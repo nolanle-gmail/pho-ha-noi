@@ -68,10 +68,33 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('audit records the actor', audit.every(a => 'user_name' in a) && audit.some(a => a.user_name === 'Harry Nguyen'), 'no actor');
     check('audit detail parsed to object', audit.some(a => a.detail && a.detail.guest), 'no detail.guest');
 
-    // RBAC: host pinned to their location
+    // ── Owner-only: full guest history + daily report ──────────
+    const allHist = await j(await fetch(base + '/api/waitlist/history/all', { headers: H(token) }));
+    check('owner guest history (all locations)', Array.isArray(allHist) && allHist.length >= 20, 'len=' + (allHist && allHist.length));
+    check('history rows carry location name', allHist.every(r => 'location_name' in r));
+    const locNames = new Set(allHist.map(r => r.location_name));
+    check('history spans multiple locations', locNames.size >= 5, 'locs=' + locNames.size);
+
+    const oneLoc = await j(await fetch(base + `/api/waitlist/history/all?location_id=${loc}`, { headers: H(token) }));
+    check('history filters by location', oneLoc.every(r => r.location_id === loc));
+
+    const report = await j(await fetch(base + '/api/waitlist/report/daily', { headers: H(token) }));
+    check('daily report has rows + totals', report.rows.length >= 1 && report.totals.guests > 0, JSON.stringify(report.totals));
+    check('report day has guest headcount', report.rows.every(r => 'guests' in r && 'parties' in r));
+
+    // ── RBAC: host pinned to own location; cannot see owner history/report ──
     const host = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'host2@phohanoi.com', password: 'Host123!' }) }));
     const hostQueue = await j(await fetch(base + '/api/waitlist/', { headers: H(host.token) }));
     check('host scoped to own location', Array.isArray(hostQueue), 'not array');
+    r = await fetch(base + '/api/waitlist/history/all', { headers: H(host.token) });
+    check('host BLOCKED from guest history', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/waitlist/report/daily', { headers: H(host.token) });
+    check('host BLOCKED from daily report', r.status === 403, 'status=' + r.status);
+
+    // Manager also blocked (owner-only)
+    const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
+    r = await fetch(base + '/api/waitlist/history/all', { headers: H(mgr.token) });
+    check('manager BLOCKED from guest history', r.status === 403, 'status=' + r.status);
   } catch (e) { fail++; console.log('  FAIL  exception: ' + e.message); }
   finally { server.close(); }
   console.log(`\n${pass} passed, ${fail} failed`);

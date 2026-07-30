@@ -114,10 +114,54 @@ router.get('/audit', requireRole(...HOST), (req, res) => {
   res.json(rows.map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d }; }));
 });
 
-// Today's seated / left history.
+// Today's seated / left history (host board).
 router.get('/history', requireRole(...HOST), (req, res) => {
   const l = requireLoc(req, res, true); if (!l) return;
   res.json(db.prepare(`SELECT * FROM waitlist WHERE location_id=? AND status IN ('seated','left') AND date(created_at)=date('now') ORDER BY created_at DESC LIMIT 100`).all(l));
+});
+
+// ── Owner/admin only ─────────────────────────────────────────────────────
+// Full guest history across all time. Optional filters: location_id (omit for
+// ALL 10 locations), start / end dates (YYYY-MM-DD), status.
+router.get('/history/all', requireRole('owner'), (req, res) => {
+  const conds = [], args = [];
+  if (req.query.location_id) { conds.push('w.location_id=?'); args.push(req.query.location_id); }
+  if (req.query.start) { conds.push('date(w.created_at) >= ?'); args.push(req.query.start); }
+  if (req.query.end) { conds.push('date(w.created_at) <= ?'); args.push(req.query.end); }
+  if (req.query.status) { conds.push('w.status=?'); args.push(req.query.status); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const limit = Math.min(1000, parseInt(req.query.limit) || 500);
+  const rows = db.prepare(`
+    SELECT w.*, l.name AS location_name
+    FROM waitlist w JOIN locations l ON w.location_id=l.id
+    ${where} ORDER BY w.created_at DESC LIMIT ${limit}
+  `).all(...args);
+  res.json(rows);
+});
+
+// Daily report — parties and guest headcount per day, with status breakdown.
+// Optional filters: location_id (omit for ALL locations), start / end.
+router.get('/report/daily', requireRole('owner'), (req, res) => {
+  const conds = [], args = [];
+  if (req.query.location_id) { conds.push('location_id=?'); args.push(req.query.location_id); }
+  if (req.query.start) { conds.push('date(created_at) >= ?'); args.push(req.query.start); }
+  if (req.query.end) { conds.push('date(created_at) <= ?'); args.push(req.query.end); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const rows = db.prepare(`
+    SELECT date(created_at) AS day,
+           COUNT(*) AS parties,
+           COALESCE(SUM(party_size), 0) AS guests,
+           SUM(CASE WHEN status='seated' THEN 1 ELSE 0 END) AS seated,
+           SUM(CASE WHEN status='left' THEN 1 ELSE 0 END) AS left_count,
+           SUM(CASE WHEN status='waiting' THEN 1 ELSE 0 END) AS waiting
+    FROM waitlist ${where}
+    GROUP BY date(created_at) ORDER BY day DESC LIMIT 90
+  `).all(...args);
+  const totals = rows.reduce((a, r) => ({
+    parties: a.parties + r.parties, guests: a.guests + r.guests,
+    seated: a.seated + r.seated, left: a.left + r.left_count,
+  }), { parties: 0, guests: 0, seated: 0, left: 0 });
+  res.json({ days: rows.length, totals, rows });
 });
 
 module.exports = router;

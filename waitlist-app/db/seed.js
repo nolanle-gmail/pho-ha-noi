@@ -56,7 +56,34 @@ function run() {
   audit.run(host1.id, locIds[0], 'party_added', walk, JSON.stringify({ guest: 'Walk-off party', party_size: 5 }), '-55 minutes');
   audit.run(host1.id, locIds[0], 'party_left', walk, JSON.stringify({ guest: 'Walk-off party', party_size: 5 }), '-50 minutes');
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${PARTIES.length} waiting parties.`);
+  // ── Historical guests across all 10 locations (last 21 days) ─────────────
+  // Populates the owner-only guest history and daily report.
+  const rng = (() => { let s = 12345; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+  const FIRST = ['Nguyen', 'Tran', 'Le', 'Pham', 'Hoang', 'Vo', 'Dang', 'Bui', 'Do', 'Ngo', 'Duong', 'Ly', 'Chen', 'Kim', 'Smith', 'Garcia', 'Patel'];
+  const GIVEN = ['Kim', 'David', 'Lily', 'Anh', 'Minh', 'Linh', 'Tuan', 'Mai', 'Alex', 'Sarah', 'Danny', 'Grace', 'Henry', 'Ivy'];
+  const histIns = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, status, seated_at, created_at) VALUES (?,?,?,?,?,?,?, datetime('now', ?))`);
+  let histCount = 0;
+  for (let d = 1; d <= 21; d++) {
+    locIds.forEach((lid, li) => {
+      // Busier locations (lower index) and weekends see more guests.
+      const base = li < 4 ? 4 : 2;
+      const count = Math.floor(rng() * base) + Math.floor(rng() * 3);
+      for (let i = 0; i < count; i++) {
+        const name = `${FIRST[Math.floor(rng() * FIRST.length)]}, ${GIVEN[Math.floor(rng() * GIVEN.length)]}`;
+        const size = 1 + Math.floor(rng() * 6);
+        const hoursAgo = d * 24 - Math.floor(rng() * 10) - 11; // spread through service hours
+        const seated = rng() > 0.18; // most parties get seated; some leave
+        histIns.run(lid, name, size, null, Math.floor(rng() * 40),
+          seated ? 'seated' : 'left', null, `-${hoursAgo} hours`);
+        histCount++;
+      }
+    });
+  }
+  // Set a realistic seated_at for the historical seated rows (a few minutes
+  // after arrival). Done in a follow-up pass so the insert stays simple.
+  db.prepare(`UPDATE waitlist SET seated_at=datetime(created_at, '+' || (10 + (id % 30)) || ' minutes') WHERE status='seated' AND seated_at IS NULL`).run();
+
+  console.log(`Seeded ${LOCATIONS.length} locations, ${PARTIES.length} waiting parties, ${histCount} historical guests.`);
   console.log('Owner: harry@phohanoi.com / Harry123!  ·  Host: host1@phohanoi.com / Host123!');
 }
 

@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -50,8 +50,27 @@ async function boot() {
     S.loc = String(S.locations[0].id); picker.value = S.loc;
     picker.onchange = () => { S.loc = picker.value; render(); };
   } else { S.loc = String(S.user.location_id); picker.classList.add('hidden'); }
+  renderNav();
   render();
-  setInterval(() => { if (!$('modalHost').innerHTML) render(); }, 15000); // live refresh
+  // Live refresh — only the board auto-refreshes (history/report keep filter state).
+  setInterval(() => { if (S.view === 'board' && !$('modalHost').innerHTML) render(); }, 15000);
+}
+
+// Owner-only sub-navigation between the host board, guest history and report.
+function renderNav() {
+  const nav = $('subnav');
+  if (S.user.role !== 'owner') { nav.classList.add('hidden'); nav.innerHTML = ''; return; }
+  nav.classList.remove('hidden');
+  const items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report']];
+  nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
+  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
+}
+
+// Dispatch to the active view.
+function render() {
+  if (S.view === 'history') return renderHistory();
+  if (S.view === 'report') return renderReport();
+  return renderBoard();
 }
 
 function modal(title, bodyHtml, onOk, okLabel = 'Add party') {
@@ -77,7 +96,7 @@ function auditSummary(a) {
   return bits.join(' · ');
 }
 
-async function render() {
+async function renderBoard() {
   const [queue, stats, history, audit] = await Promise.all([api(q('/waitlist/')), api(q('/waitlist/stats')), api(q('/waitlist/history')), api(q('/waitlist/audit'))]);
   $('view').innerHTML = `
     <div class="stats">
@@ -158,6 +177,108 @@ async function act(action, id, name) {
     }
     render();
   } catch (e) { toast(e.message, true); }
+}
+
+// ── Owner: Guest History (all time, any location) ──────────────────────────
+const histFilter = { loc: '', start: '', end: '', status: '' };
+function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
+if (!histFilter.start) { histFilter.start = daysAgoISO(21); histFilter.end = daysAgoISO(0); }
+
+function locOptions(selected) {
+  return `<option value="">All 10 locations</option>` +
+    S.locations.map(l => `<option value="${l.id}" ${String(selected) === String(l.id) ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+}
+
+async function renderHistory() {
+  $('view').innerHTML = `
+    <div class="section-head"><h2>Guest History <span style="font-weight:400;color:var(--muted);font-size:.9rem">— all guests, any point in time</span></h2></div>
+    <div class="filters">
+      <div class="field"><label>Location</label><select id="hLoc">${locOptions(histFilter.loc)}</select></div>
+      <div class="field"><label>From</label><input id="hStart" type="date" value="${histFilter.start}"></div>
+      <div class="field"><label>To</label><input id="hEnd" type="date" value="${histFilter.end}"></div>
+      <div class="field"><label>Status</label><select id="hStatus">
+        <option value="">All</option><option value="seated">Seated</option><option value="left">Left</option><option value="waiting">Waiting</option>
+      </select></div>
+    </div>
+    <div id="histResults"><p style="color:var(--muted)">Loading…</p></div>`;
+  const bind = () => {
+    histFilter.loc = $('hLoc').value; histFilter.start = $('hStart').value; histFilter.end = $('hEnd').value; histFilter.status = $('hStatus').value;
+    loadHistory();
+  };
+  ['hLoc', 'hStart', 'hEnd', 'hStatus'].forEach(id => $(id).onchange = bind);
+  $('hStatus').value = histFilter.status;
+  loadHistory();
+}
+
+async function loadHistory() {
+  const p = new URLSearchParams();
+  if (histFilter.loc) p.set('location_id', histFilter.loc);
+  if (histFilter.start) p.set('start', histFilter.start);
+  if (histFilter.end) p.set('end', histFilter.end);
+  if (histFilter.status) p.set('status', histFilter.status);
+  let rows;
+  try { rows = await api('/waitlist/history/all?' + p.toString()); }
+  catch (e) { $('histResults').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const guests = rows.reduce((s, r) => s + (r.party_size || 0), 0);
+  $('histResults').innerHTML = `
+    <p style="color:var(--muted);margin:.2rem 0 1rem">${rows.length} parties · ${guests} guests in range</p>
+    <div class="hist"><table><thead><tr><th>Date</th><th>Guest</th><th>Party</th><th>Location</th><th>Status</th><th>Phone</th><th>Seated</th></tr></thead><tbody>
+      ${rows.length ? rows.map(r => `<tr>
+        <td>${esc((r.created_at || '').slice(0, 10))}</td>
+        <td>${esc(r.guest_name)}</td>
+        <td>${r.party_size}</td>
+        <td>${esc((r.location_name || '').replace('Pho Ha Noi — ', ''))}</td>
+        <td><span class="badge ${r.status}">${r.status}</span></td>
+        <td>${esc(r.phone || '—')}</td>
+        <td>${esc((r.seated_at || '').slice(0, 16).replace('T', ' '))}</td>
+      </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:1.5rem">No guests match these filters.</td></tr>'}
+    </tbody></table></div>`;
+}
+
+// ── Owner: Daily Report ────────────────────────────────────────────────────
+const repFilter = { loc: '', start: daysAgoISO(21), end: daysAgoISO(0) };
+
+async function renderReport() {
+  $('view').innerHTML = `
+    <div class="section-head"><h2>Daily Report <span style="font-weight:400;color:var(--muted);font-size:.9rem">— guests on the waitlist per day</span></h2></div>
+    <div class="filters">
+      <div class="field"><label>Location</label><select id="rLoc">${locOptions(repFilter.loc)}</select></div>
+      <div class="field"><label>From</label><input id="rStart" type="date" value="${repFilter.start}"></div>
+      <div class="field"><label>To</label><input id="rEnd" type="date" value="${repFilter.end}"></div>
+    </div>
+    <div id="repResults"><p style="color:var(--muted)">Loading…</p></div>`;
+  const bind = () => { repFilter.loc = $('rLoc').value; repFilter.start = $('rStart').value; repFilter.end = $('rEnd').value; loadReport(); };
+  ['rLoc', 'rStart', 'rEnd'].forEach(id => $(id).onchange = bind);
+  loadReport();
+}
+
+async function loadReport() {
+  const p = new URLSearchParams();
+  if (repFilter.loc) p.set('location_id', repFilter.loc);
+  if (repFilter.start) p.set('start', repFilter.start);
+  if (repFilter.end) p.set('end', repFilter.end);
+  let data;
+  try { data = await api('/waitlist/report/daily?' + p.toString()); }
+  catch (e) { $('repResults').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const t = data.totals, maxG = Math.max(1, ...data.rows.map(r => r.guests));
+  const avg = data.days ? Math.round(t.guests / data.days) : 0;
+  $('repResults').innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="label">Total guests</div><div class="value">${t.guests}</div></div>
+      <div class="stat"><div class="label">Total parties</div><div class="value">${t.parties}</div></div>
+      <div class="stat"><div class="label">Avg guests / day</div><div class="value">${avg}</div></div>
+      <div class="stat"><div class="label">Seated / Left</div><div class="value" style="font-size:1.4rem">${t.seated} / ${t.left}</div></div>
+    </div>
+    <div class="hist"><table><thead><tr><th>Day</th><th>Guests</th><th>Parties</th><th>Seated</th><th>Left</th><th style="width:38%">Guests</th></tr></thead><tbody>
+      ${data.rows.length ? data.rows.map(r => `<tr>
+        <td>${esc(r.day)}</td>
+        <td><strong>${r.guests}</strong></td>
+        <td>${r.parties}</td>
+        <td>${r.seated}</td>
+        <td>${r.left_count}</td>
+        <td><div style="background:var(--gold-soft);border-radius:6px;height:14px"><div style="background:var(--gold);height:14px;border-radius:6px;width:${(r.guests / maxG * 100).toFixed(0)}%"></div></div></td>
+      </tr>`).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:1.5rem">No data in range.</td></tr>'}
+    </tbody></table></div>`;
 }
 
 (function init() {
