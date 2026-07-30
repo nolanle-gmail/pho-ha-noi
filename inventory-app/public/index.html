@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pho Ha Noi — Inventory</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- Login -->
+  <div id="login" class="login-wrap">
+    <form class="login-card" id="loginForm">
+      <div class="brand"><span class="bowl">🍜</span> Pho Ha Noi</div>
+      <div class="sub">Inventory Management</div>
+      <div class="err" id="loginErr"></div>
+      <input id="email" type="email" placeholder="Email" value="harry@phohanoi.com" autocomplete="username" />
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button class="btn block" type="submit">Sign in</button>
+      <div class="sub" style="margin-top:1rem;font-size:.78rem">
+        Owner: harry@phohanoi.com / Harry123!
+      </div>
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <div class="topbar">
+      <div class="logo">🍜 Pho Ha Noi <span style="opacity:.7;font-weight:500;font-size:.85rem">· Inventory</span></div>
+      <div class="right">
+        <select id="locPicker" class="hidden"></select>
+        <span class="who" id="who"></span>
+        <button class="btn ghost sm" id="logout" style="color:#fff;border-color:rgba(255,255,255,.4)">Sign out</button>
+      </div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div class="content" id="view"></div>
+  </div>
+
+  <div id="modalHost"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

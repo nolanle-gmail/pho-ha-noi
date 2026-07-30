@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pho Ha Noi — Waitlist</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="login" class="login-wrap">
+    <form class="login-card" id="loginForm">
+      <div class="brand"><span class="bowl">🍜</span> Pho Ha Noi</div>
+      <div class="sub">Host Check-In &amp; Waiting List</div>
+      <div class="err" id="loginErr"></div>
+      <input id="email" type="email" placeholder="Email" value="host1@phohanoi.com" autocomplete="username" />
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <button class="btn block" type="submit">Sign in</button>
+      <div class="sub" style="margin-top:1rem;font-size:.76rem">Host: host1@phohanoi.com / Host123!<br>Owner: harry@phohanoi.com / Harry123!</div>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
+    <div class="topbar">
+      <div class="logo">🍜 Pho Ha Noi <span style="opacity:.7;font-weight:500;font-size:.9rem">· Front Desk</span></div>
+      <div class="right">
+        <select id="locPicker" class="hidden"></select>
+        <span class="clock" id="clock"></span>
+        <button class="btn ghost" id="logout" style="padding:.5rem .8rem">Sign out</button>
+      </div>
+    </div>
+    <div class="wrap" id="view"></div>
+  </div>
+
+  <div id="modalHost"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
