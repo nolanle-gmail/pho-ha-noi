@@ -19,8 +19,9 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('bad password rejected', r.status === 401);
 
     const locs = await j(await fetch(base + '/api/waitlist/locations', { headers: H(token) }));
-    check('locations', locs.length === 2);
-    const loc = locs[0].id;
+    check('ten locations', locs.length === 10, 'len=' + locs.length);
+    // Seeded queue lives at San Jose; /locations is alphabetical, so resolve by name.
+    const loc = Object.fromEntries(locs.map(l => [l.name, l.id]))['Pho Ha Noi — San Jose'];
 
     let queue = await j(await fetch(base + `/api/waitlist/?location_id=${loc}`, { headers: H(token) }));
     check('seeded queue', queue.length >= 4, 'len=' + queue.length);

@@ -69,8 +69,16 @@ const ITEMS = [
 ];
 
 const LOCATIONS = [
-  ['Pho Ha Noi — Downtown', '123 Main St, San Jose, CA'],
-  ['Pho Ha Noi — Eastside', '890 Story Rd, San Jose, CA'],
+  ['Pho Ha Noi — San Jose', '123 Santana Row, San Jose, CA 95128'],
+  ['Pho Ha Noi — Milpitas', '456 Great Mall Dr, Milpitas, CA 95035'],
+  ['Pho Ha Noi — Cupertino', '789 Stevens Creek Blvd, Cupertino, CA 95014'],
+  ['Pho Ha Noi — Fremont', '321 Fremont Blvd, Fremont, CA 94538'],
+  ['Pho Ha Noi — Palo Alto', '654 University Ave, Palo Alto, CA 94301'],
+  ['Pho Ha Noi — Berkeley', '987 Shattuck Ave, Berkeley, CA 94704'],
+  ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St, Fountain Valley, CA 92708'],
+  ['Pho Ha Noi — Santa Clara', '753 El Camino Real, Santa Clara, CA 95050'],
+  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave, Sunnyvale, CA 94086'],
+  ['Pho Ha Noi — Oakland', '426 Broadway, Oakland, CA 94607'],
 ];
 
 const VENDORS = [
@@ -145,10 +153,13 @@ function run() {
   let sku = 1000;
   locIds.forEach((lid, li) => {
     ITEMS.forEach(([name, cat, unit, baseQty, min, par, cost, perishable]) => {
-      // Location 2 runs leaner; a few items intentionally drop below min.
-      const factor = li === 0 ? 1 : 0.55;
+      // Each location carries a different stock level so dashboards vary.
+      const FACTORS = [1, 0.55, 0.8, 0.65, 0.95, 0.5, 0.75, 0.85, 0.6, 0.7];
+      const factor = FACTORS[li] != null ? FACTORS[li] : 0.7;
       let qty = Math.round(baseQty * factor);
-      if (li === 1 && ['Beef Flank', 'Thai Basil', 'Lime', 'Star Anise', 'Sriracha'].includes(name)) {
+      // Force a few below-min items at a couple of branches to exercise reorder.
+      if ((li === 1 && ['Beef Flank', 'Thai Basil', 'Lime', 'Star Anise', 'Sriracha'].includes(name)) ||
+          (li === 5 && ['Beef Brisket', 'Cilantro', 'Fish Sauce'].includes(name))) {
         qty = Math.max(0, Math.round(min * 0.5)); // force some low-stock
       }
       sku++;

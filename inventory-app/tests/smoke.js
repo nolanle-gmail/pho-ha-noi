@@ -29,8 +29,11 @@ const check = (name, ok, detail = '') => {
 
     // Locations
     const locs = await j(await fetch(base + '/api/inventory/locations', { headers: H(token) }));
-    check('two locations', locs.length === 2, JSON.stringify(locs.length));
-    const loc1 = locs[0].id, loc2 = locs[1].id;
+    check('ten locations', locs.length === 10, JSON.stringify(locs.length));
+    // Resolve by name — /locations returns alphabetical order, not seed order.
+    const byName = Object.fromEntries(locs.map(l => [l.name, l.id]));
+    const loc1 = byName['Pho Ha Noi — San Jose'];    // full stock, has manager1
+    const loc2 = byName['Pho Ha Noi — Milpitas'];     // seeded below-min items
 
     // Dashboard
     const dash = await j(await fetch(base + `/api/inventory/dashboard?location_id=${loc1}`, { headers: H(token) }));
@@ -114,7 +117,7 @@ const check = (name, ok, detail = '') => {
 
     // Warehouse view
     const wh = await j(await fetch(base + '/api/inventory/warehouse', { headers: H(token) }));
-    check('warehouse view', wh.locations.length === 2 && wh.items.length >= 48);
+    check('warehouse view', wh.locations.length === 10 && wh.items.length >= 48, 'locs=' + wh.locations.length);
 
     // ── Glossary: descriptions/notes, edit, delete ─────────────
     const glossary = await j(await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(token) }));
@@ -156,7 +159,7 @@ const check = (name, ok, detail = '') => {
       body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/inventory/', { headers: H(mgr.token) });
     const mgrStock = await j(r);
-    check('manager sees only their location', mgrStock.every(s => s.location_id === locs[0].id), 'mixed locations');
+    check('manager sees only their location', mgrStock.every(s => s.location_id === loc1), 'mixed locations');
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

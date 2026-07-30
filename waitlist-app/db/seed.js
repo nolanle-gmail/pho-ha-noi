@@ -7,8 +7,16 @@ const { migrate } = require('./schema');
 migrate();
 
 const LOCATIONS = [
-  ['Pho Ha Noi — Downtown', '123 Main St, San Jose, CA', 8],
-  ['Pho Ha Noi — Eastside', '890 Story Rd, San Jose, CA', 7],
+  ['Pho Ha Noi — San Jose', '123 Santana Row, San Jose, CA 95128', 8],
+  ['Pho Ha Noi — Milpitas', '456 Great Mall Dr, Milpitas, CA 95035', 7],
+  ['Pho Ha Noi — Cupertino', '789 Stevens Creek Blvd, Cupertino, CA 95014', 9],
+  ['Pho Ha Noi — Fremont', '321 Fremont Blvd, Fremont, CA 94538', 8],
+  ['Pho Ha Noi — Palo Alto', '654 University Ave, Palo Alto, CA 94301', 10],
+  ['Pho Ha Noi — Berkeley', '987 Shattuck Ave, Berkeley, CA 94704', 9],
+  ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St, Fountain Valley, CA 92708', 8],
+  ['Pho Ha Noi — Santa Clara', '753 El Camino Real, Santa Clara, CA 95050', 7],
+  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave, Sunnyvale, CA 94086', 8],
+  ['Pho Ha Noi — Oakland', '426 Broadway, Oakland, CA 94607', 9],
 ];
 
 const PARTIES = [

@@ -14,7 +14,9 @@ PhoHaNoi/
 
 A faithful port of the reference inventory design, with the item catalog tailored
 to a Vietnamese pho restaurant (49 items across Protein, Noodles, Produce, Pantry,
-Spices, Beverage, Packaging, Cleaning) across two locations.
+Spices, Beverage, Packaging, Cleaning) across 10 Bay Area / SoCal locations
+(San Jose, Milpitas, Cupertino, Fremont, Palo Alto, Berkeley, Fountain Valley,
+Santa Clara, Sunnyvale, Oakland).
 
 **Features**
 - **Glossary / item catalog** — every item with description, SKU, category, unit, notes; add / edit / remove items (remove is a soft-delete that preserves history)
