@@ -82,9 +82,9 @@ async function boot() {
 }
 
 const TABS = [
-  ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['glossary', 'Glossary'],
-  ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'],
-  ['vendors', 'Vendors'], ['reports', 'Reports'], ['activity', 'Activity'],
+  ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['orders', 'Orders & Reorder'],
+  ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
+  ['reports', 'Reports'], ['activity', 'Activity'], ['glossary', 'Glossary'],
 ];
 function renderTabs() {
   $('tabs').innerHTML = TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'active' : ''}">${l}</button>`).join('');
