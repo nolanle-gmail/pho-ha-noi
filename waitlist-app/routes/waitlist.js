@@ -130,7 +130,8 @@ router.get('/history/all', requireRole('owner'), (req, res) => {
   if (req.query.end) { conds.push('date(w.created_at) <= ?'); args.push(req.query.end); }
   if (req.query.status) { conds.push('w.status=?'); args.push(req.query.status); }
   const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-  const limit = Math.min(1000, parseInt(req.query.limit) || 500);
+  // Higher cap so a full CSV export isn't silently truncated.
+  const limit = Math.min(50000, parseInt(req.query.limit) || 500);
   const rows = db.prepare(`
     SELECT w.*, l.name AS location_name
     FROM waitlist w JOIN locations l ON w.location_id=l.id

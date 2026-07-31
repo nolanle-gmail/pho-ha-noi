@@ -46,7 +46,7 @@ A touch-friendly host station for walk-in check-in and paging.
 - Live stats: waiting now, longest wait, next-party quote, seated today
 - "Handled today" history; auto-refreshes every 15s
 - **Activity log** — every add / notify / seat / remove is recorded with **who did it** (name + role) and shown in a "who did what" log
-- **Guest history (owner/admin only)** — full history of every guest at any point in time, across all 10 locations, filterable by location, date range and status
+- **Guest history (owner/admin only)** — full history of every guest at any point in time, across all 10 locations, filterable by location, date range and status; **one-click CSV export** of the filtered results
 - **Daily report (owner/admin only)** — guests and parties on the waitlist per day (with seated/left breakdown), for one location or all 10
 - Owner can view any location's live board at any time via the location switcher
 - Roles: owner · manager · frontdesk (host) — location-scoped; history/report are owner-only

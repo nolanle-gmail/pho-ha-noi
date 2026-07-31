@@ -191,7 +191,8 @@ function locOptions(selected) {
 
 async function renderHistory() {
   $('view').innerHTML = `
-    <div class="section-head"><h2>Guest History <span style="font-weight:400;color:var(--muted);font-size:.9rem">— all guests, any point in time</span></h2></div>
+    <div class="section-head"><h2>Guest History <span style="font-weight:400;color:var(--muted);font-size:.9rem">— all guests, any point in time</span></h2>
+      <button class="btn" id="exportCsv">⬇ Export CSV</button></div>
     <div class="filters">
       <div class="field"><label>Location</label><select id="hLoc">${locOptions(histFilter.loc)}</select></div>
       <div class="field"><label>From</label><input id="hStart" type="date" value="${histFilter.start}"></div>
@@ -207,7 +208,56 @@ async function renderHistory() {
   };
   ['hLoc', 'hStart', 'hEnd', 'hStatus'].forEach(id => $(id).onchange = bind);
   $('hStatus').value = histFilter.status;
+  $('exportCsv').onclick = exportHistoryCSV;
   loadHistory();
+}
+
+// Build a CSV cell: quote when it contains a comma, quote or newline.
+function csvCell(v) {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+async function exportHistoryCSV() {
+  const btn = $('exportCsv');
+  const orig = btn.textContent;
+  btn.textContent = 'Preparing…'; btn.disabled = true;
+  try {
+    const p = new URLSearchParams();
+    if (histFilter.loc) p.set('location_id', histFilter.loc);
+    if (histFilter.start) p.set('start', histFilter.start);
+    if (histFilter.end) p.set('end', histFilter.end);
+    if (histFilter.status) p.set('status', histFilter.status);
+    p.set('limit', '50000'); // full export, not the display cap
+    const rows = await api('/waitlist/history/all?' + p.toString());
+
+    const headers = ['Date', 'Guest', 'Party Size', 'Location', 'Status', 'Phone',
+      'Quoted (min)', 'Added At', 'Notified At', 'Seated At', 'Table', 'Notes'];
+    const lines = [headers.join(',')];
+    for (const r of rows) {
+      lines.push([
+        (r.created_at || '').slice(0, 10), r.guest_name, r.party_size, r.location_name,
+        r.status, r.phone || '', r.quoted_minutes == null ? '' : r.quoted_minutes,
+        r.created_at || '', r.notified_at || '', r.seated_at || '', r.table_number || '', r.notes || '',
+      ].map(csvCell).join(','));
+    }
+    const csv = '﻿' + lines.join('\r\n'); // BOM so Excel reads UTF-8
+
+    const locPart = histFilter.loc
+      ? (S.locations.find(l => String(l.id) === String(histFilter.loc)) || {}).name?.replace('Pho Ha Noi — ', '').replace(/\s+/g, '-')
+      : 'all-locations';
+    const fname = `pho-ha-noi_guest-history_${locPart}_${histFilter.start || 'start'}_to_${histFilter.end || 'end'}.csv`;
+
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = fname; document.body.appendChild(a); a.click();
+    a.remove(); URL.revokeObjectURL(url);
+    toast(`Exported ${rows.length} guests to CSV`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.textContent = orig; btn.disabled = false;
+  }
 }
 
 async function loadHistory() {

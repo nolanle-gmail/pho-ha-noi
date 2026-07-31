@@ -78,6 +78,11 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     const oneLoc = await j(await fetch(base + `/api/waitlist/history/all?location_id=${loc}`, { headers: H(token) }));
     check('history filters by location', oneLoc.every(r => r.location_id === loc));
 
+    // CSV export path: a large limit returns the full set (not capped at 500)
+    const fullExport = await j(await fetch(base + '/api/waitlist/history/all?limit=50000', { headers: H(token) }));
+    check('history honors large export limit', Array.isArray(fullExport) && fullExport.length >= allHist.length, 'len=' + fullExport.length);
+    check('export rows have CSV fields', fullExport.every(r => 'guest_name' in r && 'created_at' in r && 'location_name' in r));
+
     const report = await j(await fetch(base + '/api/waitlist/report/daily', { headers: H(token) }));
     check('daily report has rows + totals', report.rows.length >= 1 && report.totals.guests > 0, JSON.stringify(report.totals));
     check('report day has guest headcount', report.rows.every(r => 'guests' in r && 'parties' in r));
