@@ -1,6 +1,6 @@
 // End-to-end smoke test for the inventory API. Starts the app on a test port
 // and exercises the main flows. Run: node tests/smoke.js
-process.env.DB_PATH = process.env.DB_PATH || require('path').join(__dirname, '..', 'db', 'phohanoi_inventory.db');
+process.env.DB_PATH = process.env.DB_PATH || require('path').join(__dirname, '..', 'db', 'phohanoi_management.db');
 const app = require('../server');
 
 let pass = 0, fail = 0;

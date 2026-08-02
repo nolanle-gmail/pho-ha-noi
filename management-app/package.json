@@ -1,7 +1,7 @@
 {
-  "name": "pho-ha-noi-inventory",
+  "name": "pho-ha-noi-management",
   "version": "1.0.0",
-  "description": "Pho Ha Noi — restaurant inventory management (owner: Harry Nguyen)",
+  "description": "Pho Ha Noi Management System — inventory & operations (owner: Harry Nguyen)",
   "main": "server.js",
   "type": "commonjs",
   "scripts": {

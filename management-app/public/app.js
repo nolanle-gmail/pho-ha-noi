@@ -1,4 +1,4 @@
-// Pho Ha Noi — Inventory SPA
+// Pho Ha Noi Management System — SPA
 const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

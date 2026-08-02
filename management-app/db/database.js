@@ -3,7 +3,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, 'phohanoi_inventory.db');
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'phohanoi_management.db');
 const db = new DatabaseSync(dbPath);
 
 db.exec('PRAGMA journal_mode = WAL');

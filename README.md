@@ -6,11 +6,11 @@ in the same stack as the reference design in `C:\Restaurant_Design`
 
 ```
 PhoHaNoi/
-├── inventory-app/   Pho Ha Noi Management System — shell + inventory (port 4001)
+├── management-app/  Pho Ha Noi Management System — shell + inventory (port 4001)
 └── waitlist-app/    Host check-in / waiting list (port 4002)
 ```
 
-## 1. Pho Ha Noi Management System  (`inventory-app`, http://localhost:4001)
+## 1. Pho Ha Noi Management System  (`management-app`, http://localhost:4001)
 
 **Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
 Inventory · Menu/Recipes · Reports · Messages) plus **Account Settings** (profile
@@ -67,7 +67,7 @@ A touch-friendly host station for walk-in check-in and paging.
 ## Run either app
 
 ```bash
-cd inventory-app   # or waitlist-app
+cd management-app   # or waitlist-app
 npm install
 npm run seed       # demo data
 npm start
@@ -80,5 +80,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # inventory: 38 checks · waitlist: 21 checks
+npm run smoke      # management: 38 checks · waitlist: 32 checks
 ```
