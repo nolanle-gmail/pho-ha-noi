@@ -13,6 +13,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Pho Ha Noi — Inventory' }));
 
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));
 
 const PORT = process.env.PORT || 4001;

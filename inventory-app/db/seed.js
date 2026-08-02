@@ -98,18 +98,15 @@ function run() {
   const locIds = LOCATIONS.map(([name, addr]) =>
     db.prepare(`INSERT INTO locations (name, address) VALUES (?,?)`).run(name, addr).lastInsertRowid);
 
-  // Users
+  // Users — one account per access level (owner, admin, manager, support, employee).
   const hash = (p) => bcrypt.hashSync(p, 10);
-  db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`)
-    .run('Harry Nguyen', 'harry@phohanoi.com', hash('Harry123!'), 'owner', null);
-  locIds.forEach((lid, i) => {
-    db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`)
-      .run(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, hash('Manager123!'), 'manager', lid);
-  });
-  db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`)
-    .run('Stockroom Lead', 'stock@phohanoi.com', hash('Stock123!'), 'stockroom', locIds[0]);
-  db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`)
-    .run('Head Chef', 'chef@phohanoi.com', hash('Chef123!'), 'chef', locIds[0]);
+  const mkUser = (name, email, pw, role, lid) =>
+    db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run(name, email, hash(pw), role, lid);
+  mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null);           // sees everything
+  mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null);             // sees everything (for now)
+  locIds.forEach((lid, i) => mkUser(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid));
+  mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0]);
+  mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0]);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
 
   // Vendors

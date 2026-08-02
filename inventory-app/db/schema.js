@@ -10,7 +10,7 @@ function migrate() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('owner','manager','stockroom','chef','bartender','employee')),
+      role TEXT NOT NULL CHECK(role IN ('owner','admin','manager','support','employee')),
       location_id INTEGER REFERENCES locations(id),
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))

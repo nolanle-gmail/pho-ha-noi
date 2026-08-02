@@ -1,5 +1,5 @@
 // Pho Ha Noi — Inventory SPA
-const S = { token: null, user: null, locations: [], loc: null, tab: 'dashboard' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -65,20 +65,70 @@ async function boot() {
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('who').textContent = `${S.user.name} · ${S.user.role}`;
+  $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(S.user.role)}</div>`;
   S.locations = await api('/inventory/locations');
   const picker = $('locPicker');
-  if (S.user.role === 'owner') {
-    picker.classList.remove('hidden');
+  const seesAll = S.user.role === 'owner' || S.user.role === 'admin';
+  if (seesAll) {
     picker.innerHTML = S.locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
     S.loc = String(S.locations[0].id);
     picker.value = S.loc;
     picker.onchange = () => { S.loc = picker.value; render(); };
   } else {
     S.loc = String(S.user.location_id);
-    picker.classList.add('hidden');
   }
-  renderTabs();
-  render();
+  renderSidebar();
+  $('hamburger').onclick = () => $('app').classList.toggle('sidebar-open');
+  $('sidebarOverlay').onclick = () => $('app').classList.remove('sidebar-open');
+  $('logout').onclick = () => { localStorage.clear(); location.reload(); };
+  $('navAccount').onclick = () => { setActiveNav(null); $('app').classList.remove('sidebar-open'); openAccount(); };
+
+  const allowed = allowedSections();
+  const start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
+  showSection(start);
+}
+
+// ── Left-menu sections ─────────────────────────────────────────────────────
+const ROLE_ALL = ['owner', 'admin', 'manager', 'support', 'employee'];
+const SECTIONS = [
+  ['overview', '📊', 'Overview', ROLE_ALL],
+  ['locations', '📍', 'Locations', ['owner', 'admin', 'manager']],
+  ['staff', '👥', 'Staff', ['owner', 'admin', 'manager']],
+  ['inventory', '📦', 'Inventory', ROLE_ALL],
+  ['menu', '🍽️', 'Menu/Recipes', ['owner', 'admin', 'manager']],
+  ['reports', '📈', 'Reports', ['owner', 'admin', 'manager']],
+  ['messages', '💬', 'Messages', ROLE_ALL],
+];
+const allowedSections = () => SECTIONS.filter(s => s[3].includes(S.user.role));
+
+function renderSidebar() {
+  $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
+    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}</button>`
+  ).join('');
+  $('sidebarNav').querySelectorAll('button').forEach(b => b.onclick = () => showSection(b.dataset.section));
+}
+function setActiveNav(section) {
+  $('sidebarNav').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.section === section));
+}
+
+function showSection(section) {
+  S.section = section;
+  setActiveNav(section);
+  $('app').classList.remove('sidebar-open');
+  const meta = SECTIONS.find(s => s[0] === section);
+  $('pageTitle').textContent = meta ? meta[2] : 'Account Settings';
+  const isInv = section === 'inventory';
+  $('tabs').classList.toggle('hidden', !isInv);
+  $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  if (isInv) { renderTabs(); render(); return; }
+  const fn = {
+    overview: renderOverview, locations: renderLocations, staff: renderStaff,
+    menu: () => renderPlaceholder('Menu / Recipes', '🍽️', 'Recipe costing & menu management — modules coming here.'),
+    reports: () => renderPlaceholder('Reports', '📈', 'Cross-module reporting — modules coming here.'),
+    messages: () => renderPlaceholder('Messages', '💬', 'Team messaging — modules coming here.'),
+  }[section];
+  (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
 const TABS = [
@@ -486,6 +536,118 @@ async function renderActivity() {
         ${counts.length ? counts.map(c => `<tr><td class="mono">${esc((c.created_at || '').slice(0, 16))}</td><td>${esc(c.item_name)}</td><td class="num">${numf(c.system_qty)}</td><td class="num">${numf(c.counted_qty)}</td><td class="num">${c.variance > 0 ? '+' : ''}${numf(c.variance)}</td><td>${esc(c.user_name || '—')}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No counts yet.</td></tr>'}
       </tbody></table></div>
     </div>`;
+}
+
+// ── Section: Overview ──────────────────────────────────────────────────────
+async function renderOverview() {
+  let dash = null;
+  try { dash = await api(invQ('/dashboard')); } catch { /* employee etc. */ }
+  let staffCount = null;
+  if (['owner', 'admin', 'manager'].includes(S.user.role)) {
+    try { staffCount = (await api('/staff')).length; } catch { staffCount = null; }
+  }
+  const locName = (S.locations.find(l => String(l.id) === String(S.loc)) || {}).name || '';
+  const quick = allowedSections().filter(s => s[0] !== 'overview');
+  $('view').innerHTML = `
+    <div class="overview-hero">
+      <h2>Welcome, ${esc(S.user.name.split(' ')[0])}</h2>
+      <p>Pho Ha Noi Management System · <span class="role-chip">${esc(S.user.role)}</span></p>
+    </div>
+    <div class="kpis">
+      <div class="card"><div class="label">Locations</div><div class="value">${S.locations.length}</div></div>
+      ${staffCount != null ? `<div class="card"><div class="label">Staff</div><div class="value">${staffCount}</div></div>` : ''}
+      ${dash ? `<div class="card"><div class="label">Inventory value${locName ? ' · ' + esc(locName.replace('Pho Ha Noi — ', '')) : ''}</div><div class="value">${money(dash.total_value)}</div></div>
+      <div class="card"><div class="label">Below minimum</div><div class="value ${dash.low_stock ? 'warn' : ''}">${dash.low_stock}</div></div>
+      <div class="card"><div class="label">Expiring ≤ 7 days</div><div class="value ${dash.expiring_7d ? 'bad' : ''}">${dash.expiring_7d}</div></div>` : ''}
+    </div>
+    <div class="section"><h3>Jump to a section</h3>
+      <div class="quick-grid">
+        ${quick.map(([k, icon, label]) => `<button class="quick-card" data-goto="${k}"><span class="q-icon">${icon}</span><span>${esc(label)}</span></button>`).join('')}
+      </div>
+    </div>`;
+  $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+}
+
+// ── Section: Locations ─────────────────────────────────────────────────────
+async function renderLocations() {
+  const locs = await api('/inventory/locations');
+  $('view').innerHTML = `
+    <h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length} restaurants</span></h2>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead><tbody>
+      ${locs.map(l => `<tr>
+        <td><strong>${esc(l.name)}</strong></td>
+        <td class="mono">${esc(l.address || '—')}</td>
+        <td><span class="badge ok">Active</span></td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+// ── Section: Staff ─────────────────────────────────────────────────────────
+const ROLE_CHIP = { owner: 'gold', admin: 'gold', manager: 'blue', support: 'ok', employee: 'gray' };
+async function renderStaff() {
+  let rows;
+  try { rows = await api('/staff'); }
+  catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
+  $('view').innerHTML = `
+    <h2 class="page">Staff <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(u => `<tr>
+        <td><strong>${esc(u.name)}</strong></td>
+        <td class="mono">${esc(u.email)}</td>
+        <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
+        <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
+        <td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+// ── Placeholder section (modules land here later) ──────────────────────────
+function renderPlaceholder(title, icon, subtitle) {
+  $('pageTitle').textContent = title;
+  $('view').innerHTML = `
+    <div class="placeholder">
+      <div class="ph-icon">${icon}</div>
+      <h2>${esc(title)}</h2>
+      <p>${esc(subtitle || '')}</p>
+      <p class="ph-note">This section is ready for its modules — horizontal tabs will go here, just like Inventory.</p>
+    </div>`;
+}
+
+// ── Account Settings ───────────────────────────────────────────────────────
+async function openAccount() {
+  $('tabs').classList.add('hidden');
+  $('locPicker').classList.add('hidden');
+  $('pageTitle').textContent = 'Account Settings';
+  S.section = 'account';
+  let me = S.user;
+  try { me = await api('/auth/me'); } catch { /* use cached */ }
+  $('view').innerHTML = `
+    <h2 class="page">Account Settings</h2>
+    <div class="acct-grid">
+      <div class="section"><h3>My profile</h3>
+        <div class="profile-row"><span>Name</span><strong>${esc(me.name || S.user.name)}</strong></div>
+        <div class="profile-row"><span>Email</span><strong>${esc(me.email || '—')}</strong></div>
+        <div class="profile-row"><span>Access level</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(me.role || S.user.role)}</span></div>
+        <div class="profile-row"><span>Location</span><strong>${esc((me.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</strong></div>
+      </div>
+      <div class="section"><h3>Change password</h3>
+        <div class="err" id="pwErr"></div>
+        <label class="fld-label">Current password</label><input id="pwCur" type="password" class="fld" />
+        <label class="fld-label">New password (min 8 chars)</label><input id="pwNew" type="password" class="fld" />
+        <label class="fld-label">Confirm new password</label><input id="pwCon" type="password" class="fld" />
+        <button class="btn" id="pwSave" style="margin-top:.5rem">Update password</button>
+      </div>
+    </div>`;
+  $('pwSave').onclick = async () => {
+    $('pwErr').textContent = '';
+    const cur = $('pwCur').value, nw = $('pwNew').value, con = $('pwCon').value;
+    if (nw !== con) { $('pwErr').textContent = 'New passwords do not match.'; return; }
+    try {
+      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ current_password: cur, new_password: nw }) });
+      toast('Password updated');
+      $('pwCur').value = $('pwNew').value = $('pwCon').value = '';
+    } catch (e) { $('pwErr').textContent = e.message; }
+  };
 }
 
 // ── Restore session ────────────────────────────────────────────────────────

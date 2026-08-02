@@ -6,13 +6,24 @@ in the same stack as the reference design in `C:\Restaurant_Design`
 
 ```
 PhoHaNoi/
-├── inventory-app/   Full inventory management (port 4001)
+├── inventory-app/   Pho Ha Noi Management System — shell + inventory (port 4001)
 └── waitlist-app/    Host check-in / waiting list (port 4002)
 ```
 
-## 1. Inventory app  (`inventory-app`, http://localhost:4001)
+## 1. Pho Ha Noi Management System  (`inventory-app`, http://localhost:4001)
 
-A faithful port of the reference inventory design, with the item catalog tailored
+**Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
+Inventory · Menu/Recipes · Reports · Messages) plus **Account Settings** (profile
++ change password). Sidebar items are filtered by access level, and **Inventory**
+opens its own horizontal tab bar (Dashboard · Stock · Orders & Reorder · Transfers
+· Lots & Expiry · Vendors · Reports · Activity · Glossary). Other sections are
+scaffolds ready for their own horizontal tabs.
+
+**Access levels:** Owner & Admin see everything · Manager runs their location ·
+Support handles stock operations · Employee is view/request only. Enforced both in
+the UI (sidebar + pages) and the API (403s).
+
+The inventory module is a faithful port of the reference design, with the catalog tailored
 to a Vietnamese pho restaurant (49 items across Protein, Noodles, Produce, Pantry,
 Spices, Beverage, Packaging, Cleaning) across 10 Bay Area / SoCal locations
 (San Jose, Milpitas, Cupertino, Fremont, Palo Alto, Berkeley, Fountain Valley,
@@ -30,9 +41,9 @@ Santa Clara, Sunnyvale, Oakland).
 - **Transfers** between locations, immutable **transaction ledger**
 - **Activity log** — every order, status change, reorder, transfer and receive is recorded with **who did it** (name + role) and when
 - **Reports**: inventory valuation by category + 30-day consumed cost (COGS)
-- Roles: owner (all locations) · manager · stockroom · chef — RBAC + location scoping
+- Access levels: owner · admin (both all locations) · manager · support · employee — RBAC + location scoping
 
-**Logins:** `harry@phohanoi.com` / `Harry123!` (owner) · `manager1@phohanoi.com` / `Manager123!` · `stock@phohanoi.com` / `Stock123!`
+**Logins:** `harry@phohanoi.com` / `Harry123!` (owner) · `admin@phohanoi.com` / `Admin123!` · `manager1@phohanoi.com` / `Manager123!` · `support@phohanoi.com` / `Support123!` · `employee@phohanoi.com` / `Employee123!`
 
 ## 2. Waiting-list app  (`waitlist-app`, http://localhost:4002)
 

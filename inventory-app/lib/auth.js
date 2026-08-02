@@ -33,4 +33,13 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { signToken, verifyToken, requireRole, SECRET };
+// Access levels: owner & admin see everything; manager runs their location;
+// support handles inventory operations; employee is view/request only.
+const ROLES = {
+  ALL: ['owner', 'admin', 'manager', 'support', 'employee'], // any signed-in user
+  OPS: ['owner', 'admin', 'manager', 'support'],             // stock operations
+  MANAGE: ['owner', 'admin', 'manager'],                     // items, vendors, POs
+  ADMIN: ['owner', 'admin'],                                 // users, settings
+};
+
+module.exports = { signToken, verifyToken, requireRole, ROLES, SECRET };

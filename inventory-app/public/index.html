@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pho Ha Noi — Inventory</title>
+  <title>Pho Ha Noi — Management System</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div id="login" class="login-wrap">
     <form class="login-card" id="loginForm">
       <div class="brand"><span class="bowl">🍜</span> Pho Ha Noi</div>
-      <div class="sub">Inventory Management</div>
+      <div class="sub">Management System</div>
       <div class="err" id="loginErr"></div>
       <input id="email" type="email" placeholder="Email" value="harry@phohanoi.com" autocomplete="username" />
       <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
@@ -22,18 +22,35 @@
     </form>
   </div>
 
-  <!-- App -->
-  <div id="app" class="hidden">
-    <div class="topbar">
-      <div class="logo">🍜 Pho Ha Noi <span style="opacity:.7;font-weight:500;font-size:.85rem">· Inventory</span></div>
-      <div class="right">
-        <select id="locPicker" class="hidden"></select>
-        <span class="who" id="who"></span>
-        <button class="btn ghost sm" id="logout" style="color:#fff;border-color:rgba(255,255,255,.4)">Sign out</button>
+  <!-- App shell -->
+  <div id="app" class="app-shell hidden">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-logo">
+        <div class="logo-icon">🍜</div>
+        <div class="logo-name">Pho Ha Noi</div>
+        <div class="logo-sub">Management System</div>
       </div>
+      <div class="sidebar-user" id="sbUser"></div>
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-footer">
+        <button class="nav-item" id="navAccount"><span class="nav-icon">⚙️</span>Account Settings</button>
+        <button class="nav-item logout" id="logout"><span class="nav-icon">🚪</span>Sign Out</button>
+      </div>
+    </aside>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <div class="main">
+      <div class="topbar">
+        <button class="hamburger" id="hamburger" aria-label="Menu">☰</button>
+        <div class="page-title" id="pageTitle">Overview</div>
+        <div class="right">
+          <select id="locPicker" class="hidden"></select>
+          <span class="who" id="who"></span>
+        </div>
+      </div>
+      <div class="tabs hidden" id="tabs"></div>
+      <div class="content" id="view"></div>
     </div>
-    <div class="tabs" id="tabs"></div>
-    <div class="content" id="view"></div>
   </div>
 
   <div id="modalHost"></div>
