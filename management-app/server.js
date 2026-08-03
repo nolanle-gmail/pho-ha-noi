@@ -15,6 +15,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Pho Ha Noi Manag
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));
+app.use('/api/menu', require('./routes/menu'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

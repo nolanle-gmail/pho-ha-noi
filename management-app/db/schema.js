@@ -155,10 +155,36 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- ── Menu & Recipes ────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS menu_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      sort_order INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS menu_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_id INTEGER REFERENCES menu_categories(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      price REAL NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    -- A recipe line ties a menu item to an inventory ingredient (by name) and a
+    -- per-serving quantity. Costing multiplies quantity by the ingredient's
+    -- average inventory unit cost across locations.
+    CREATE TABLE IF NOT EXISTS recipe_ingredients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      menu_item_id INTEGER NOT NULL REFERENCES menu_items(id),
+      item_name TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0
+    );
+
     CREATE INDEX IF NOT EXISTS idx_inv_loc ON inventory(location_id);
     CREATE INDEX IF NOT EXISTS idx_txn_item ON inventory_transactions(item_id);
     CREATE INDEX IF NOT EXISTS idx_lot_item ON inventory_lots(item_id);
     CREATE INDEX IF NOT EXISTS idx_so_loc ON supply_orders(location_id);
+    CREATE INDEX IF NOT EXISTS idx_recipe_item ON recipe_ingredients(menu_item_id);
   `);
 
   // Migrations for databases created before these columns existed.

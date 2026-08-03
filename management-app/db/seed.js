@@ -192,7 +192,59 @@ function run() {
   if (basil) db.prepare(`INSERT INTO supply_orders (item_id,item_name,location_id,quantity,vendor,vendor_id,status,ordered_by,notes) VALUES (?,?,?,?,?,?, 'approved',?,?)`)
     .run(basil.id, 'Thai Basil', locIds[1], 120, prodVendor.name, prodVendor.id, owner.id, 'Herbs restock');
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors.`);
+  // ── Menu & recipes ───────────────────────────────────────────────────────
+  // [category, [ [name, description, price, [[ingredient, qtyPerServing], ...]] ]]
+  const MENU = [
+    ['Phở', [
+      ['Phở Tái', 'Rare beef, sliced thin, cooked in hot broth', 13.95,
+        [['Beef Bones (marrow)', 0.6], ['Rice Noodles (bánh phở)', 0.4], ['Eye of Round (sliced)', 0.25],
+         ['Yellow Onion', 0.08], ['Green Onion', 0.05], ['Thai Basil', 0.1], ['Bean Sprouts', 0.15],
+         ['Lime', 0.5], ['Fish Sauce', 0.02], ['Star Anise', 0.01], ['Cinnamon Stick', 0.01]]],
+      ['Phở Chín', 'Well-done brisket', 13.95,
+        [['Beef Bones (marrow)', 0.6], ['Rice Noodles (bánh phở)', 0.4], ['Beef Brisket', 0.3],
+         ['Yellow Onion', 0.08], ['Green Onion', 0.05], ['Thai Basil', 0.1], ['Bean Sprouts', 0.15], ['Lime', 0.5], ['Fish Sauce', 0.02]]],
+      ['Phở Đặc Biệt', 'House special — rare beef, brisket, meatball, tripe & tendon', 15.95,
+        [['Beef Bones (marrow)', 0.6], ['Rice Noodles (bánh phở)', 0.4], ['Eye of Round (sliced)', 0.15],
+         ['Beef Brisket', 0.15], ['Beef Meatballs (bò viên)', 0.15], ['Beef Tripe', 0.1], ['Beef Tendon', 0.1],
+         ['Yellow Onion', 0.08], ['Green Onion', 0.05], ['Thai Basil', 0.1], ['Bean Sprouts', 0.15], ['Lime', 0.5]]],
+      ['Phở Gà', 'Chicken pho', 12.95,
+        [['Whole Chicken', 0.4], ['Rice Noodles (bánh phở)', 0.4], ['Yellow Onion', 0.08], ['Ginger', 0.03],
+         ['Green Onion', 0.05], ['Cilantro', 0.05], ['Lime', 0.5]]],
+      ['Phở Chay', 'Vegetarian pho', 12.5,
+        [['Rice Noodles (bánh phở)', 0.4], ['Napa Cabbage', 0.2], ['Bean Sprouts', 0.15], ['Thai Basil', 0.1],
+         ['Yellow Onion', 0.08], ['Ginger', 0.03], ['Green Onion', 0.05]]],
+    ]],
+    ['Appetizers', [
+      ['Gỏi Cuốn', 'Fresh spring rolls (2)', 6.5,
+        [['Rice Paper', 0.1], ['Vermicelli (bún)', 0.1], ['Bean Sprouts', 0.05], ['Thai Basil', 0.03], ['Hoisin Sauce', 0.05]]],
+      ['Chả Giò', 'Crispy fried egg rolls (3)', 6.95,
+        [['Rice Paper', 0.08], ['Vermicelli (bún)', 0.05], ['Green Onion', 0.03]]],
+    ]],
+    ['Beverages', [
+      ['Cà Phê Sữa Đá', 'Vietnamese iced coffee', 4.95,
+        [['Vietnamese Coffee (ground)', 0.05], ['Condensed Milk', 0.1]]],
+      ['Trà Đá', 'Jasmine iced tea', 2.5, [['Jasmine Tea', 0.02]]],
+      ['Nước Dừa', 'Coconut water', 3.95, [['Coconut Water', 0.03]]],
+    ]],
+    ['Desserts', [
+      ['Chè', 'Sweet dessert soup', 4.5, [['Rock Sugar', 0.1], ['Condensed Milk', 0.05]]],
+    ]],
+  ];
+
+  const insCat = db.prepare(`INSERT INTO menu_categories (name, sort_order) VALUES (?,?)`);
+  const insMenu = db.prepare(`INSERT INTO menu_items (category_id, name, description, price) VALUES (?,?,?,?)`);
+  const insRec = db.prepare(`INSERT INTO recipe_ingredients (menu_item_id, item_name, quantity) VALUES (?,?,?)`);
+  let menuCount = 0;
+  MENU.forEach(([cat, items], ci) => {
+    const catId = insCat.run(cat, ci).lastInsertRowid;
+    items.forEach(([name, desc, price, recipe]) => {
+      const mid = insMenu.run(catId, name, desc, price).lastInsertRowid;
+      recipe.forEach(([ing, qty]) => insRec.run(mid, ing, qty));
+      menuCount++;
+    });
+  });
+
+  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items with recipes.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
 

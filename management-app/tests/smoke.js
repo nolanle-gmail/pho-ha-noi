@@ -154,12 +154,47 @@ const check = (name, ok, detail = '') => {
     check('audit records receive', audit.some(a => a.action === 'stock_received'), 'no stock_received');
     check('audit records transfer', audit.some(a => a.action === 'transfer'), 'no transfer');
 
+    // ── Menu & Recipes module ──────────────────────────────────
+    const cats = await j(await fetch(base + '/api/menu/categories', { headers: H(token) }));
+    check('menu categories seeded', cats.length >= 4, 'len=' + cats.length);
+    const menuItems = await j(await fetch(base + '/api/menu/items', { headers: H(token) }));
+    check('menu items seeded', menuItems.length >= 8, 'len=' + menuItems.length);
+    const pho = menuItems.find(m => m.name.includes('Đặc Biệt')) || menuItems[0];
+    check('menu item has recipe cost + food %', pho.recipe_cost > 0 && pho.food_cost_pct > 0, JSON.stringify({ c: pho.recipe_cost, p: pho.food_cost_pct }));
+
+    const ings = await j(await fetch(base + '/api/menu/ingredients', { headers: H(token) }));
+    check('ingredient picker from inventory', Array.isArray(ings) && ings.length >= 40, 'len=' + (ings && ings.length));
+
+    const recipe = await j(await fetch(base + `/api/menu/items/${pho.id}/recipe`, { headers: H(token) }));
+    check('recipe returns ingredients + cost', recipe.ingredients.length >= 3 && recipe.recipe_cost > 0, JSON.stringify(recipe.recipe_cost));
+
+    // Create an item, set a recipe, verify costing reflects it
+    const created = await j(await fetch(base + '/api/menu/items', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ category_id: cats[0].id, name: 'Test Bowl', price: 10 }) }));
+    r = await fetch(base + `/api/menu/items/${created.id}/recipe`, { method: 'PUT', headers: H(token),
+      body: JSON.stringify({ ingredients: [{ item_name: 'Rice Noodles (bánh phở)', quantity: 0.5 }, { item_name: 'Beef Brisket', quantity: 0.3 }] }) });
+    check('set recipe', r.status === 200, await r.text());
+    const rc = await j(await fetch(base + `/api/menu/items/${created.id}/recipe`, { headers: H(token) }));
+    check('recipe cost computed from inventory', rc.recipe_cost > 0 && rc.ingredients.length === 2, JSON.stringify(rc.recipe_cost));
+
+    const costing = await j(await fetch(base + '/api/menu/costing', { headers: H(token) }));
+    check('costing report', costing.items.length >= 8 && costing.avg_food_cost_pct > 0, JSON.stringify(costing.avg_food_cost_pct));
+
+    // RBAC: employee cannot access menu module (owner/admin/manager only)
+    const emp = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'employee@phohanoi.com', password: 'Employee123!' }) }));
+    r = await fetch(base + '/api/menu/items', { headers: H(emp.token) });
+    check('employee BLOCKED from menu (403)', r.status === 403, 'status=' + r.status);
+
     // RBAC: manager sees only their location
     const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/inventory/', { headers: H(mgr.token) });
     const mgrStock = await j(r);
     check('manager sees only their location', mgrStock.every(s => s.location_id === loc1), 'mixed locations');
+    // manager CAN access the menu module
+    r = await fetch(base + '/api/menu/items', { headers: H(mgr.token) });
+    check('manager can access menu (200)', r.status === 200, 'status=' + r.status);
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

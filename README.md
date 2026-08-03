@@ -14,10 +14,17 @@ PhoHaNoi/
 
 **Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
 Inventory · Menu/Recipes · Reports · Messages) plus **Account Settings** (profile
-+ change password). Sidebar items are filtered by access level, and **Inventory**
-opens its own horizontal tab bar (Dashboard · Stock · Orders & Reorder · Transfers
-· Lots & Expiry · Vendors · Reports · Activity · Glossary). Other sections are
-scaffolds ready for their own horizontal tabs.
++ change password). Sidebar items are filtered by access level. Two sections have
+their own horizontal tab bars:
+- **Inventory** — Dashboard · Stock · Orders & Reorder · Transfers · Lots & Expiry
+  · Vendors · Reports · Activity · Glossary.
+- **Menu/Recipes** — **Menu** (items + categories, CRUD), **Recipes** (link each
+  item to inventory ingredients per serving; live recipe cost / food-cost % /
+  margin), **Costing** (all items with food-cost % vs a ≤30 / 30–40 / >40 target).
+  Costs come from each ingredient's average inventory unit cost, so the menu is
+  wired to real stock prices.
+
+Locations, Staff, Reports and Messages are scaffolds ready for their own tabs.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
 Support handles stock operations · Employee is view/request only. Enforced both in
@@ -80,5 +87,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 38 checks · waitlist: 32 checks
+npm run smoke      # management: 48 checks · waitlist: 32 checks
 ```

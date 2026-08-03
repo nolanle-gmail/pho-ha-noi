@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -118,13 +118,14 @@ function showSection(section) {
   const meta = SECTIONS.find(s => s[0] === section);
   $('pageTitle').textContent = meta ? meta[2] : 'Account Settings';
   const isInv = section === 'inventory';
-  $('tabs').classList.toggle('hidden', !isInv);
+  const isMenu = section === 'menu';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu));
   $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
+  if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   const fn = {
     overview: renderOverview, locations: renderLocations, staff: renderStaff,
-    menu: () => renderPlaceholder('Menu / Recipes', '🍽️', 'Recipe costing & menu management — modules coming here.'),
     reports: () => renderPlaceholder('Reports', '📈', 'Cross-module reporting — modules coming here.'),
     messages: () => renderPlaceholder('Messages', '💬', 'Team messaging — modules coming here.'),
   }[section];
@@ -611,6 +612,151 @@ function renderPlaceholder(title, icon, subtitle) {
       <p>${esc(subtitle || '')}</p>
       <p class="ph-note">This section is ready for its modules — horizontal tabs will go here, just like Inventory.</p>
     </div>`;
+}
+
+// ── Menu / Recipes module (horizontal tabs) ────────────────────────────────
+const MENU_TABS = [['menu', 'Menu'], ['recipes', 'Recipes'], ['costing', 'Costing']];
+function renderMenuTabs() {
+  $('tabs').innerHTML = MENU_TABS.map(([k, l]) => `<button data-mtab="${k}" class="${S.menuTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.menuTab = b.dataset.mtab; renderMenuTabs(); renderMenu(); });
+}
+function renderMenu() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  ({ menu: renderMenuList, recipes: renderRecipes, costing: renderCosting }[S.menuTab])();
+}
+function foodPctBadge(pct) {
+  if (pct == null) return '<span class="badge gray">—</span>';
+  const tone = pct <= 30 ? 'ok' : (pct <= 40 ? 'low' : 'out');
+  return `<span class="badge ${tone}">${pct}%</span>`;
+}
+const foodClass = (pct) => pct == null ? '' : (pct <= 30 ? '' : (pct <= 40 ? 'warn' : 'bad'));
+
+async function renderMenuList() {
+  const [items, cats] = await Promise.all([api('/menu/items'), api('/menu/categories')]);
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Menu <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${items.length} items</span></h2>
+      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="addCat">+ Category</button><button class="btn" id="addMenuItem">+ Menu item</button></div></div>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Item</th><th>Category</th><th class="num">Price</th><th class="num">Recipe cost</th><th>Food %</th><th>Description</th><th>Actions</th>
+    </tr></thead><tbody>
+      ${items.length ? items.map(m => `<tr>
+        <td><strong>${esc(m.name)}</strong>${m.is_active ? '' : ' <span class="badge gray">inactive</span>'}</td>
+        <td>${esc(m.category_name || '—')}</td>
+        <td class="num">${money(m.price)}</td>
+        <td class="num">${m.ingredient_count ? money(m.recipe_cost) : '<span style="color:var(--muted)">no recipe</span>'}</td>
+        <td>${m.ingredient_count ? foodPctBadge(m.food_cost_pct) : '—'}</td>
+        <td style="max-width:240px;color:#374151">${esc(m.description || '')}</td>
+        <td><div class="actions-cell">
+          <button class="btn sm" data-mact="recipe" data-id="${m.id}">Recipe (${m.ingredient_count})</button>
+          <button class="btn sm ghost" data-mact="edit" data-id="${m.id}">Edit</button>
+          <button class="btn sm ghost" data-mact="del" data-id="${m.id}">Delete</button>
+        </div></td>
+      </tr>`).join('') : '<tr><td colspan="7" class="empty">No menu items yet.</td></tr>'}
+    </tbody></table></div>`;
+  $('addCat').onclick = () => modal('Add category', [
+    { key: 'name', label: 'Category name' }, { key: 'sort_order', label: 'Sort order', type: 'number', value: cats.length },
+  ], async (v) => { await api('/menu/categories', { method: 'POST', body: JSON.stringify(v) }); toast('Category added'); renderMenu(); });
+  $('addMenuItem').onclick = () => menuItemModal(null, cats);
+  $('view').querySelectorAll('[data-mact]').forEach(b => b.onclick = () => {
+    const m = items.find(x => x.id == b.dataset.id);
+    if (b.dataset.mact === 'recipe') { recipeEdit.itemId = m.id; S.menuTab = 'recipes'; renderMenuTabs(); renderMenu(); }
+    else if (b.dataset.mact === 'edit') menuItemModal(m, cats);
+    else if (b.dataset.mact === 'del') modal(`Delete “${m.name}”?`, [], async () => { await api('/menu/items/' + m.id, { method: 'DELETE' }); toast('Menu item deleted'); renderMenu(); }, 'Delete');
+  });
+}
+
+function menuItemModal(m, cats) {
+  const isNew = !m;
+  modal(isNew ? 'Add menu item' : `Edit — ${m.name}`, [
+    { key: 'name', label: 'Item name', value: m ? m.name : '' },
+    { key: 'category_id', label: 'Category', type: 'select', options: cats.map(c => ({ value: c.id, label: c.name })), value: m ? m.category_id : (cats[0] && cats[0].id) },
+    { key: 'price', label: 'Price ($)', type: 'number', step: '0.01', value: m ? m.price : 0 },
+    { key: 'description', label: 'Description', value: m ? m.description : '' },
+  ], async (v) => {
+    if (isNew) { await api('/menu/items', { method: 'POST', body: JSON.stringify(v) }); toast('Menu item added'); }
+    else { await api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Menu item updated'); }
+    renderMenu();
+  }, isNew ? 'Add item' : 'Save');
+}
+
+// Recipes editor
+let recipeEdit = { itemId: null, list: [] };
+let ingCostMap = {};
+async function renderRecipes() {
+  const [items, ingredients] = await Promise.all([api('/menu/items'), api('/menu/ingredients')]);
+  ingCostMap = {}; ingredients.forEach(i => { ingCostMap[i.item_name] = { unit: i.unit, avg_cost: i.avg_cost }; });
+  if (!items.length) { $('view').innerHTML = '<div class="empty">Add a menu item first.</div>'; return; }
+  const selId = items.some(m => m.id == recipeEdit.itemId) ? recipeEdit.itemId : items[0].id;
+  recipeEdit.itemId = selId;
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Recipes</h2>
+      <select id="recItem">${items.map(m => `<option value="${m.id}" ${m.id == selId ? 'selected' : ''}>${esc(m.name)} — ${money(m.price)}</option>`).join('')}</select></div>
+    <div id="recipeEditor"><div class="empty">Loading…</div></div>`;
+  $('recItem').onchange = () => { recipeEdit.itemId = $('recItem').value; loadRecipe(ingredients); };
+  loadRecipe(ingredients);
+}
+async function loadRecipe(ingredients) {
+  const data = await api(`/menu/items/${recipeEdit.itemId}/recipe`);
+  recipeEdit.list = data.ingredients.map(i => ({ item_name: i.item_name, quantity: i.quantity }));
+  renderRecipeEditor(ingredients, data.item);
+}
+const recipeCost = () => recipeEdit.list.reduce((s, i) => s + i.quantity * ((ingCostMap[i.item_name] || {}).avg_cost || 0), 0);
+function renderRecipeEditor(ingredients, item) {
+  const cost = recipeCost(), price = item.price;
+  const foodPct = price > 0 ? Math.round(cost / price * 1000) / 10 : null;
+  $('recipeEditor').innerHTML = `
+    <div class="kpis">
+      <div class="card"><div class="label">Menu price</div><div class="value">${money(price)}</div></div>
+      <div class="card"><div class="label">Recipe cost</div><div class="value">${money(cost)}</div></div>
+      <div class="card"><div class="label">Food cost %</div><div class="value ${foodClass(foodPct)}">${foodPct == null ? '—' : foodPct + '%'}</div></div>
+      <div class="card"><div class="label">Margin</div><div class="value">${money(price - cost)}</div></div>
+    </div>
+    <div class="section">
+      <div class="table-wrap"><table><thead><tr><th>Ingredient</th><th class="num">Qty</th><th>Unit</th><th class="num">Unit cost</th><th class="num">Line cost</th><th></th></tr></thead><tbody>
+        ${recipeEdit.list.length ? recipeEdit.list.map((i, idx) => { const c = ingCostMap[i.item_name] || { unit: '', avg_cost: 0 }; return `<tr>
+          <td>${esc(i.item_name)}</td><td class="num">${numf(i.quantity)}</td><td>${esc(c.unit)}</td><td class="num">${money(c.avg_cost)}</td><td class="num">${money(i.quantity * c.avg_cost)}</td>
+          <td><button class="btn sm ghost" data-rmrec="${idx}">Remove</button></td></tr>`; }).join('') : '<tr><td colspan="6" class="empty">No ingredients yet — add some below.</td></tr>'}
+      </tbody></table></div>
+      <div class="rec-add">
+        <select id="recIng">${ingredients.map(i => `<option value="${esc(i.item_name)}">${esc(i.item_name)} (${esc(i.unit)}, ${money(i.avg_cost)})</option>`).join('')}</select>
+        <input id="recQty" type="number" step="0.01" placeholder="Qty per serving" />
+        <button class="btn ghost" id="recAdd">+ Add ingredient</button>
+        <button class="btn" id="recSave" style="margin-left:auto">Save recipe</button>
+      </div>
+    </div>`;
+  $('recipeEditor').querySelectorAll('[data-rmrec]').forEach(b => b.onclick = () => { recipeEdit.list.splice(+b.dataset.rmrec, 1); renderRecipeEditor(ingredients, item); });
+  $('recAdd').onclick = () => {
+    const name = $('recIng').value, q = parseFloat($('recQty').value);
+    if (!name || !(q > 0)) { toast('Pick an ingredient and a quantity', true); return; }
+    const ex = recipeEdit.list.find(x => x.item_name === name);
+    if (ex) ex.quantity = Math.round((ex.quantity + q) * 1000) / 1000; else recipeEdit.list.push({ item_name: name, quantity: q });
+    renderRecipeEditor(ingredients, item);
+  };
+  $('recSave').onclick = async () => {
+    try { await api(`/menu/items/${recipeEdit.itemId}/recipe`, { method: 'PUT', body: JSON.stringify({ ingredients: recipeEdit.list }) }); toast('Recipe saved'); }
+    catch (e) { toast(e.message, true); }
+  };
+}
+
+async function renderCosting() {
+  const data = await api('/menu/costing');
+  $('view').innerHTML = `
+    <h2 class="page">Costing <span style="font-weight:400;color:var(--muted);font-size:.9rem">— recipe cost & food-cost %</span></h2>
+    <div class="kpis">
+      <div class="card"><div class="label">Priced items</div><div class="value">${data.priced_count}</div></div>
+      <div class="card"><div class="label">Avg food cost %</div><div class="value ${foodClass(data.avg_food_cost_pct)}">${data.avg_food_cost_pct == null ? '—' : data.avg_food_cost_pct + '%'}</div></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Item</th><th>Category</th><th class="num">Price</th><th class="num">Recipe cost</th><th class="num">Margin</th><th>Food cost %</th></tr></thead><tbody>
+      ${data.items.map(m => `<tr>
+        <td><strong>${esc(m.name)}</strong></td>
+        <td>${esc(m.category_name || '—')}</td>
+        <td class="num">${money(m.price)}</td>
+        <td class="num">${m.ingredient_count ? money(m.recipe_cost) : '—'}</td>
+        <td class="num">${m.ingredient_count ? money(m.margin) : '—'}</td>
+        <td>${m.ingredient_count ? foodPctBadge(m.food_cost_pct) : '<span class="badge gray">no recipe</span>'}</td>
+      </tr>`).join('')}
+    </tbody></table></div>
+    <p class="sub" style="margin-top:.8rem;color:var(--muted)">Food cost % uses each ingredient's average inventory unit cost across active locations. Target: ≤ 30% (green), 30–40% (amber), &gt; 40% (red).</p>`;
 }
 
 // ── Account Settings ───────────────────────────────────────────────────────
