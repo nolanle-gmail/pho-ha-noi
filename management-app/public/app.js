@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -119,13 +119,15 @@ function showSection(section) {
   $('pageTitle').textContent = meta ? meta[2] : 'Account Settings';
   const isInv = section === 'inventory';
   const isMenu = section === 'menu';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu));
+  const isStaff = section === 'staff';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff));
   $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
+  if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   const fn = {
-    overview: renderOverview, locations: renderLocations, staff: renderStaff,
+    overview: renderOverview, locations: renderLocations,
     reports: () => renderPlaceholder('Reports', '📈', 'Cross-module reporting — modules coming here.'),
     messages: () => renderPlaceholder('Messages', '💬', 'Team messaging — modules coming here.'),
   }[section];
@@ -583,21 +585,111 @@ async function renderLocations() {
     </tbody></table></div>`;
 }
 
-// ── Section: Staff ─────────────────────────────────────────────────────────
+// ── Section: Staff (module with tabs) ──────────────────────────────────────
 const ROLE_CHIP = { owner: 'gold', admin: 'gold', manager: 'blue', support: 'ok', employee: 'gray' };
-async function renderStaff() {
-  let rows;
-  try { rows = await api('/staff'); }
+const ACCESS_LEVELS = ['owner', 'admin', 'manager', 'support', 'employee'];
+const STAFF_TABS = [['directory', 'Directory'], ['access', 'Access Levels']];
+function renderStaffTabs() {
+  $('tabs').innerHTML = STAFF_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.staffTab = b.dataset.stab; renderStaffTabs(); renderStaffModule(); });
+}
+function renderStaffModule() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  ({ directory: renderStaffDirectory, access: renderAccessLevels }[S.staffTab])();
+}
+
+let staffSearch = '';
+async function renderStaffDirectory() {
+  let rows, locations;
+  try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations').catch(() => S.locations)]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
+  const canManage = ['owner', 'admin'].includes(S.user.role);
+  const q = staffSearch.toLowerCase();
+  const shown = q ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q)) : rows;
   $('view').innerHTML = `
-    <h2 class="page">Staff <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th></tr></thead><tbody>
-      ${rows.map(u => `<tr>
+    <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
+      ${canManage ? '<button class="btn" id="addStaff">+ Add staff</button>' : '<span class="badge gray">View only</span>'}</div>
+    <div style="margin-bottom:1rem"><input id="staffSearch" placeholder="Search name, email or role…" value="${esc(staffSearch)}" style="max-width:320px" /></div>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th>${canManage ? '<th>Actions</th>' : ''}
+    </tr></thead><tbody>
+      ${shown.length ? shown.map(u => `<tr>
         <td><strong>${esc(u.name)}</strong></td>
         <td class="mono">${esc(u.email)}</td>
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
         <td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td>
+        ${canManage ? `<td><div class="actions-cell">
+          <button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
+          <button class="btn sm ghost" data-sact="pw" data-id="${u.id}">Reset password</button>
+          <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>
+        </div></td>` : ''}
+      </tr>`).join('') : `<tr><td colspan="${canManage ? 6 : 5}" class="empty">No staff match your search.</td></tr>`}
+    </tbody></table></div>`;
+
+  const search = $('staffSearch');
+  search.oninput = () => { staffSearch = search.value; const pos = search.selectionStart; renderStaffDirectory().then(() => { const s = $('staffSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }); };
+  if (canManage) {
+    $('addStaff').onclick = () => staffModal(null, locations);
+    $('view').querySelectorAll('[data-sact]').forEach(b => b.onclick = () => {
+      const u = rows.find(x => x.id == b.dataset.id);
+      if (b.dataset.sact === 'edit') staffModal(u, locations);
+      else if (b.dataset.sact === 'pw') resetStaffPassword(u);
+      else if (b.dataset.sact === 'toggle') toggleStaff(u);
+    });
+  }
+}
+
+function locFieldOptions(locations, selected, includeAll) {
+  const opts = includeAll ? [{ value: '', label: 'All locations (owner/admin)' }] : [];
+  return opts.concat(locations.map(l => ({ value: l.id, label: l.name.replace('Pho Ha Noi — ', '') })));
+}
+function staffModal(u, locations) {
+  const isNew = !u;
+  const roleOpts = ACCESS_LEVELS
+    .filter(r => r !== 'owner' || S.user.role === 'owner') // only owner can assign owner
+    .map(r => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }));
+  const fields = [
+    { key: 'name', label: 'Full name', value: u ? u.name : '' },
+    { key: 'email', label: 'Email', value: u ? u.email : '', type: isNew ? 'email' : 'text' },
+    { key: 'role', label: 'Access level', type: 'select', options: roleOpts, value: u ? u.role : 'employee' },
+    { key: 'location_id', label: 'Location', type: 'select', options: locFieldOptions(locations, u ? u.location_id : '', true), value: u ? (u.location_id || '') : '' },
+  ];
+  if (isNew) fields.splice(2, 0, { key: 'password', label: 'Temporary password (min 8)', type: 'password' });
+  modal(isNew ? 'Add staff' : `Edit — ${u.name}`, fields, async (v) => {
+    if (v.email !== undefined && !isNew) delete v.email; // email is immutable on edit
+    if (isNew) { await api('/staff', { method: 'POST', body: JSON.stringify(v) }); toast('Staff account created'); }
+    else { await api('/staff/' + u.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Staff updated'); }
+    renderStaffModule();
+  }, isNew ? 'Create account' : 'Save');
+}
+function resetStaffPassword(u) {
+  modal(`Reset password — ${u.name}`, [{ key: 'new_password', label: 'New password (min 8 chars)', type: 'password' }],
+    async (v) => { await api(`/staff/${u.id}/reset-password`, { method: 'POST', body: JSON.stringify(v) }); toast('Password reset'); }, 'Reset password');
+}
+function toggleStaff(u) {
+  modal(`${u.is_active ? 'Deactivate' : 'Activate'} ${u.name}?`, [], async () => {
+    await api('/staff/' + u.id, { method: 'PUT', body: JSON.stringify({ is_active: !u.is_active }) });
+    toast(u.is_active ? 'Account deactivated' : 'Account activated'); renderStaffModule();
+  }, u.is_active ? 'Deactivate' : 'Activate');
+}
+
+const ACCESS_MATRIX = [
+  ['owner', 'gold', 'Everything', 'All locations · all modules · manage staff & access levels'],
+  ['admin', 'gold', 'Everything (for now)', 'Same as Owner across all locations; cannot create Owner accounts'],
+  ['manager', 'blue', 'Their location', 'Inventory + Menu/Recipes; view staff; manage vendors & purchase orders'],
+  ['support', 'ok', 'Stock operations', 'Receive, transfer, waste & cycle-count at their location; view inventory'],
+  ['employee', 'gray', 'View / request', 'View stock & overview; request orders — no management actions'],
+];
+function renderAccessLevels() {
+  $('view').innerHTML = `
+    <h2 class="page">Access Levels</h2>
+    <p class="sub" style="color:var(--muted);margin-top:-.4rem">What each access level can do. Owner and Admin see everything; others are scoped to their location.</p>
+    <div class="table-wrap"><table><thead><tr><th>Level</th><th>Scope</th><th>Capabilities</th></tr></thead><tbody>
+      ${ACCESS_MATRIX.map(([role, chip, scope, caps]) => `<tr>
+        <td><span class="badge ${chip}">${role}</span></td>
+        <td><strong>${esc(scope)}</strong></td>
+        <td style="color:#374151">${esc(caps)}</td>
       </tr>`).join('')}
     </tbody></table></div>`;
 }

@@ -195,6 +195,41 @@ const check = (name, ok, detail = '') => {
     // manager CAN access the menu module
     r = await fetch(base + '/api/menu/items', { headers: H(mgr.token) });
     check('manager can access menu (200)', r.status === 200, 'status=' + r.status);
+
+    // ── Staff management ───────────────────────────────────────
+    const newStaff = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'Test Support', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) }));
+    check('create staff account', newStaff.success === true && !!newStaff.id, JSON.stringify(newStaff));
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'Dup', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'employee', location_id: loc1 }) });
+    check('duplicate email rejected (409)', r.status === 409, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'NoLoc', email: 'noloc@phohanoi.com', password: 'TestPass123!', role: 'employee' }) });
+    check('non-admin role requires location (400)', r.status === 400, 'status=' + r.status);
+
+    r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ name: 'Renamed Support', role: 'manager', location_id: loc1 }) });
+    check('edit staff (name + role)', r.status === 200, await r.text());
+    r = await fetch(base + `/api/staff/${newStaff.id}/reset-password`, { method: 'POST', headers: H(token), body: JSON.stringify({ new_password: 'ResetPass123!' }) });
+    check('reset staff password', r.status === 200);
+    const relog = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'teststaff@phohanoi.com', password: 'ResetPass123!' }) }));
+    check('login with reset password', !!relog.token);
+
+    r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
+    check('deactivate staff', r.status === 200);
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'teststaff@phohanoi.com', password: 'ResetPass123!' }) });
+    check('deactivated account cannot log in (401)', r.status === 401, 'status=' + r.status);
+
+    const meId = (await j(await fetch(base + '/api/auth/me', { headers: H(token) }))).id;
+    r = await fetch(base + `/api/staff/${meId}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
+    check('cannot deactivate self (400)', r.status === 400, 'status=' + r.status);
+
+    const adminTok = (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@phohanoi.com', password: 'Admin123!' }) }))).token;
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(adminTok), body: JSON.stringify({ name: 'X', email: 'x@phohanoi.com', password: 'Password123!', role: 'owner' }) });
+    check('admin cannot create owner (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Y', email: 'y@phohanoi.com', password: 'Password123!', role: 'employee', location_id: loc1 }) });
+    check('manager cannot manage staff (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { headers: H(emp.token) });
+    check('employee blocked from staff directory (403)', r.status === 403, 'status=' + r.status);
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

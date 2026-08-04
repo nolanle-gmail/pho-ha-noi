@@ -23,8 +23,12 @@ their own horizontal tab bars:
   margin), **Costing** (all items with food-cost % vs a ≤30 / 30–40 / >40 target).
   Costs come from each ingredient's average inventory unit cost, so the menu is
   wired to real stock prices.
+- **Staff** — **Directory** (add / edit / deactivate / reset-password staff;
+  assign access level + location; owner/admin only, managers view-only) and
+  **Access Levels** (reference matrix of what each level can do). Guardrails:
+  only owners create owners, no self-deactivation, unique emails.
 
-Locations, Staff, Reports and Messages are scaffolds ready for their own tabs.
+Locations, Reports and Messages are scaffolds ready for their own tabs.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
 Support handles stock operations · Employee is view/request only. Enforced both in
@@ -87,5 +91,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 48 checks · waitlist: 32 checks
+npm run smoke      # management: 60 checks · waitlist: 32 checks
 ```
