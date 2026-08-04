@@ -15,11 +15,19 @@ PhoHaNoi/
 ## 1. Pho Ha Noi Management System  (`management-app`, http://localhost:4001)
 
 **Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
-Inventory · Menu/Recipes · Reports · Messages) plus **Account Settings** (profile
-+ change password). Sidebar items are filtered by access level. Two sections have
-their own horizontal tab bars:
+Inventory · Central Kitchen · Menu/Recipes · Reports · Messages) plus **Account
+Settings** (profile + change password). Sidebar items are filtered by access
+level. Several sections have their own horizontal tab bars:
 - **Inventory** — Dashboard · Stock · Orders & Reorder · Transfers · Lots & Expiry
   · Vendors · Reports · Activity · Glossary.
+- **Central Kitchen** (owner/admin) — the production & supply hub for all stores:
+  **Demand** (aggregates daily item requests from every location), **Production**
+  (master recipes scaled into batch sheets with yield/shrinkage control + safety-
+  stock alerts; record runs to update on-hand), **Fulfillment** (consolidated
+  pick-list, per-store packing slips, and delivery-route manifests), and **CK
+  Staff** (roster, photo-verified task assignments, shift schedule, and a **PIN
+  time-clock** terminal). The Central Kitchen is a special `central_kitchen`
+  location (in the Locations directory but hidden from store switchers).
 - **Menu/Recipes** — **Menu** (items + categories, CRUD), **Recipes** (link each
   item to inventory ingredients per serving; live recipe cost / food-cost % /
   margin), **Costing** (all items with food-cost % vs a ≤30 / 30–40 / >40 target).
@@ -110,5 +118,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 93 checks · waitlist: 32 checks
+npm run smoke      # management: 111 checks · waitlist: 32 checks
 ```

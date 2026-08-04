@@ -114,7 +114,8 @@ const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); r
 
 function run() {
   // Clear domain tables (children before parents for FK safety).
-  for (const t of ['message_recipients', 'messages', 'recipe_ingredients', 'menu_items', 'menu_categories',
+  for (const t of ['ck_recipe_ingredients', 'store_requests', 'ck_production_runs', 'ck_tasks', 'ck_shifts', 'ck_products',
+                   'message_recipients', 'messages', 'recipe_ingredients', 'menu_items', 'menu_categories',
                    'daily_sales', 'timesheets', 'equipment', 'location_hours',
                    'inventory_transactions', 'inventory_lots', 'waste_log', 'cycle_counts',
                    'supply_orders', 'transfer_requests', 'inventory', 'vendors', 'audit_log', 'users', 'locations']) {
@@ -343,6 +344,76 @@ function run() {
   insMr.run(mid, owner.id, 0);
   mid = insMsg.run(owner.id, 'all', null, 'Welcome to the Management System', 'Team — our new Pho Ha Noi Management System is live. Please sign in and set your password under Account Settings.', '-1 days').lastInsertRowid;
   db.prepare(`SELECT id FROM users WHERE is_active=1 AND id<>?`).all(owner.id).forEach(u => insMr.run(mid, u.id, 0));
+
+  // ── Central Kitchen (production & supply hub) ───────────────────────────────
+  const ckId = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,type,status,is_active)
+    VALUES (?,?,?,?,?,?,?,?,?,0,'central_kitchen','active',1)`)
+    .run('Pho Ha Noi — Central Kitchen', '2000 Industrial Pkwy', 'Hayward', 'CA', '94545', '(510) 555-0100', 'kitchen@phohanoi.com', 'America/Los_Angeles', '2021-03-01').lastInsertRowid;
+  // CK operating (production) hours: Mon–Sat 04:00–16:00, closed Sunday.
+  for (let d = 0; d < 7; d++) db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,?)`).run(ckId, d, '04:00', '16:00', d === 6 ? 1 : 0);
+  // CK equipment.
+  [['Industrial Broth Kettle #1', 'Cooking', 'Vulcan Equipment', '(800) 555-3300', 'VK-300ST'],
+   ['Industrial Broth Kettle #2', 'Cooking', 'Vulcan Equipment', '(800) 555-3300', 'VK-300ST'],
+   ['Blast Chiller', 'Refrigeration', 'CoolTech Refrigeration', '(800) 555-2100', 'CT-BC40'],
+   ['Vacuum Sealer / Packaging Line', 'Packaging', 'PackRight Systems', '(800) 555-9100', 'PR-VS8'],
+   ['Refrigerated Delivery Van', 'Logistics', 'FleetCo', '(800) 555-9200', 'Isuzu NPR-XD']].forEach(([n, c, v, vp, m], i) =>
+    db.prepare(`INSERT INTO equipment (location_id,name,category,model,vendor,vendor_phone,maintenance_freq,status) VALUES (?,?,?,?,?,?,?, 'operational')`).run(ckId, n, c, m, v, vp, i === 4 ? 'quarterly' : 'monthly'));
+
+  // CK staff (with PIN time-clock codes) + a manager.
+  const ckStaff = [
+    ['Trang Le', 'ck.manager@phohanoi.com', 'CKManager123!', 'manager', 34, '1111'],
+    ['Bao Nguyen', 'ck.cook@phohanoi.com', 'CKCook123!', 'support', 24, '2222'],
+    ['Mai Pham', 'ck.prep@phohanoi.com', 'CKPrep123!', 'employee', 19, '3333'],
+  ].map(([name, email, pw, role, rate, pin]) => {
+    const id = db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id,hourly_rate,pin) VALUES (?,?,?,?,?,?,?)`).run(name, email, hash(pw), role, ckId, rate, pin).lastInsertRowid;
+    return { id, name, role };
+  });
+
+  // CK products with master recipes. [name, unit, batch_yield, shrinkage, safety, on_hand, [[ingredient, qtyPerBatch]]]
+  const CK_PRODUCTS = [
+    ['Beef Pho Broth', 'gal', 40, 0.06, 300, 220, [['Beef Bones (marrow)', 120], ['Yellow Onion', 20], ['Ginger', 8], ['Star Anise', 2], ['Cinnamon Stick', 2], ['Fish Sauce', 3], ['Rock Sugar', 5], ['Salt', 4]]],
+    ['Chicken Pho Broth', 'gal', 30, 0.05, 180, 150, [['Whole Chicken', 60], ['Yellow Onion', 12], ['Ginger', 6], ['Salt', 3], ['Fish Sauce', 2]]],
+    ['Sliced Rare Beef', 'lb', 50, 0.04, 400, 260, [['Eye of Round (sliced)', 52]]],
+    ['Braised Brisket', 'lb', 40, 0.10, 300, 150, [['Beef Brisket', 48], ['Fish Sauce', 1], ['Rock Sugar', 1]]],
+    ['Beef Meatballs (bò viên)', 'lb', 60, 0.03, 260, 280, [['Beef Meatballs (bò viên)', 62]]],
+    ['Spice Sachet', 'each', 200, 0.02, 1200, 700, [['Star Anise', 1.5], ['Cinnamon Stick', 1.5], ['Cardamom (black)', 0.5], ['Cloves', 0.5], ['Coriander Seed', 1], ['Fennel Seed', 1]]],
+    ['Hoisin-Sriracha Blend', 'bottle', 100, 0.01, 400, 460, [['Hoisin Sauce', 30], ['Sriracha', 20]]],
+  ];
+  const insCkP = db.prepare(`INSERT INTO ck_products (name,unit,batch_yield,shrinkage_pct,safety_stock,on_hand) VALUES (?,?,?,?,?,?)`);
+  const insCkR = db.prepare(`INSERT INTO ck_recipe_ingredients (product_id,item_name,quantity) VALUES (?,?,?)`);
+  const ckProdIds = CK_PRODUCTS.map(([name, unit, yld, shr, safety, oh, recipe]) => {
+    const pid = insCkP.run(name, unit, yld, shr, safety, oh).lastInsertRowid;
+    recipe.forEach(([ing, q]) => insCkR.run(pid, ing, q));
+    return pid;
+  });
+
+  // Today's store requests to the central kitchen (demand aggregation).
+  const insReq = db.prepare(`INSERT INTO store_requests (location_id, product_id, quantity, request_date, status) VALUES (?,?,?, date('now'), 'requested')`);
+  const REQ_BASE = [30, 18, 24, 16, 20, 40, 30]; // per-product typical store request
+  let reqCount = 0;
+  locIds.forEach((lid) => {
+    ckProdIds.forEach((pid, pi) => {
+      if (rng() < 0.2) return; // not every store orders every product
+      const qty = Math.round(REQ_BASE[pi] * (0.6 + rng() * 0.8));
+      insReq.run(lid, pid, qty);
+      reqCount++;
+    });
+  });
+
+  // A couple of production runs earlier today/yesterday.
+  const insRun = db.prepare(`INSERT INTO ck_production_runs (product_id,batches,planned_output,actual_output,shrinkage_loss,produced_by,produced_at) VALUES (?,?,?,?,?,?, datetime('now', ?))`);
+  insRun.run(ckProdIds[0], 5, 188, 185, 15, ckStaff[1].id, '-6 hours');
+  insRun.run(ckProdIds[2], 4, 192, 190, 8, ckStaff[1].id, '-5 hours');
+  insRun.run(ckProdIds[5], 3, 588, 585, 12, ckStaff[2].id, '-4 hours');
+
+  // CK tasks (some photo-verified) and today's shifts.
+  const insTask = db.prepare(`INSERT INTO ck_tasks (title, assigned_to, requires_photo, due) VALUES (?,?,?, date('now'))`);
+  insTask.run('QA check morning broth batch', ckStaff[0].id, 1);
+  insTask.run('Deep-clean broth kettle #2', ckStaff[1].id, 1);
+  insTask.run('Restock spice sachet station', ckStaff[2].id, 0);
+  insTask.run('Load North Bay delivery truck', ckStaff[2].id, 1);
+  const insShift = db.prepare(`INSERT INTO ck_shifts (user_id, shift_date, start_time, end_time) VALUES (?, date('now'), ?, ?)`);
+  ckStaff.forEach((s, i) => insShift.run(s.id, ['04:00', '05:00', '06:00'][i], ['12:00', '13:00', '14:00'][i]));
 
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');

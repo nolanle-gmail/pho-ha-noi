@@ -279,7 +279,8 @@ const check = (name, ok, detail = '') => {
 
     // ── Locations module ───────────────────────────────────────
     const locsList = await j(await fetch(base + '/api/locations', { headers: H(token) }));
-    check('locations list with counts', locsList.length === 10 && locsList[0].equipment_count === 12 && locsList.every(l => 'manager_name' in l && 'staff_count' in l), 'len=' + locsList.length);
+    check('locations list (10 stores + central kitchen)', locsList.length === 11 && locsList.some(l => l.type === 'central_kitchen') && locsList.every(l => 'manager_name' in l && 'staff_count' in l), 'len=' + locsList.length);
+    check('store switchers exclude central kitchen', locs.length === 10 && !locs.some(l => l.type === 'central_kitchen'));
     const locDet = await j(await fetch(base + `/api/locations/${loc1}`, { headers: H(token) }));
     check('location detail (info + 7 days hours)', !!locDet.city && locDet.hours.length === 7 && !!locDet.phone, JSON.stringify(locDet.city));
     const locStaff = await j(await fetch(base + `/api/locations/${loc1}/staff`, { headers: H(token) }));
@@ -312,9 +313,56 @@ const check = (name, ok, detail = '') => {
     check('manager cannot create location (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/locations/${loc1}/equipment`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Equip' }) });
     check('manager can add equipment to own location', r.status === 200, 'status=' + r.status);
-    const otherLoc = locsList.find(l => l.id !== loc1).id;
+    const otherLoc = locsList.find(l => l.id !== loc1 && l.type !== 'central_kitchen').id;
     r = await fetch(base + `/api/locations/${otherLoc}/equipment`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Nope' }) });
     check('manager blocked from other location (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Central Kitchen module ─────────────────────────────────
+    const ckSum = await j(await fetch(base + '/api/central/summary', { headers: H(token) }));
+    check('CK summary', !!ckSum.location && ckSum.products === 7 && ckSum.low_stock >= 1 && ckSum.pending_stores === 10 && ckSum.staff === 3, JSON.stringify({ p: ckSum.products, s: ckSum.staff }));
+    const ckDem = await j(await fetch(base + '/api/central/demand', { headers: H(token) }));
+    check('CK demand aggregation', ckDem.products.length === 7 && ckDem.products[0].total_requested > 0 && Array.isArray(ckDem.products[0].by_store), JSON.stringify(ckDem.products[0].total_requested));
+    const ckProds = await j(await fetch(base + '/api/central/products', { headers: H(token) }));
+    check('CK products with recipes + cost', ckProds.length === 7 && ckProds.every(p => Array.isArray(p.ingredients)) && ckProds.some(p => p.batch_cost > 0));
+    const ckPlan = await j(await fetch(base + '/api/central/batch-plan', { headers: H(token) }));
+    const sheet = ckPlan.sheets.find(s => s.batches > 0);
+    check('CK batch plan (scaling + yield + alerts)', ckPlan.alerts.length >= 1 && !!sheet && sheet.usable_output < sheet.gross_output && sheet.ingredients.length >= 1, JSON.stringify({ a: ckPlan.alerts.length }));
+
+    r = await fetch(base + '/api/central/production', { method: 'POST', headers: H(token), body: JSON.stringify({ product_id: sheet.product_id, batches: 3 }) });
+    const prod = await j(r);
+    check('CK record production (updates on-hand)', r.status === 200 && prod.produced > 0, JSON.stringify(prod));
+    const onHandBefore = ckProds.find(p => p.id === sheet.product_id).on_hand;
+    const ckProds2 = await j(await fetch(base + '/api/central/products', { headers: H(token) }));
+    check('CK on-hand increased after production', ckProds2.find(p => p.id === sheet.product_id).on_hand > onHandBefore);
+
+    const ckFul = await j(await fetch(base + '/api/central/fulfillment', { headers: H(token) }));
+    check('CK fulfillment (stores, pick list, manifests)', ckFul.stores.length === 10 && ckFul.pick_list.length === 7 && ckFul.manifests.length >= 3 && ckFul.stores.every(s => s.location_id), 'manifests=' + ckFul.manifests.length);
+    const fulStore = ckFul.stores.find(s => s.status === 'requested');
+    r = await fetch(base + `/api/central/fulfill/${fulStore.location_id}`, { method: 'POST', headers: H(token), body: '{}' });
+    check('CK fulfill a store', r.status === 200 && (await j(r)).fulfilled >= 1);
+
+    const ckStaff = await j(await fetch(base + '/api/central/staff', { headers: H(token) }));
+    check('CK staff with PINs', ckStaff.length === 3 && ckStaff.every(s => s.has_pin));
+    const ckTasks = await j(await fetch(base + '/api/central/tasks', { headers: H(token) }));
+    check('CK tasks (some photo-verified)', ckTasks.length >= 4 && ckTasks.some(t => t.requires_photo));
+    const photoTask = ckTasks.find(t => t.requires_photo && t.status !== 'done');
+    r = await fetch(base + `/api/central/tasks/${photoTask.id}/complete`, { method: 'PUT', headers: H(token), body: '{}' });
+    check('photo task needs a photo (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `/api/central/tasks/${photoTask.id}/complete`, { method: 'PUT', headers: H(token), body: JSON.stringify({ photo_url: 'https://example.com/p.jpg' }) });
+    check('complete photo task with photo', r.status === 200);
+
+    const cin = await j(await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '2222' }) }));
+    check('PIN clock-in', cin.success && cin.action === 'clock_in', JSON.stringify(cin.action));
+    const cout = await j(await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '2222' }) }));
+    check('PIN clock-out', cout.success && cout.action === 'clock_out', JSON.stringify(cout.action));
+    r = await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '0000' }) });
+    check('bad PIN rejected (404)', r.status === 404, 'status=' + r.status);
+
+    // RBAC: central kitchen is owner/admin only
+    r = await fetch(base + '/api/central/summary', { headers: H(mgr.token) });
+    check('manager blocked from central kitchen (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/central/summary', { headers: H(emp.token) });
+    check('employee blocked from central kitchen (403)', r.status === 403, 'status=' + r.status);
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

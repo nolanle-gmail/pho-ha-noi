@@ -30,6 +30,7 @@ function migrate() {
       timezone TEXT DEFAULT 'America/Los_Angeles',
       opening_date TEXT,
       seats INTEGER DEFAULT 0,
+      type TEXT NOT NULL DEFAULT 'restaurant',
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draft','closed')),
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))
@@ -66,6 +67,68 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_equip_loc ON equipment(location_id);
+
+    -- ── Central Kitchen (production & supply hub) ─────────────────────────
+    -- Items the central kitchen produces (broths, prepped proteins, sauces).
+    CREATE TABLE IF NOT EXISTS ck_products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      unit TEXT DEFAULT 'each',
+      batch_yield REAL NOT NULL DEFAULT 0,      -- gross output per batch
+      shrinkage_pct REAL NOT NULL DEFAULT 0,    -- yield loss (0–1)
+      safety_stock REAL NOT NULL DEFAULT 0,
+      on_hand REAL NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    -- Master recipe: raw inventory ingredients + quantity per batch.
+    CREATE TABLE IF NOT EXISTS ck_recipe_ingredients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL REFERENCES ck_products(id),
+      item_name TEXT NOT NULL,
+      quantity REAL NOT NULL DEFAULT 0
+    );
+    -- Daily item requests submitted by each store location.
+    CREATE TABLE IF NOT EXISTS store_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      product_id INTEGER NOT NULL REFERENCES ck_products(id),
+      quantity REAL NOT NULL DEFAULT 0,
+      request_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'requested' CHECK(status IN ('requested','fulfilled')),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    -- Production batch runs, with yield/shrinkage tracking.
+    CREATE TABLE IF NOT EXISTS ck_production_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL REFERENCES ck_products(id),
+      batches REAL NOT NULL,
+      planned_output REAL NOT NULL,
+      actual_output REAL NOT NULL,
+      shrinkage_loss REAL NOT NULL DEFAULT 0,
+      produced_at TEXT DEFAULT (datetime('now')),
+      produced_by INTEGER REFERENCES users(id)
+    );
+    -- CK HR: task assignments (optionally photo-verified) and shift schedule.
+    CREATE TABLE IF NOT EXISTS ck_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      assigned_to INTEGER REFERENCES users(id),
+      requires_photo INTEGER NOT NULL DEFAULT 0,
+      photo_url TEXT,
+      status TEXT NOT NULL DEFAULT 'assigned' CHECK(status IN ('assigned','done')),
+      due TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      completed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS ck_shifts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      shift_date TEXT NOT NULL,
+      start_time TEXT,
+      end_time TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sr_date ON store_requests(request_date, product_id);
+    CREATE INDEX IF NOT EXISTS idx_ckrec_prod ON ck_recipe_ingredients(product_id);
 
     -- Inventory items — stock is per (item_name, location). Attributes: SKU,
     -- category, unit, reorder trigger (min_quantity), target level (par_level),
@@ -290,6 +353,8 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN opening_date TEXT`,
     `ALTER TABLE locations ADD COLUMN seats INTEGER DEFAULT 0`,
     `ALTER TABLE locations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
+    `ALTER TABLE locations ADD COLUMN type TEXT NOT NULL DEFAULT 'restaurant'`,
+    `ALTER TABLE users ADD COLUMN pin TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

@@ -159,6 +159,32 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .hours-row label { font-size: .82rem; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; }
 .hours-row input[type=checkbox] { width: auto; margin: 0; }
 
+/* Central Kitchen */
+.ck-low { color: var(--out); font-weight: 700; }
+.ck-demand-row { cursor: pointer; }
+.ck-demand-row:hover { background: var(--bg); }
+.ck-store-chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .3rem 0; }
+.chip { background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: .15rem .6rem; font-size: .78rem; }
+.ck-alert { background: var(--out-bg); color: #7f1d1d; border: 1px solid #fca5a5; border-radius: 12px; padding: .8rem 1rem; margin-bottom: 1.25rem; font-size: .9rem; }
+.ck-sheet { border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; }
+.ck-sheet-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.ck-sheet-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .6rem; margin-top: .8rem; }
+.ck-sheet-stats > div { display: flex; flex-direction: column; background: var(--bg); border-radius: 9px; padding: .5rem .7rem; }
+.ck-sheet-stats span { color: var(--muted); font-size: .72rem; }
+.ck-sheet-stats strong { font-size: 1.02rem; }
+.ck-manifest { border: 1px solid var(--line); border-radius: 10px; padding: .7rem .9rem; margin-bottom: .6rem; }
+.ck-manifest-head { font-weight: 700; display: flex; align-items: center; gap: .5rem; }
+.ck-manifest-stops { color: var(--muted); font-size: .85rem; margin-top: .3rem; }
+.ck-slips { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+.ck-slip { border: 1px solid var(--line); border-radius: 12px; padding: .9rem; }
+.ck-slip-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+.ck-slip-line { display: flex; justify-content: space-between; font-size: .86rem; padding: .2rem 0; border-bottom: 1px solid var(--line); }
+.ck-slip-line:last-child { border-bottom: none; }
+.ck-clock { display: flex; gap: .5rem; margin-bottom: .8rem; }
+.ck-clock input { margin: 0; }
+.ck-clock-row { display: flex; justify-content: space-between; font-size: .85rem; padding: .3rem 0; border-bottom: 1px solid var(--line); }
+.ck-clock-row:last-child { border-bottom: none; }
+
 @media (max-width: 860px) {
   .sidebar { transform: translateX(-100%); transition: transform .2s; }
   .app-shell.sidebar-open .sidebar { transform: translateX(0); }

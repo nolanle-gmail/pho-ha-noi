@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -96,6 +96,7 @@ const SECTIONS = [
   ['locations', '📍', 'Locations', ['owner', 'admin', 'manager']],
   ['staff', '👥', 'Staff', ['owner', 'admin', 'manager']],
   ['inventory', '📦', 'Inventory', ROLE_ALL],
+  ['central', '🏭', 'Central Kitchen', ['owner', 'admin']],
   ['menu', '🍽️', 'Menu/Recipes', ['owner', 'admin', 'manager']],
   ['reports', '📈', 'Reports', ['owner', 'admin', 'manager']],
   ['messages', '💬', 'Messages', ROLE_ALL],
@@ -127,7 +128,8 @@ function showSection(section) {
   const isStaff = section === 'staff';
   const isReports = section === 'reports';
   const isMessages = section === 'messages';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages));
+  const isCentral = section === 'central';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral));
   $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
@@ -135,6 +137,7 @@ function showSection(section) {
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
   if (isMessages) { renderMsgTabs(); renderMessages(); return; }
+  if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
   const fn = { overview: renderOverview }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
@@ -1226,6 +1229,159 @@ async function renderCompose() {
       S.msgTab = 'sent'; renderMsgTabs(); renderMessages();
     } catch (e) { $('cErr').textContent = e.message; }
   };
+}
+
+// ── Central Kitchen module (production & supply hub) ────────────────────────
+const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+function renderCkTabs() {
+  $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
+}
+function renderCentral() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
+}
+
+async function renderCkOverview() {
+  const d = await api('/central/summary');
+  $('view').innerHTML = `
+    <div class="overview-hero"><h2>🏭 Central Kitchen</h2><p>${esc(d.location ? d.location.city + ', ' + d.location.state : '')} · production & supply hub for all locations</p></div>
+    <div class="kpis">
+      <div class="card"><div class="label">Products</div><div class="value">${d.products}</div></div>
+      <div class="card"><div class="label">Low stock</div><div class="value ${d.low_stock ? 'bad' : ''}">${d.low_stock}</div></div>
+      <div class="card"><div class="label">Stores requesting today</div><div class="value">${d.pending_stores}</div></div>
+      <div class="card"><div class="label">Batches produced today</div><div class="value">${d.produced_today}</div></div>
+      <div class="card"><div class="label">CK staff</div><div class="value">${d.staff}</div></div>
+      <div class="card"><div class="label">Open tasks</div><div class="value ${d.open_tasks ? 'warn' : ''}">${d.open_tasks}</div></div>
+    </div>
+    <div class="section"><h3>What the Central Kitchen does</h3>
+      <div class="quick-grid">
+        <button class="quick-card" data-ckgo="demand"><span class="q-icon">📥</span><span>Demand aggregation</span></button>
+        <button class="quick-card" data-ckgo="production"><span class="q-icon">🍲</span><span>Batch production</span></button>
+        <button class="quick-card" data-ckgo="fulfillment"><span class="q-icon">🚚</span><span>Fulfillment</span></button>
+        <button class="quick-card" data-ckgo="staff"><span class="q-icon">👥</span><span>CK staff & clock</span></button>
+      </div></div>`;
+  $('view').querySelectorAll('[data-ckgo]').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ckgo; renderCkTabs(); renderCentral(); });
+}
+
+async function renderCkDemand() {
+  const d = await api('/central/demand');
+  const max = Math.max(1, ...d.products.map(p => p.total_requested));
+  $('view').innerHTML = `
+    <h2 class="page">Demand Aggregation <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${d.date}, all stores</span></h2>
+    <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Requested</th><th class="num">Stores</th><th class="num">On hand</th><th class="num">Safety</th><th style="width:26%">Demand</th></tr></thead><tbody>
+      ${d.products.map(p => `<tr class="ck-demand-row" data-pid="${p.id}">
+        <td><strong>${esc(p.name)}</strong></td>
+        <td class="num"><strong>${numf(p.total_requested)}</strong> ${esc(p.unit)}</td>
+        <td class="num">${p.store_count}</td>
+        <td class="num ${p.on_hand < p.safety_stock ? 'ck-low' : ''}">${numf(p.on_hand)}</td>
+        <td class="num">${numf(p.safety_stock)}</td>
+        <td><div style="background:var(--gold-soft);border-radius:6px;height:14px"><div style="background:var(--gold);height:14px;border-radius:6px;width:${(p.total_requested / max * 100).toFixed(0)}%"></div></div></td>
+      </tr>
+      <tr class="ck-stores hidden" data-for="${p.id}"><td colspan="6" style="background:var(--bg)"><div class="ck-store-chips">${p.by_store.length ? p.by_store.map(s => `<span class="chip">${esc(shortLoc(s.location))}: <strong>${numf(s.quantity)}</strong></span>`).join('') : '<span style="color:var(--muted)">No store requests</span>'}</div></td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="sub" style="color:var(--muted);margin-top:.6rem">Click a product to see the per-store breakdown.</p>`;
+  $('view').querySelectorAll('.ck-demand-row').forEach(r => r.onclick = () => { const t = $('view').querySelector(`.ck-stores[data-for="${r.dataset.pid}"]`); t.classList.toggle('hidden'); });
+}
+
+async function renderCkProduction() {
+  const [plan, runs] = await Promise.all([api('/central/batch-plan'), api('/central/production')]);
+  const toProduce = plan.sheets.filter(s => s.batches > 0);
+  $('view').innerHTML = `
+    <h2 class="page">Production <span style="font-weight:400;color:var(--muted);font-size:.9rem">— batch planning, scaling & yield</span></h2>
+    ${plan.alerts.length ? `<div class="ck-alert"><strong>⚠ ${plan.alerts.length} safety-stock alert${plan.alerts.length > 1 ? 's' : ''}:</strong> ${plan.alerts.map(a => `${esc(a.name)} (${numf(a.on_hand)}/${numf(a.safety_stock)} ${esc(a.unit)})`).join(' · ')}</div>` : ''}
+    <div class="section"><h3>Production batch sheets</h3>
+      ${toProduce.length ? toProduce.map(s => `
+        <div class="ck-sheet">
+          <div class="ck-sheet-head">
+            <div><strong>${esc(s.name)}</strong> ${s.low_stock ? '<span class="badge low">low</span>' : ''}
+              <div class="sub" style="color:var(--muted)">Demand ${numf(s.demand)} · on hand ${numf(s.on_hand)} · safety ${numf(s.safety_stock)} ${esc(s.unit)}</div></div>
+            <button class="btn sm" data-produce="${s.product_id}" data-batches="${s.batches}" data-name="${esc(s.name)}">Record production</button>
+          </div>
+          <div class="ck-sheet-stats">
+            <div><span>Batches</span><strong>${s.batches}</strong></div>
+            <div><span>Gross output</span><strong>${numf(s.gross_output)} ${esc(s.unit)}</strong></div>
+            <div><span>Usable (after ${(s.shrinkage_pct * 100).toFixed(0)}% shrink)</span><strong>${numf(s.usable_output)} ${esc(s.unit)}</strong></div>
+            <div><span>Yield loss</span><strong>${numf(s.shrinkage_loss)} ${esc(s.unit)}</strong></div>
+            <div><span>Est. cost</span><strong>${money(s.est_cost)}</strong></div>
+          </div>
+          <div class="table-wrap" style="margin-top:.6rem"><table><thead><tr><th>Ingredient (scaled ×${s.batches})</th><th class="num">Per batch</th><th class="num">Total</th><th class="num">Cost</th></tr></thead><tbody>
+            ${s.ingredients.map(i => `<tr><td>${esc(i.item_name)}</td><td class="num">${numf(i.per_batch)}</td><td class="num"><strong>${numf(i.total)}</strong></td><td class="num">${money(i.cost)}</td></tr>`).join('')}
+          </tbody></table></div>
+        </div>`).join('') : '<div class="empty">Nothing to produce — all products meet demand and safety stock.</div>'}
+    </div>
+    <div class="section"><h3>Recent production runs</h3>
+      <div class="table-wrap"><table><thead><tr><th>When</th><th>Product</th><th class="num">Batches</th><th class="num">Output</th><th class="num">Yield loss</th><th>By</th></tr></thead><tbody>
+        ${runs.length ? runs.map(r => `<tr><td class="mono">${esc((r.produced_at || '').slice(0, 16))}</td><td>${esc(r.product_name)}</td><td class="num">${numf(r.batches)}</td><td class="num">${numf(r.actual_output)} ${esc(r.unit)}</td><td class="num">${numf(r.shrinkage_loss)}</td><td>${esc(r.produced_by_name || '—')}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No production runs yet.</td></tr>'}
+      </tbody></table></div></div>`;
+  $('view').querySelectorAll('[data-produce]').forEach(b => b.onclick = () => modal(`Record production — ${b.dataset.name}`, [
+    { key: 'batches', label: 'Batches produced', type: 'number', value: b.dataset.batches },
+    { key: 'actual_output', label: 'Actual usable output (blank = expected)', type: 'number' },
+  ], async (v) => { const r = await api('/central/production', { method: 'POST', body: JSON.stringify({ product_id: b.dataset.produce, ...v }) }); toast(`Produced ${numf(r.produced)} units`); renderCentral(); }, 'Record'));
+}
+
+async function renderCkFulfillment() {
+  const d = await api('/central/fulfillment');
+  $('view').innerHTML = `
+    <h2 class="page">Fulfillment & Logistics <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${d.date}</span></h2>
+    <div class="section"><h3>Consolidated pick list</h3>
+      <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Total to pick</th></tr></thead><tbody>
+        ${d.pick_list.map(p => `<tr><td><strong>${esc(p.product)}</strong></td><td class="num">${numf(p.quantity)} ${esc(p.unit)}</td></tr>`).join('')}
+      </tbody></table></div></div>
+    <div class="section"><h3>Delivery manifests</h3>
+      ${d.manifests.map(m => `<div class="ck-manifest"><div class="ck-manifest-head">🚚 ${esc(m.route)} route <span class="badge gray">${m.stops.length} stop${m.stops.length > 1 ? 's' : ''}</span></div>
+        <div class="ck-manifest-stops">${m.stops.map(s => `${esc(s.short)} (${s.lines.length} items)`).join(' → ')}</div></div>`).join('')}
+    </div>
+    <div class="section"><h3>Packing slips by store</h3>
+      <div class="ck-slips">${d.stores.map(s => `<div class="ck-slip">
+        <div class="ck-slip-head"><strong>${esc(s.short)}</strong> ${s.status === 'fulfilled' ? '<span class="badge ok">fulfilled</span>' : `<button class="btn sm" data-fulfill="${s.location_id || ''}" data-name="${esc(s.short)}">Fulfill</button>`}</div>
+        ${s.lines.map(l => `<div class="ck-slip-line"><span>${esc(l.product)}</span><strong>${numf(l.quantity)} ${esc(l.unit)}</strong></div>`).join('')}
+      </div>`).join('')}</div>
+    </div>`;
+  // attach location ids (stores carry location_id via by_store? fetch fresh with ids)
+  $('view').querySelectorAll('[data-fulfill]').forEach(b => b.onclick = async () => {
+    try { const r = await api('/central/fulfill/' + b.dataset.fulfill, { method: 'POST', body: '{}' }); toast(`Fulfilled ${r.fulfilled} lines for ${b.dataset.name}`); renderCentral(); }
+    catch (e) { toast(e.message, true); }
+  });
+}
+
+async function renderCkStaff() {
+  const [staff, tasks, sched, clock] = await Promise.all([api('/central/staff'), api('/central/tasks'), api('/central/schedule'), api('/central/timeclock')]);
+  $('view').innerHTML = `
+    <h2 class="page">Central Kitchen HR</h2>
+    <div class="acct-grid">
+      <div class="section"><h3>PIN time clock <span style="font-weight:400;color:var(--muted);font-size:.82rem">terminal</span></h3>
+        <div class="err" id="ckClockErr"></div>
+        <div class="ck-clock"><input id="ckPin" inputmode="numeric" placeholder="Enter PIN" maxlength="8"><button class="btn" id="ckClockBtn">Clock in / out</button></div>
+        <div class="ck-clock-log">${clock.slice(0, 6).map(c => `<div class="ck-clock-row"><span>${esc(c.name)}</span><span class="mono">${esc((c.clock_in || '').slice(11, 16))}${c.clock_out ? '–' + esc((c.clock_out || '').slice(11, 16)) : ' <span class="badge ok">on shift</span>'}</span></div>`).join('') || '<span style="color:var(--muted)">No clock activity.</span>'}</div>
+      </div>
+      <div class="section"><h3>Today's schedule</h3>
+        ${sched.length ? sched.map(s => `<div class="profile-row"><span>${esc(s.name)}</span><strong>${esc(s.start_time || '')}–${esc(s.end_time || '')}</strong></div>`).join('') : '<div class="empty">No shifts scheduled.</div>'}
+      </div>
+    </div>
+    <div class="section"><div class="row-between"><h3>Task assignments</h3><button class="btn sm" id="ckAddTask">+ Add task</button></div>
+      <div class="table-wrap"><table><thead><tr><th>Task</th><th>Assigned to</th><th>Verify</th><th>Status</th><th></th></tr></thead><tbody>
+        ${tasks.map(t => `<tr><td><strong>${esc(t.title)}</strong></td><td>${esc(t.assigned_name || '—')}</td><td>${t.requires_photo ? '<span class="badge gold">📷 photo</span>' : '—'}</td><td>${t.status === 'done' ? '<span class="badge ok">done</span>' : '<span class="badge low">assigned</span>'}</td><td>${t.status === 'done' ? '' : `<button class="btn sm ghost" data-ckdone="${t.id}" data-photo="${t.requires_photo}">Complete</button>`}</td></tr>`).join('')}
+      </tbody></table></div></div>
+    <div class="section"><h3>Staff</h3>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th class="num">Rate</th><th>PIN</th></tr></thead><tbody>
+        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('')}
+      </tbody></table></div></div>`;
+  $('ckClockBtn').onclick = async () => {
+    $('ckClockErr').textContent = '';
+    try { const r = await api('/central/clock', { method: 'POST', body: JSON.stringify({ pin: $('ckPin').value }) }); toast(`${r.name}: ${r.action === 'clock_in' ? 'clocked in' : 'clocked out (' + numf(r.hours) + 'h)'}`); renderCentral(); }
+    catch (e) { $('ckClockErr').textContent = e.message; }
+  };
+  $('ckAddTask').onclick = () => modal('Add task', [
+    { key: 'title', label: 'Task' },
+    { key: 'assigned_to', label: 'Assign to', type: 'select', options: staff.map(u => ({ value: u.id, label: u.name })) },
+    { key: 'requires_photo', label: 'Requires photo?', type: 'select', options: [{ value: '', label: 'No' }, { value: '1', label: 'Yes' }] },
+  ], async (v) => { await api('/central/tasks', { method: 'POST', body: JSON.stringify(v) }); toast('Task added'); renderCentral(); });
+  $('view').querySelectorAll('[data-ckdone]').forEach(b => b.onclick = () => {
+    if (b.dataset.photo === '1') modal('Complete task (photo required)', [{ key: 'photo_url', label: 'Photo URL / reference' }],
+      async (v) => { await api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: JSON.stringify(v) }); toast('Task completed'); renderCentral(); }, 'Complete');
+    else api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: '{}' }).then(() => { toast('Task completed'); renderCentral(); });
+  });
 }
 
 // ── Account Settings ───────────────────────────────────────────────────────

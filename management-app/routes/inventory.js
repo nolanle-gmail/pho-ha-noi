@@ -16,7 +16,7 @@ function scopeLoc(req, fromQuery) {
 
 // ── Meta: locations & categories (for pickers) ─────────────────────────────
 router.get('/locations', (req, res) => {
-  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 ORDER BY name`).all());
+  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 AND type='restaurant' ORDER BY name`).all());
 });
 router.get('/categories', (req, res) => {
   const rows = db.prepare(`SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL ORDER BY category`).all();
@@ -60,7 +60,7 @@ router.get('/', requireRole(...ROLES.ALL), (req, res) => {
 
 // Warehouse view — one row per item, quantities across all locations.
 router.get('/warehouse', requireRole(...ROLES.OPS), (req, res) => {
-  const locations = db.prepare(`SELECT * FROM locations WHERE is_active=1 ORDER BY name`).all();
+  const locations = db.prepare(`SELECT * FROM locations WHERE is_active=1 AND type='restaurant' ORDER BY name`).all();
   const items = db.prepare(`
     SELECT i.item_name, i.category, i.unit,
            GROUP_CONCAT(i.location_id || ':' || i.quantity || ':' || i.min_quantity || ':' || i.id) as loc_data
