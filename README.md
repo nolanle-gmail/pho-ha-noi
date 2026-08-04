@@ -1,5 +1,7 @@
 # Pho Ha Noi
 
+[![CI](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/ci.yml/badge.svg)](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/ci.yml)
+
 Two standalone restaurant apps for **Pho Ha Noi** (owner: **Harry Nguyen**), built
 in the same stack as the reference design in `C:\Restaurant_Design`
 (Node.js + Express + built-in `node:sqlite`, vanilla-JS frontend — no build step).
