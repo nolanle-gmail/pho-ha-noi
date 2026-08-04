@@ -127,6 +127,21 @@ h2.page { margin: 0 0 1rem; font-size: 1.35rem; }
 .rec-add select { min-width: 240px; margin: 0; }
 .rec-add input { width: 130px; margin: 0; }
 
+/* Messages */
+.nav-badge { margin-left: auto; background: var(--gold); color: #422006; font-size: .72rem; font-weight: 800; border-radius: 999px; padding: 0 .45rem; min-width: 18px; text-align: center; }
+.tab-badge { background: var(--gold); color: #422006; font-size: .68rem; font-weight: 800; border-radius: 999px; padding: 0 .35rem; }
+.msg-list { display: flex; flex-direction: column; gap: .7rem; }
+.msg-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .9rem 1.1rem; }
+.msg-card.unread { border-left: 4px solid var(--gold); cursor: pointer; }
+.msg-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; font-size: .85rem; }
+.msg-from { font-weight: 600; display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.msg-from .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); display: inline-block; }
+.msg-time { color: var(--muted); white-space: nowrap; }
+.msg-subj { font-weight: 700; margin: .35rem 0 .2rem; }
+.msg-body { color: #374151; font-size: .92rem; white-space: pre-wrap; }
+.msg-meta { color: var(--muted); font-size: .78rem; margin-top: .5rem; }
+textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 9px; font-family: inherit; font-size: .95rem; resize: vertical; margin-bottom: .7rem; }
+
 @media (max-width: 860px) {
   .sidebar { transform: translateX(-100%); transition: transform .2s; }
   .app-shell.sidebar-open .sidebar { transform: translateX(0); }

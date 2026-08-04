@@ -33,8 +33,12 @@ their own horizontal tab bars:
   **Timesheets** (staff hours + labor cost from hourly rates), **Payments**
   (cash / card / online split by location). Location + date-range filters;
   owner/admin see all locations, managers are scoped to theirs.
+- **Messages** — team messaging: **Inbox** (unread badges in the sidebar + tab,
+  click to mark read), **Sent** (with read progress), **Compose** (direct to a
+  person, or broadcast to all staff / a whole location — broadcasts are
+  manager-and-above only). Everyone can send direct messages.
 
-Locations and Messages are scaffolds ready for their own tabs.
+Locations is a scaffold ready for its own tabs.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
 Support handles stock operations · Employee is view/request only. Enforced both in
@@ -97,5 +101,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 67 checks · waitlist: 32 checks
+npm run smoke      # management: 77 checks · waitlist: 32 checks
 ```

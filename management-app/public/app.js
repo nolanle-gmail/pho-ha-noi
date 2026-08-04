@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -86,6 +86,7 @@ async function boot() {
   const allowed = allowedSections();
   const start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
   showSection(start);
+  refreshUnread();
 }
 
 // ── Left-menu sections ─────────────────────────────────────────────────────
@@ -103,9 +104,13 @@ const allowedSections = () => SECTIONS.filter(s => s[3].includes(S.user.role));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
-    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}</button>`
+    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}${k === 'messages' && S.unread ? `<span class="nav-badge">${S.unread}</span>` : ''}</button>`
   ).join('');
   $('sidebarNav').querySelectorAll('button').forEach(b => b.onclick = () => showSection(b.dataset.section));
+}
+async function refreshUnread() {
+  try { S.unread = (await api('/messages/unread-count')).count; } catch { S.unread = 0; }
+  renderSidebar();
 }
 function setActiveNav(section) {
   $('sidebarNav').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.section === section));
@@ -121,16 +126,17 @@ function showSection(section) {
   const isMenu = section === 'menu';
   const isStaff = section === 'staff';
   const isReports = section === 'reports';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports));
+  const isMessages = section === 'messages';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages));
   $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
+  if (isMessages) { renderMsgTabs(); renderMessages(); return; }
   const fn = {
     overview: renderOverview, locations: renderLocations,
-    messages: () => renderPlaceholder('Messages', '💬', 'Team messaging — modules coming here.'),
   }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
@@ -972,6 +978,97 @@ async function renderRepPayments() {
         ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location))}</td><td class="num">${money(l.cash)}</td><td class="num">${money(l.card)}</td><td class="num">${money(l.online)}</td><td class="num"><strong>${money(l.total)}</strong></td></tr>`).join('')}
       </tbody></table></div></div>` : ''}`;
   wireReportFilters(true);
+}
+
+// ── Messages module (horizontal tabs) ──────────────────────────────────────
+const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose']];
+function renderMsgTabs() {
+  $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; renderMsgTabs(); renderMessages(); });
+}
+function renderMessages() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose }[S.msgTab])();
+}
+function msgTime(iso) {
+  const d = new Date((iso || '').replace(' ', 'T') + 'Z');
+  const m = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (m < 60) return m + 'm ago';
+  if (m < 1440) return Math.floor(m / 60) + 'h ago';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+const audBadge = (a) => a === 'all' ? '<span class="badge gray">broadcast</span>' : (a === 'location' ? '<span class="badge gray">location</span>' : '');
+
+async function renderInbox() {
+  const msgs = await api('/messages/inbox');
+  $('view').innerHTML = `
+    <h2 class="page">Inbox <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.filter(m => !m.is_read).length} unread</span></h2>
+    ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-mid="${m.id}">
+        <div class="msg-head">
+          <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(m.sender_role)}</span> ${audBadge(m.audience)}</span>
+          <span class="msg-time">${msgTime(m.created_at)}</span>
+        </div>
+        <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
+        <div class="msg-body">${esc(m.body)}</div>
+      </div>`).join('')}</div>` : '<div class="empty">No messages yet.</div>'}`;
+  $('view').querySelectorAll('.msg-card.unread').forEach(card => card.onclick = async () => {
+    try {
+      await api(`/messages/${card.dataset.mid}/read`, { method: 'POST' });
+      card.classList.remove('unread');
+      card.querySelector('.dot')?.remove();
+      refreshUnread(); renderMsgTabs();
+    } catch { /* ignore */ }
+  });
+}
+
+async function renderSent() {
+  const msgs = await api('/messages/sent');
+  $('view').innerHTML = `
+    <h2 class="page">Sent</h2>
+    ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
+      <div class="msg-card">
+        <div class="msg-head">
+          <span class="msg-from">To ${m.audience === 'all' ? 'all staff' : m.audience === 'location' ? esc(shortLoc(m.location_name) || 'a location') : `${m.recipients} recipient`} ${audBadge(m.audience)}</span>
+          <span class="msg-time">${msgTime(m.created_at)}</span>
+        </div>
+        <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
+        <div class="msg-body">${esc(m.body)}</div>
+        <div class="msg-meta">Read by ${m.read_count} of ${m.recipients}</div>
+      </div>`).join('')}</div>` : '<div class="empty">You haven’t sent any messages.</div>'}`;
+}
+
+async function renderCompose() {
+  const canBroadcast = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const recips = await api('/messages/recipients');
+  $('view').innerHTML = `
+    <h2 class="page">New message</h2>
+    <div class="section" style="max-width:640px">
+      <div class="err" id="cErr"></div>
+      <label class="fld-label">To</label>
+      <select id="cAud" class="fld">
+        <option value="direct">A person</option>
+        ${canBroadcast ? '<option value="all">All staff (broadcast)</option><option value="location">A whole location</option>' : ''}
+      </select>
+      <div id="cDirect"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(u.role)}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
+      <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
+      <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
+      <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
+      <button class="btn" id="cSend">Send message</button>
+    </div>`;
+  const aud = $('cAud');
+  aud.onchange = () => { $('cDirect').classList.toggle('hidden', aud.value !== 'direct'); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); };
+  $('cSend').onclick = async () => {
+    $('cErr').textContent = '';
+    const payload = { audience: aud.value, subject: $('cSubj').value, body: $('cBody').value };
+    if (aud.value === 'direct') payload.recipient_id = $('cRecip').value;
+    if (aud.value === 'location') payload.location_id = $('cLocSel').value;
+    try {
+      const r = await api('/messages', { method: 'POST', body: JSON.stringify(payload) });
+      toast(`Message sent to ${r.recipients} recipient${r.recipients > 1 ? 's' : ''}`);
+      S.msgTab = 'sent'; renderMsgTabs(); renderMessages();
+    } catch (e) { $('cErr').textContent = e.message; }
+  };
 }
 
 // ── Account Settings ───────────────────────────────────────────────────────

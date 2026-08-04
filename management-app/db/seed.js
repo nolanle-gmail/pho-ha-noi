@@ -279,7 +279,19 @@ function run() {
     });
   }
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets.`);
+  // ── Team messages ─────────────────────────────────────────────────────────
+  const m1 = db.prepare(`SELECT id FROM users WHERE email='manager1@phohanoi.com'`).get();
+  const sup = db.prepare(`SELECT id FROM users WHERE email='support@phohanoi.com'`).get();
+  const insMsg = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body, created_at) VALUES (?,?,?,?,?, datetime('now', ?))`);
+  const insMr = db.prepare(`INSERT INTO message_recipients (message_id, user_id, is_read) VALUES (?,?,?)`);
+  let mid = insMsg.run(m1.id, 'direct', null, 'Beef Flank running low', 'We are low on Beef Flank at Milpitas — can we expedite this week’s order?', '-3 hours').lastInsertRowid;
+  insMr.run(mid, owner.id, 0);
+  mid = insMsg.run(sup.id, 'direct', null, 'Produce delivery received', 'Saigon Produce delivery received and logged into inventory.', '-75 minutes').lastInsertRowid;
+  insMr.run(mid, owner.id, 0);
+  mid = insMsg.run(owner.id, 'all', null, 'Welcome to the Management System', 'Team — our new Pho Ha Noi Management System is live. Please sign in and set your password under Account Settings.', '-1 days').lastInsertRowid;
+  db.prepare(`SELECT id FROM users WHERE is_active=1 AND id<>?`).all(owner.id).forEach(u => insMr.run(mid, u.id, 0));
+
+  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
 

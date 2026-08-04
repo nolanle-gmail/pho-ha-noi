@@ -248,6 +248,34 @@ const check = (name, ok, detail = '') => {
     check('manager report scoped to one location', mgrSales.by_location.length === 1, 'locs=' + mgrSales.by_location.length);
     r = await fetch(base + '/api/reports/sales', { headers: H(emp.token) });
     check('employee blocked from reports (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Messages ───────────────────────────────────────────────
+    const unread0 = await j(await fetch(base + '/api/messages/unread-count', { headers: H(token) }));
+    check('owner has unread messages', unread0.count >= 2, 'count=' + unread0.count);
+    const inbox = await j(await fetch(base + '/api/messages/inbox', { headers: H(token) }));
+    check('owner inbox populated', inbox.length >= 2 && inbox.some(m => !m.is_read));
+
+    const empMe = await j(await fetch(base + '/api/auth/me', { headers: H(emp.token) }));
+    r = await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ audience: 'direct', recipient_id: empMe.id, subject: 'Hi', body: 'Welcome aboard!' }) });
+    const sentMsg = await j(r);
+    check('send direct message', r.status === 200 && sentMsg.recipients === 1, JSON.stringify(sentMsg));
+    const empInbox = await j(await fetch(base + '/api/messages/inbox', { headers: H(emp.token) }));
+    check('recipient received message', empInbox.some(m => m.body === 'Welcome aboard!' && !m.is_read));
+    const empUnread = await j(await fetch(base + '/api/messages/unread-count', { headers: H(emp.token) }));
+    check('recipient unread count', empUnread.count >= 1);
+    const theMsg = empInbox.find(m => m.body === 'Welcome aboard!');
+    r = await fetch(base + `/api/messages/${theMsg.id}/read`, { method: 'POST', headers: H(emp.token) });
+    check('mark message read', r.status === 200);
+    const empUnread2 = await j(await fetch(base + '/api/messages/unread-count', { headers: H(emp.token) }));
+    check('unread decremented after read', empUnread2.count === empUnread.count - 1, `${empUnread.count} -> ${empUnread2.count}`);
+
+    r = await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ audience: 'all', subject: 'Notice', body: 'All-staff notice' }) });
+    const bc = await j(r);
+    check('owner broadcast to all', r.status === 200 && bc.recipients >= 13, 'recipients=' + bc.recipients);
+    r = await fetch(base + '/api/messages', { method: 'POST', headers: H(emp.token), body: JSON.stringify({ audience: 'all', body: 'spam' }) });
+    check('employee cannot broadcast (403)', r.status === 403, 'status=' + r.status);
+    const ownerSent = await j(await fetch(base + '/api/messages/sent', { headers: H(token) }));
+    check('sent list includes broadcast', ownerSent.some(m => m.audience === 'all'));
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

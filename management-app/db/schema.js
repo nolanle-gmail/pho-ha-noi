@@ -211,6 +211,27 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_sales_loc_date ON daily_sales(location_id, sale_date);
     CREATE INDEX IF NOT EXISTS idx_ts_user ON timesheets(user_id);
+
+    -- ── Team messaging ────────────────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL REFERENCES users(id),
+      audience TEXT NOT NULL DEFAULT 'direct' CHECK(audience IN ('direct','all','location')),
+      location_id INTEGER REFERENCES locations(id),
+      subject TEXT,
+      body TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    -- One row per recipient (a broadcast fans out to many), tracking read state.
+    CREATE TABLE IF NOT EXISTS message_recipients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL REFERENCES messages(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      is_read INTEGER NOT NULL DEFAULT 0,
+      read_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_msg_recip ON message_recipients(user_id, is_read);
+    CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender_id);
   `);
 
   // Migrations for databases created before these columns existed.
