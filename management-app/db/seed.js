@@ -107,6 +107,8 @@ function run() {
   locIds.forEach((lid, i) => mkUser(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid));
   mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0]);
   mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0]);
+  // Hourly rates drive labor-cost figures in the Timesheets report.
+  db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
 
   // Vendors
@@ -244,7 +246,40 @@ function run() {
     });
   });
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items with recipes.`);
+  // ── Sales (30 days × all locations) — powers Sales, Analytics & Payments ──
+  const rng = (() => { let s = 20260804; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+  const BASE = [4200, 2600, 3800, 3000, 4600, 2400, 3500, 4000, 2800, 3300]; // per-location daily baseline
+  const insSale = db.prepare(`INSERT INTO daily_sales (location_id, sale_date, total_revenue, cash_revenue, card_revenue, online_revenue, cover_count, food_sales, beverage_sales) VALUES (?, date('now', ?), ?,?,?,?,?,?,?)`);
+  let salesRows = 0;
+  for (let d = 0; d < 30; d++) {
+    locIds.forEach((lid, li) => {
+      const base = BASE[li] || 3000;
+      const rev = Math.round(base * (0.8 + rng() * 0.5));
+      const covers = Math.round(rev / (35 + rng() * 20));
+      const food = Math.round(rev * 0.78), bev = rev - food;
+      const cash = Math.round(rev * (0.2 + rng() * 0.1));
+      const online = Math.round(rev * (0.1 + rng() * 0.1));
+      const card = rev - cash - online;
+      insSale.run(lid, `-${d} days`, rev, cash, card, online, covers, food, bev);
+      salesRows++;
+    });
+  }
+
+  // ── Timesheets (14 days) for hourly staff — powers Timesheets report ──────
+  const staff = db.prepare(`SELECT id, location_id FROM users WHERE role IN ('manager','support','employee') AND location_id IS NOT NULL`).all();
+  const insTs = db.prepare(`INSERT INTO timesheets (user_id, location_id, clock_in, clock_out, hours) VALUES (?,?, datetime('now', ?), datetime('now', ?), ?)`);
+  let tsRows = 0;
+  for (let d = 1; d <= 14; d++) {
+    staff.forEach(s => {
+      if (rng() < 0.25) return; // day off
+      const hrs = [6, 7, 8, 8, 9][Math.floor(rng() * 5)];
+      const startAgo = d * 24 - 9; // mid-service start
+      insTs.run(s.id, s.location_id, `-${startAgo} hours`, `-${startAgo - hrs} hours`, hrs);
+      tsRows++;
+    });
+  }
+
+  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
 

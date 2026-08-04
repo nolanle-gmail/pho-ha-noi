@@ -230,6 +230,24 @@ const check = (name, ok, detail = '') => {
     check('manager cannot manage staff (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + '/api/staff', { headers: H(emp.token) });
     check('employee blocked from staff directory (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Reports module ─────────────────────────────────────────
+    const repInv = await j(await fetch(base + '/api/reports/inventory', { headers: H(token) }));
+    check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 10 && repInv.top_items.length > 0, JSON.stringify(repInv.total_value));
+    const repSales = await j(await fetch(base + '/api/reports/sales', { headers: H(token) }));
+    check('sales report', repSales.total_revenue > 0 && repSales.by_day.length >= 25 && repSales.by_location.length === 10 && repSales.avg_check > 0, JSON.stringify(repSales.total_revenue));
+    const repPay = await j(await fetch(base + '/api/reports/payments', { headers: H(token) }));
+    check('payments report totals add up', repPay.totals.total > 0 && Math.abs((repPay.totals.cash + repPay.totals.card + repPay.totals.online) - repPay.totals.total) < 5, JSON.stringify(repPay.totals));
+    const repTs = await j(await fetch(base + '/api/reports/timesheets', { headers: H(token) }));
+    check('timesheets report', repTs.total_hours > 0 && repTs.total_labor_cost > 0 && repTs.by_staff.length >= 5, JSON.stringify(repTs.total_hours));
+    const repAn = await j(await fetch(base + '/api/reports/analytics', { headers: H(token) }));
+    check('analytics report', repAn.revenue > 0 && repAn.food_cost_pct > 0 && repAn.labor_cost_pct != null && repAn.revenue_trend.length >= 25, JSON.stringify({ f: repAn.food_cost_pct, l: repAn.labor_cost_pct }));
+
+    // manager scoped to their location; employee blocked
+    const mgrSales = await j(await fetch(base + '/api/reports/sales', { headers: H(mgr.token) }));
+    check('manager report scoped to one location', mgrSales.by_location.length === 1, 'locs=' + mgrSales.by_location.length);
+    r = await fetch(base + '/api/reports/sales', { headers: H(emp.token) });
+    check('employee blocked from reports (403)', r.status === 403, 'status=' + r.status);
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

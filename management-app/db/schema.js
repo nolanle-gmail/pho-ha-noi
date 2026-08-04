@@ -12,6 +12,7 @@ function migrate() {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('owner','admin','manager','support','employee')),
       location_id INTEGER REFERENCES locations(id),
+      hourly_rate REAL NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -185,6 +186,31 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_lot_item ON inventory_lots(item_id);
     CREATE INDEX IF NOT EXISTS idx_so_loc ON supply_orders(location_id);
     CREATE INDEX IF NOT EXISTS idx_recipe_item ON recipe_ingredients(menu_item_id);
+
+    -- ── Sales & Timesheets (for reporting) ────────────────────────────────
+    CREATE TABLE IF NOT EXISTS daily_sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      sale_date TEXT NOT NULL,
+      total_revenue REAL NOT NULL DEFAULT 0,
+      cash_revenue REAL NOT NULL DEFAULT 0,
+      card_revenue REAL NOT NULL DEFAULT 0,
+      online_revenue REAL NOT NULL DEFAULT 0,
+      cover_count INTEGER NOT NULL DEFAULT 0,
+      food_sales REAL NOT NULL DEFAULT 0,
+      beverage_sales REAL NOT NULL DEFAULT 0,
+      UNIQUE(location_id, sale_date)
+    );
+    CREATE TABLE IF NOT EXISTS timesheets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      location_id INTEGER REFERENCES locations(id),
+      clock_in TEXT NOT NULL,
+      clock_out TEXT,
+      hours REAL NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_sales_loc_date ON daily_sales(location_id, sale_date);
+    CREATE INDEX IF NOT EXISTS idx_ts_user ON timesheets(user_id);
   `);
 
   // Migrations for databases created before these columns existed.
@@ -192,6 +218,7 @@ function migrate() {
     `ALTER TABLE inventory ADD COLUMN description TEXT`,
     `ALTER TABLE inventory ADD COLUMN notes TEXT`,
     `ALTER TABLE inventory ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

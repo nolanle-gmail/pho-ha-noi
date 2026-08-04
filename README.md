@@ -27,8 +27,14 @@ their own horizontal tab bars:
   assign access level + location; owner/admin only, managers view-only) and
   **Access Levels** (reference matrix of what each level can do). Guardrails:
   only owners create owners, no self-deactivation, unique emails.
+- **Reports** — **Items** (inventory value by category/location, top items,
+  30-day COGS), **Sales** (revenue, covers, avg check, daily + by-location),
+  **Analytics** (revenue trend, food-cost %, labor-cost %, best/lowest location),
+  **Timesheets** (staff hours + labor cost from hourly rates), **Payments**
+  (cash / card / online split by location). Location + date-range filters;
+  owner/admin see all locations, managers are scoped to theirs.
 
-Locations, Reports and Messages are scaffolds ready for their own tabs.
+Locations and Messages are scaffolds ready for their own tabs.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
 Support handles stock operations · Employee is view/request only. Enforced both in
@@ -91,5 +97,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 60 checks · waitlist: 32 checks
+npm run smoke      # management: 67 checks · waitlist: 32 checks
 ```

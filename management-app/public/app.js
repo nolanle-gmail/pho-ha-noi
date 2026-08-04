@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -120,15 +120,16 @@ function showSection(section) {
   const isInv = section === 'inventory';
   const isMenu = section === 'menu';
   const isStaff = section === 'staff';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff));
+  const isReports = section === 'reports';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports));
   $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
+  if (isReports) { renderReportTabs(); renderReportModule(); return; }
   const fn = {
     overview: renderOverview, locations: renderLocations,
-    reports: () => renderPlaceholder('Reports', '📈', 'Cross-module reporting — modules coming here.'),
     messages: () => renderPlaceholder('Messages', '💬', 'Team messaging — modules coming here.'),
   }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
@@ -849,6 +850,128 @@ async function renderCosting() {
       </tr>`).join('')}
     </tbody></table></div>
     <p class="sub" style="margin-top:.8rem;color:var(--muted)">Food cost % uses each ingredient's average inventory unit cost across active locations. Target: ≤ 30% (green), 30–40% (amber), &gt; 40% (red).</p>`;
+}
+
+// ── Reports module (horizontal tabs) ───────────────────────────────────────
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments']];
+const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
+function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
+
+function renderReportTabs() {
+  $('tabs').innerHTML = REPORT_TABS.map(([k, l]) => `<button data-rtab="${k}" class="${S.reportTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.reportTab = b.dataset.rtab; renderReportTabs(); renderReportModule(); });
+}
+function renderReportModule() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments }[S.reportTab])();
+}
+const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
+function reportFilters(withDates) {
+  const seesAll = ['owner', 'admin'].includes(S.user.role);
+  const loc = seesAll ? `<div class="field"><label>Location</label><select id="rfLoc"><option value="">All 10 locations</option>${S.locations.map(l => `<option value="${l.id}" ${String(reportFilter.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></div>` : '';
+  const dates = withDates ? `<div class="field"><label>From</label><input id="rfStart" type="date" value="${reportFilter.start}"></div><div class="field"><label>To</label><input id="rfEnd" type="date" value="${reportFilter.end}"></div>` : '';
+  return (loc || dates) ? `<div class="filters">${loc}${dates}</div>` : '';
+}
+function wireReportFilters(withDates) {
+  const bind = () => { const l = $('rfLoc'); if (l) reportFilter.loc = l.value; if (withDates) { reportFilter.start = $('rfStart').value; reportFilter.end = $('rfEnd').value; } renderReportModule(); };
+  ['rfLoc', 'rfStart', 'rfEnd'].forEach(id => { const el = $(id); if (el) el.onchange = bind; });
+}
+function reportQuery(withDates) {
+  const p = new URLSearchParams();
+  if (reportFilter.loc) p.set('location_id', reportFilter.loc);
+  if (withDates) { if (reportFilter.start) p.set('start', reportFilter.start); if (reportFilter.end) p.set('end', reportFilter.end); }
+  const s = p.toString(); return s ? '?' + s : '';
+}
+function barTable(rows) {
+  return `<div class="table-wrap"><table><tbody>${rows.map(([label, val, pct]) => `<tr>
+    <td style="width:32%">${esc(label)}</td><td class="num" style="width:20%">${val}</td>
+    <td><div style="background:var(--gold-soft);border-radius:6px;height:14px"><div style="background:var(--gold);height:14px;border-radius:6px;width:${Math.max(1, pct).toFixed(0)}%"></div></div></td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function renderRepItems() {
+  const d = await api('/reports/inventory' + reportQuery(false));
+  const maxCat = Math.max(1, ...d.by_category.map(c => c.value)), maxLoc = Math.max(1, ...d.by_location.map(l => l.value));
+  $('view').innerHTML = `${reportFilters(false)}
+    <div class="kpis">
+      <div class="card"><div class="label">Inventory value</div><div class="value">${money(d.total_value)}</div></div>
+      <div class="card"><div class="label">Items tracked</div><div class="value">${d.item_count}</div></div>
+      <div class="card"><div class="label">Below minimum</div><div class="value ${d.low_stock ? 'warn' : ''}">${d.low_stock}</div></div>
+      <div class="card"><div class="label">Consumed (30d COGS)</div><div class="value">${money(d.consumed_cost_30d)}</div></div>
+    </div>
+    <div class="section"><h3>Value by category</h3>${barTable(d.by_category.map(c => [c.category, money(c.value), c.value / maxCat * 100]))}</div>
+    ${d.by_location.length > 1 ? `<div class="section"><h3>Value by location</h3>${barTable(d.by_location.map(l => [shortLoc(l.location), money(l.value), l.value / maxLoc * 100]))}</div>` : ''}
+    <div class="section"><h3>Top items by value</h3>
+      <div class="table-wrap"><table><thead><tr><th>Item</th><th>Location</th><th class="num">Qty</th><th class="num">Value</th></tr></thead><tbody>
+        ${d.top_items.map(t => `<tr><td>${esc(t.item_name)}</td><td>${esc(shortLoc(t.location))}</td><td class="num">${numf(t.quantity)} ${esc(t.unit)}</td><td class="num">${money(t.value)}</td></tr>`).join('')}
+      </tbody></table></div></div>`;
+  wireReportFilters(false);
+}
+
+async function renderRepSales() {
+  const d = await api('/reports/sales' + reportQuery(true));
+  const maxDay = Math.max(1, ...d.by_day.map(x => x.revenue)), maxLoc = Math.max(1, ...d.by_location.map(x => x.revenue));
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="kpis">
+      <div class="card"><div class="label">Total revenue</div><div class="value">${money(d.total_revenue)}</div></div>
+      <div class="card"><div class="label">Covers</div><div class="value">${numf(d.total_covers)}</div></div>
+      <div class="card"><div class="label">Avg check</div><div class="value">${money(d.avg_check)}</div></div>
+      <div class="card"><div class="label">Avg daily</div><div class="value">${money(d.avg_daily)}</div></div>
+    </div>
+    ${d.by_location.length > 1 ? `<div class="section"><h3>Revenue by location</h3>${barTable(d.by_location.map(l => [shortLoc(l.location), money(l.revenue), l.revenue / maxLoc * 100]))}</div>` : ''}
+    <div class="section"><h3>Daily revenue</h3>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th class="num">Revenue</th><th class="num">Covers</th><th class="num">Food</th><th class="num">Bev</th><th style="width:28%">Trend</th></tr></thead><tbody>
+        ${d.by_day.map(x => `<tr><td>${esc(x.day)}</td><td class="num">${money(x.revenue)}</td><td class="num">${numf(x.covers)}</td><td class="num">${money(x.food)}</td><td class="num">${money(x.beverage)}</td><td><div style="background:var(--gold-soft);border-radius:6px;height:12px"><div style="background:var(--gold);height:12px;border-radius:6px;width:${(x.revenue / maxDay * 100).toFixed(0)}%"></div></div></td></tr>`).join('')}
+      </tbody></table></div></div>`;
+  wireReportFilters(true);
+}
+
+async function renderRepAnalytics() {
+  const d = await api('/reports/analytics' + reportQuery(true));
+  const maxT = Math.max(1, ...d.revenue_trend.map(x => x.revenue)), maxL = Math.max(1, ...d.by_location.map(x => x.revenue));
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="kpis">
+      <div class="card"><div class="label">Revenue</div><div class="value">${money(d.revenue)}</div></div>
+      <div class="card"><div class="label">Avg daily</div><div class="value">${money(d.avg_daily)}</div></div>
+      <div class="card"><div class="label">Food cost %</div><div class="value ${foodClass(d.food_cost_pct)}">${d.food_cost_pct == null ? '—' : d.food_cost_pct + '%'}</div></div>
+      <div class="card"><div class="label">Labor cost %</div><div class="value ${d.labor_cost_pct > 30 ? 'warn' : ''}">${d.labor_cost_pct == null ? '—' : d.labor_cost_pct + '%'}</div></div>
+      <div class="card"><div class="label">Inventory value</div><div class="value">${money(d.inventory_value)}</div></div>
+    </div>
+    <div class="section"><h3>Highlights</h3>
+      <p style="margin:0">Best location: <strong>${esc(shortLoc(d.best_location) || '—')}</strong> · Lowest: <strong>${esc(shortLoc(d.lowest_location) || '—')}</strong> · Avg check: <strong>${money(d.avg_check)}</strong> · Labor cost: <strong>${money(d.labor_cost)}</strong></p></div>
+    <div class="section"><h3>Revenue trend</h3>${barTable(d.revenue_trend.map(x => [x.day, money(x.revenue), x.revenue / maxT * 100]))}</div>
+    ${d.by_location.length > 1 ? `<div class="section"><h3>Revenue by location</h3>${barTable(d.by_location.map(l => [shortLoc(l.location), money(l.revenue), l.revenue / maxL * 100]))}</div>` : ''}`;
+  wireReportFilters(true);
+}
+
+async function renderRepTimesheets() {
+  const d = await api('/reports/timesheets' + reportQuery(true));
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="kpis">
+      <div class="card"><div class="label">Total hours</div><div class="value">${numf(d.total_hours)}</div></div>
+      <div class="card"><div class="label">Labor cost</div><div class="value">${money(d.total_labor_cost)}</div></div>
+      <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Role</th><th>Location</th><th class="num">Shifts</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Labor cost</th></tr></thead><tbody>
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(s.role)}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">No timesheets in range.</td></tr>'}
+    </tbody></table></div>`;
+  wireReportFilters(true);
+}
+
+async function renderRepPayments() {
+  const d = await api('/reports/payments' + reportQuery(true));
+  const t = d.totals, total = t.total || 0, pct = (v) => total ? (v / total * 100).toFixed(1) + '%' : '—';
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="kpis">
+      <div class="card"><div class="label">Total collected</div><div class="value">${money(total)}</div></div>
+      <div class="card"><div class="label">Cash · ${pct(t.cash)}</div><div class="value">${money(t.cash)}</div></div>
+      <div class="card"><div class="label">Card · ${pct(t.card)}</div><div class="value">${money(t.card)}</div></div>
+      <div class="card"><div class="label">Online · ${pct(t.online)}</div><div class="value">${money(t.online)}</div></div>
+    </div>
+    ${d.by_location.length > 1 ? `<div class="section"><h3>By location</h3>
+      <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Cash</th><th class="num">Card</th><th class="num">Online</th><th class="num">Total</th></tr></thead><tbody>
+        ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location))}</td><td class="num">${money(l.cash)}</td><td class="num">${money(l.card)}</td><td class="num">${money(l.online)}</td><td class="num"><strong>${money(l.total)}</strong></td></tr>`).join('')}
+      </tbody></table></div></div>` : ''}`;
+  wireReportFilters(true);
 }
 
 // ── Account Settings ───────────────────────────────────────────────────────
