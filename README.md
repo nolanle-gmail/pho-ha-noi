@@ -37,8 +37,15 @@ their own horizontal tab bars:
   click to mark read), **Sent** (with read progress), **Compose** (direct to a
   person, or broadcast to all staff / a whole location — broadcasts are
   manager-and-above only). Everyone can send direct messages.
-
-Locations is a scaffold ready for its own tabs.
+- **Locations** — a directory of every location (+ **add new**, owner/admin) with
+  a per-location detail view: **Details** (address, phone, email, seats, opening
+  date, manager, plus editable **operating hours**), **Staff** (roster), and
+  **Equipment** (assets with vendor + phone, model/serial, purchase & warranty
+  dates, **maintenance schedule** with next-service due dates flagged when
+  overdue, and status — operational / needs-service / out-of-order; full CRUD).
+  Owner/admin manage everything; managers manage their own location's hours &
+  equipment. Standard restaurant equipment (walk-ins, ranges, fryers, ice
+  machine, dishwasher, hood/fire suppression, POS, etc.) is seeded per location.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
 Support handles stock operations · Employee is view/request only. Enforced both in
@@ -101,5 +108,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 77 checks · waitlist: 32 checks
+npm run smoke      # management: 93 checks · waitlist: 32 checks
 ```

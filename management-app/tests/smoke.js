@@ -276,6 +276,45 @@ const check = (name, ok, detail = '') => {
     check('employee cannot broadcast (403)', r.status === 403, 'status=' + r.status);
     const ownerSent = await j(await fetch(base + '/api/messages/sent', { headers: H(token) }));
     check('sent list includes broadcast', ownerSent.some(m => m.audience === 'all'));
+
+    // ── Locations module ───────────────────────────────────────
+    const locsList = await j(await fetch(base + '/api/locations', { headers: H(token) }));
+    check('locations list with counts', locsList.length === 10 && locsList[0].equipment_count === 12 && locsList.every(l => 'manager_name' in l && 'staff_count' in l), 'len=' + locsList.length);
+    const locDet = await j(await fetch(base + `/api/locations/${loc1}`, { headers: H(token) }));
+    check('location detail (info + 7 days hours)', !!locDet.city && locDet.hours.length === 7 && !!locDet.phone, JSON.stringify(locDet.city));
+    const locStaff = await j(await fetch(base + `/api/locations/${loc1}/staff`, { headers: H(token) }));
+    check('location staff roster', Array.isArray(locStaff) && locStaff.length >= 1);
+    const locEq = await j(await fetch(base + `/api/locations/${loc1}/equipment`, { headers: H(token) }));
+    check('location equipment (vendor + maintenance)', locEq.length === 12 && !!locEq[0].vendor && !!locEq[0].maintenance_freq && !!locEq[0].status, 'len=' + locEq.length);
+
+    const newLoc = await j(await fetch(base + '/api/locations', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Pho Ha Noi — Test', city: 'Testville', state: 'CA', phone: '(408) 555-9999', seats: 40 }) }));
+    check('create location', newLoc.success === true && !!newLoc.id);
+    const nd = await j(await fetch(base + `/api/locations/${newLoc.id}`, { headers: H(token) }));
+    check('new location gets default hours', nd.hours.length === 7);
+    r = await fetch(base + `/api/locations/${newLoc.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ seats: 55, status: 'draft' }) });
+    check('update location', r.status === 200);
+
+    const ne = await j(await fetch(base + `/api/locations/${newLoc.id}/equipment`, { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Test Fryer', category: 'Cooking', vendor: 'Vulcan', maintenance_freq: 'monthly' }) }));
+    check('add equipment', ne.success === true && !!ne.id);
+    r = await fetch(base + `/api/locations/equipment/${ne.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'needs_service' }) });
+    check('edit equipment status', r.status === 200);
+    r = await fetch(base + `/api/locations/equipment/${ne.id}`, { method: 'DELETE', headers: H(token) });
+    check('delete equipment', r.status === 200);
+    r = await fetch(base + `/api/locations/${loc1}/hours`, { method: 'PUT', headers: H(token), body: JSON.stringify({ hours: [{ day_of_week: 0, open_time: '11:00', close_time: '21:00', is_closed: 0 }] }) });
+    check('set operating hours', r.status === 200);
+
+    // RBAC
+    r = await fetch(base + '/api/locations', { headers: H(emp.token) });
+    check('employee blocked from locations (403)', r.status === 403, 'status=' + r.status);
+    const mgrLocs = await j(await fetch(base + '/api/locations', { headers: H(mgr.token) }));
+    check('manager sees only their location', mgrLocs.length === 1 && mgrLocs[0].id === loc1, 'len=' + mgrLocs.length);
+    r = await fetch(base + '/api/locations', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'X' }) });
+    check('manager cannot create location (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/locations/${loc1}/equipment`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Equip' }) });
+    check('manager can add equipment to own location', r.status === 200, 'status=' + r.status);
+    const otherLoc = locsList.find(l => l.id !== loc1).id;
+    r = await fetch(base + `/api/locations/${otherLoc}/equipment`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Nope' }) });
+    check('manager blocked from other location (403)', r.status === 403, 'status=' + r.status);
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {

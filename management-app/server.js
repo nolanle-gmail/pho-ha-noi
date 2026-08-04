@@ -18,6 +18,7 @@ app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/menu', require('./routes/menu'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/locations', require('./routes/locations'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0 };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -135,9 +135,8 @@ function showSection(section) {
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
   if (isMessages) { renderMsgTabs(); renderMessages(); return; }
-  const fn = {
-    overview: renderOverview, locations: renderLocations,
-  }[section];
+  if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
+  const fn = { overview: renderOverview }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -578,18 +577,176 @@ async function renderOverview() {
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
 }
 
-// ── Section: Locations ─────────────────────────────────────────────────────
-async function renderLocations() {
-  const locs = await api('/inventory/locations');
+// ── Section: Locations (master-detail module) ──────────────────────────────
+const statusBadgeLoc = (s) => `<span class="badge ${s === 'active' ? 'ok' : (s === 'draft' ? 'gray' : 'out')}">${esc(s)}</span>`;
+function renderLocationsSection() {
+  if (S.locView === 'detail' && S.locDetailId) { $('tabs').classList.remove('hidden'); renderLocDetailTabs(); renderLocDetail(); }
+  else { $('tabs').classList.add('hidden'); renderLocList(); }
+}
+
+async function renderLocList() {
+  const locs = await api('/locations');
+  const canAdd = ['owner', 'admin'].includes(S.user.role);
   $('view').innerHTML = `
-    <h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length} restaurants</span></h2>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead><tbody>
-      ${locs.map(l => `<tr>
-        <td><strong>${esc(l.name)}</strong></td>
-        <td class="mono">${esc(l.address || '—')}</td>
-        <td><span class="badge ok">Active</span></td>
-      </tr>`).join('')}
+    <div class="row-between"><h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length}</span></h2>
+      ${canAdd ? '<button class="btn" id="addLoc">+ Add location</button>' : ''}</div>
+    <div class="loc-grid">
+      ${locs.map(l => `<div class="loc-card">
+        <div class="loc-card-head"><span class="loc-name">${esc(shortLoc(l.name))}</span>${statusBadgeLoc(l.status)}</div>
+        <div class="loc-meta">📍 ${esc([l.city, l.state].filter(Boolean).join(', ') || '—')}</div>
+        <div class="loc-meta">📞 ${esc(l.phone || '—')}</div>
+        <div class="loc-stats">
+          <div><span>Manager</span><strong>${esc(l.manager_name || '—')}</strong></div>
+          <div><span>Staff</span><strong>${l.staff_count}</strong></div>
+          <div><span>Seats</span><strong>${l.seats || '—'}</strong></div>
+          <div><span>Equipment</span><strong>${l.equipment_count}${l.equipment_issues ? ` <span class="badge low">${l.equipment_issues}⚠</span>` : ''}</strong></div>
+        </div>
+        <button class="btn ghost sm" data-manage="${l.id}">Manage →</button>
+      </div>`).join('')}
+    </div>`;
+  if (canAdd) $('addLoc').onclick = () => locationModal(null);
+  $('view').querySelectorAll('[data-manage]').forEach(b => b.onclick = () => { S.locDetailId = b.dataset.manage; S.locView = 'detail'; S.locTab = 'details'; renderLocationsSection(); });
+}
+
+function locationModal(loc) {
+  const isNew = !loc;
+  const fields = [
+    { key: 'name', label: 'Location name', value: loc ? loc.name : 'Pho Ha Noi — ' },
+    { key: 'address', label: 'Street address', value: loc ? loc.address : '' },
+    { key: 'city', label: 'City', value: loc ? loc.city : '' },
+    { key: 'state', label: 'State', value: loc ? loc.state : 'CA' },
+    { key: 'zip', label: 'ZIP', value: loc ? loc.zip : '' },
+    { key: 'phone', label: 'Phone', value: loc ? loc.phone : '' },
+    { key: 'email', label: 'Email', value: loc ? loc.email : '' },
+    { key: 'seats', label: 'Seats', type: 'number', value: loc ? loc.seats : 0 },
+    { key: 'opening_date', label: 'Opening date (YYYY-MM-DD)', value: loc ? loc.opening_date : '' },
+    { key: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }, { value: 'closed', label: 'Closed' }], value: loc ? loc.status : 'active' },
+  ];
+  modal(isNew ? 'Add location' : `Edit — ${shortLoc(loc.name)}`, fields, async (v) => {
+    if (isNew) { await api('/locations', { method: 'POST', body: JSON.stringify(v) }); toast('Location added'); }
+    else { await api('/locations/' + loc.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Location updated'); }
+    S.locations = await api('/inventory/locations').catch(() => S.locations);
+    isNew ? (S.locView = 'list', renderLocationsSection()) : renderLocDetail();
+  }, isNew ? 'Add location' : 'Save');
+}
+
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['equipment', 'Equipment']];
+function renderLocDetailTabs() {
+  $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
+}
+async function renderLocDetail() {
+  const loc = await api('/locations/' + S.locDetailId);
+  $('view').innerHTML = `
+    <div class="loc-detail-head">
+      <button class="btn ghost sm" id="locBack">← Locations</button>
+      <h2 class="page" style="margin:0">${esc(shortLoc(loc.name))} ${statusBadgeLoc(loc.status)}</h2>
+    </div>
+    <div id="locBody"><div class="empty">Loading…</div></div>`;
+  $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, equipment: renderLocEquipment }[S.locTab])();
+}
+
+function renderLocInfo(loc) {
+  const canEdit = ['owner', 'admin'].includes(S.user.role);
+  const canEditHours = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
+  $('locBody').innerHTML = `
+    <div class="acct-grid">
+      <div class="section"><div class="row-between"><h3>Location details</h3>${canEdit ? '<button class="btn sm ghost" id="editLoc">Edit</button>' : ''}</div>
+        <div class="profile-row"><span>Address</span><strong>${esc([loc.address, loc.city, loc.state, loc.zip].filter(Boolean).join(', ') || '—')}</strong></div>
+        <div class="profile-row"><span>Phone</span><strong>${esc(loc.phone || '—')}</strong></div>
+        <div class="profile-row"><span>Email</span><strong>${esc(loc.email || '—')}</strong></div>
+        <div class="profile-row"><span>Manager</span><strong>${esc(loc.manager ? loc.manager.name : '—')}</strong></div>
+        <div class="profile-row"><span>Seats</span><strong>${loc.seats || '—'}</strong></div>
+        <div class="profile-row"><span>Opened</span><strong>${esc(loc.opening_date || '—')}</strong></div>
+        <div class="profile-row"><span>Timezone</span><strong>${esc(loc.timezone || '—')}</strong></div>
+      </div>
+      <div class="section"><div class="row-between"><h3>Operating hours</h3>${canEditHours ? '<button class="btn sm ghost" id="editHours">Edit</button>' : ''}</div>
+        ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}
+      </div>
+    </div>`;
+  if (canEdit) $('editLoc').onclick = () => locationModal(loc);
+  if (canEditHours) $('editHours').onclick = () => editHoursModal(loc);
+}
+
+function editHoursModal(loc) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Operating hours</h3><div class="err" id="mErr"></div>
+    ${days.map((d, i) => { const h = hoursMap[i] || { open_time: '10:00', close_time: '22:00', is_closed: 0 }; return `<div class="hours-row"><span>${d}</span>
+      <input type="time" data-open="${i}" value="${h.open_time || '10:00'}"><input type="time" data-close="${i}" value="${h.close_time || '22:00'}">
+      <label><input type="checkbox" data-closed="${i}" ${h.is_closed ? 'checked' : ''}> Closed</label></div>`; }).join('')}
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save hours</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    const hours = days.map((d, i) => ({ day_of_week: i, open_time: host.querySelector(`[data-open="${i}"]`).value, close_time: host.querySelector(`[data-close="${i}"]`).value, is_closed: host.querySelector(`[data-closed="${i}"]`).checked ? 1 : 0 }));
+    try { await api('/locations/' + loc.id + '/hours', { method: 'PUT', body: JSON.stringify({ hours }) }); toast('Hours updated'); close(); renderLocDetail(); }
+    catch (e) { $('mErr').textContent = e.message; }
+  };
+}
+
+async function renderLocStaff() {
+  const staff = await api('/locations/' + S.locDetailId + '/staff');
+  $('locBody').innerHTML = `
+    <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location. Add or reassign staff in the Staff section.</p>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
+      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
+}
+
+const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };
+function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }
+async function renderLocEquipment() {
+  const eq = await api('/locations/' + S.locDetailId + '/equipment');
+  const canManage = ['owner', 'admin', 'manager'].includes(S.user.role);
+  $('locBody').innerHTML = `
+    <div class="row-between"><h3 style="margin:0">Equipment & assets <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${eq.length}</span></h3>${canManage ? '<button class="btn" id="addEq">+ Add equipment</button>' : ''}</div>
+    <div class="table-wrap" style="margin-top:1rem"><table><thead><tr>
+      <th>Equipment</th><th>Category</th><th>Vendor</th><th>Maintenance</th><th>Next service</th><th>Warranty</th><th>Status</th>${canManage ? '<th></th>' : ''}
+    </tr></thead><tbody>
+      ${eq.length ? eq.map(e => `<tr>
+        <td><strong>${esc(e.name)}</strong><div class="mono" style="font-size:.72rem;color:var(--muted)">${esc(e.model || '')}${e.serial ? ' · ' + esc(e.serial) : ''}</div></td>
+        <td>${esc(e.category || '—')}</td>
+        <td>${esc(e.vendor || '—')}${e.vendor_phone ? `<div class="mono" style="font-size:.72rem;color:var(--muted)">${esc(e.vendor_phone)}</div>` : ''}</td>
+        <td>${esc(e.maintenance_freq || '—')}</td>
+        <td>${nextServiceCell(e.next_service)}</td>
+        <td>${esc(e.warranty_expiry || '—')}</td>
+        <td>${equipStatusBadge(e.status)}</td>
+        ${canManage ? `<td><div class="actions-cell"><button class="btn sm ghost" data-eqedit="${e.id}">Edit</button><button class="btn sm ghost" data-eqdel="${e.id}">Delete</button></div></td>` : ''}
+      </tr>`).join('') : `<tr><td colspan="${canManage ? 8 : 7}" class="empty">No equipment recorded.</td></tr>`}
+    </tbody></table></div>`;
+  if (canManage) {
+    $('addEq').onclick = () => equipmentModal(null);
+    $('locBody').querySelectorAll('[data-eqedit]').forEach(b => b.onclick = () => equipmentModal(eq.find(x => x.id == b.dataset.eqedit)));
+    $('locBody').querySelectorAll('[data-eqdel]').forEach(b => b.onclick = () => { const e = eq.find(x => x.id == b.dataset.eqdel); modal(`Delete “${e.name}”?`, [], async () => { await api('/locations/equipment/' + e.id, { method: 'DELETE' }); toast('Equipment removed'); renderLocDetail(); }, 'Delete'); });
+  }
+}
+function equipmentModal(e) {
+  const isNew = !e;
+  modal(isNew ? 'Add equipment' : `Edit — ${e.name}`, [
+    { key: 'name', label: 'Equipment name', value: e ? e.name : '' },
+    { key: 'category', label: 'Category', value: e ? e.category : 'Cooking' },
+    { key: 'model', label: 'Model', value: e ? e.model : '' },
+    { key: 'serial', label: 'Serial #', value: e ? e.serial : '' },
+    { key: 'vendor', label: 'Vendor', value: e ? e.vendor : '' },
+    { key: 'vendor_phone', label: 'Vendor phone', value: e ? e.vendor_phone : '' },
+    { key: 'purchase_date', label: 'Purchase date (YYYY-MM-DD)', value: e ? e.purchase_date : '' },
+    { key: 'warranty_expiry', label: 'Warranty expiry', value: e ? e.warranty_expiry : '' },
+    { key: 'maintenance_freq', label: 'Maintenance', type: 'select', options: ['monthly', 'quarterly', 'biannual', 'annual', 'as_needed'].map(x => ({ value: x, label: x })), value: e ? e.maintenance_freq : 'quarterly' },
+    { key: 'last_service', label: 'Last service (YYYY-MM-DD)', value: e ? e.last_service : '' },
+    { key: 'next_service', label: 'Next service (YYYY-MM-DD)', value: e ? e.next_service : '' },
+    { key: 'status', label: 'Status', type: 'select', options: [{ value: 'operational', label: 'Operational' }, { value: 'needs_service', label: 'Needs service' }, { value: 'out_of_order', label: 'Out of order' }], value: e ? e.status : 'operational' },
+    { key: 'notes', label: 'Notes', value: e ? e.notes : '' },
+  ], async (v) => {
+    if (isNew) { await api('/locations/' + S.locDetailId + '/equipment', { method: 'POST', body: JSON.stringify(v) }); toast('Equipment added'); }
+    else { await api('/locations/equipment/' + e.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Equipment updated'); }
+    renderLocDetail();
+  }, isNew ? 'Add equipment' : 'Save');
 }
 
 // ── Section: Staff (module with tabs) ──────────────────────────────────────

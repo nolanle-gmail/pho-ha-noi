@@ -142,6 +142,23 @@ h2.page { margin: 0 0 1rem; font-size: 1.35rem; }
 .msg-meta { color: var(--muted); font-size: .78rem; margin-top: .5rem; }
 textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 9px; font-family: inherit; font-size: .95rem; resize: vertical; margin-bottom: .7rem; }
 
+/* Locations */
+.loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+.loc-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem; }
+.loc-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+.loc-card-head .loc-name { font-weight: 800; font-size: 1.02rem; }
+.loc-meta { color: var(--muted); font-size: .85rem; margin-bottom: .2rem; }
+.loc-stats { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .8rem; margin: .8rem 0; }
+.loc-stats > div { display: flex; flex-direction: column; }
+.loc-stats span { color: var(--muted); font-size: .72rem; }
+.loc-stats strong { font-size: .92rem; }
+.loc-detail-head { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.hours-row { display: flex; align-items: center; gap: .6rem; margin-bottom: .5rem; }
+.hours-row > span { width: 44px; font-weight: 600; font-size: .85rem; }
+.hours-row input[type=time] { width: auto; margin: 0; padding: .35rem .5rem; }
+.hours-row label { font-size: .82rem; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; }
+.hours-row input[type=checkbox] { width: auto; margin: 0; }
+
 @media (max-width: 860px) {
   .sidebar { transform: translateX(-100%); transition: transform .2s; }
   .app-shell.sidebar-open .sidebar { transform: translateX(0); }

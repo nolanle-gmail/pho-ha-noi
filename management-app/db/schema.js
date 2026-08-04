@@ -22,9 +22,50 @@ function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       address TEXT,
+      city TEXT,
+      state TEXT,
+      zip TEXT,
+      phone TEXT,
+      email TEXT,
+      timezone TEXT DEFAULT 'America/Los_Angeles',
+      opening_date TEXT,
+      seats INTEGER DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','draft','closed')),
       is_active INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    -- Operating hours per location (day_of_week 0=Mon … 6=Sun).
+    CREATE TABLE IF NOT EXISTS location_hours (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      day_of_week INTEGER NOT NULL,
+      open_time TEXT,
+      close_time TEXT,
+      is_closed INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(location_id, day_of_week)
+    );
+
+    -- Equipment / assets at a location, with vendor + maintenance tracking.
+    CREATE TABLE IF NOT EXISTS equipment (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      name TEXT NOT NULL,
+      category TEXT,
+      model TEXT,
+      serial TEXT,
+      vendor TEXT,
+      vendor_phone TEXT,
+      purchase_date TEXT,
+      warranty_expiry TEXT,
+      maintenance_freq TEXT DEFAULT 'quarterly',
+      last_service TEXT,
+      next_service TEXT,
+      status TEXT NOT NULL DEFAULT 'operational' CHECK(status IN ('operational','needs_service','out_of_order')),
+      notes TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_equip_loc ON equipment(location_id);
 
     -- Inventory items — stock is per (item_name, location). Attributes: SKU,
     -- category, unit, reorder trigger (min_quantity), target level (par_level),
@@ -240,6 +281,15 @@ function migrate() {
     `ALTER TABLE inventory ADD COLUMN notes TEXT`,
     `ALTER TABLE inventory ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE locations ADD COLUMN city TEXT`,
+    `ALTER TABLE locations ADD COLUMN state TEXT`,
+    `ALTER TABLE locations ADD COLUMN zip TEXT`,
+    `ALTER TABLE locations ADD COLUMN phone TEXT`,
+    `ALTER TABLE locations ADD COLUMN email TEXT`,
+    `ALTER TABLE locations ADD COLUMN timezone TEXT DEFAULT 'America/Los_Angeles'`,
+    `ALTER TABLE locations ADD COLUMN opening_date TEXT`,
+    `ALTER TABLE locations ADD COLUMN seats INTEGER DEFAULT 0`,
+    `ALTER TABLE locations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

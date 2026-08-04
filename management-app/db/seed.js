@@ -68,17 +68,37 @@ const ITEMS = [
   ['Trash Bags', 'Cleaning', 'case', 9, 4, 18, 19.00, false],
 ];
 
+// [name, address, city, state, zip, phone, seats, opening_date]
 const LOCATIONS = [
-  ['Pho Ha Noi — San Jose', '123 Santana Row, San Jose, CA 95128'],
-  ['Pho Ha Noi — Milpitas', '456 Great Mall Dr, Milpitas, CA 95035'],
-  ['Pho Ha Noi — Cupertino', '789 Stevens Creek Blvd, Cupertino, CA 95014'],
-  ['Pho Ha Noi — Fremont', '321 Fremont Blvd, Fremont, CA 94538'],
-  ['Pho Ha Noi — Palo Alto', '654 University Ave, Palo Alto, CA 94301'],
-  ['Pho Ha Noi — Berkeley', '987 Shattuck Ave, Berkeley, CA 94704'],
-  ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St, Fountain Valley, CA 92708'],
-  ['Pho Ha Noi — Santa Clara', '753 El Camino Real, Santa Clara, CA 95050'],
-  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave, Sunnyvale, CA 94086'],
-  ['Pho Ha Noi — Oakland', '426 Broadway, Oakland, CA 94607'],
+  ['Pho Ha Noi — San Jose', '123 Santana Row', 'San Jose', 'CA', '95128', '(408) 555-0181', 78, '2021-06-01'],
+  ['Pho Ha Noi — Milpitas', '456 Great Mall Dr', 'Milpitas', 'CA', '95035', '(408) 555-0142', 54, '2022-01-15'],
+  ['Pho Ha Noi — Cupertino', '789 Stevens Creek Blvd', 'Cupertino', 'CA', '95014', '(408) 555-0193', 66, '2022-05-01'],
+  ['Pho Ha Noi — Fremont', '321 Fremont Blvd', 'Fremont', 'CA', '94538', '(510) 555-0124', 60, '2022-09-01'],
+  ['Pho Ha Noi — Palo Alto', '654 University Ave', 'Palo Alto', 'CA', '94301', '(650) 555-0165', 84, '2023-01-10'],
+  ['Pho Ha Noi — Berkeley', '987 Shattuck Ave', 'Berkeley', 'CA', '94704', '(510) 555-0136', 48, '2023-04-01'],
+  ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St', 'Fountain Valley', 'CA', '92708', '(714) 555-0117', 70, '2023-07-01'],
+  ['Pho Ha Noi — Santa Clara', '753 El Camino Real', 'Santa Clara', 'CA', '95050', '(408) 555-0158', 62, '2023-10-01'],
+  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave', 'Sunnyvale', 'CA', '94086', '(408) 555-0149', 58, '2024-02-01'],
+  ['Pho Ha Noi — Oakland', '426 Broadway', 'Oakland', 'CA', '94607', '(510) 555-0170', 72, '2024-06-01'],
+];
+
+// Weekly hours (index 0=Mon … 6=Sun): [open, close]
+const HOURS = [['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '23:00'], ['09:00', '23:00'], ['09:00', '21:00']];
+
+// Standard restaurant equipment template: [name, category, vendor, vendor_phone, model, maintenance_freq]
+const EQUIPMENT = [
+  ['Walk-in Cooler', 'Refrigeration', 'CoolTech Refrigeration', '(800) 555-2100', 'CT-WC8x10', 'quarterly'],
+  ['Walk-in Freezer', 'Refrigeration', 'CoolTech Refrigeration', '(800) 555-2100', 'CT-WF6x8', 'quarterly'],
+  ['Pho Broth Kettle (100 qt)', 'Cooking', 'Vulcan Equipment', '(800) 555-3300', 'VK-100ST', 'monthly'],
+  ['6-Burner Range', 'Cooking', 'Vulcan Equipment', '(800) 555-3300', 'V6B-36', 'quarterly'],
+  ['Deep Fryer (dual)', 'Cooking', 'Vulcan Equipment', '(800) 555-3300', 'VF-2X', 'monthly'],
+  ['Commercial Rice Cooker', 'Cooking', 'Town Foodservice', '(800) 555-4400', 'TRC-55', 'biannual'],
+  ['Ice Machine', 'Refrigeration', 'Hoshizaki Service', '(800) 555-5500', 'HZ-500', 'quarterly'],
+  ['Conveyor Dishwasher', 'Cleaning', 'Ecolab', '(800) 555-6600', 'EC-DW44', 'monthly'],
+  ['Exhaust Hood & Fire Suppression', 'Safety', 'BaySafe Fire', '(800) 555-7700', 'BS-Hood12', 'biannual'],
+  ['POS Terminal', 'Technology', 'Toast POS', '(800) 555-8800', 'Toast Flex', 'as_needed'],
+  ['Prep Table Refrigerator', 'Refrigeration', 'CoolTech Refrigeration', '(800) 555-2100', 'CT-PT48', 'quarterly'],
+  ['Steam Table / Soup Warmer', 'Cooking', 'Town Foodservice', '(800) 555-4400', 'TS-6W', 'quarterly'],
 ];
 
 const VENDORS = [
@@ -88,15 +108,49 @@ const VENDORS = [
   ['Bay Restaurant Supply', 'Karen Ho', '(408) 555-0110', 'karen@bayrsupply.example', 3, 'Packaging, cleaning'],
 ];
 
+const rng = (() => { let s = 20260804; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
+const iso = (d) => new Date(d).toISOString().slice(0, 10);
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+
 function run() {
-  // Clear domain tables (respect FK order).
-  for (const t of ['inventory_transactions', 'inventory_lots', 'waste_log', 'cycle_counts',
+  // Clear domain tables (children before parents for FK safety).
+  for (const t of ['message_recipients', 'messages', 'recipe_ingredients', 'menu_items', 'menu_categories',
+                   'daily_sales', 'timesheets', 'equipment', 'location_hours',
+                   'inventory_transactions', 'inventory_lots', 'waste_log', 'cycle_counts',
                    'supply_orders', 'transfer_requests', 'inventory', 'vendors', 'audit_log', 'users', 'locations']) {
     db.exec(`DELETE FROM ${t}`);
   }
 
-  const locIds = LOCATIONS.map(([name, addr]) =>
-    db.prepare(`INSERT INTO locations (name, address) VALUES (?,?)`).run(name, addr).lastInsertRowid);
+  const insLoc = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active) VALUES (?,?,?,?,?,?,?,?,?,?, 'active',1)`);
+  const insHours = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);
+  const locIds = LOCATIONS.map(([name, addr, city, state, zip, phone, seats, opening]) => {
+    const email = city.toLowerCase().replace(/[^a-z]/g, '') + '@phohanoi.com';
+    const id = insLoc.run(name, addr, city, state, zip, phone, email, 'America/Los_Angeles', opening, seats).lastInsertRowid;
+    HOURS.forEach((h, d) => insHours.run(id, d, h[0], h[1]));
+    return id;
+  });
+
+  // Equipment per location (standard set with vendor + maintenance schedule).
+  const insEq = db.prepare(`INSERT INTO equipment (location_id,name,category,model,serial,vendor,vendor_phone,purchase_date,warranty_expiry,maintenance_freq,last_service,next_service,status,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const freqDays = { monthly: 30, quarterly: 91, biannual: 182, annual: 365, as_needed: null };
+  let equipCount = 0;
+  locIds.forEach((lid, li) => {
+    const opening = new Date(LOCATIONS[li][7]);
+    EQUIPMENT.forEach(([name, cat, vendor, vphone, model, freq], ei) => {
+      const purchase = addDays(opening, -14 + ei);
+      const warranty = new Date(purchase); warranty.setFullYear(warranty.getFullYear() + 3);
+      const last = addDays(new Date(), -(15 + Math.floor(rng() * 45)));
+      const fd = freqDays[freq];
+      const next = fd ? iso(addDays(last, fd)) : null;
+      let status = 'operational';
+      const roll = rng();
+      if (roll > 0.94) status = 'out_of_order'; else if (roll > 0.82) status = 'needs_service';
+      if (next && new Date(next) < new Date() && status === 'operational') status = 'needs_service';
+      const serial = 'SN-' + String(lid).padStart(2, '0') + String(ei + 1).padStart(2, '0') + '-' + Math.floor(rng() * 9000 + 1000);
+      insEq.run(lid, name, cat, model, serial, vendor, vphone, iso(purchase), iso(warranty), freq, iso(last), next, status, null);
+      equipCount++;
+    });
+  });
 
   // Users — one account per access level (owner, admin, manager, support, employee).
   const hash = (p) => bcrypt.hashSync(p, 10);
@@ -247,7 +301,6 @@ function run() {
   });
 
   // ── Sales (30 days × all locations) — powers Sales, Analytics & Payments ──
-  const rng = (() => { let s = 20260804; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
   const BASE = [4200, 2600, 3800, 3000, 4600, 2400, 3500, 4000, 2800, 3300]; // per-location daily baseline
   const insSale = db.prepare(`INSERT INTO daily_sales (location_id, sale_date, total_revenue, cash_revenue, card_revenue, online_revenue, cover_count, food_sales, beverage_sales) VALUES (?, date('now', ?), ?,?,?,?,?,?,?)`);
   let salesRows = 0;
@@ -291,7 +344,7 @@ function run() {
   mid = insMsg.run(owner.id, 'all', null, 'Welcome to the Management System', 'Team — our new Pho Ha Noi Management System is live. Please sign in and set your password under Account Settings.', '-1 days').lastInsertRowid;
   db.prepare(`SELECT id FROM users WHERE is_active=1 AND id<>?`).all(owner.id).forEach(u => insMr.run(mid, u.id, 0));
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
+  console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
 
