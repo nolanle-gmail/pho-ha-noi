@@ -21,12 +21,17 @@ level. Several sections have their own horizontal tab bars:
 - **Inventory** — Dashboard · Stock · Orders & Reorder · Transfers · Lots & Expiry
   · Vendors · Reports · Activity · Glossary.
 - **Central Kitchen** (owner/admin) — the production & supply hub for all stores:
-  **Demand** (aggregates daily item requests from every location), **Production**
-  (master recipes scaled into batch sheets with yield/shrinkage control + safety-
-  stock alerts; record runs to update on-hand), **Fulfillment** (consolidated
-  pick-list, per-store packing slips, and delivery-route manifests), and **CK
-  Staff** (roster, photo-verified task assignments, shift schedule, and a **PIN
-  time-clock** terminal). The Central Kitchen is a special `central_kitchen`
+  **Demand** (aggregates daily item requests from every location — with a
+  **Generate from sales** action that rebuilds requests from each store's 7-day
+  average covers × per-cover usage), **Production** (master recipes scaled into
+  batch sheets with yield/shrinkage control + safety-stock alerts; record runs to
+  update on-hand), **Recipes** (a **master-recipe editor** — add/edit products
+  and their batch yield, shrinkage, safety stock, and per-batch ingredients drawn
+  from real inventory costs), **Fulfillment** (consolidated pick-list, per-store
+  packing slips, and delivery-route manifests — fulfilling a store **delivers the
+  produced stock into that store's own inventory** as a logged *in* transfer),
+  and **CK Staff** (roster, photo-verified task assignments, shift schedule, and a
+  **PIN time-clock** terminal). The Central Kitchen is a special `central_kitchen`
   location (in the Locations directory but hidden from store switchers).
 - **Menu/Recipes** — **Menu** (items + categories, CRUD), **Recipes** (link each
   item to inventory ingredients per serving; live recipe cost / food-cost % /
@@ -118,5 +123,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 111 checks · waitlist: 32 checks
+npm run smoke      # management: 120 checks · waitlist: 32 checks
 ```

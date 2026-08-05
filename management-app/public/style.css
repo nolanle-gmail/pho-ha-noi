@@ -184,6 +184,10 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .ck-clock input { margin: 0; }
 .ck-clock-row { display: flex; justify-content: space-between; font-size: .85rem; padding: .3rem 0; border-bottom: 1px solid var(--line); }
 .ck-clock-row:last-child { border-bottom: none; }
+.ck-rec-add { display: flex; gap: .5rem; margin: .7rem 0; flex-wrap: wrap; }
+.ck-rec-add select { flex: 1 1 auto; margin: 0; min-width: 0; }
+.ck-rec-add input { width: 120px; margin: 0; }
+.row-actions { display: flex; gap: .4rem; justify-content: flex-end; }
 
 @media (max-width: 860px) {
   .sidebar { transform: translateX(-100%); transition: transform .2s; }

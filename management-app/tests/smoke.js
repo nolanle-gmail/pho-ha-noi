@@ -335,11 +335,31 @@ const check = (name, ok, detail = '') => {
     const ckProds2 = await j(await fetch(base + '/api/central/products', { headers: H(token) }));
     check('CK on-hand increased after production', ckProds2.find(p => p.id === sheet.product_id).on_hand > onHandBefore);
 
+    // Master-recipe editor: create product, update its attributes, set its recipe.
+    r = await fetch(base + '/api/central/products', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Test Chili Oil', unit: 'bottle', batch_yield: 50, shrinkage_pct: 0.05, safety_stock: 30, on_hand: 10 }) });
+    const newProd = await j(r);
+    check('CK create product', r.status === 200 && newProd.id > 0);
+    r = await fetch(base + `/api/central/products/${newProd.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ safety_stock: 80, shrinkage_pct: 0.12 }) });
+    check('CK update product attributes', r.status === 200);
+    const ingList = await j(await fetch(base + '/api/central/ingredients', { headers: H(token) }));
+    check('CK ingredient picker (from inventory costs)', ingList.length > 0 && ingList.every(i => 'avg_cost' in i));
+    r = await fetch(base + `/api/central/products/${newProd.id}/recipe`, { method: 'PUT', headers: H(token), body: JSON.stringify({ ingredients: [{ item_name: ingList[0].item_name, quantity: 4 }] }) });
+    check('CK set recipe', r.status === 200);
+    const edited = (await j(await fetch(base + '/api/central/products', { headers: H(token) }))).find(p => p.id === newProd.id);
+    check('CK product reflects edits (attrs + recipe + cost)', edited.safety_stock === 80 && Math.abs(edited.shrinkage_pct - 0.12) < 1e-9 && edited.ingredients.length === 1 && edited.batch_cost > 0, JSON.stringify({ s: edited.safety_stock, i: edited.ingredients.length, c: edited.batch_cost }));
+
     const ckFul = await j(await fetch(base + '/api/central/fulfillment', { headers: H(token) }));
     check('CK fulfillment (stores, pick list, manifests)', ckFul.stores.length === 10 && ckFul.pick_list.length === 7 && ckFul.manifests.length >= 3 && ckFul.stores.every(s => s.location_id), 'manifests=' + ckFul.manifests.length);
     const fulStore = ckFul.stores.find(s => s.status === 'requested');
-    r = await fetch(base + `/api/central/fulfill/${fulStore.location_id}`, { method: 'POST', headers: H(token), body: '{}' });
-    check('CK fulfill a store', r.status === 200 && (await j(r)).fulfilled >= 1);
+    const stockBefore = await j(await fetch(base + `/api/inventory/?location_id=${fulStore.location_id}`, { headers: H(token) }));
+    const ful = await j(await fetch(base + `/api/central/fulfill/${fulStore.location_id}`, { method: 'POST', headers: H(token), body: '{}' }));
+    check('CK fulfill a store', ful.fulfilled >= 1);
+    // Fulfillment delivers the produced stock into the store's own inventory.
+    const stockAfter = await j(await fetch(base + `/api/inventory/?location_id=${fulStore.location_id}`, { headers: H(token) }));
+    const delivered = stockAfter.filter(i => i.category === 'Prepared (Central Kitchen)');
+    check('CK delivery lands in store inventory', delivered.length >= 1 && stockAfter.length >= stockBefore.length, JSON.stringify({ before: stockBefore.length, after: stockAfter.length, delivered: delivered.length }));
+    const deliveryTxn = (await j(await fetch(base + `/api/inventory/transactions?location_id=${fulStore.location_id}`, { headers: H(token) }))).some(t => t.notes === 'Central Kitchen delivery');
+    check('CK delivery logged in store ledger', deliveryTxn);
 
     const ckStaff = await j(await fetch(base + '/api/central/staff', { headers: H(token) }));
     check('CK staff with PINs', ckStaff.length === 3 && ckStaff.every(s => s.has_pin));
@@ -357,6 +377,12 @@ const check = (name, ok, detail = '') => {
     check('PIN clock-out', cout.success && cout.action === 'clock_out', JSON.stringify(cout.action));
     r = await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '0000' }) });
     check('bad PIN rejected (404)', r.status === 404, 'status=' + r.status);
+
+    // Auto-generate store requests from each store's recent sales (7-day covers).
+    const gen = await j(await fetch(base + '/api/central/generate-requests', { method: 'POST', headers: H(token), body: '{}' }));
+    check('CK generate requests from sales', gen.success && gen.generated > 0 && gen.stores > 0, JSON.stringify({ g: gen.generated, s: gen.stores }));
+    const demGen = await j(await fetch(base + '/api/central/demand', { headers: H(token) }));
+    check('generated demand reflects sales volume', demGen.products.some(p => p.total_requested > 0 && p.by_store.length > 0));
 
     // RBAC: central kitchen is owner/admin only
     r = await fetch(base + '/api/central/summary', { headers: H(mgr.token) });

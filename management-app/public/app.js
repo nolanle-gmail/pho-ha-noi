@@ -1232,14 +1232,14 @@ async function renderCompose() {
 }
 
 // ── Central Kitchen module (production & supply hub) ────────────────────────
-const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['recipes', 'Recipes'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
 function renderCkTabs() {
   $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
 }
 function renderCentral() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
+  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, recipes: renderCkRecipes, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
 }
 
 async function renderCkOverview() {
@@ -1258,6 +1258,7 @@ async function renderCkOverview() {
       <div class="quick-grid">
         <button class="quick-card" data-ckgo="demand"><span class="q-icon">📥</span><span>Demand aggregation</span></button>
         <button class="quick-card" data-ckgo="production"><span class="q-icon">🍲</span><span>Batch production</span></button>
+        <button class="quick-card" data-ckgo="recipes"><span class="q-icon">📖</span><span>Master recipes</span></button>
         <button class="quick-card" data-ckgo="fulfillment"><span class="q-icon">🚚</span><span>Fulfillment</span></button>
         <button class="quick-card" data-ckgo="staff"><span class="q-icon">👥</span><span>CK staff & clock</span></button>
       </div></div>`;
@@ -1268,7 +1269,8 @@ async function renderCkDemand() {
   const d = await api('/central/demand');
   const max = Math.max(1, ...d.products.map(p => p.total_requested));
   $('view').innerHTML = `
-    <h2 class="page">Demand Aggregation <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${d.date}, all stores</span></h2>
+    <div class="row-between"><h2 class="page">Demand Aggregation <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${d.date}, all stores</span></h2>
+      <button class="btn sm" id="ckGenReq" title="Rebuild today's requests from each store's recent sales">⚡ Generate from sales</button></div>
     <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Requested</th><th class="num">Stores</th><th class="num">On hand</th><th class="num">Safety</th><th style="width:26%">Demand</th></tr></thead><tbody>
       ${d.products.map(p => `<tr class="ck-demand-row" data-pid="${p.id}">
         <td><strong>${esc(p.name)}</strong></td>
@@ -1280,8 +1282,12 @@ async function renderCkDemand() {
       </tr>
       <tr class="ck-stores hidden" data-for="${p.id}"><td colspan="6" style="background:var(--bg)"><div class="ck-store-chips">${p.by_store.length ? p.by_store.map(s => `<span class="chip">${esc(shortLoc(s.location))}: <strong>${numf(s.quantity)}</strong></span>`).join('') : '<span style="color:var(--muted)">No store requests</span>'}</div></td></tr>`).join('')}
     </tbody></table></div>
-    <p class="sub" style="color:var(--muted);margin-top:.6rem">Click a product to see the per-store breakdown.</p>`;
+    <p class="sub" style="color:var(--muted);margin-top:.6rem">Click a product to see the per-store breakdown. <strong>Generate from sales</strong> rebuilds today's requests from each store's 7-day average covers.</p>`;
   $('view').querySelectorAll('.ck-demand-row').forEach(r => r.onclick = () => { const t = $('view').querySelector(`.ck-stores[data-for="${r.dataset.pid}"]`); t.classList.toggle('hidden'); });
+  $('ckGenReq').onclick = async () => {
+    try { const r = await api('/central/generate-requests', { method: 'POST', body: '{}' }); toast(`Generated ${r.generated} requests across ${r.stores} stores`); renderCentral(); }
+    catch (e) { toast(e.message, true); }
+  };
 }
 
 async function renderCkProduction() {
@@ -1320,10 +1326,88 @@ async function renderCkProduction() {
   ], async (v) => { const r = await api('/central/production', { method: 'POST', body: JSON.stringify({ product_id: b.dataset.produce, ...v }) }); toast(`Produced ${numf(r.produced)} units`); renderCentral(); }, 'Record'));
 }
 
+async function renderCkRecipes() {
+  const products = await api('/central/products');
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Master Recipes <span style="font-weight:400;color:var(--muted);font-size:.9rem">— batch yield, shrinkage & ingredients</span></h2>
+      <button class="btn sm" id="ckAddProd">+ Add product</button></div>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Edit each product's batch yield, shrinkage and safety stock, and the ingredients consumed per batch. These drive batch scaling, yield/loss and cost across the module.</p>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Product</th><th class="num">Batch yield</th><th class="num">Shrink</th><th class="num">Usable / batch</th>
+      <th class="num">Safety</th><th class="num">On hand</th><th class="num">Batch cost</th><th class="num">Ingredients</th><th></th>
+    </tr></thead><tbody>
+      ${products.map(p => `<tr>
+        <td><strong>${esc(p.name)}</strong> <span style="color:var(--muted)">${esc(p.unit)}</span></td>
+        <td class="num">${numf(p.batch_yield)}</td>
+        <td class="num">${(p.shrinkage_pct * 100).toFixed(0)}%</td>
+        <td class="num">${numf(p.usable_per_batch)}</td>
+        <td class="num">${numf(p.safety_stock)}</td>
+        <td class="num ${p.on_hand < p.safety_stock ? 'ck-low' : ''}">${numf(p.on_hand)}</td>
+        <td class="num">${money(p.batch_cost)}</td>
+        <td class="num">${p.ingredients.length}</td>
+        <td><div class="row-actions"><button class="btn sm ghost" data-editprod="${p.id}">Edit</button><button class="btn sm" data-editrec="${p.id}">Recipe</button></div></td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
+  const byId = (id) => products.find(p => p.id == id);
+  $('ckAddProd').onclick = () => ckProductModal(null);
+  $('view').querySelectorAll('[data-editprod]').forEach(b => b.onclick = () => ckProductModal(byId(b.dataset.editprod)));
+  $('view').querySelectorAll('[data-editrec]').forEach(b => b.onclick = () => ckRecipeModal(byId(b.dataset.editrec)));
+}
+
+function ckProductModal(p) {
+  const isNew = !p;
+  modal(isNew ? 'Add CK product' : `Edit — ${p.name}`, [
+    { key: 'name', label: 'Product name', value: p ? p.name : '' },
+    { key: 'unit', label: 'Unit (gal, lb, each, bottle…)', value: p ? p.unit : 'each' },
+    { key: 'batch_yield', label: 'Batch yield (gross output per batch)', type: 'number', step: '0.1', value: p ? p.batch_yield : 0 },
+    { key: 'shrinkage_pct', label: 'Shrinkage (0–0.9, e.g. 0.06 = 6%)', type: 'number', step: '0.01', value: p ? p.shrinkage_pct : 0 },
+    { key: 'safety_stock', label: 'Safety stock', type: 'number', value: p ? p.safety_stock : 0 },
+    { key: 'on_hand', label: 'On hand', type: 'number', value: p ? p.on_hand : 0 },
+  ], async (v) => {
+    if (isNew) { await api('/central/products', { method: 'POST', body: JSON.stringify(v) }); toast('Product added — add its recipe next'); }
+    else { await api('/central/products/' + p.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Product updated'); }
+    renderCentral();
+  }, isNew ? 'Add' : 'Save');
+}
+
+async function ckRecipeModal(p) {
+  const ingredients = await api('/central/ingredients');
+  let list = p.ingredients.map(i => ({ item_name: i.item_name, quantity: i.quantity }));
+  const host = $('modalHost');
+  const render = () => {
+    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:560px"><h3>Recipe — ${esc(p.name)}</h3><div class="err" id="mErr"></div>
+      <p class="sub" style="color:var(--muted);margin-top:0">Ingredients consumed <strong>per batch</strong> (one batch yields ${numf(p.batch_yield)} ${esc(p.unit)}).</p>
+      <div class="table-wrap"><table><tbody>
+        ${list.length ? list.map((i, idx) => `<tr><td>${esc(i.item_name)}</td><td class="num">${numf(i.quantity)}</td><td style="width:1%"><button class="btn sm ghost" data-rm="${idx}">✕</button></td></tr>`).join('') : '<tr><td colspan="3" class="empty">No ingredients yet.</td></tr>'}
+      </tbody></table></div>
+      <div class="ck-rec-add"><select id="ckIng">${ingredients.map(i => `<option value="${esc(i.item_name)}">${esc(i.item_name)} · ${money(i.avg_cost)}</option>`).join('')}</select>
+        <input id="ckQty" type="number" step="0.01" min="0" placeholder="Qty / batch"><button class="btn ghost" id="ckAddIng">+ Add</button></div>
+      <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save recipe</button></div>
+    </div></div>`;
+    const close = () => host.innerHTML = '';
+    $('mCancel').onclick = close;
+    host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    host.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { list.splice(+b.dataset.rm, 1); render(); });
+    $('ckAddIng').onclick = () => {
+      const name = $('ckIng').value, q = parseFloat($('ckQty').value);
+      if (!name || !(q > 0)) { toast('Pick an ingredient and a quantity', true); return; }
+      const ex = list.find(x => x.item_name === name);
+      if (ex) ex.quantity += q; else list.push({ item_name: name, quantity: q });
+      render();
+    };
+    $('mOk').onclick = async () => {
+      try { await api('/central/products/' + p.id + '/recipe', { method: 'PUT', body: JSON.stringify({ ingredients: list }) }); toast('Recipe saved'); close(); renderCentral(); }
+      catch (e) { $('mErr').textContent = e.message; }
+    };
+  };
+  render();
+}
+
 async function renderCkFulfillment() {
   const d = await api('/central/fulfillment');
   $('view').innerHTML = `
     <h2 class="page">Fulfillment & Logistics <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${d.date}</span></h2>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Fulfilling a store deducts Central Kitchen on-hand and delivers the stock into that store's own inventory (a logged <em>in</em> transfer).</p>
     <div class="section"><h3>Consolidated pick list</h3>
       <div class="table-wrap"><table><thead><tr><th>Product</th><th class="num">Total to pick</th></tr></thead><tbody>
         ${d.pick_list.map(p => `<tr><td><strong>${esc(p.product)}</strong></td><td class="num">${numf(p.quantity)} ${esc(p.unit)}</td></tr>`).join('')}
