@@ -1,13 +1,13 @@
 :root {
-  --red: #b91c1c;
-  --red-dark: #7f1d1d;
-  --gold: #f59e0b;
-  --gold-soft: #fef3c7;
-  --bg: #faf7f2;
+  --red: #930B19;
+  --red-dark: #62070e;
+  --gold: #cfa941;
+  --gold-soft: #f6ecd8;
+  --bg: #f7f3ec;
   --surface: #ffffff;
-  --ink: #1f2937;
-  --muted: #6b7280;
-  --line: #ece7df;
+  --ink: #323232;
+  --muted: #6b6058;
+  --line: #e7dece;
   --ok: #16a34a;
   --ok-bg: #dcfce7;
   --low: #d97706;
@@ -37,6 +37,9 @@ button { font-family: inherit; cursor: pointer; }
 }
 .brand { font-size: 1.8rem; font-weight: 800; color: var(--red); letter-spacing: -.5px; }
 .brand .bowl { font-size: 2.4rem; display: block; }
+.brand-logo { background: linear-gradient(135deg, var(--red), var(--red-dark)); border-radius: 14px; padding: 1rem 1.2rem; }
+.brand-logo img { height: 56px; width: auto; display: block; margin: 0 auto; }
+.sidebar-logo .logo-img { height: 40px; width: auto; display: block; filter: drop-shadow(0 2px 6px rgba(0,0,0,.35)); }
 .sub { color: var(--muted); margin: .25rem 0 1.5rem; font-size: .9rem; }
 input, select {
   width: 100%; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 10px;

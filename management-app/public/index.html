@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pho Ha Noi — Management System</title>
+  <title>Enterprise Restaurant Management System</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
   <!-- Login -->
   <div id="login" class="login-wrap">
     <form class="login-card" id="loginForm">
-      <div class="brand"><span class="bowl">🍜</span> Pho Ha Noi</div>
-      <div class="sub">Management System</div>
+      <div class="brand-logo"><img src="/brand.svg" alt="Phở Hà Nội" /></div>
+      <div class="sub" style="margin-top:.6rem">Enterprise Restaurant Management System</div>
       <div class="err" id="loginErr"></div>
       <input id="email" type="email" placeholder="Email" value="harry@phohanoi.com" autocomplete="username" />
       <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
@@ -26,9 +26,8 @@
   <div id="app" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-logo">
-        <div class="logo-icon">🍜</div>
-        <div class="logo-name">Pho Ha Noi</div>
-        <div class="logo-sub">Management System</div>
+        <img class="logo-img" src="/brand.svg" alt="Phở Hà Nội" />
+        <div class="logo-sub">Enterprise Restaurant Management System</div>
       </div>
       <div class="sidebar-user" id="sbUser"></div>
       <nav class="sidebar-nav" id="sidebarNav"></nav>

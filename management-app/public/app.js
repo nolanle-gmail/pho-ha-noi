@@ -563,7 +563,7 @@ async function renderOverview() {
   $('view').innerHTML = `
     <div class="overview-hero">
       <h2>Welcome, ${esc(S.user.name.split(' ')[0])}</h2>
-      <p>Pho Ha Noi Management System · <span class="role-chip">${esc(S.user.role)}</span></p>
+      <p>Enterprise Restaurant Management System · <span class="role-chip">${esc(S.user.role)}</span></p>
     </div>
     <div class="kpis">
       <div class="card"><div class="label">Locations</div><div class="value">${S.locations.length}</div></div>

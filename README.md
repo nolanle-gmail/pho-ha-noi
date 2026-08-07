@@ -8,11 +8,11 @@ in the same stack as the reference design in `C:\Restaurant_Design`
 
 ```
 PhoHaNoi/
-├── management-app/  Pho Ha Noi Management System — shell + inventory (port 4001)
+├── management-app/  Enterprise Restaurant Management System — shell + inventory (port 4001)
 └── waitlist-app/    Host check-in / waiting list (port 4002)
 ```
 
-## 1. Pho Ha Noi Management System  (`management-app`, http://localhost:4001)
+## 1. Enterprise Restaurant Management System  (`management-app`, http://localhost:4001)
 
 **Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
 Inventory · Central Kitchen · Menu/Recipes · Reports · Messages) plus **Account
