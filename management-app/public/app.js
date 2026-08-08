@@ -759,7 +759,10 @@ const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['acce
 function renderStaffTabs() {
   if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
   $('tabs').innerHTML = STAFF_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.staffTab = b.dataset.stab; renderStaffTabs(); renderStaffModule(); });
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (b.dataset.stab === 'directory') { staffLetter = 'A'; staffSearch = ''; } // default to letter A
+    S.staffTab = b.dataset.stab; renderStaffTabs(); renderStaffModule();
+  });
 }
 function renderStaffModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
@@ -798,22 +801,34 @@ async function renderStaffOverview() {
 }
 
 let staffSearch = '';
+let staffLetter = 'A';
+const letterOf = (u) => { const L = (u.name.trim()[0] || '#').toUpperCase(); return /[A-Z]/.test(L) ? L : '#'; };
 async function renderStaffDirectory() {
   let rows, locations;
   try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations').catch(() => S.locations)]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
   const canManage = ['owner', 'admin'].includes(S.user.role);
-  const q = staffSearch.toLowerCase();
-  const shown = (q ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q)) : rows)
+  const q = staffSearch.trim().toLowerCase();
+  const searching = q.length > 0;
+  // Which first-letters actually have people (for the A–Z bar).
+  const present = new Set(rows.map(letterOf));
+  const shown = (searching
+    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q))
+    : rows.filter(u => letterOf(u) === staffLetter))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
-  const colspan = canManage ? 6 : 5;
+
+  // A–Z bar (plus '#' only if some name is non-alphabetic).
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').concat(present.has('#') ? ['#'] : []);
+  const bar = letters.map(L => {
+    const has = present.has(L);
+    const active = !searching && L === staffLetter;
+    return `<button type="button" class="ltr${active ? ' active' : ''}" data-ltr="${L}"${has ? '' : ' disabled'}>${L}</button>`;
+  }).join('');
+
   let body = '';
-  if (!shown.length) body = `<tr><td colspan="${colspan}" class="empty">No staff match your search.</td></tr>`;
+  if (!shown.length) body = `<tr><td colspan="6" class="empty">${searching ? 'No staff match your search.' : 'No staff with names starting “' + staffLetter + '”.'}</td></tr>`;
   else {
-    let letter = '';
     for (const u of shown) {
-      const L = (u.name[0] || '#').toUpperCase();
-      if (L !== letter) { letter = L; body += `<tr class="grp"><td colspan="${colspan}">${letter}</td></tr>`; }
       const st = staffStatus(u);
       body += `<tr>
         <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
@@ -821,35 +836,42 @@ async function renderStaffDirectory() {
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
         <td><span class="badge ${STATUS_CHIP[st] || 'gray'}">${st}</span></td>
-        ${canManage ? `<td><div class="actions-cell">
-          <button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
+        <td><div class="actions-cell">
+          <button class="btn sm" data-sact="view" data-id="${u.id}">View</button>
+          ${canManage ? `<button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
           <button class="btn sm ghost" data-sact="pw" data-id="${u.id}">Reset password</button>
-          <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>
-        </div></td>` : ''}
+          <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>` : ''}
+        </div></td>
       </tr>`;
     }
   }
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
       ${canManage ? '<button class="btn" id="addStaff">+ Add staff</button>' : '<span class="badge gray">View only</span>'}</div>
-    <div style="margin-bottom:1rem"><input id="staffSearch" placeholder="Search name, email or role…" value="${esc(staffSearch)}" style="max-width:320px" /></div>
+    <div class="letter-bar">${bar}</div>
+    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
+      ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th>${canManage ? '<th>Actions</th>' : ''}
+      <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 
+  // A–Z letter bar — clicking a letter filters to it and clears any search.
+  $('view').querySelectorAll('[data-ltr]').forEach(b => b.onclick = () => {
+    staffLetter = b.dataset.ltr; staffSearch = ''; renderStaffDirectory();
+  });
   const search = $('staffSearch');
   search.oninput = () => { staffSearch = search.value; const pos = search.selectionStart; renderStaffDirectory().then(() => { const s = $('staffSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }); };
-  // Profile link — available to anyone who can see the directory.
+  // Profile link + View button — available to anyone who can see the directory.
   $('view').querySelectorAll('[data-prof]').forEach(a => a.onclick = (e) => { e.preventDefault(); renderStaffProfile(a.dataset.prof); });
-  if (canManage) {
-    $('addStaff').onclick = () => renderStaffAdd(locations);
-    $('view').querySelectorAll('[data-sact]').forEach(b => b.onclick = () => {
-      const u = rows.find(x => x.id == b.dataset.id);
-      if (b.dataset.sact === 'edit') staffModal(u, locations);
-      else if (b.dataset.sact === 'pw') resetStaffPassword(u);
-      else if (b.dataset.sact === 'toggle') toggleStaff(u);
-    });
-  }
+  $('view').querySelectorAll('[data-sact]').forEach(b => b.onclick = () => {
+    const u = rows.find(x => x.id == b.dataset.id);
+    const act = b.dataset.sact;
+    if (act === 'view') renderStaffProfile(u.id);
+    else if (act === 'edit') staffModal(u, locations);
+    else if (act === 'pw') resetStaffPassword(u);
+    else if (act === 'toggle') toggleStaff(u);
+  });
+  if (canManage) $('addStaff').onclick = () => renderStaffAdd(locations);
 }
 
 // ── Staff profile (full HR record) ───────────────────────────────────────────
@@ -866,7 +888,11 @@ async function renderStaffProfile(id) {
   $('view').innerHTML = `
     <div class="row-between">
       <button class="btn sm ghost" id="backDir">← Directory</button>
-      ${canEdit ? '<button class="btn" id="editProf">Edit profile</button>' : '<span class="badge gray">View only</span>'}
+      ${canEdit ? `<div class="actions-cell">
+        <button class="btn sm ghost" id="profPw">Reset password</button>
+        <button class="btn sm ghost" id="profToggle">${d.is_active ? 'Deactivate' : 'Activate'}</button>
+        <button class="btn" id="editProf">Edit profile</button>
+      </div>` : '<span class="badge gray">View only</span>'}
     </div>
     <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(d.role)}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
     <p class="sub" style="color:var(--muted);margin-top:0">${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
@@ -880,7 +906,16 @@ async function renderStaffProfile(id) {
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${F('Skills / roles', p.skills)}${F('Notes', p.notes)}</div>
     </div>`;
   $('backDir').onclick = () => renderStaffModule();
-  if (canEdit) $('editProf').onclick = () => staffProfileEdit(d, locations, staff);
+  if (canEdit) {
+    $('editProf').onclick = () => staffProfileEdit(d, locations, staff);
+    $('profPw').onclick = () => resetStaffPassword({ id: d.id, name: d.name });
+    $('profToggle').onclick = () => {
+      modal(`${d.is_active ? 'Deactivate' : 'Activate'} ${d.name}?`, [], async () => {
+        await api('/staff/' + d.id, { method: 'PUT', body: JSON.stringify({ is_active: !d.is_active }) });
+        toast(d.is_active ? 'Account deactivated' : 'Account activated'); renderStaffProfile(d.id);
+      }, d.is_active ? 'Deactivate' : 'Activate');
+    };
+  }
 }
 
 function staffProfileEdit(d, locations, staff) {

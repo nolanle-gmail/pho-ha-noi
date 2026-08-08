@@ -159,12 +159,21 @@ function run() {
     db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run(name, email, hash(pw), role, lid);
   mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null);           // sees everything
   mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null);             // sees everything (for now)
-  locIds.forEach((lid, i) => mkUser(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid));
+  // Ten managers, one per store — real names (login emails stay manager1..10@phohanoi.com).
+  const MANAGER_NAMES = [
+    'Danh Pham', 'Kim Tran', 'Long Nguyen', 'Mai Vo', 'Quang Bui',
+    'Linh Dao', 'Tuan Ho', 'Hoa Ly', 'Bao Phan', 'Anh Truong',
+  ];
+  const managerIds = locIds.map((lid, i) =>
+    Number(mkUser(MANAGER_NAMES[i], `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid).lastInsertRowid));
   mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0]);
   mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0]);
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
+
+  // ── Staff HR profiles + 150 generated staff ────────────────────────────────
+  seedStaffProfiles(db, locIds, managerIds);
 
   // Vendors
   VENDORS.forEach(([name, contact, phone, email, lead, notes]) =>
@@ -417,6 +426,113 @@ function run() {
 
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
+}
+
+// ── Staff HR profiles + 150 generated staff ──────────────────────────────────
+// Gives the 10 managers (+ support/employee) real HR records, then generates
+// 150 staff spread across the stores, each with a full profile for the Directory.
+function seedStaffProfiles(db, locIds, managerIds) {
+  const rand = (n) => Math.floor(Math.random() * n);
+  const pick = (arr) => arr[rand(arr.length)];
+  const pad = (n, w) => String(n).padStart(w, '0');
+
+  const FIRST = [
+    'An', 'Bao', 'Binh', 'Chau', 'Cuong', 'Dao', 'Diep', 'Duc', 'Dung', 'Giang',
+    'Ha', 'Hai', 'Hanh', 'Hieu', 'Hoa', 'Hoang', 'Hong', 'Hue', 'Huy', 'Khanh',
+    'Lam', 'Lan', 'Linh', 'Loan', 'Long', 'Mai', 'Minh', 'Nam', 'Nga', 'Ngoc',
+    'Nhung', 'Oanh', 'Phong', 'Phuc', 'Phuong', 'Quan', 'Quyen', 'Son', 'Tam', 'Thanh',
+    'Thao', 'Thu', 'Thuy', 'Tien', 'Toan', 'Trang', 'Trinh', 'Tuan', 'Tuyet', 'Vy',
+    'Alex', 'Amy', 'Brian', 'Cindy', 'David', 'Ella', 'Frank', 'Grace', 'Henry', 'Ivy',
+    'Jason', 'Kevin', 'Lisa', 'Nathan', 'Olivia', 'Peter', 'Rachel', 'Steven', 'Tina', 'William',
+  ];
+  const LAST = [
+    'Nguyen', 'Tran', 'Le', 'Pham', 'Hoang', 'Phan', 'Vu', 'Vo', 'Dang', 'Bui',
+    'Do', 'Ho', 'Ngo', 'Duong', 'Ly', 'Dinh', 'Dao', 'Truong', 'Cao', 'Mai',
+    'Chen', 'Wang', 'Kim', 'Park', 'Garcia', 'Martinez', 'Nguyen-Tran', 'Lam', 'Ta', 'Luu',
+  ];
+  const CITIES = [
+    ['San Jose', '95112'], ['Milpitas', '95035'], ['Cupertino', '95014'], ['Fremont', '94536'],
+    ['Palo Alto', '94301'], ['Berkeley', '94704'], ['Santa Clara', '95050'], ['Sunnyvale', '94086'],
+    ['Oakland', '94607'], ['Fountain Valley', '92708'],
+  ];
+  const STREETS = ['Oak', 'Maple', 'Cedar', 'Pine', 'Elm', 'Willow', 'Lincoln', 'Mission', 'Bascom', 'King', 'Alum Rock', 'Story', 'Tully', 'Berryessa'];
+  const FOH_TITLES = ['Server', 'Host', 'Cashier', 'Busser', 'Barista', 'Shift Lead', 'Food Runner'];
+  const BOH_TITLES = ['Line Cook', 'Prep Cook', 'Dishwasher', 'Kitchen Assistant', 'Broth Cook', 'Grill Cook'];
+  const EMP_TYPES = ['full_time', 'full_time', 'full_time', 'part_time', 'part_time', 'seasonal'];
+  const STATUSES = ['active', 'active', 'active', 'active', 'active', 'active', 'active', 'active', 'vacation', 'sick', 'inactive'];
+  const RELATIONS = ['Spouse', 'Parent', 'Sibling', 'Partner', 'Friend'];
+  const CONTACTS = ['phone', 'email', 'text'];
+  const SKILLS_FOH = ['customer service', 'POS / register', 'opening', 'closing', 'catering', 'training new hires', 'bilingual (VN/EN)'];
+  const SKILLS_BOH = ['broth prep', 'knife skills', 'grill', 'wok', 'food safety', 'inventory', 'noodle station'];
+
+  const phone = () => `(${pick(['408', '510', '650', '669', '714', '925'])}) ${pad(rand(900) + 100, 3)}-${pad(rand(10000), 4)}`;
+  const dob = () => `19${pad(rand(38) + 62, 2)}-${pad(rand(12) + 1, 2)}-${pad(rand(28) + 1, 2)}`; // 1962–1999
+  const hireDate = () => `20${pad(rand(9) + 16, 2)}-${pad(rand(12) + 1, 2)}-${pad(rand(28) + 1, 2)}`; // 2016–2024
+
+  const insProfile = db.prepare(`INSERT INTO staff_profiles
+    (user_id, preferred_name, legal_first_name, legal_last_name, dob, gender, personal_email,
+     phone, address_line1, city, state, postal_code, country, emergency_name, emergency_relation,
+     emergency_phone, employee_code, job_title, department, employment_type, status, hire_date,
+     pay_type, preferred_contact, skills, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'))
+    ON CONFLICT(user_id) DO NOTHING`);
+
+  // Build a profile record for an existing user id.
+  const mkProfile = (userId, first, last, opts = {}) => {
+    const [city, zip] = pick(CITIES);
+    const boh = opts.boh !== undefined ? opts.boh : Math.random() < 0.5;
+    const title = opts.title || (boh ? pick(BOH_TITLES) : pick(FOH_TITLES));
+    const dept = opts.department || (boh ? 'Back of House' : 'Front of House');
+    const skills = (boh ? SKILLS_BOH : SKILLS_FOH).filter(() => Math.random() < 0.4);
+    insProfile.run(
+      userId, first, first, last, dob(), pick(['female', 'male', 'other', '']),
+      `${first}.${last}${rand(90) + 10}@gmail.com`.toLowerCase(),
+      phone(), `${rand(4000) + 100} ${pick(STREETS)} St`, city, 'CA', zip, 'USA',
+      `${pick(FIRST)} ${last}`, pick(RELATIONS), phone(),
+      opts.code || `PHN-${pad(userId, 4)}`, title, dept,
+      opts.employment_type || pick(EMP_TYPES), opts.status || pick(STATUSES), hireDate(),
+      'hourly', pick(CONTACTS), skills.join(', '),
+    );
+  };
+
+  // Managers, support, employee get real HR records too.
+  managerIds.forEach((id, i) => {
+    const u = db.prepare(`SELECT name FROM users WHERE id=?`).get(id);
+    const [first, ...rest] = (u.name || 'Store Manager').split(' ');
+    mkProfile(id, first, rest.join(' ') || 'Manager', {
+      title: 'General Manager', department: 'Management', boh: false,
+      employment_type: 'full_time', status: 'active', code: `MGR-${pad(i + 1, 3)}`,
+    });
+  });
+  const support = db.prepare(`SELECT id FROM users WHERE role='support' LIMIT 1`).get();
+  if (support) mkProfile(support.id, 'Support', 'Staff', { title: 'Inventory Support', department: 'Operations', boh: false, employment_type: 'full_time', status: 'active' });
+  const emp = db.prepare(`SELECT id FROM users WHERE email='employee@phohanoi.com'`).get();
+  if (emp) mkProfile(emp.id, 'Employee', 'One', { title: 'Server', department: 'Front of House', boh: false, employment_type: 'part_time', status: 'active' });
+
+  // 150 generated staff spread across the stores.
+  const insUser = db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id,hourly_rate,is_active) VALUES (?,?,?,?,?,?,?)`);
+  const pwHash = bcrypt.hashSync('Staff123!', 10);
+  const insAlsoWorks = db.prepare(`INSERT OR IGNORE INTO staff_locations (user_id, location_id) VALUES (?,?)`);
+  const usedEmail = new Set();
+  let made = 0;
+  for (let i = 0; i < 150; i++) {
+    const first = pick(FIRST), last = pick(LAST);
+    let email = `${first}.${last}${i + 1}@phohanoi.com`.toLowerCase();
+    while (usedEmail.has(email)) email = `${first}.${last}${i + 1}.${rand(999)}@phohanoi.com`.toLowerCase();
+    usedEmail.add(email);
+    const role = Math.random() < 0.18 ? 'support' : 'employee';
+    const lid = pick(locIds);
+    const boh = Math.random() < 0.5;
+    const status = pick(STATUSES);
+    const rate = role === 'support' ? 20 + rand(6) : 16 + rand(8);
+    const r = insUser.run(`${first} ${last}`, email, pwHash, role, lid, rate, status === 'inactive' ? 0 : 1);
+    const uid = Number(r.lastInsertRowid);
+    mkProfile(uid, first, last, { boh, status });
+    // ~30% also work a second store (transfers / cross-location coverage).
+    if (Math.random() < 0.3) { const alt = pick(locIds); if (alt !== lid) insAlsoWorks.run(uid, alt); }
+    made++;
+  }
+  console.log(`Seeded ${managerIds.length} manager profiles + ${made} generated staff with HR profiles.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }
