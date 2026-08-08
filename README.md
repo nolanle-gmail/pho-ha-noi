@@ -57,10 +57,11 @@ level. Several sections have their own horizontal tab bars:
     profile**, **Reset password**, and **Activate/Deactivate**. By design, SSN and
     bank/account numbers are **not** stored here — keep those in your payroll
     provider (only a non-sensitive payroll reference is kept).
-  - Guardrails: only owners create owners, no self-deactivation, unique emails.
-  The demo seed ships **10 named store managers** (each with a General-Manager
-  profile) plus **150 generated staff** spread across the stores, each with a full
-  profile, so the directory and reports are populated out of the box.
+  - **Guardrails:** only owners create owners, no self-deactivation, unique
+    emails.
+  - The demo seed ships **10 named store managers** (each with a General-Manager
+    profile) plus **150 generated staff** spread across the stores, each with a
+    full profile, so the directory and reports are populated out of the box.
 - **Reports** — **Items** (inventory value by category/location, top items,
   30-day COGS), **Sales** (revenue, covers, avg check, daily + by-location),
   **Analytics** (revenue trend, food-cost %, labor-cost %, best/lowest location),
