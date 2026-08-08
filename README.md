@@ -38,10 +38,29 @@ level. Several sections have their own horizontal tab bars:
   margin), **Costing** (all items with food-cost % vs a ≤30 / 30–40 / >40 target).
   Costs come from each ingredient's average inventory unit cost, so the menu is
   wired to real stock prices.
-- **Staff** — **Directory** (add / edit / deactivate / reset-password staff;
-  assign access level + location; owner/admin only, managers view-only) and
-  **Access Levels** (reference matrix of what each level can do). Guardrails:
-  only owners create owners, no self-deactivation, unique emails.
+- **Staff** — **Overview** (per-location roster health: staff count, the
+  location's manager, and an active / vacation / sick / inactive breakdown, with
+  KPI totals across all stores), **Directory**, and **Access Levels** (reference
+  matrix of what each level can do).
+  - **Directory** — a clickable **A–Z letter bar** (defaults to "A" on open;
+    letters with no one are dimmed) plus a search that spans every staff member.
+    Each row has a **View** button opening the person's full profile; owner/admin
+    also get inline Edit / Reset-password / Activate-Deactivate.
+  - **Add staff** (owner/admin) — a full form that creates the account *and* its
+    complete HR profile in one go, including access level, home location, and
+    additional **"also works at"** locations (for cross-location coverage /
+    transfers).
+  - **Staff profile** — a full HR record per person: personal details, work +
+    personal contact, mailing address, emergency contact, employment (title,
+    department, type, hire date, supervisor, home + additional locations), payroll
+    (pay type + hourly rate), and skills / notes. The view page offers **Edit
+    profile**, **Reset password**, and **Activate/Deactivate**. By design, SSN and
+    bank/account numbers are **not** stored here — keep those in your payroll
+    provider (only a non-sensitive payroll reference is kept).
+  - Guardrails: only owners create owners, no self-deactivation, unique emails.
+  The demo seed ships **10 named store managers** (each with a General-Manager
+  profile) plus **150 generated staff** spread across the stores, each with a full
+  profile, so the directory and reports are populated out of the box.
 - **Reports** — **Items** (inventory value by category/location, top items,
   30-day COGS), **Sales** (revenue, covers, avg check, daily + by-location),
   **Analytics** (revenue trend, food-cost %, labor-cost %, best/lowest location),
