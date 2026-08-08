@@ -231,6 +231,38 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/staff', { headers: H(emp.token) });
     check('employee blocked from staff directory (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Scheduling: job catalog ────────────────────────────────
+    const jobs = await j(await fetch(base + '/api/schedule/jobs?active=1', { headers: H(token) }));
+    check('job catalog seeded', Array.isArray(jobs) && jobs.length >= 20, 'count=' + (jobs || []).length);
+    const jobIds = jobs.slice(0, 2).map(x => x.id);
+    const newJob = await j(await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ code: 'TST-99', name: 'Smoke Test Task', department: 'Facilities', complexity: 'low', est_minutes: 10 }) }));
+    check('create job (owner)', newJob.success === true && !!newJob.id, JSON.stringify(newJob));
+    r = await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(token), body: JSON.stringify({ code: 'TST-99', name: 'Dup Code' }) });
+    check('duplicate Job ID rejected (409)', r.status === 409, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Job' }) });
+    check('manager cannot edit job catalog (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Scheduling: weekly shifts ──────────────────────────────
+    const wk = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    check('manager gets weekly schedule', Array.isArray(wk.staff) && !!wk.week_start && wk.days.length === 7, JSON.stringify(wk).slice(0, 80));
+    const schedStaff = wk.staff.find(s => s.role !== 'manager') || wk.staff[0];
+    const shiftRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00', job_ids: jobIds }) }));
+    check('manager creates shift with jobs', shiftRes.success === true && !!shiftRes.id, JSON.stringify(shiftRes));
+    const wk2 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const savedShift = (wk2.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shiftRes.id);
+    check('shift appears with assigned jobs', !!savedShift && savedShift.jobs.length === jobIds.length, JSON.stringify(savedShift || {}).slice(0, 80));
+    r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ start_time: '08:00', job_ids: [jobIds[0]] }) });
+    check('manager updates shift', r.status === 200, await r.text());
+    r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc2, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00' }) });
+    check('manager cannot schedule another location (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from schedule (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('manager deletes shift', r.status === 200, await r.text());
+
     // ── Reports module ─────────────────────────────────────────
     const repInv = await j(await fetch(base + '/api/reports/inventory', { headers: H(token) }));
     check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 10 && repInv.top_items.length > 0, JSON.stringify(repInv.total_value));

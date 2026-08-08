@@ -382,6 +382,41 @@ function migrate() {
       location_id INTEGER NOT NULL REFERENCES locations(id),
       PRIMARY KEY (user_id, location_id)
     );
+
+    -- Job/task catalog — the menu of jobs a manager can assign to staff on a shift.
+    CREATE TABLE IF NOT EXISTS jobs (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      code        TEXT UNIQUE,                 -- Job ID, e.g. "FOH-02"
+      name        TEXT NOT NULL,
+      description TEXT,                         -- description / instructions
+      department  TEXT,                         -- Front of House / Back of House / Bar / Facilities / Management
+      complexity  TEXT DEFAULT 'medium',        -- low / medium / high
+      est_minutes INTEGER,                      -- typical duration
+      notes       TEXT,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Weekly staff schedule — one row per staff member per working day per location.
+    -- A person can have shifts at different locations on different days.
+    CREATE TABLE IF NOT EXISTS shifts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      shift_date  TEXT NOT NULL,                -- ISO date (YYYY-MM-DD)
+      start_time  TEXT,                         -- "09:00"
+      end_time    TEXT,                         -- "17:00"
+      notes       TEXT,
+      created_by  INTEGER REFERENCES users(id),
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Jobs/tasks assigned to a shift (a shift can carry several jobs).
+    CREATE TABLE IF NOT EXISTS shift_jobs (
+      shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+      job_id   INTEGER NOT NULL REFERENCES jobs(id),
+      PRIMARY KEY (shift_id, job_id)
+    );
   `);
 
   // Migrations for databases created before these columns existed.

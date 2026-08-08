@@ -20,6 +20,7 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/central', require('./routes/central'));
+app.use('/api/schedule', require('./routes/schedule'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

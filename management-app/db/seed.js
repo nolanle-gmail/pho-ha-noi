@@ -175,6 +175,9 @@ function run() {
   // ── Staff HR profiles + 150 generated staff ────────────────────────────────
   seedStaffProfiles(db, locIds, managerIds);
 
+  // ── Job/task catalog + a demo week of shifts ───────────────────────────────
+  seedJobsAndShifts(db, locIds);
+
   // Vendors
   VENDORS.forEach(([name, contact, phone, email, lead, notes]) =>
     db.prepare(`INSERT INTO vendors (name,contact_name,phone,email,lead_time_days,notes) VALUES (?,?,?,?,?,?)`)
@@ -533,6 +536,82 @@ function seedStaffProfiles(db, locIds, managerIds) {
     made++;
   }
   console.log(`Seeded ${managerIds.length} manager profiles + ${made} generated staff with HR profiles.`);
+}
+
+// ── Job/task catalog + demo shifts ───────────────────────────────────────────
+// The catalog of restaurant jobs a manager can assign to a staff member's shift,
+// plus a demo week of scheduled shifts so the location Schedule tab isn't empty.
+const JOBS = [
+  // [code, name, description, department, complexity, est_minutes, notes]
+  ['FOH-01', 'Greet & Seat Guests', 'Welcome guests, manage the waitlist, seat parties, and present menus.', 'Front of House', 'low', 5, 'Set the tone for the visit — warm and prompt.'],
+  ['FOH-02', 'Take Orders', 'Take food and drink orders accurately, enter them into the POS, and note allergies/modifications.', 'Front of House', 'medium', 10, 'Always confirm spice level and protein choice for pho.'],
+  ['FOH-03', 'Serve Food & Drinks', 'Run and deliver orders to the correct table and verify accuracy before dropping.', 'Front of House', 'low', 5, ''],
+  ['FOH-04', 'Bus & Reset Tables', 'Clear dishes, wipe and sanitize surfaces, and reset the table for the next party.', 'Front of House', 'low', 8, ''],
+  ['FOH-05', 'Handle Payments', 'Process cash and card payments, close checks in the POS, and keep the drawer balanced.', 'Front of House', 'medium', 5, 'Follow cash-handling policy; no shared drawers.'],
+  ['FOH-06', 'Phone & To-Go Orders', 'Take phone and online pickup orders, package to-go correctly, and stage for pickup.', 'Front of House', 'medium', 10, 'Double-check bag contents against the ticket.'],
+  ['FOH-07', 'Stock Herb & Condiment Station', 'Refill hoisin/sriracha, herb plates, bean sprouts, limes, and jalapeños.', 'Front of House', 'low', 20, ''],
+  ['BOH-01', 'Broth Station (Pho)', 'Monitor and season the simmering broth, hold correct temperature, and maintain levels all shift.', 'Back of House', 'high', 30, 'Signature product — taste and adjust regularly.'],
+  ['BOH-02', 'Noodle Station', 'Blanch rice noodles to order, portion bowls, and assemble pho on the line.', 'Back of House', 'medium', 8, ''],
+  ['BOH-03', 'Protein Prep', 'Slice rare beef, portion brisket/meatballs/tendon, and prep chicken for service.', 'Back of House', 'high', 30, 'Follow FIFO and label with prep date.'],
+  ['BOH-04', 'Line Cook (Wok/Grill)', 'Cook stir-fry, grilled, and fried items to the ticket and to standard.', 'Back of House', 'high', 15, ''],
+  ['BOH-05', 'Cold Prep / Garnish', 'Prep vegetables, herbs, garnishes, and roll spring/summer rolls.', 'Back of House', 'medium', 25, ''],
+  ['BOH-06', 'Expo / Plating', 'Assemble and quality-check plates at the pass before they leave the kitchen.', 'Back of House', 'high', 10, 'Own the ticket times and call the line.'],
+  ['BOH-07', 'Dishwashing', 'Run the dish pit, keep clean dishes stocked, and manage kitchen trash.', 'Back of House', 'low', 45, ''],
+  ['BAR-01', 'Prepare Beverages', 'Make Vietnamese coffee, tea, smoothies, and soft drinks to order.', 'Bar', 'medium', 8, ''],
+  ['BAR-02', 'Stock Drink Station', 'Restock ice, cups, lids, syrups, and canned drinks.', 'Bar', 'low', 20, ''],
+  ['FAC-01', 'Opening Checklist', 'Unlock, power on equipment, run temperature checks, and set up all stations for service.', 'Facilities', 'medium', 30, 'Record walk-in temps on the log.'],
+  ['FAC-02', 'Closing Checklist', 'Shut down equipment, secure cash, complete the cleaning list, and lock up.', 'Facilities', 'medium', 30, 'Manager verifies before departure.'],
+  ['FAC-03', 'Deep Clean / Sanitation', 'Deep-clean floors, hood, restrooms, and equipment per the sanitation schedule.', 'Facilities', 'medium', 60, ''],
+  ['FAC-04', 'Receiving & Restock', 'Receive deliveries, verify invoices against the order, and stock dry/cold storage.', 'Facilities', 'medium', 30, 'Reject anything out of temp or damaged.'],
+  ['FAC-05', 'Trash & Recycling', 'Take out trash, break down boxes, and manage recycling/compost.', 'Facilities', 'low', 15, ''],
+  ['MGT-01', 'Shift Lead / Floor Manager', 'Oversee service flow, handle guest issues, and coordinate the team on the floor.', 'Management', 'high', 0, 'Point person for the shift.'],
+  ['MGT-02', 'Cash Reconciliation', 'Count drawers, prepare the deposit, and record daily sales.', 'Management', 'medium', 20, ''],
+  ['MGT-03', 'Inventory Count', 'Perform cycle counts, flag low stock, and place reorders.', 'Management', 'medium', 45, ''],
+  ['MGT-04', 'Staff Scheduling', 'Build and adjust the weekly staff schedule and assign jobs.', 'Management', 'medium', 30, ''],
+];
+
+function seedJobsAndShifts(db, locIds) {
+  const insJob = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes) VALUES (?,?,?,?,?,?,?)`);
+  const jobIds = JOBS.map(j => Number(insJob.run(...j).lastInsertRowid));
+  const jobByCode = {}; JOBS.forEach((j, i) => { jobByCode[j[0]] = jobIds[i]; });
+
+  // Monday of the current week.
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const dayISO = (offset) => { const d = new Date(monday); d.setDate(monday.getDate() + offset); return iso(d); };
+
+  const insShift = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`);
+  const insSJ = db.prepare(`INSERT OR IGNORE INTO shift_jobs (shift_id, job_id) VALUES (?,?)`);
+  const rand = (n) => Math.floor(Math.random() * n);
+  const pick = (a) => a[rand(a.length)];
+  const AM = ['08:00', '10:00', '17:00']; const shiftLen = { '08:00': '16:00', '10:00': '18:00', '17:00': '23:00' };
+  const FOH = ['FOH-01', 'FOH-02', 'FOH-03', 'FOH-04', 'FOH-05', 'FOH-06', 'FOH-07', 'BAR-01'];
+  const BOH = ['BOH-01', 'BOH-02', 'BOH-03', 'BOH-04', 'BOH-05', 'BOH-06', 'BOH-07', 'FAC-04'];
+
+  // For the first 4 stores, schedule ~6 staff across Mon–Sat with 1–2 jobs each.
+  let shiftCount = 0;
+  const mgr = db.prepare(`SELECT id FROM users WHERE role='manager' AND location_id=? LIMIT 1`);
+  locIds.slice(0, 4).forEach((lid) => {
+    const boss = mgr.get(lid);
+    const staff = db.prepare(`SELECT id FROM users WHERE location_id=? AND role IN ('employee','support') AND is_active=1 LIMIT 6`).all(lid);
+    staff.forEach((s, si) => {
+      // Five working days offset per person so it looks like a real rota.
+      for (let d = 0; d < 6; d++) {
+        if ((d + si) % 6 === 5) continue; // one day off
+        const start = pick(AM);
+        const r = insShift.run(s.id, lid, dayISO(d), start, shiftLen[start], null, boss ? boss.id : null);
+        const pool = si % 2 === 0 ? FOH : BOH;
+        const nJobs = 1 + rand(2);
+        const chosen = new Set();
+        while (chosen.size < nJobs) chosen.add(pick(pool));
+        chosen.forEach(code => insSJ.run(Number(r.lastInsertRowid), jobByCode[code]));
+        shiftCount++;
+      }
+    });
+  });
+  console.log(`Seeded ${JOBS.length} jobs and ${shiftCount} demo shifts for the current week.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }

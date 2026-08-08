@@ -40,8 +40,15 @@ level. Several sections have their own horizontal tab bars:
   wired to real stock prices.
 - **Staff** — **Overview** (per-location roster health: staff count, the
   location's manager, and an active / vacation / sick / inactive breakdown, with
-  KPI totals across all stores), **Directory**, and **Access Levels** (reference
-  matrix of what each level can do).
+  KPI totals across all stores), **Directory**, **Jobs / Tasks**, and **Access
+  Levels** (reference matrix of what each level can do).
+  - **Jobs / Tasks** — a catalog of the jobs that exist in the restaurant
+    (grouped by department: Front of House, Back of House, Bar, Facilities,
+    Management), each with a **Job ID**, name, description/instructions,
+    **complexity** (low / medium / high), typical duration, and notes. Owner/admin
+    curate it (add / edit / retire); managers pick from it when scheduling. Ships
+    with ~25 seeded jobs (Broth Station, Take Orders, Expo/Plating, Opening &
+    Closing checklists, Cash Reconciliation, …).
   - **Directory** — a clickable **A–Z letter bar** (defaults to "A" on open;
     letters with no one are dimmed) plus a search that spans every staff member.
     Each row has a **View** button opening the person's full profile; owner/admin
@@ -74,12 +81,21 @@ level. Several sections have their own horizontal tab bars:
   manager-and-above only). Everyone can send direct messages.
 - **Locations** — a directory of every location (+ **add new**, owner/admin) with
   a per-location detail view: **Details** (address, phone, email, seats, opening
-  date, manager, plus editable **operating hours**), **Staff** (roster), and
-  **Equipment** (assets with vendor + phone, model/serial, purchase & warranty
-  dates, **maintenance schedule** with next-service due dates flagged when
-  overdue, and status — operational / needs-service / out-of-order; full CRUD).
-  Owner/admin manage everything; managers manage their own location's hours &
-  equipment. Standard restaurant equipment (walk-ins, ranges, fryers, ice
+  date, manager, plus editable **operating hours**), **Staff** (roster),
+  **Schedule**, and **Equipment** (assets with vendor + phone, model/serial,
+  purchase & warranty dates, **maintenance schedule** with next-service due dates
+  flagged when overdue, and status — operational / needs-service / out-of-order;
+  full CRUD). Owner/admin manage everything; managers manage their own location's
+  hours, equipment & schedule.
+  - **Schedule** — a **weekly staff schedule** the location's manager builds from
+    the Manage view: a grid of every staff member at that location × the seven
+    days of the week. Click **+** on any day to add a shift (start/end time, notes)
+    and **pick one or more jobs/tasks** from the catalog to assign; a staff member
+    can hold several jobs on a shift. Week navigation (prev / this week / next) and
+    a highlighted "today". Because each shift carries its own location, a person
+    can be scheduled at **different locations on different days** — shifts at
+    another store show as read-only "@ store" cards for cross-location visibility,
+    and staff whose home store is elsewhere are flagged **visiting**. Standard restaurant equipment (walk-ins, ranges, fryers, ice
   machine, dishwasher, hood/fire suppression, POS, etc.) is seeded per location.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
@@ -143,5 +159,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 120 checks · waitlist: 32 checks
+npm run smoke      # management: 131 checks · waitlist: 32 checks
 ```

@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview' };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -633,7 +633,7 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['equipment', 'Equipment']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['equipment', 'Equipment']];
 function renderLocDetailTabs() {
   $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -647,7 +647,7 @@ async function renderLocDetail() {
     </div>
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, equipment: renderLocEquipment }[S.locTab])();
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, equipment: renderLocEquipment }[S.locTab])();
 }
 
 function renderLocInfo(loc) {
@@ -700,6 +700,124 @@ async function renderLocStaff() {
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
       ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
+}
+
+// ── Weekly schedule (per location) ───────────────────────────────────────────
+function mondayOf(dateStr) { const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return d.toISOString().slice(0, 10); }
+function addDaysIso(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00'); return `${MON[d.getMonth()]} ${d.getDate()}`; };
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+async function renderLocSchedule() {
+  const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  let data, jobs;
+  try {
+    [data, jobs] = await Promise.all([
+      api('/schedule/week?location_id=' + S.locDetailId + (S.schedWeek ? '&week=' + S.schedWeek : '')),
+      api('/schedule/jobs?active=1'),
+    ]);
+  } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  S.schedWeek = data.week_start;
+  const days = data.days;
+  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" title="${esc((j.code ? j.code + ' · ' : '') + j.name + ' (' + (j.complexity || '') + ')')}">${esc(j.code || j.name)}</span>`;
+
+  const cell = (st, day) => {
+    const here = st.shifts.filter(s => s.shift_date === day && String(s.location_id) === String(data.location.id));
+    const away = st.shifts.filter(s => s.shift_date === day && String(s.location_id) !== String(data.location.id));
+    const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
+        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'}</div>
+        <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
+      </div>`).join('');
+    const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
+        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'}</div>
+        <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
+      </div>`).join('');
+    const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
+    return `<td class="sched-cell">${hereCards}${awayCards}${add}</td>`;
+  };
+
+  $('locBody').innerHTML = `
+    <div class="row-between sched-head">
+      <div class="week-nav">
+        <button class="btn sm ghost" id="wkPrev">‹ Prev</button>
+        <button class="btn sm ghost" id="wkToday">This week</button>
+        <button class="btn sm ghost" id="wkNext">Next ›</button>
+      </div>
+      <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
+      ${canEdit ? '' : '<span class="badge gray">View only</span>'}
+    </div>
+    <div class="table-wrap"><table class="sched-table"><thead><tr>
+      <th class="sched-name">Staff</th>
+      ${days.map((d, i) => `<th class="${d === todayIso() ? 'is-today' : ''}">${WD[i]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
+    </tr></thead><tbody>
+      ${data.staff.length ? data.staff.map(st => `<tr>
+        <td class="sched-name"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
+          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</td>
+        ${days.map(d => cell(st, d)).join('')}
+      </tr>`).join('') : `<tr><td colspan="8" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
+    </tbody></table></div>
+    <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Click a shift to edit; use + to add.</p>`;
+
+  $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
+  $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
+  $('wkToday').onclick = () => { S.schedWeek = mondayOf(null); renderLocSchedule(); };
+  if (canEdit) {
+    $('locBody').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+      const st = data.staff.find(x => x.id == b.dataset.add);
+      shiftModal(st, b.dataset.day, null, jobs, data.location);
+    });
+    $('locBody').querySelectorAll('[data-shift]').forEach(c => c.onclick = () => {
+      let shift, st;
+      for (const s of data.staff) { const f = s.shifts.find(x => x.id == c.dataset.shift); if (f) { shift = f; st = s; break; } }
+      if (shift) shiftModal(st, shift.shift_date, shift, jobs, data.location);
+    });
+  }
+}
+
+function shiftModal(staff, dayIso, shift, jobs, location) {
+  const isNew = !shift;
+  const chosen = new Set((shift && shift.jobs ? shift.jobs : []).map(j => String(j.id)));
+  const byDept = {}; jobs.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
+  const depts = Object.keys(byDept).sort((a, b) => JOB_DEPTS.indexOf(a) - JOB_DEPTS.indexOf(b));
+  const wd = WD[(new Date(dayIso + 'T00:00:00').getDay() + 6) % 7];
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide"><h3>Schedule — ${esc(staff.name)}</h3>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">${wd} ${fmtDay(dayIso)} · ${esc(shortLoc(location.name))}</p>
+    <div class="err" id="mErr"></div>
+    <div class="form-grid">
+      <label>Start<input id="s_start" type="time" value="${esc(shift && shift.start_time || '10:00')}" /></label>
+      <label>End<input id="s_end" type="time" value="${esc(shift && shift.end_time || '18:00')}" /></label>
+      <label style="grid-column:1/-1">Notes<input id="s_notes" value="${esc(shift && shift.notes || '')}" placeholder="Optional" /></label>
+    </div>
+    <div class="job-pick-label">Assign jobs / tasks <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
+    <div class="job-pick">
+      ${depts.map(d => `<div class="job-pick-dept"><div class="jpd-head">${esc(d)}</div>
+        ${byDept[d].map(j => `<label class="chk jpick"><input type="checkbox" data-job="${j.id}" ${chosen.has(String(j.id)) ? 'checked' : ''}/>
+          <span class="badge ${COMPLEXITY_CHIP[j.complexity] || 'gray'}">${esc(j.complexity || '')}</span> ${esc(j.name)}${j.code ? ` <span class="mono" style="color:var(--muted)">${esc(j.code)}</span>` : ''}</label>`).join('')}
+      </div>`).join('')}
+    </div>
+    <div class="actions">
+      ${isNew ? '' : '<button class="btn ghost danger" id="mDelete" style="margin-right:auto">Delete shift</button>'}
+      <button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${isNew ? 'Add shift' : 'Save'}</button>
+    </div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  if (!isNew) $('mDelete').onclick = () => {
+    modal('Delete this shift?', [], async () => { await api('/schedule/shifts/' + shift.id, { method: 'DELETE' }); toast('Shift removed'); renderLocSchedule(); }, 'Delete');
+  };
+  $('mOk').onclick = async () => {
+    const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
+    const body = { user_id: staff.id, location_id: location.id, shift_date: dayIso, start_time: $('s_start').value, end_time: $('s_end').value, notes: $('s_notes').value, job_ids };
+    try {
+      if (isNew) await api('/schedule/shifts', { method: 'POST', body: JSON.stringify(body) });
+      else await api('/schedule/shifts/' + shift.id, { method: 'PUT', body: JSON.stringify(body) });
+      toast(isNew ? 'Shift added' : 'Shift saved'); close(); renderLocSchedule();
+    } catch (e) { $('mErr').textContent = e.message; }
+  };
 }
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };
@@ -755,7 +873,7 @@ function equipmentModal(e) {
 // ── Section: Staff (module with tabs) ──────────────────────────────────────
 const ROLE_CHIP = { owner: 'gold', admin: 'gold', manager: 'blue', support: 'ok', employee: 'gray' };
 const ACCESS_LEVELS = ['owner', 'admin', 'manager', 'support', 'employee'];
-const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['access', 'Access Levels']];
+const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels']];
 function renderStaffTabs() {
   if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
   $('tabs').innerHTML = STAFF_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
@@ -766,7 +884,7 @@ function renderStaffTabs() {
 }
 function renderStaffModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ overview: renderStaffOverview, directory: renderStaffDirectory, access: renderAccessLevels }[S.staffTab] || renderStaffOverview)();
+  ({ overview: renderStaffOverview, directory: renderStaffDirectory, jobs: renderJobsCatalog, access: renderAccessLevels }[S.staffTab] || renderStaffOverview)();
 }
 
 const STATUS_CHIP = { active: 'ok', inactive: 'out', vacation: 'blue', sick: 'low' };
@@ -798,6 +916,82 @@ async function renderStaffOverview() {
         <td class="num">${l.inactive ? `<span class="badge out">${l.inactive}</span>` : '0'}</td>
       </tr>`).join('')}
     </tbody></table></div>`;
+}
+
+// ── Job / task catalog ───────────────────────────────────────────────────────
+const COMPLEXITY_CHIP = { low: 'ok', medium: 'blue', high: 'low' };
+const JOB_DEPTS = ['Front of House', 'Back of House', 'Bar', 'Facilities', 'Management'];
+async function renderJobsCatalog() {
+  let jobs;
+  try { jobs = await api('/schedule/jobs'); }
+  catch (e) { return renderPlaceholder('Jobs', '🧾', e.message); }
+  const canManage = ['owner', 'admin'].includes(S.user.role);
+  const active = jobs.filter(j => j.is_active);
+  const byDept = {};
+  active.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
+  const depts = Object.keys(byDept).sort((a, b) => JOB_DEPTS.indexOf(a) - JOB_DEPTS.indexOf(b));
+  const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '—')}</span>`;
+  const section = (d) => `
+    <h3 class="dept-head">${esc(d)} <span style="font-weight:400;color:var(--muted);font-size:.8rem">— ${byDept[d].length}</span></h3>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Job ID</th><th>Job / task</th><th>Complexity</th><th class="num">Est.</th><th>Description &amp; instructions</th>${canManage ? '<th>Actions</th>' : ''}
+    </tr></thead><tbody>
+      ${byDept[d].map(j => `<tr>
+        <td class="mono"><strong>${esc(j.code || '—')}</strong></td>
+        <td><strong>${esc(j.name)}</strong>${j.notes ? `<div class="job-note">📌 ${esc(j.notes)}</div>` : ''}</td>
+        <td>${cx(j.complexity)}</td>
+        <td class="num">${j.est_minutes != null ? j.est_minutes + 'm' : '—'}</td>
+        <td class="job-desc">${esc(j.description || '—')}</td>
+        ${canManage ? `<td><div class="actions-cell">
+          <button class="btn sm ghost" data-jedit="${j.id}">Edit</button>
+          <button class="btn sm ghost" data-jretire="${j.id}">Retire</button></div></td>` : ''}
+      </tr>`).join('')}
+    </tbody></table></div>`;
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Jobs &amp; Tasks <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${active.length} active</span></h2>
+      ${canManage ? '<button class="btn" id="addJob">+ Add job</button>' : '<span class="badge gray">View only</span>'}</div>
+    <p class="sub" style="color:var(--muted);margin-top:0">The catalog of jobs a manager can assign to a staff member's shift on the schedule.</p>
+    ${depts.length ? depts.map(section).join('') : '<div class="empty">No jobs in the catalog yet.</div>'}`;
+  if (canManage) {
+    $('addJob').onclick = () => jobModal(null);
+    $('view').querySelectorAll('[data-jedit]').forEach(b => b.onclick = () => jobModal(jobs.find(j => j.id == b.dataset.jedit)));
+    $('view').querySelectorAll('[data-jretire]').forEach(b => b.onclick = () => {
+      const j = jobs.find(x => x.id == b.dataset.jretire);
+      modal(`Retire “${j.name}”?`, [], async () => { await api('/schedule/jobs/' + j.id, { method: 'DELETE' }); toast('Job retired'); renderJobsCatalog(); }, 'Retire');
+    });
+  }
+}
+
+function jobModal(job) {
+  const isNew = !job;
+  const j = job || {};
+  const host = $('modalHost');
+  const opt = (v, sel) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(v || '—')}</option>`;
+  host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide"><h3>${isNew ? 'Add job / task' : 'Edit — ' + esc(j.name)}</h3>
+    <div class="err" id="mErr"></div>
+    <div class="form-grid">
+      <label>Job ID<input id="j_code" value="${esc(j.code || '')}" placeholder="e.g. FOH-08" /></label>
+      <label>Job / task name<input id="j_name" value="${esc(j.name || '')}" /></label>
+      <label>Department<select id="j_department">${['', ...JOB_DEPTS].map(d => opt(d, j.department || '')).join('')}</select></label>
+      <label>Complexity<select id="j_complexity">${['low', 'medium', 'high'].map(c => opt(c, j.complexity || 'medium')).join('')}</select></label>
+      <label>Est. minutes<input id="j_est_minutes" type="number" min="0" value="${j.est_minutes != null ? j.est_minutes : ''}" /></label>
+    </div>
+    <label class="pfl">Description / instructions<textarea id="j_description" rows="3">${esc(j.description || '')}</textarea></label>
+    <label class="pfl">Notes<textarea id="j_notes" rows="2">${esc(j.notes || '')}</textarea></label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${isNew ? 'Create job' : 'Save'}</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    const body = {};
+    ['code', 'name', 'department', 'complexity', 'est_minutes', 'description', 'notes'].forEach(k => { body[k] = $('j_' + k).value; });
+    try {
+      if (isNew) await api('/schedule/jobs', { method: 'POST', body: JSON.stringify(body) });
+      else await api('/schedule/jobs/' + j.id, { method: 'PUT', body: JSON.stringify(body) });
+      toast(isNew ? 'Job added' : 'Job updated'); close(); renderJobsCatalog();
+    } catch (e) { $('mErr').textContent = e.message; }
+  };
 }
 
 let staffSearch = '';
