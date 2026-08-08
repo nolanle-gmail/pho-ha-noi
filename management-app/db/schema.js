@@ -338,6 +338,51 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender_id);
   `);
 
+  // Staff profiles: full HR record per person (1:1 with users). Sensitive
+  // identifiers (SSN, bank/account numbers) are intentionally NOT stored here —
+  // keep those in a dedicated payroll provider.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff_profiles (
+      user_id           INTEGER PRIMARY KEY REFERENCES users(id),
+      preferred_name    TEXT,
+      legal_first_name  TEXT,
+      legal_last_name   TEXT,
+      dob               TEXT,
+      gender            TEXT,
+      personal_email    TEXT,
+      phone             TEXT,
+      alt_phone         TEXT,
+      address_line1     TEXT,
+      address_line2     TEXT,
+      city              TEXT,
+      state             TEXT,
+      postal_code       TEXT,
+      country           TEXT DEFAULT 'USA',
+      emergency_name    TEXT,
+      emergency_relation TEXT,
+      emergency_phone   TEXT,
+      employee_code     TEXT,
+      job_title         TEXT,
+      department        TEXT,
+      employment_type   TEXT,
+      hire_date         TEXT,
+      termination_date  TEXT,
+      supervisor_id     INTEGER REFERENCES users(id),
+      pay_type          TEXT,
+      payroll_ref       TEXT,
+      preferred_contact TEXT,
+      skills            TEXT,
+      notes             TEXT,
+      updated_at        TEXT DEFAULT (datetime('now'))
+    );
+    -- Additional locations a person can work at (home location is users.location_id).
+    CREATE TABLE IF NOT EXISTS staff_locations (
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      PRIMARY KEY (user_id, location_id)
+    );
+  `);
+
   // Migrations for databases created before these columns existed.
   for (const stmt of [
     `ALTER TABLE inventory ADD COLUMN description TEXT`,

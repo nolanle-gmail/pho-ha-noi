@@ -781,7 +781,7 @@ async function renderStaffDirectory() {
       <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th>${canManage ? '<th>Actions</th>' : ''}
     </tr></thead><tbody>
       ${shown.length ? shown.map(u => `<tr>
-        <td><strong>${esc(u.name)}</strong></td>
+        <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
         <td class="mono">${esc(u.email)}</td>
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
@@ -796,6 +796,8 @@ async function renderStaffDirectory() {
 
   const search = $('staffSearch');
   search.oninput = () => { staffSearch = search.value; const pos = search.selectionStart; renderStaffDirectory().then(() => { const s = $('staffSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }); };
+  // Profile link — available to anyone who can see the directory.
+  $('view').querySelectorAll('[data-prof]').forEach(a => a.onclick = (e) => { e.preventDefault(); renderStaffProfile(a.dataset.prof); });
   if (canManage) {
     $('addStaff').onclick = () => staffModal(null, locations);
     $('view').querySelectorAll('[data-sact]').forEach(b => b.onclick = () => {
@@ -805,6 +807,67 @@ async function renderStaffDirectory() {
       else if (b.dataset.sact === 'toggle') toggleStaff(u);
     });
   }
+}
+
+// ── Staff profile (full HR record) ───────────────────────────────────────────
+async function renderStaffProfile(id) {
+  let d, locations, staff;
+  try { [d, locations, staff] = await Promise.all([api('/staff/' + id + '/profile'), api('/inventory/locations').catch(() => S.locations || []), api('/staff').catch(() => [])]); }
+  catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
+  const canEdit = ['owner', 'admin'].includes(S.user.role);
+  const p = d.profile || {};
+  const shortLoc = (n) => (n || '').replace('Pho Ha Noi — ', '');
+  const locName = (lid) => { const l = (locations || []).find(x => x.id == lid); return l ? shortLoc(l.name) : ''; };
+  const assigned = (d.assigned_location_ids || []).map(locName).filter(Boolean).join(', ');
+  const F = (l, v) => `<div class="pf"><span class="pl">${l}</span><span class="pv">${v ? esc(v) : '—'}</span></div>`;
+  $('view').innerHTML = `
+    <div class="row-between">
+      <button class="btn sm ghost" id="backDir">← Directory</button>
+      ${canEdit ? '<button class="btn" id="editProf">Edit profile</button>' : '<span class="badge gray">View only</span>'}
+    </div>
+    <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(d.role)}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
+    <p class="sub" style="color:var(--muted);margin-top:0">${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
+    <div class="prof-cols">
+      <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Employee code', p.employee_code)}</div>
+      <div class="section"><h3>Contact</h3>${F('Work email', d.email)}${F('Personal email', p.personal_email)}${F('Mobile', p.phone)}${F('Alt phone', p.alt_phone)}${F('Preferred contact', p.preferred_contact)}</div>
+      <div class="section"><h3>Mailing address</h3>${F('Address', [p.address_line1, p.address_line2].filter(Boolean).join(', '))}${F('City', p.city)}${F('State', p.state)}${F('Postal code', p.postal_code)}${F('Country', p.country)}</div>
+      <div class="section"><h3>Emergency contact</h3>${F('Name', p.emergency_name)}${F('Relationship', p.emergency_relation)}${F('Phone', p.emergency_phone)}</div>
+      <div class="section"><h3>Employment</h3>${F('Job title', p.job_title)}${F('Department', p.department)}${F('Type', p.employment_type)}${F('Hire date', p.hire_date)}${F('Termination date', p.termination_date)}${F('Supervisor', d.supervisor ? d.supervisor.name : '')}${F('Home location', shortLoc(d.location_name) || 'All locations')}${F('Also works at', assigned)}</div>
+      <div class="section"><h3>Payroll</h3>${F('Pay type', p.pay_type)}${F('Pay rate', d.hourly_rate ? ('$' + d.hourly_rate + '/hr') : '')}${F('Payroll ref', p.payroll_ref)}<p class="sub" style="color:var(--muted);font-size:.76rem;margin:.5rem 0 0">SSN &amp; bank details are intentionally not stored here — keep those in your payroll provider.</p></div>
+      <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${F('Skills / roles', p.skills)}${F('Notes', p.notes)}</div>
+    </div>`;
+  $('backDir').onclick = () => renderStaffModule();
+  if (canEdit) $('editProf').onclick = () => staffProfileEdit(d, locations, staff);
+}
+
+function staffProfileEdit(d, locations, staff) {
+  const p = d.profile || {};
+  const assigned = new Set((d.assigned_location_ids || []).map(String));
+  const inp = (k, label, val, type = 'text') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" /></label>`;
+  const selRaw = (k, label, val, opts) => `<label class="pfl">${label}<select id="pf_${k}">${opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(val || '') ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>`;
+  const selS = (k, label, val, arr) => selRaw(k, label, val, arr.map(x => ({ v: x, n: x || '—' })));
+  const supOpts = [{ v: '', n: '—' }].concat((staff || []).filter(s => s.id != d.id).map(s => ({ v: s.id, n: s.name })));
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Edit — ${esc(d.name)}</h2>
+      <div><button class="btn ghost" id="cancelProf">Cancel</button> <button class="btn" id="saveProf">Save profile</button></div></div>
+    <div class="prof-cols">
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code', p.employee_code)}</div>
+      <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
+      <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
+      <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
+      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', p.job_title)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
+      <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', p.pay_type, ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', d.hourly_rate, 'number')}${inp('payroll_ref', 'Payroll reference', p.payroll_ref)}</div>
+      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
+      <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', p.skills)}<label class="pfl">Notes<textarea id="pf_notes" rows="3">${esc(p.notes || '')}</textarea></label></div>
+    </div>`;
+  $('cancelProf').onclick = () => renderStaffProfile(d.id);
+  $('saveProf').onclick = async () => {
+    const body = {};
+    $('view').querySelectorAll('[id^="pf_"]').forEach(el => { body[el.id.slice(3)] = el.value; });
+    body.assigned_location_ids = [...$('view').querySelectorAll('[data-loc]:checked')].map(c => c.dataset.loc);
+    try { await api('/staff/' + d.id + '/profile', { method: 'PUT', body: JSON.stringify(body) }); toast('Profile saved'); renderStaffProfile(d.id); }
+    catch (e) { toast(e.message, true); }
+  };
 }
 
 function locFieldOptions(locations, selected, includeAll) {

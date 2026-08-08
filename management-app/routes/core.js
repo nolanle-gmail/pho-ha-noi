@@ -93,4 +93,60 @@ router.post('/staff/:id/reset-password', requireRole(...ROLES.ADMIN), (req, res)
   res.json({ success: true });
 });
 
+// ── Staff profile (full HR record) ───────────────────────────────────────────
+const PROFILE_COLS = [
+  'preferred_name', 'legal_first_name', 'legal_last_name', 'dob', 'gender',
+  'personal_email', 'phone', 'alt_phone', 'address_line1', 'address_line2',
+  'city', 'state', 'postal_code', 'country', 'emergency_name', 'emergency_relation',
+  'emergency_phone', 'employee_code', 'job_title', 'department', 'employment_type',
+  'hire_date', 'termination_date', 'supervisor_id', 'pay_type', 'payroll_ref',
+  'preferred_contact', 'skills', 'notes',
+];
+
+// View a full profile (owner/admin/manager).
+router.get('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
+  const u = db.prepare(`SELECT u.id, u.name, u.email, u.role, u.location_id, u.hourly_rate, u.is_active, u.created_at,
+      l.name AS location_name FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?`).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'Staff member not found.' });
+  const profile = db.prepare(`SELECT * FROM staff_profiles WHERE user_id=?`).get(u.id) || {};
+  const assigned = db.prepare(`SELECT location_id FROM staff_locations WHERE user_id=?`).all(u.id).map(r => r.location_id);
+  const supervisor = profile.supervisor_id ? db.prepare(`SELECT id, name FROM users WHERE id=?`).get(profile.supervisor_id) : null;
+  res.json({ ...u, profile, assigned_location_ids: assigned, supervisor });
+});
+
+// Update a profile (owner/admin only).
+router.put('/staff/:id/profile', requireRole(...ROLES.ADMIN), (req, res) => {
+  const u = db.prepare(`SELECT id FROM users WHERE id=?`).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'Staff member not found.' });
+  const b = req.body || {};
+
+  // Pay rate lives on users.
+  if (b.hourly_rate !== undefined) db.prepare(`UPDATE users SET hourly_rate=? WHERE id=?`).run(Math.max(0, parseFloat(b.hourly_rate) || 0), u.id);
+
+  // Merge provided fields over the existing profile, then upsert.
+  const existing = db.prepare(`SELECT * FROM staff_profiles WHERE user_id=?`).get(u.id) || {};
+  const merged = {};
+  for (const c of PROFILE_COLS) {
+    merged[c] = b[c] !== undefined ? (b[c] === '' ? null : b[c]) : (existing[c] ?? null);
+  }
+  if (merged.supervisor_id != null && merged.supervisor_id !== '') merged.supervisor_id = parseInt(merged.supervisor_id, 10) || null;
+
+  const placeholders = PROFILE_COLS.map(() => '?').join(',');
+  const updates = PROFILE_COLS.map(c => `${c}=excluded.${c}`).join(', ');
+  db.prepare(`INSERT INTO staff_profiles (user_id, ${PROFILE_COLS.join(',')}, updated_at)
+     VALUES (?, ${placeholders}, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET ${updates}, updated_at=datetime('now')`)
+    .run(u.id, ...PROFILE_COLS.map(c => merged[c]));
+
+  // Assigned (additional) locations.
+  if (Array.isArray(b.assigned_location_ids)) {
+    db.prepare(`DELETE FROM staff_locations WHERE user_id=?`).run(u.id);
+    const ins = db.prepare(`INSERT OR IGNORE INTO staff_locations (user_id, location_id) VALUES (?,?)`);
+    for (const lid of b.assigned_location_ids) { const n = parseInt(lid, 10); if (n) ins.run(u.id, n); }
+  }
+
+  auditLog(req, 'staff_profile_update', 'user', u.id, { fields: Object.keys(b) });
+  res.json({ success: true });
+});
+
 module.exports = router;
