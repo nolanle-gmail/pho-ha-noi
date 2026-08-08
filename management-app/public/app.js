@@ -755,14 +755,46 @@ function equipmentModal(e) {
 // ── Section: Staff (module with tabs) ──────────────────────────────────────
 const ROLE_CHIP = { owner: 'gold', admin: 'gold', manager: 'blue', support: 'ok', employee: 'gray' };
 const ACCESS_LEVELS = ['owner', 'admin', 'manager', 'support', 'employee'];
-const STAFF_TABS = [['directory', 'Directory'], ['access', 'Access Levels']];
+const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['access', 'Access Levels']];
 function renderStaffTabs() {
+  if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
   $('tabs').innerHTML = STAFF_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.staffTab = b.dataset.stab; renderStaffTabs(); renderStaffModule(); });
 }
 function renderStaffModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ directory: renderStaffDirectory, access: renderAccessLevels }[S.staffTab])();
+  ({ overview: renderStaffOverview, directory: renderStaffDirectory, access: renderAccessLevels }[S.staffTab] || renderStaffOverview)();
+}
+
+const STATUS_CHIP = { active: 'ok', inactive: 'out', vacation: 'blue', sick: 'low' };
+const staffStatus = (u) => (!u.is_active ? 'inactive' : (u.work_status || 'active'));
+
+async function renderStaffOverview() {
+  let overview;
+  try { overview = await api('/staff/overview'); }
+  catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
+  const sum = (k) => overview.reduce((s, l) => s + (l[k] || 0), 0);
+  $('view').innerHTML = `
+    <h2 class="page">Staff Overview <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${sum('total')} across ${overview.length} locations</span></h2>
+    <div class="kpis" style="margin-bottom:1rem">
+      <div class="card"><div class="label">Active</div><div class="value ok">${sum('active')}</div></div>
+      <div class="card"><div class="label">On vacation</div><div class="value">${sum('vacation')}</div></div>
+      <div class="card"><div class="label">Sick</div><div class="value">${sum('sick')}</div></div>
+      <div class="card"><div class="label">Inactive</div><div class="value bad">${sum('inactive')}</div></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr>
+      <th>Location</th><th>Manager</th><th class="num">Staff</th><th class="num">Active</th><th class="num">Vacation</th><th class="num">Sick</th><th class="num">Inactive</th>
+    </tr></thead><tbody>
+      ${overview.map(l => `<tr>
+        <td><strong>${esc((l.location_name || '').replace('Pho Ha Noi — ', ''))}</strong></td>
+        <td>${l.manager ? esc(l.manager) : '<span style="color:var(--muted)">— no manager —</span>'}</td>
+        <td class="num"><strong>${l.total}</strong></td>
+        <td class="num"><span class="badge ok">${l.active}</span></td>
+        <td class="num">${l.vacation ? `<span class="badge blue">${l.vacation}</span>` : '0'}</td>
+        <td class="num">${l.sick ? `<span class="badge low">${l.sick}</span>` : '0'}</td>
+        <td class="num">${l.inactive ? `<span class="badge out">${l.inactive}</span>` : '0'}</td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
 }
 
 let staffSearch = '';
@@ -772,34 +804,45 @@ async function renderStaffDirectory() {
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
   const canManage = ['owner', 'admin'].includes(S.user.role);
   const q = staffSearch.toLowerCase();
-  const shown = q ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q)) : rows;
+  const shown = (q ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q)) : rows)
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
+  const colspan = canManage ? 6 : 5;
+  let body = '';
+  if (!shown.length) body = `<tr><td colspan="${colspan}" class="empty">No staff match your search.</td></tr>`;
+  else {
+    let letter = '';
+    for (const u of shown) {
+      const L = (u.name[0] || '#').toUpperCase();
+      if (L !== letter) { letter = L; body += `<tr class="grp"><td colspan="${colspan}">${letter}</td></tr>`; }
+      const st = staffStatus(u);
+      body += `<tr>
+        <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
+        <td class="mono">${esc(u.email)}</td>
+        <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
+        <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
+        <td><span class="badge ${STATUS_CHIP[st] || 'gray'}">${st}</span></td>
+        ${canManage ? `<td><div class="actions-cell">
+          <button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
+          <button class="btn sm ghost" data-sact="pw" data-id="${u.id}">Reset password</button>
+          <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>
+        </div></td>` : ''}
+      </tr>`;
+    }
+  }
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
       ${canManage ? '<button class="btn" id="addStaff">+ Add staff</button>' : '<span class="badge gray">View only</span>'}</div>
     <div style="margin-bottom:1rem"><input id="staffSearch" placeholder="Search name, email or role…" value="${esc(staffSearch)}" style="max-width:320px" /></div>
     <div class="table-wrap"><table><thead><tr>
       <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th>${canManage ? '<th>Actions</th>' : ''}
-    </tr></thead><tbody>
-      ${shown.length ? shown.map(u => `<tr>
-        <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
-        <td class="mono">${esc(u.email)}</td>
-        <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
-        <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
-        <td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td>
-        ${canManage ? `<td><div class="actions-cell">
-          <button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
-          <button class="btn sm ghost" data-sact="pw" data-id="${u.id}">Reset password</button>
-          <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>
-        </div></td>` : ''}
-      </tr>`).join('') : `<tr><td colspan="${canManage ? 6 : 5}" class="empty">No staff match your search.</td></tr>`}
-    </tbody></table></div>`;
+    </tr></thead><tbody>${body}</tbody></table></div>`;
 
   const search = $('staffSearch');
   search.oninput = () => { staffSearch = search.value; const pos = search.selectionStart; renderStaffDirectory().then(() => { const s = $('staffSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } }); };
   // Profile link — available to anyone who can see the directory.
   $('view').querySelectorAll('[data-prof]').forEach(a => a.onclick = (e) => { e.preventDefault(); renderStaffProfile(a.dataset.prof); });
   if (canManage) {
-    $('addStaff').onclick = () => staffModal(null, locations);
+    $('addStaff').onclick = () => renderStaffAdd(locations);
     $('view').querySelectorAll('[data-sact]').forEach(b => b.onclick = () => {
       const u = rows.find(x => x.id == b.dataset.id);
       if (b.dataset.sact === 'edit') staffModal(u, locations);
@@ -855,7 +898,7 @@ function staffProfileEdit(d, locations, staff) {
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
-      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', p.job_title)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
+      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', p.job_title)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', p.pay_type, ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', d.hourly_rate, 'number')}${inp('payroll_ref', 'Payroll reference', p.payroll_ref)}</div>
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', p.skills)}<label class="pfl">Notes<textarea id="pf_notes" rows="3">${esc(p.notes || '')}</textarea></label></div>
@@ -902,6 +945,48 @@ function toggleStaff(u) {
     await api('/staff/' + u.id, { method: 'PUT', body: JSON.stringify({ is_active: !u.is_active }) });
     toast(u.is_active ? 'Account deactivated' : 'Account activated'); renderStaffModule();
   }, u.is_active ? 'Deactivate' : 'Activate');
+}
+
+// Full add-staff form (account + complete profile in one go).
+function renderStaffAdd(locations) {
+  const inp = (k, label, val, type = 'text') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" /></label>`;
+  const selRaw = (k, label, val, opts) => `<label class="pfl">${label}<select id="pf_${k}">${opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(val || '') ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>`;
+  const selS = (k, label, val, arr) => selRaw(k, label, val, arr.map(x => ({ v: x, n: x || '—' })));
+  const roleOpts = ACCESS_LEVELS.filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: r.charAt(0).toUpperCase() + r.slice(1) }));
+  const locOpts = [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') })));
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Add staff</h2>
+      <div><button class="btn ghost" id="cancelAdd">Cancel</button> <button class="btn" id="saveAdd">Create account</button></div></div>
+    <div class="err" id="addErr"></div>
+    <div class="prof-cols">
+      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('email', 'Email', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Access level', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code', '')}</div>
+      <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
+      <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
+      <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', '')}${inp('emergency_relation', 'Relationship', '')}${inp('emergency_phone', 'Phone', '')}</div>
+      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', '')}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
+      <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', '', ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', '', 'number')}${inp('payroll_ref', 'Payroll reference', '')}</div>
+      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
+      <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', '')}<label class="pfl">Notes<textarea id="pf_notes" rows="3"></textarea></label></div>
+    </div>`;
+  $('cancelAdd').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
+  $('saveAdd').onclick = async () => {
+    $('addErr').textContent = '';
+    const get = (k) => { const el = $('pf_' + k); return el ? el.value : ''; };
+    const name = get('name'), email = get('email'), password = get('password'), role = get('role'), location_id = get('location_id');
+    if (!name || !email || !password) { $('addErr').textContent = 'Name, email and temporary password are required.'; return; }
+    if (password.length < 8) { $('addErr').textContent = 'Password must be at least 8 characters.'; return; }
+    try {
+      const created = await api('/staff', { method: 'POST', body: JSON.stringify({ name, email, password, role, location_id: location_id || undefined }) });
+      const accountKeys = new Set(['name', 'email', 'password', 'role', 'location_id']);
+      const body = {};
+      $('view').querySelectorAll('[id^="pf_"]').forEach(el => { const k = el.id.slice(3); if (!accountKeys.has(k)) body[k] = el.value; });
+      body.assigned_location_ids = [...$('view').querySelectorAll('[data-loc]:checked')].map(c => c.dataset.loc);
+      await api('/staff/' + created.id + '/profile', { method: 'PUT', body: JSON.stringify(body) });
+      toast('Staff account created');
+      renderStaffProfile(created.id);
+    } catch (e) { $('addErr').textContent = e.message; }
+  };
 }
 
 const ACCESS_MATRIX = [

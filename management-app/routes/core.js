@@ -14,11 +14,33 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
   const rows = db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.location_id, u.is_active, l.name AS location_name
+    SELECT u.id, u.name, u.email, u.role, u.location_id, u.is_active, l.name AS location_name,
+           sp.status AS work_status
     FROM users u LEFT JOIN locations l ON u.location_id=l.id
+    LEFT JOIN staff_profiles sp ON sp.user_id=u.id
     ${where}
     ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 WHEN 'support' THEN 3 ELSE 4 END, u.name
   `).all(...args);
+  res.json(rows);
+});
+
+// Staff overview: per-location roster health (count, manager, status breakdown).
+router.get('/staff/overview', requireRole(...ROLES.MANAGE), (req, res) => {
+  const scopeAll = ['owner', 'admin'].includes(req.user.role);
+  const locs = db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ${scopeAll ? '' : 'AND id=?'} ORDER BY name`)
+    .all(...(scopeAll ? [] : [req.user.location_id]));
+  const displayStatus = (u) => (!u.is_active ? 'inactive' : (u.status || 'active'));
+  const rows = locs.map((l) => {
+    const staff = db.prepare(`SELECT u.is_active, sp.status FROM users u LEFT JOIN staff_profiles sp ON sp.user_id=u.id WHERE u.location_id=?`).all(l.id);
+    const mgr = db.prepare(`SELECT name FROM users WHERE location_id=? AND role IN ('manager','admin') AND is_active=1
+      ORDER BY CASE role WHEN 'manager' THEN 0 ELSE 1 END, name LIMIT 1`).get(l.id);
+    const count = (s) => staff.filter((u) => displayStatus(u) === s).length;
+    return {
+      location_id: l.id, location_name: l.name, manager: mgr ? mgr.name : null,
+      total: staff.length, active: count('active'), inactive: count('inactive'),
+      vacation: count('vacation'), sick: count('sick'),
+    };
+  });
   res.json(rows);
 });
 
@@ -99,7 +121,7 @@ const PROFILE_COLS = [
   'personal_email', 'phone', 'alt_phone', 'address_line1', 'address_line2',
   'city', 'state', 'postal_code', 'country', 'emergency_name', 'emergency_relation',
   'emergency_phone', 'employee_code', 'job_title', 'department', 'employment_type',
-  'hire_date', 'termination_date', 'supervisor_id', 'pay_type', 'payroll_ref',
+  'status', 'hire_date', 'termination_date', 'supervisor_id', 'pay_type', 'payroll_ref',
   'preferred_contact', 'skills', 'notes',
 ];
 

@@ -365,6 +365,7 @@ function migrate() {
       job_title         TEXT,
       department        TEXT,
       employment_type   TEXT,
+      status            TEXT DEFAULT 'active',
       hire_date         TEXT,
       termination_date  TEXT,
       supervisor_id     INTEGER REFERENCES users(id),
@@ -400,6 +401,7 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`,
     `ALTER TABLE locations ADD COLUMN type TEXT NOT NULL DEFAULT 'restaurant'`,
     `ALTER TABLE users ADD COLUMN pin TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 
