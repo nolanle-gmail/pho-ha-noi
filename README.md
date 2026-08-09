@@ -21,8 +21,9 @@ level. **Managers get a dedicated dashboard** as their Overview: a greeting +
 today's date, KPI tiles (staff, on-shift today, anyone over 40h this week, low
 stock, equipment issues, unread messages), **today's roster** (each person's
 shift, hours, assigned-job count, and OT flags — with an "away" mark when they're
-at another store), **weekly schedule health** (staff-days over 8h, over-40h
-staff, shifts missing jobs, unscheduled staff), **roster status** (active /
+at another store), **weekly schedule health** (unfilled days the store is open
+but nobody's scheduled, staff-days over 8h, over-40h staff, shifts missing jobs,
+unscheduled staff), **roster status** (active /
 vacation / sick / inactive), and a **needs-attention** panel (below-par stock +
 equipment needing service). Every tile links into the relevant module. Several
 sections have their own horizontal tab bars:

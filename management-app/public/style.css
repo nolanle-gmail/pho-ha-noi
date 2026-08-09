@@ -110,8 +110,7 @@ td.sched-week { vertical-align: middle; text-align: center; }
 @media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
 .stat-btn { text-align: left; cursor: pointer; font: inherit; border: 1px solid var(--line); }
 .stat-btn:hover { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
-.health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
-@media (max-width: 640px) { .health-grid { grid-template-columns: repeat(2, 1fr); } }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: .6rem; }
 .health { border: 1px solid var(--line); border-radius: 10px; padding: .6rem; text-align: center; font-size: .78rem; color: var(--muted); }
 .health .h-num { font-size: 1.5rem; font-weight: 800; color: var(--ink); }
 .health.ok .h-num { color: #1e7e34; } .health.warn .h-num { color: #b4630b; } .health.bad .h-num { color: var(--red); }

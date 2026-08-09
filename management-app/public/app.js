@@ -595,12 +595,13 @@ async function renderOverview() {
 async function renderManagerDashboard() {
   const loc = S.user.location_id;
   const safe = (p, fb) => p.then(x => x).catch(() => fb);
-  const [week, overview, reorder, equip, dash] = await Promise.all([
+  const [week, overview, reorder, equip, dash, locDetail] = await Promise.all([
     safe(api(`/schedule/week?location_id=${loc}`), { staff: [], days: [], location: {} }),
     safe(api('/staff/overview'), []),
     safe(api(`/inventory/reorder-suggestions?location_id=${loc}`), []),
     safe(api(`/locations/${loc}/equipment`), []),
     safe(api(`/inventory/dashboard?location_id=${loc}`), null),
+    safe(api(`/locations/${loc}`), { hours: [] }),
   ]);
   const locName = shortLoc(week.location && week.location.name) || 'your location';
   const rs = overview[0] || { total: week.staff.length, active: 0, vacation: 0, sick: 0, inactive: 0, manager: null };
@@ -625,6 +626,16 @@ async function renderManagerDashboard() {
   });
   const noJobs = week.staff.reduce((n, st) => n + st.shifts.filter(s => String(s.location_id) === String(loc) && s.jobs.length === 0).length, 0);
   const unscheduled = week.staff.filter(st => st.shifts.length === 0).length;
+
+  // Unfilled days: the store is open (per operating hours) but nobody is scheduled
+  // at this location that day. Hours use day_of_week 0=Mon … 6=Sun, matching week.days.
+  const openMap = {}; (locDetail.hours || []).forEach(h => { openMap[h.day_of_week] = h; });
+  const unfilledDays = week.days.filter((iso, i) => {
+    const h = openMap[i];
+    const open = h ? !h.is_closed : true; // assume open if hours are unknown
+    if (!open) return false;
+    return !week.staff.some(st => st.shifts.some(s => s.shift_date === iso && String(s.location_id) === String(loc)));
+  }).map((iso) => WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]);
 
   const equipIssues = equip.filter(e => e.status && e.status !== 'operational');
   const serviceDue = equip.filter(e => e.next_service && e.status === 'operational' && new Date(e.next_service) < new Date());
@@ -663,12 +674,14 @@ async function renderManagerDashboard() {
       <div class="section">
         <h3 style="margin-top:0">This week's schedule health</h3>
         <div class="health-grid">
+          <div class="health ${unfilledDays.length ? 'bad' : 'ok'}"><div class="h-num">${unfilledDays.length}</div><div>unfilled open days</div></div>
           <div class="health ${overDay ? 'warn' : 'ok'}"><div class="h-num">${overDay}</div><div>staff-days over 8h</div></div>
           <div class="health ${overWeek.length ? 'bad' : 'ok'}"><div class="h-num">${overWeek.length}</div><div>over 40h this week</div></div>
           <div class="health ${noJobs ? 'warn' : 'ok'}"><div class="h-num">${noJobs}</div><div>shifts with no jobs</div></div>
           <div class="health ${unscheduled ? 'warn' : 'ok'}"><div class="h-num">${unscheduled}</div><div>unscheduled staff</div></div>
         </div>
-        ${overWeek.length ? `<p class="sub" style="margin:.6rem 0 0;color:var(--red);font-size:.82rem">Over full-time: ${overWeek.map(s => esc(s.name)).join(', ')} — review or approve.</p>` : ''}
+        ${unfilledDays.length ? `<p class="sub" style="margin:.6rem 0 0;color:var(--red);font-size:.82rem">Open but nobody scheduled: ${unfilledDays.join(', ')} — assign coverage.</p>` : ''}
+        ${overWeek.length ? `<p class="sub" style="margin:.4rem 0 0;color:var(--red);font-size:.82rem">Over full-time: ${overWeek.map(s => esc(s.name)).join(', ')} — review or approve.</p>` : ''}
       </div>
     </div>
 
