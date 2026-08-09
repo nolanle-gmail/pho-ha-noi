@@ -105,6 +105,22 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .ot-banner { background: #fdecea; border: 1px solid #f3b7b0; color: #a12a1c; border-radius: 10px; padding: .55rem .7rem; margin: .3rem 0 .6rem; font-size: .84rem; line-height: 1.4; }
 .ot-ack { display: flex; align-items: center; gap: .4rem; margin-top: .5rem; font-weight: 700; color: var(--red); }
 .ot-ack input { width: auto; margin: 0; }
+/* ── Manager dashboard ────────────────────────────────────────────────── */
+.dash-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+@media (max-width: 900px) { .dash-cols { grid-template-columns: 1fr; } }
+.stat-btn { text-align: left; cursor: pointer; font: inherit; border: 1px solid var(--line); }
+.stat-btn:hover { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+.health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem; }
+@media (max-width: 640px) { .health-grid { grid-template-columns: repeat(2, 1fr); } }
+.health { border: 1px solid var(--line); border-radius: 10px; padding: .6rem; text-align: center; font-size: .78rem; color: var(--muted); }
+.health .h-num { font-size: 1.5rem; font-weight: 800; color: var(--ink); }
+.health.ok .h-num { color: #1e7e34; } .health.warn .h-num { color: #b4630b; } .health.bad .h-num { color: var(--red); }
+.health.warn { background: #fff8ef; } .health.bad { background: #fdf1f1; }
+.attn-block { border-top: 1px solid var(--line); padding: .6rem 0; font-size: .9rem; }
+.attn-block:first-of-type { border-top: none; }
+.attn-list { margin: .35rem 0 .5rem; padding-left: 1.1rem; font-size: .84rem; }
+.attn-list li { margin: .15rem 0; }
+.attn-list .muted, .muted { color: var(--muted); }
 .job-pick-label { font-size: .85rem; font-weight: 700; margin: .3rem 0 .3rem; }
 .job-pick { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; }
 .jpd-head { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--red); font-weight: 800; margin: .4rem 0 .2rem; }

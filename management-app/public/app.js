@@ -551,7 +551,18 @@ async function renderActivity() {
 }
 
 // ── Section: Overview ──────────────────────────────────────────────────────
+// Jump straight into a location's detail tab (used by the manager dashboard).
+function openLocationDetail(locId, tab) {
+  S.section = 'locations'; setActiveNav('locations');
+  const meta = SECTIONS.find(s => s[0] === 'locations');
+  $('pageTitle').textContent = meta ? meta[2] : 'Locations';
+  $('locPicker').classList.add('hidden');
+  S.locView = 'detail'; S.locDetailId = locId; S.locTab = tab || 'details';
+  renderLocationsSection();
+}
+
 async function renderOverview() {
+  if (S.user.role === 'manager' && S.user.location_id) return renderManagerDashboard();
   let dash = null;
   try { dash = await api(invQ('/dashboard')); } catch { /* employee etc. */ }
   let staffCount = null;
@@ -578,6 +589,115 @@ async function renderOverview() {
       </div>
     </div>`;
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+}
+
+// ── Manager dashboard (the Overview a manager lands on) ──────────────────────
+async function renderManagerDashboard() {
+  const loc = S.user.location_id;
+  const safe = (p, fb) => p.then(x => x).catch(() => fb);
+  const [week, overview, reorder, equip, dash] = await Promise.all([
+    safe(api(`/schedule/week?location_id=${loc}`), { staff: [], days: [], location: {} }),
+    safe(api('/staff/overview'), []),
+    safe(api(`/inventory/reorder-suggestions?location_id=${loc}`), []),
+    safe(api(`/locations/${loc}/equipment`), []),
+    safe(api(`/inventory/dashboard?location_id=${loc}`), null),
+  ]);
+  const locName = shortLoc(week.location && week.location.name) || 'your location';
+  const rs = overview[0] || { total: week.staff.length, active: 0, vacation: 0, sick: 0, inactive: 0, manager: null };
+  const today = todayIso();
+
+  // Who's on today (at this location; note anyone away).
+  const onToday = week.staff.map(st => {
+    const todays = st.shifts.filter(s => s.shift_date === today);
+    if (!todays.length) return null;
+    const dayH = sumHours(todays), weekH = sumHours(st.shifts);
+    const away = todays.filter(s => String(s.location_id) !== String(loc));
+    return { name: st.name, role: st.role, todays, dayH, weekH, away, ot: dayH > DAILY_MAX || weekH > WEEKLY_MAX };
+  }).filter(Boolean).sort((a, b) => (a.todays[0].start_time || '').localeCompare(b.todays[0].start_time || ''));
+
+  // Schedule health for the week.
+  const overWeek = week.staff.filter(st => sumHours(st.shifts) > WEEKLY_MAX);
+  let overDay = 0;
+  week.staff.forEach(st => {
+    const byDay = {};
+    st.shifts.forEach(s => { byDay[s.shift_date] = (byDay[s.shift_date] || 0) + shiftHours(s.start_time, s.end_time); });
+    Object.values(byDay).forEach(h => { if (h > DAILY_MAX) overDay++; });
+  });
+  const noJobs = week.staff.reduce((n, st) => n + st.shifts.filter(s => String(s.location_id) === String(loc) && s.jobs.length === 0).length, 0);
+  const unscheduled = week.staff.filter(st => st.shifts.length === 0).length;
+
+  const equipIssues = equip.filter(e => e.status && e.status !== 'operational');
+  const serviceDue = equip.filter(e => e.next_service && e.status === 'operational' && new Date(e.next_service) < new Date());
+  const hr = new Date().getHours();
+  const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const stat = (label, value, cls, goto) => `<button class="card stat-btn" ${goto ? `data-goto="${goto}"` : ''}><div class="label">${label}</div><div class="value ${cls || ''}">${value}</div></button>`;
+
+  $('view').innerHTML = `
+    <div class="overview-hero">
+      <h2>${greet}, ${esc(S.user.name.split(' ')[0])}</h2>
+      <p>${esc(locName)} · <span class="role-chip">manager</span> · ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</p>
+    </div>
+    <div class="kpis">
+      ${stat('Staff', rs.total, '', 'staff')}
+      ${stat('On today', onToday.length, onToday.length ? 'ok' : '')}
+      ${stat('Over 40h this week', overWeek.length, overWeek.length ? 'bad' : '')}
+      ${stat('Low stock', reorder.length, reorder.length ? 'warn' : '', 'inventory')}
+      ${stat('Equipment issues', equipIssues.length + serviceDue.length, (equipIssues.length + serviceDue.length) ? 'warn' : '')}
+      ${stat('Unread messages', S.unread || 0, S.unread ? 'warn' : '', 'messages')}
+    </div>
+
+    <div class="dash-cols">
+      <div class="section">
+        <div class="row-between"><h3 style="margin:0">On today — ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</h3>
+          <button class="btn sm ghost" data-sched="1">Open schedule →</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Shift</th><th class="num">Hrs</th><th>Jobs</th></tr></thead><tbody>
+          ${onToday.length ? onToday.map(p => `<tr>
+            <td><strong>${esc(p.name)}</strong> <span class="badge ${ROLE_CHIP[p.role] || 'gray'}">${esc(p.role)}</span>${p.ot ? ' <span class="badge out" title="Over daily/weekly limit">OT ⚠</span>' : ''}${p.away.length ? ' <span class="badge blue">away</span>' : ''}</td>
+            <td>${p.todays.map(s => `${s.start_time || '—'}–${s.end_time || '—'}`).join(', ')}</td>
+            <td class="num">${fmtH(p.dayH)}h</td>
+            <td>${p.todays.reduce((n, s) => n + s.jobs.length, 0)} assigned</td>
+          </tr>`).join('') : '<tr><td colspan="4" class="empty">Nobody scheduled today.</td></tr>'}
+        </tbody></table></div>
+      </div>
+
+      <div class="section">
+        <h3 style="margin-top:0">This week's schedule health</h3>
+        <div class="health-grid">
+          <div class="health ${overDay ? 'warn' : 'ok'}"><div class="h-num">${overDay}</div><div>staff-days over 8h</div></div>
+          <div class="health ${overWeek.length ? 'bad' : 'ok'}"><div class="h-num">${overWeek.length}</div><div>over 40h this week</div></div>
+          <div class="health ${noJobs ? 'warn' : 'ok'}"><div class="h-num">${noJobs}</div><div>shifts with no jobs</div></div>
+          <div class="health ${unscheduled ? 'warn' : 'ok'}"><div class="h-num">${unscheduled}</div><div>unscheduled staff</div></div>
+        </div>
+        ${overWeek.length ? `<p class="sub" style="margin:.6rem 0 0;color:var(--red);font-size:.82rem">Over full-time: ${overWeek.map(s => esc(s.name)).join(', ')} — review or approve.</p>` : ''}
+      </div>
+    </div>
+
+    <div class="dash-cols">
+      <div class="section">
+        <h3 style="margin-top:0">Roster status</h3>
+        <div class="kpis" style="margin:0">
+          <div class="card"><div class="label">Active</div><div class="value ok">${rs.active}</div></div>
+          <div class="card"><div class="label">Vacation</div><div class="value">${rs.vacation}</div></div>
+          <div class="card"><div class="label">Sick</div><div class="value">${rs.sick}</div></div>
+          <div class="card"><div class="label">Inactive</div><div class="value bad">${rs.inactive}</div></div>
+        </div>
+        <button class="btn sm ghost" data-goto="staff" style="margin-top:.7rem">View staff directory →</button>
+      </div>
+
+      <div class="section">
+        <h3 style="margin-top:0">Needs attention</h3>
+        <div class="attn-block"><strong>${reorder.length}</strong> item${reorder.length === 1 ? '' : 's'} below par
+          ${reorder.length ? `<ul class="attn-list">${reorder.slice(0, 4).map(i => `<li>${esc(i.item_name || i.name)} <span class="muted">${i.quantity != null ? i.quantity : ''}${i.par_level != null ? ' / ' + i.par_level : ''}</span></li>`).join('')}${reorder.length > 4 ? `<li class="muted">+${reorder.length - 4} more…</li>` : ''}</ul>` : ''}
+          <button class="btn sm ghost" data-goto="inventory">Open inventory →</button></div>
+        <div class="attn-block"><strong>${equipIssues.length + serviceDue.length}</strong> equipment item${(equipIssues.length + serviceDue.length) === 1 ? '' : 's'} to check
+          ${(equipIssues.length + serviceDue.length) ? `<ul class="attn-list">${equipIssues.slice(0, 3).map(e => `<li>${esc(e.name)} <span class="badge low">${esc((e.status || '').replace('_', ' '))}</span></li>`).join('')}${serviceDue.slice(0, 3 - Math.min(3, equipIssues.length)).map(e => `<li>${esc(e.name)} <span class="badge out">service overdue</span></li>`).join('')}</ul>` : ''}
+          <button class="btn sm ghost" data-equip="1">Open equipment →</button></div>
+      </div>
+    </div>`;
+
+  $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+  $('view').querySelectorAll('[data-sched]').forEach(b => b.onclick = () => openLocationDetail(loc, 'schedule'));
+  $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
 }
 
 // ── Section: Locations (master-detail module) ──────────────────────────────
