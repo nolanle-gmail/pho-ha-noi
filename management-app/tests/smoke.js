@@ -240,8 +240,10 @@ const check = (name, ok, detail = '') => {
     check('create job (owner)', newJob.success === true && !!newJob.id, JSON.stringify(newJob));
     r = await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(token), body: JSON.stringify({ code: 'TST-99', name: 'Dup Code' }) });
     check('duplicate Job ID rejected (409)', r.status === 409, 'status=' + r.status);
-    r = await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Job' }) });
-    check('manager cannot edit job catalog (403)', r.status === 403, 'status=' + r.status);
+    const mgrJob = await j(await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Job', department: 'Front of House' }) }));
+    check('manager can add a job', mgrJob.success === true && !!mgrJob.id, JSON.stringify(mgrJob));
+    r = await fetch(base + '/api/schedule/jobs', { headers: H(emp.token) });
+    check('employee blocked from job catalog (403)', r.status === 403, 'status=' + r.status);
 
     // ── Scheduling: weekly shifts ──────────────────────────────
     const wk = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));

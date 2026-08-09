@@ -579,7 +579,8 @@ function seedJobsAndShifts(db, locIds) {
   const now = new Date();
   const monday = new Date(now);
   monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
-  const iso = (d) => d.toISOString().slice(0, 10);
+  // Local-date ISO — toISOString() would shift the date in negative-offset zones.
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const dayISO = (offset) => { const d = new Date(monday); d.setDate(monday.getDate() + offset); return iso(d); };
 
   const insShift = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`);

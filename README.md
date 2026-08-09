@@ -45,10 +45,10 @@ level. Several sections have their own horizontal tab bars:
   - **Jobs / Tasks** — a catalog of the jobs that exist in the restaurant
     (grouped by department: Front of House, Back of House, Bar, Facilities,
     Management), each with a **Job ID**, name, description/instructions,
-    **complexity** (low / medium / high), typical duration, and notes. Owner/admin
-    curate it (add / edit / retire); managers pick from it when scheduling. Ships
-    with ~25 seeded jobs (Broth Station, Take Orders, Expo/Plating, Opening &
-    Closing checklists, Cash Reconciliation, …).
+    **complexity** (low / medium / high), typical duration, and notes. Managers
+    and owner/admin curate the shared catalog (add / edit / retire) and pick from
+    it when scheduling. Ships with ~25 seeded jobs (Broth Station, Take Orders,
+    Expo/Plating, Opening & Closing checklists, Cash Reconciliation, …).
   - **Directory** — a clickable **A–Z letter bar** (defaults to "A" on open;
     letters with no one are dimmed) plus a search that spans every staff member.
     Each row has a **View** button opening the person's full profile; owner/admin
@@ -95,7 +95,11 @@ level. Several sections have their own horizontal tab bars:
     a highlighted "today". Because each shift carries its own location, a person
     can be scheduled at **different locations on different days** — shifts at
     another store show as read-only "@ store" cards for cross-location visibility,
-    and staff whose home store is elsewhere are flagged **visiting**. Standard restaurant equipment (walk-ins, ranges, fryers, ice
+    and staff whose home store is elsewhere are flagged **visiting**. Each shift
+    shows its hours, and the grid enforces soft limits — **8h/day** and **40h/week**
+    (full-time): the day cell and the week total turn red ⚠ when exceeded, and the
+    shift editor blocks the save until the scheduler ticks **"Approve overtime
+    exception"**, so going over is a deliberate, authorized choice. Standard restaurant equipment (walk-ins, ranges, fryers, ice
   machine, dishwasher, hood/fire suppression, POS, etc.) is seeded per location.
 
 **Access levels:** Owner & Admin see everything · Manager runs their location ·
@@ -159,5 +163,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 131 checks · waitlist: 32 checks
+npm run smoke      # management: 132 checks · waitlist: 32 checks
 ```

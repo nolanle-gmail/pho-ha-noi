@@ -703,12 +703,26 @@ async function renderLocStaff() {
 }
 
 // ── Weekly schedule (per location) ───────────────────────────────────────────
-function mondayOf(dateStr) { const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return d.toISOString().slice(0, 10); }
-function addDaysIso(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+// Local-date ISO — toISOString() would shift the date west of UTC (e.g. Pacific).
+function fmtLocalIso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function mondayOf(dateStr) { const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return fmtLocalIso(d); }
+function addDaysIso(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocalIso(d); }
 const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fmtDay = (iso) => { const d = new Date(iso + 'T00:00:00'); return `${MON[d.getMonth()]} ${d.getDate()}`; };
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => fmtLocalIso(new Date());
+// Overtime caps: max 8h/day, 40h/week (full-time). Over-cap shifts are flagged,
+// not blocked — the scheduler approves an exception to keep them.
+const DAILY_MAX = 8, WEEKLY_MAX = 40;
+function shiftHours(start, end) {
+  if (!start || !end) return 0;
+  const [h1, m1] = start.split(':').map(Number), [h2, m2] = end.split(':').map(Number);
+  let mins = (h2 * 60 + m2) - (h1 * 60 + m1);
+  if (mins < 0) mins += 1440; // shift crosses midnight
+  return mins / 60;
+}
+const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftHours(s.start_time, s.end_time), 0);
+const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
 
 async function renderLocSchedule() {
   const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
@@ -724,18 +738,27 @@ async function renderLocSchedule() {
   const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" title="${esc((j.code ? j.code + ' · ' : '') + j.name + ' (' + (j.complexity || '') + ')')}">${esc(j.code || j.name)}</span>`;
 
   const cell = (st, day) => {
-    const here = st.shifts.filter(s => s.shift_date === day && String(s.location_id) === String(data.location.id));
-    const away = st.shifts.filter(s => s.shift_date === day && String(s.location_id) !== String(data.location.id));
+    const dayShifts = st.shifts.filter(s => s.shift_date === day);
+    const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
+    const away = dayShifts.filter(s => String(s.location_id) !== String(data.location.id));
+    const dayTotal = sumHours(dayShifts);
     const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
-        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'}</div>
+        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftHours(s.start_time, s.end_time))}h</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
       </div>`).join('');
     const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
-        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'}</div>
+        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftHours(s.start_time, s.end_time))}h</span></div>
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
+    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h</div>` : '';
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
-    return `<td class="sched-cell">${hereCards}${awayCards}${add}</td>`;
+    return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${awayCards}${total}${add}</td>`;
+  };
+  const weekBadge = (st) => {
+    const h = sumHours(st.shifts);
+    if (!h) return '<span class="hours-none">—</span>';
+    return h > WEEKLY_MAX ? `<span class="badge out" title="Over the ${WEEKLY_MAX}h full-time limit">${fmtH(h)}h ⚠</span>`
+      : `<span class="badge ${h === WEEKLY_MAX ? 'blue' : 'ok'}">${fmtH(h)}h</span>`;
   };
 
   $('locBody').innerHTML = `
@@ -751,14 +774,16 @@ async function renderLocSchedule() {
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
       ${days.map((d, i) => `<th class="${d === todayIso() ? 'is-today' : ''}">${WD[i]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
+      <th class="sched-week">Week<div class="sched-date">/ ${WEEKLY_MAX}h</div></th>
     </tr></thead><tbody>
       ${data.staff.length ? data.staff.map(st => `<tr>
         <td class="sched-name"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
           ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</td>
         ${days.map(d => cell(st, d)).join('')}
-      </tr>`).join('') : `<tr><td colspan="8" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
+        <td class="sched-week">${weekBadge(st)}</td>
+      </tr>`).join('') : `<tr><td colspan="9" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
     </tbody></table></div>
-    <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Click a shift to edit; use + to add.</p>`;
+    <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong> — over-limit shifts are flagged ⚠ (approve an exception when editing). Click a shift to edit; use + to add.</p>`;
 
   $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
   $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
@@ -798,6 +823,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
           <span class="badge ${COMPLEXITY_CHIP[j.complexity] || 'gray'}">${esc(j.complexity || '')}</span> ${esc(j.name)}${j.code ? ` <span class="mono" style="color:var(--muted)">${esc(j.code)}</span>` : ''}</label>`).join('')}
       </div>`).join('')}
     </div>
+    <div id="otWarn"></div>
     <div class="actions">
       ${isNew ? '' : '<button class="btn ghost danger" id="mDelete" style="margin-right:auto">Delete shift</button>'}
       <button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${isNew ? 'Add shift' : 'Save'}</button>
@@ -809,7 +835,28 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   if (!isNew) $('mDelete').onclick = () => {
     modal('Delete this shift?', [], async () => { await api('/schedule/shifts/' + shift.id, { method: 'DELETE' }); toast('Shift removed'); renderLocSchedule(); }, 'Delete');
   };
+
+  // Live overtime check — 8h/day and 40h/week, across every location the person works.
+  const curId = shift ? shift.id : null;
+  const otherDay = staff.shifts.filter(s => s.shift_date === dayIso && s.id !== curId);
+  const otherWeek = staff.shifts.filter(s => s.id !== curId);
+  let over = false;
+  const recompute = () => {
+    const proposed = shiftHours($('s_start').value, $('s_end').value);
+    const day = sumHours(otherDay) + proposed, week = sumHours(otherWeek) + proposed;
+    const msgs = [];
+    if (day > DAILY_MAX) msgs.push(`This day totals <strong>${fmtH(day)}h</strong> — over the ${DAILY_MAX}h daily limit.`);
+    if (week > WEEKLY_MAX) msgs.push(`This week totals <strong>${fmtH(week)}h</strong> — over the ${WEEKLY_MAX}h full-time limit.`);
+    over = msgs.length > 0;
+    $('otWarn').innerHTML = over
+      ? `<div class="ot-banner">⚠ ${msgs.join('<br>')}<label class="chk ot-ack"><input type="checkbox" id="s_ot"> Approve overtime exception</label></div>`
+      : '';
+  };
+  $('s_start').oninput = recompute; $('s_end').oninput = recompute;
+  recompute();
+
   $('mOk').onclick = async () => {
+    if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
     const body = { user_id: staff.id, location_id: location.id, shift_date: dayIso, start_time: $('s_start').value, end_time: $('s_end').value, notes: $('s_notes').value, job_ids };
     try {
@@ -925,7 +972,7 @@ async function renderJobsCatalog() {
   let jobs;
   try { jobs = await api('/schedule/jobs'); }
   catch (e) { return renderPlaceholder('Jobs', '🧾', e.message); }
-  const canManage = ['owner', 'admin'].includes(S.user.role);
+  const canManage = ['owner', 'admin', 'manager'].includes(S.user.role);
   const active = jobs.filter(j => j.is_active);
   const byDept = {};
   active.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });

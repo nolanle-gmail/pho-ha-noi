@@ -13,15 +13,18 @@ const isAdmin = (req) => ['owner', 'admin'].includes(req.user.role);
 const ownsLocation = (req, locId) => isAdmin(req) || String(req.user.location_id) === String(locId);
 const COMPLEXITY = ['low', 'medium', 'high'];
 
+// Local-date ISO (YYYY-MM-DD) — avoids the UTC shift that toISOString() causes
+// in negative-offset timezones (e.g. US Pacific).
+function fmtLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 // Monday (ISO) of the week containing `dateStr` (defaults to today).
 function weekStart(dateStr) {
   const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
   if (isNaN(d)) return weekStart(null);
   const day = (d.getDay() + 6) % 7; // 0 = Monday
   d.setDate(d.getDate() - day);
-  return d.toISOString().slice(0, 10);
+  return fmtLocal(d);
 }
-function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocal(d); }
 
 // ── Job/task catalog ─────────────────────────────────────────────────────────
 router.get('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
@@ -31,7 +34,8 @@ router.get('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 const JOB_FIELDS = ['code', 'name', 'description', 'department', 'complexity', 'est_minutes', 'notes'];
-router.post('/jobs', requireRole(...ROLES.ADMIN), (req, res) => {
+// Managers can grow the shared catalog too, not just owner/admin.
+router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Job name is required.' });
   const code = (req.body.code || '').toString().trim() || null;
@@ -44,7 +48,7 @@ router.post('/jobs', requireRole(...ROLES.ADMIN), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/jobs/:id', requireRole(...ROLES.ADMIN), (req, res) => {
+router.put('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   if (req.body.code !== undefined && req.body.code !== job.code) {
@@ -67,7 +71,7 @@ router.put('/jobs/:id', requireRole(...ROLES.ADMIN), (req, res) => {
 });
 
 // Soft-delete (retire) a job so historical shift assignments stay intact.
-router.delete('/jobs/:id', requireRole(...ROLES.ADMIN), (req, res) => {
+router.delete('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   db.prepare(`UPDATE jobs SET is_active=0 WHERE id=?`).run(job.id);
