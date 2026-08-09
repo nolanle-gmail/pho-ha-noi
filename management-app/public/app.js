@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -95,6 +95,7 @@ const SECTIONS = [
   ['overview', '📊', 'Overview', ROLE_ALL],
   ['locations', '📍', 'Locations', ['owner', 'admin', 'manager']],
   ['staff', '👥', 'Staff', ['owner', 'admin', 'manager']],
+  ['myschedule', '🗓️', 'My Schedule', ['manager', 'support', 'employee']],
   ['inventory', '📦', 'Inventory', ROLE_ALL],
   ['central', '🏭', 'Central Kitchen', ['owner', 'admin']],
   ['menu', '🍽️', 'Menu/Recipes', ['owner', 'admin', 'manager']],
@@ -139,7 +140,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -711,6 +712,59 @@ async function renderManagerDashboard() {
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
   $('view').querySelectorAll('[data-sched]').forEach(b => b.onclick = () => openLocationDetail(loc, 'schedule'));
   $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
+}
+
+// ── My Schedule (a staff member's own week, read-only, with OT warnings) ─────
+async function renderMySchedule() {
+  let data;
+  try { data = await api('/schedule/my-week' + (S.mySchedWeek ? '?week=' + S.mySchedWeek : '')); }
+  catch (e) { return renderPlaceholder('My Schedule', '🗓️', e.message); }
+  S.mySchedWeek = data.week_start;
+  const days = data.days;
+  const weekH = sumHours(data.shifts);
+  const overWeek = weekH > WEEKLY_MAX;
+  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" title="${esc((j.code ? j.code + ' · ' : '') + j.name + ' (' + (j.complexity || '') + ')')}">${esc(j.code || j.name)}</span>`;
+  const byDay = {}; data.shifts.forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
+  const overDays = days.filter(iso => sumHours(byDay[iso] || []) > DAILY_MAX).map(iso => WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]);
+
+  const dayCard = (iso, i) => {
+    const ss = (byDay[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+    const dayH = sumHours(ss);
+    const over = dayH > DAILY_MAX;
+    return `<div class="myday${iso === todayIso() ? ' today' : ''}">
+      <div class="myday-head"><span>${WD[i]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
+      ${ss.length ? ss.map(s => `<div class="myshift">
+        <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftHours(s.start_time, s.end_time))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
+        <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
+        ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
+      </div>`).join('') : '<div class="myday-off">Day off</div>'}
+    </div>`;
+  };
+
+  const warn = (overWeek || overDays.length)
+    ? `<div class="ot-banner">⚠ ${[
+        overWeek ? `You're scheduled <strong>${fmtH(weekH)}h</strong> this week — over the ${WEEKLY_MAX}h full-time limit.` : '',
+        overDays.length ? `Over ${DAILY_MAX}h on: <strong>${overDays.join(', ')}</strong>.` : '',
+      ].filter(Boolean).join('<br>')}<br>Check with your manager if this looks wrong.</div>`
+    : '';
+
+  $('view').innerHTML = `
+    <div class="row-between sched-head">
+      <div class="week-nav">
+        <button class="btn sm ghost" id="wkPrev">‹ Prev</button>
+        <button class="btn sm ghost" id="wkToday">This week</button>
+        <button class="btn sm ghost" id="wkNext">Next ›</button>
+      </div>
+      <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
+      <span class="badge ${overWeek ? 'out' : (weekH ? 'ok' : 'gray')}" title="Hours scheduled this week">${fmtH(weekH)}h / ${WEEKLY_MAX}h</span>
+    </div>
+    ${warn}
+    <div class="myweek">${days.map((d, i) => dayCard(d, i)).join('')}</div>
+    <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong>. Days over the limit are flagged ⚠. Only a manager can change a shift.</p>`;
+
+  $('wkPrev').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, -7); renderMySchedule(); };
+  $('wkNext').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, 7); renderMySchedule(); };
+  $('wkToday').onclick = () => { S.mySchedWeek = mondayOf(null); renderMySchedule(); };
 }
 
 // ── Section: Locations (master-detail module) ──────────────────────────────

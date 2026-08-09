@@ -129,6 +129,14 @@ router.get('/week', requireRole(...ROLES.MANAGE), (req, res) => {
   });
 });
 
+// Any signed-in staff member can see their own week (all locations they work).
+router.get('/my-week', (req, res) => {
+  const ws = weekStart(req.query.week);
+  const byUser = shiftsForUsers([req.user.id], ws);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  res.json({ week_start: ws, days, shifts: byUser[req.user.id] || [] });
+});
+
 // Validate + normalize a shift body against a location the requester owns.
 function prepareShift(req, res) {
   const locId = parseInt(req.body.location_id, 10);

@@ -261,7 +261,9 @@ const check = (name, ok, detail = '') => {
       body: JSON.stringify({ user_id: schedStaff.id, location_id: loc2, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00' }) });
     check('manager cannot schedule another location (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(emp.token) });
-    check('employee blocked from schedule (403)', r.status === 403, 'status=' + r.status);
+    check('employee blocked from location schedule (403)', r.status === 403, 'status=' + r.status);
+    const myWk = await j(await fetch(base + '/api/schedule/my-week', { headers: H(emp.token) }));
+    check('employee sees own schedule (my-week)', Array.isArray(myWk.shifts) && !!myWk.week_start && myWk.days.length === 7, JSON.stringify(myWk).slice(0, 60));
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());
 

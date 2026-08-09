@@ -120,6 +120,21 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .attn-list { margin: .35rem 0 .5rem; padding-left: 1.1rem; font-size: .84rem; }
 .attn-list li { margin: .15rem 0; }
 .attn-list .muted, .muted { color: var(--muted); }
+/* ── My Schedule (employee self-view) ─────────────────────────────────── */
+.myweek { display: grid; grid-template-columns: repeat(7, 1fr); gap: .6rem; margin-top: 1rem; }
+@media (max-width: 900px) { .myweek { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 520px) { .myweek { grid-template-columns: 1fr; } }
+.myday { border: 1px solid var(--line); border-radius: 10px; padding: .5rem; background: #fff; min-height: 5rem; }
+.myday.today { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+.myday-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: .82rem; border-bottom: 1px solid var(--line); padding-bottom: .3rem; margin-bottom: .4rem; }
+.myday-date { color: var(--muted); font-weight: 400; font-size: .76rem; }
+.myday-h { font-size: .74rem; color: #1e7e34; font-weight: 700; }
+.myday-h.over { color: var(--red); }
+.myshift { background: var(--gold-soft); border-radius: 8px; padding: .35rem .45rem; margin-bottom: .4rem; }
+.myshift-top { font-size: .78rem; display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; }
+.myshift-loc { color: var(--muted); font-size: .72rem; }
+.myshift-note { font-size: .72rem; color: var(--muted); margin-top: .25rem; }
+.myday-off { color: var(--muted); font-size: .78rem; font-style: italic; padding: .3rem 0; }
 .job-pick-label { font-size: .85rem; font-weight: 700; margin: .3rem 0 .3rem; }
 .job-pick { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; }
 .jpd-head { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--red); font-weight: 800; margin: .4rem 0 .2rem; }

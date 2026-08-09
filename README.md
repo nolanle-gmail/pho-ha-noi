@@ -78,6 +78,12 @@ sections have their own horizontal tab bars:
   - The demo seed ships **10 named store managers** (each with a General-Manager
     profile) plus **150 generated staff** spread across the stores, each with a
     full profile, so the directory and reports are populated out of the box.
+- **My Schedule** (manager / support / employee) — a read-only weekly view of the
+  signed-in person's own shifts across **every** location they work: seven day
+  cards with each shift's time, hours, assigned jobs, and store, a running
+  **week total (/40h)**, and the same **overtime flags** as the scheduler — days
+  over 8h are marked ⚠ and a banner calls out an over-40h week ("Check with your
+  manager"). Only a manager can change a shift.
 - **Reports** — **Items** (inventory value by category/location, top items,
   30-day COGS), **Sales** (revenue, covers, avg check, daily + by-location),
   **Analytics** (revenue trend, food-cost %, labor-cost %, best/lowest location),
@@ -172,5 +178,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 132 checks · waitlist: 32 checks
+npm run smoke      # management: 133 checks · waitlist: 32 checks
 ```
