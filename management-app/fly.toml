@@ -1,0 +1,35 @@
+# fly.toml — Pho Ha Noi Enterprise Restaurant Management System
+# Change `app` to your own unique name before the first deploy.
+app = "pho-ha-noi-management"
+primary_region = "sjc"            # San Jose — closest to the Bay Area stores
+
+[build]
+
+[env]
+  PORT = "8080"
+  DB_PATH = "/data/phohanoi_management.db"   # persists on the mounted volume
+  TRUST_PROXY = "1"                          # Fly runs behind a proxy → real client IP in logs/audit
+
+# SQLite = one writer on one disk, so run exactly ONE machine (`fly scale count 1`).
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1        # keep the app always reachable
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/health"
+
+# Persistent disk for the SQLite database.
+[mounts]
+  source = "phn_management_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
