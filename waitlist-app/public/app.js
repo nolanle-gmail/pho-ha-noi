@@ -88,7 +88,7 @@ async function renderActivity() {
   const tab = (k, l) => `<button class="navbtn ${activityFilter === k ? 'active' : ''}" data-af="${k}">${l}</button>`;
   $('view').innerHTML = `
     <div class="section-head"><h2>Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
-      <div style="display:flex;gap:.25rem">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('checkins', 'Check-ins')}${tab('denied', 'Denied')}</div></div>
+      <div style="display:flex;gap:.25rem;align-items:center">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('checkins', 'Check-ins')}${tab('denied', 'Denied')}<button class="btn" id="expCsv" style="padding:.4rem .7rem;margin-left:.4rem">⬇ Export CSV</button></div></div>
     <p style="color:var(--muted);font-size:.85rem;margin:0 0 1rem">Every sign-in, change, and blocked attempt — who, what, status and IP. Read-only page views aren't logged.</p>
     <div class="hist"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
       ${rows.length ? rows.map(r => `<tr>
@@ -100,6 +100,31 @@ async function renderActivity() {
       </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.5rem">No activity recorded yet.</td></tr>'}
     </tbody></table></div>`;
   $('view').querySelectorAll('[data-af]').forEach(b => b.onclick = () => { activityFilter = b.dataset.af; render(); });
+  $('expCsv').onclick = exportActivityCSV;
+}
+
+async function exportActivityCSV() {
+  const btn = $('expCsv'); const orig = btn.textContent; btn.textContent = 'Preparing…'; btn.disabled = true;
+  try {
+    const q = '/waitlist/activity-log?' + (activityFilter === 'all' ? '' : 'event=' + activityFilter + '&') + 'limit=1000';
+    const rows = await api(q);
+    const act = (r) => r.path === '/api/auth/login' ? (r.status === 200 ? 'signed in' : 'sign-in failed')
+      : r.path === '/api/public/checkin' ? 'customer self check-in'
+        : `${r.method} ${r.path.replace('/api/waitlist', '').replace('/api', '')}`;
+    const headers = ['When', 'Who', 'Role', 'Email', 'Action', 'Status', 'IP'];
+    const lines = [headers.join(',')];
+    for (const r of rows) lines.push([
+      (r.created_at || '').replace('T', ' ').slice(0, 19), r.user_name || '', r.user_role || '',
+      (r.detail && r.detail.email) || '', act(r), r.status, r.ip || '',
+    ].map(csvCell).join(','));
+    const csv = '﻿' + lines.join('\r\n'); // BOM so Excel reads UTF-8
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = `pho-ha-noi_activity-log_${activityFilter}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    toast(`Exported ${rows.length} rows to CSV`);
+  } catch (e) { toast(e.message, true); }
+  finally { btn.textContent = orig; btn.disabled = false; }
 }
 
 function modal(title, bodyHtml, onOk, okLabel = 'Add party') {
