@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { signToken, verifyToken } = require('../lib/auth');
+const { signToken, verifyToken, publicRoles } = require('../lib/auth');
 
 const router = express.Router();
 
@@ -26,6 +26,9 @@ router.get('/me', verifyToken, (req, res) => {
   `).get(req.user.id);
   res.json(u || {});
 });
+
+// The access-level registry (labels, scope, capabilities) — drives the UI.
+router.get('/roles', verifyToken, (req, res) => res.json(publicRoles()));
 
 // Account settings: change my own password.
 router.post('/change-password', verifyToken, (req, res) => {

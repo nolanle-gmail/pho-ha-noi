@@ -3,13 +3,13 @@
 // view/manage their own location's hours & equipment.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 router.use(verifyToken);
 
-const isAdmin = (req) => ['owner', 'admin'].includes(req.user.role);
+const isAdmin = (req) => seesAllLocations(req.user.role);
 function ownsLocation(req, locId) {
   return isAdmin(req) || String(req.user.location_id) === String(locId);
 }

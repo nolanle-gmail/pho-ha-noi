@@ -117,9 +117,28 @@ sections have their own horizontal tab bars:
     exception"**, so going over is a deliberate, authorized choice. Standard restaurant equipment (walk-ins, ranges, fryers, ice
   machine, dishwasher, hood/fire suppression, POS, etc.) is seeded per location.
 
-**Access levels:** Owner & Admin see everything · Manager runs their location ·
-Support handles stock operations · Employee is view/request only. Enforced both in
-the UI (sidebar + pages) and the API (403s).
+**Access levels:** every access level is defined **once** in a registry
+(`lib/auth.js`) as a **scope** (`all` locations / their own `location` / `self`)
+plus **capabilities** (org · manage · ops · reports · central · delivery). Route
+permission groups *and* the sidebar are both derived from that table, and the
+**Staff → Access Levels** page renders straight from it, so adding a level wires
+it up everywhere. Shipped levels:
+
+- **Owner / Admin** — everything, all locations (only an Owner can create Owners).
+- **General Manager / Regional Manager** — operations across every store.
+- **Manager / Assistant Manager / Kitchen Manager** — their own store (staff,
+  schedule, inventory, menu, reports, messages).
+- **Analyst / Accountant** — read-only Reports & analytics across all locations.
+- **Inventory Support** — inventory operations at their location.
+- **Driver** — a read-only **Deliveries** view (Central-Kitchen manifests /
+  packing slips) + their own schedule + messages.
+- **Positions** (Server, Host / Front Desk, Cashier, Bartender, Barista, Busser,
+  Chef, Line Cook, Prep Cook, Dishwasher, …) — self-service only: **My Schedule**,
+  their assigned tasks, and messages. These are separate access levels that all
+  share the same `self` scope — same permissions, different job title.
+
+Enforced in the UI (sidebar + pages) **and** the API (403s); managers get a
+location dashboard, and everyone `self`-scoped lands on a personal home screen.
 
 The inventory module is a faithful port of the reference design, with the catalog tailored
 to a Vietnamese pho restaurant (49 items across Protein, Noodles, Produce, Pantry,
@@ -139,9 +158,10 @@ Santa Clara, Sunnyvale, Oakland).
 - **Transfers** between locations, immutable **transaction ledger**
 - **Activity log** — every order, status change, reorder, transfer and receive is recorded with **who did it** (name + role) and when
 - **Reports**: inventory valuation by category + 30-day consumed cost (COGS)
-- Access levels: owner · admin (both all locations) · manager · support · employee — RBAC + location scoping
+- Access levels: a registry-driven RBAC model — Owner/Admin, General/Regional/Assistant/Kitchen Manager, Analyst/Accountant, Inventory Support, Driver, and self-service positions (Server, Chef, Front Desk, …) — with per-capability gating + location scoping
 
 **Logins:** `harry@phohanoi.com` / `Harry123!` (owner) · `admin@phohanoi.com` / `Admin123!` · `manager1@phohanoi.com` / `Manager123!` · `support@phohanoi.com` / `Support123!` · `employee@phohanoi.com` / `Employee123!`
+Additional access levels: `gm@phohanoi.com` / `Gm123456!` (general manager) · `analyst@phohanoi.com` / `Analyst123!` · `driver@phohanoi.com` / `Driver123!` · `server@phohanoi.com` / `Server123!` · `chef@phohanoi.com` / `Chef123456!`
 
 ## 2. Waiting-list app  (`waitlist-app`, http://localhost:4002)
 
@@ -178,5 +198,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 133 checks · waitlist: 32 checks
+npm run smoke      # management: 144 checks · waitlist: 32 checks
 ```

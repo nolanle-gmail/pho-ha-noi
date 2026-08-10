@@ -168,6 +168,12 @@ function run() {
     Number(mkUser(MANAGER_NAMES[i], `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid).lastInsertRowid));
   mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0]);
   mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0]);
+  // Demo accounts for the additional access levels.
+  mkUser('Grace Kim', 'gm@phohanoi.com', 'Gm123456!', 'general_manager', null);
+  mkUser('Aaron Bell', 'analyst@phohanoi.com', 'Analyst123!', 'analyst', null);
+  mkUser('Dean Vo', 'driver@phohanoi.com', 'Driver123!', 'driver', locIds[0]);
+  mkUser('Sara Tran', 'server@phohanoi.com', 'Server123!', 'server', locIds[0]);
+  mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0]);
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();

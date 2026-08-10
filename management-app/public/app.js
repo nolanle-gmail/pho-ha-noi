@@ -64,12 +64,14 @@ $('logout').onclick = () => { localStorage.clear(); location.reload(); };
 async function boot() {
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
-  $('who').textContent = `${S.user.name} · ${S.user.role}`;
-  $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(S.user.role)}</div>`;
-  S.locations = await api('/inventory/locations');
+  // Load the access-level registry so labels, nav and scope are role-aware.
+  try { (await api('/auth/roles')).forEach(r => { ROLE_DEFS[r.key] = r; ROLE_CHIP[r.key] = roleChip(r.key); }); } catch { /* fall back to raw keys */ }
+  $('who').textContent = `${S.user.name} · ${roleLabel(S.user.role)}`;
+  $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}</div>`;
+  S.locations = await api('/inventory/locations').catch(() => []);
   const picker = $('locPicker');
-  const seesAll = S.user.role === 'owner' || S.user.role === 'admin';
-  if (seesAll) {
+  const seesAll = roleScopeOf(S.user.role) === 'all';
+  if (seesAll && S.locations.length) {
     picker.innerHTML = S.locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
     S.loc = String(S.locations[0].id);
     picker.value = S.loc;
@@ -89,20 +91,38 @@ async function boot() {
   refreshUnread();
 }
 
-// ── Left-menu sections ─────────────────────────────────────────────────────
-const ROLE_ALL = ['owner', 'admin', 'manager', 'support', 'employee'];
+// ── Access-level registry (loaded from the API at boot; mirrors lib/auth.js) ──
+let ROLE_DEFS = {};
+const roleDef = (r) => ROLE_DEFS[r] || { label: r, scope: 'self', caps: [] };
+const roleLabel = (r) => roleDef(r).label;
+const roleScopeOf = (r) => roleDef(r).scope;
+// Does role `r` have capability `cap`? 'any' = everyone; 'scheduled' = gets a shift roster.
+const roleHasCap = (r, cap) => cap === 'any' ? true
+  : cap === 'scheduled' ? roleScopeOf(r) !== 'all'
+  : roleDef(r).caps.includes(cap);
+const myCap = (cap) => roleHasCap(S.user.role, cap);
+const SCOPE_LABEL = { all: 'All locations', location: 'Their location', self: 'Self only' };
+const CAP_LABEL = {
+  org: 'Account & access-level admin', manage: 'Staff, schedules, menu & locations',
+  ops: 'Inventory operations', reports: 'Reports & analytics',
+  central: 'Central Kitchen hub', delivery: 'Delivery manifests / fulfillment',
+};
+const roleChip = (r) => { const c = roleDef(r).caps; return c.includes('org') ? 'gold' : c.includes('manage') ? 'blue' : c.includes('reports') ? 'low' : (c.includes('ops') || c.includes('central') || c.includes('delivery')) ? 'ok' : 'gray'; };
+
+// ── Left-menu sections (gated by capability, not a fixed role list) ──────────
 const SECTIONS = [
-  ['overview', '📊', 'Overview', ROLE_ALL],
-  ['locations', '📍', 'Locations', ['owner', 'admin', 'manager']],
-  ['staff', '👥', 'Staff', ['owner', 'admin', 'manager']],
-  ['myschedule', '🗓️', 'My Schedule', ['manager', 'support', 'employee']],
-  ['inventory', '📦', 'Inventory', ROLE_ALL],
-  ['central', '🏭', 'Central Kitchen', ['owner', 'admin']],
-  ['menu', '🍽️', 'Menu/Recipes', ['owner', 'admin', 'manager']],
-  ['reports', '📈', 'Reports', ['owner', 'admin', 'manager']],
-  ['messages', '💬', 'Messages', ROLE_ALL],
+  ['overview', '📊', 'Overview', 'any'],
+  ['locations', '📍', 'Locations', 'manage'],
+  ['staff', '👥', 'Staff', 'manage'],
+  ['myschedule', '🗓️', 'My Schedule', 'scheduled'],
+  ['inventory', '📦', 'Inventory', 'ops'],
+  ['central', '🏭', 'Central Kitchen', 'central'],
+  ['deliveries', '🚚', 'Deliveries', 'delivery'],
+  ['menu', '🍽️', 'Menu/Recipes', 'manage'],
+  ['reports', '📈', 'Reports', 'reports'],
+  ['messages', '💬', 'Messages', 'any'],
 ];
-const allowedSections = () => SECTIONS.filter(s => s[3].includes(S.user.role));
+const allowedSections = () => SECTIONS.filter(s => myCap(s[3]));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
@@ -131,7 +151,7 @@ function showSection(section) {
   const isMessages = section === 'messages';
   const isCentral = section === 'central';
   $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral));
-  $('locPicker').classList.toggle('hidden', !(isInv && (S.user.role === 'owner' || S.user.role === 'admin')));
+  $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
@@ -140,7 +160,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, deliveries: renderDeliveries }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -563,11 +583,13 @@ function openLocationDetail(locId, tab) {
 }
 
 async function renderOverview() {
-  if (S.user.role === 'manager' && S.user.location_id) return renderManagerDashboard();
+  const scope = roleScopeOf(S.user.role);
+  if (scope === 'self') return renderSelfOverview();
+  if (myCap('manage') && scope === 'location' && S.user.location_id) return renderManagerDashboard();
   let dash = null;
-  try { dash = await api(invQ('/dashboard')); } catch { /* employee etc. */ }
+  if (myCap('ops')) { try { dash = await api(invQ('/dashboard')); } catch { /* no access */ } }
   let staffCount = null;
-  if (['owner', 'admin', 'manager'].includes(S.user.role)) {
+  if (myCap('manage')) {
     try { staffCount = (await api('/staff')).length; } catch { staffCount = null; }
   }
   const locName = (S.locations.find(l => String(l.id) === String(S.loc)) || {}).name || '';
@@ -575,7 +597,7 @@ async function renderOverview() {
   $('view').innerHTML = `
     <div class="overview-hero">
       <h2>Welcome, ${esc(S.user.name.split(' ')[0])}</h2>
-      <p>Enterprise Restaurant Management System · <span class="role-chip">${esc(S.user.role)}</span></p>
+      <p>Enterprise Restaurant Management System · <span class="role-chip">${esc(roleLabel(S.user.role))}</span></p>
     </div>
     <div class="kpis">
       <div class="card"><div class="label">Locations</div><div class="value">${S.locations.length}</div></div>
@@ -647,7 +669,7 @@ async function renderManagerDashboard() {
   $('view').innerHTML = `
     <div class="overview-hero">
       <h2>${greet}, ${esc(S.user.name.split(' ')[0])}</h2>
-      <p>${esc(locName)} · <span class="role-chip">manager</span> · ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</p>
+      <p>${esc(locName)} · <span class="role-chip">${esc(roleLabel(S.user.role))}</span> · ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</p>
     </div>
     <div class="kpis">
       ${stat('Staff', rs.total, '', 'staff')}
@@ -664,7 +686,7 @@ async function renderManagerDashboard() {
           <button class="btn sm ghost" data-sched="1">Open schedule →</button></div>
         <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Shift</th><th class="num">Hrs</th><th>Jobs</th></tr></thead><tbody>
           ${onToday.length ? onToday.map(p => `<tr>
-            <td><strong>${esc(p.name)}</strong> <span class="badge ${ROLE_CHIP[p.role] || 'gray'}">${esc(p.role)}</span>${p.ot ? ' <span class="badge out" title="Over daily/weekly limit">OT ⚠</span>' : ''}${p.away.length ? ' <span class="badge blue">away</span>' : ''}</td>
+            <td><strong>${esc(p.name)}</strong> <span class="badge ${ROLE_CHIP[p.role] || 'gray'}">${esc(roleLabel(p.role))}</span>${p.ot ? ' <span class="badge out" title="Over daily/weekly limit">OT ⚠</span>' : ''}${p.away.length ? ' <span class="badge blue">away</span>' : ''}</td>
             <td>${p.todays.map(s => `${s.start_time || '—'}–${s.end_time || '—'}`).join(', ')}</td>
             <td class="num">${fmtH(p.dayH)}h</td>
             <td>${p.todays.reduce((n, s) => n + s.jobs.length, 0)} assigned</td>
@@ -765,6 +787,48 @@ async function renderMySchedule() {
   $('wkPrev').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, -7); renderMySchedule(); };
   $('wkNext').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, 7); renderMySchedule(); };
   $('wkToday').onclick = () => { S.mySchedWeek = mondayOf(null); renderMySchedule(); };
+}
+
+// ── Self-service landing (Server, Busser, Chef, Front Desk, …) ───────────────
+function renderSelfOverview() {
+  const hr = new Date().getHours();
+  const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const cards = [
+    ['myschedule', '🗓️', 'My Schedule', 'See your shifts and assigned tasks for the week.'],
+    ['messages', '💬', 'Messages', 'Read announcements and message your team.'],
+  ];
+  $('view').innerHTML = `
+    <div class="overview-hero">
+      <h2>${greet}, ${esc(S.user.name.split(' ')[0])}</h2>
+      <p>${esc(roleLabel(S.user.role))}${S.user.location_id ? ' · ' + esc(shortLoc((S.locations.find(l => String(l.id) === String(S.user.location_id)) || {}).name || '')) : ''}</p>
+    </div>
+    <div class="quick-grid">
+      ${cards.map(([k, icon, label, desc]) => `<button class="quick-card lg" data-goto="${k}"><span class="q-icon">${icon}</span><span class="q-label">${label}</span><span class="q-desc">${esc(desc)}</span></button>`).join('')}
+    </div>`;
+  $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+}
+
+// ── Deliveries (Driver) — read-only Central-Kitchen fulfillment / manifests ──
+async function renderDeliveries() {
+  let f;
+  try { f = await api('/central/fulfillment'); }
+  catch (e) { return renderPlaceholder('Deliveries', '🚚', e.message); }
+  const shortName = (s) => (s || '').replace('Pho Ha Noi — ', '');
+  $('view').innerHTML = `
+    <h2 class="page">Deliveries <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(f.date || '')}</span></h2>
+    <p class="sub" style="color:var(--muted);margin-top:0">Today's delivery routes and per-store packing slips from the Central Kitchen.</p>
+    <div class="section"><h3 style="margin-top:0">Delivery routes</h3>
+      ${(f.manifests || []).length ? (f.manifests).map(m => `<div class="attn-block"><strong>${esc(m.route)}</strong> <span class="muted">— ${(m.stores || []).map(s => esc(shortName(s))).join(', ') || 'no stores today'}</span></div>`).join('') : '<div class="empty">No routes scheduled.</div>'}
+    </div>
+    <div class="section"><h3 style="margin-top:0">Per-store packing slips</h3>
+      <div class="table-wrap"><table><thead><tr><th>Store</th><th>Items</th><th>Status</th></tr></thead><tbody>
+        ${(f.stores || []).length ? f.stores.map(s => `<tr>
+          <td><strong>${esc(shortName(s.location))}</strong></td>
+          <td>${(s.lines || []).map(l => `${esc(l.product)} <span class="muted">×${l.quantity} ${esc(l.unit || '')}</span>`).join('<br>') || '<span class="muted">—</span>'}</td>
+          <td><span class="badge ${s.status === 'fulfilled' ? 'ok' : 'low'}">${esc(s.status || 'pending')}</span></td>
+        </tr>`).join('') : '<tr><td colspan="3" class="empty">Nothing to deliver right now.</td></tr>'}
+      </tbody></table></div>
+    </div>`;
 }
 
 // ── Section: Locations (master-detail module) ──────────────────────────────
@@ -885,7 +949,7 @@ async function renderLocStaff() {
   $('locBody').innerHTML = `
     <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location. Add or reassign staff in the Staff section.</p>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
-      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No staff assigned to this location yet.</td></tr>'}
+      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
 }
 
@@ -1105,8 +1169,10 @@ function equipmentModal(e) {
 }
 
 // ── Section: Staff (module with tabs) ──────────────────────────────────────
-const ROLE_CHIP = { owner: 'gold', admin: 'gold', manager: 'blue', support: 'ok', employee: 'gray' };
-const ACCESS_LEVELS = ['owner', 'admin', 'manager', 'support', 'employee'];
+// Chip colour per role — populated from the registry at boot (roleChip()).
+const ROLE_CHIP = {};
+// Assignable access levels, highest rank first (from the registry).
+const accessLevels = () => Object.keys(ROLE_DEFS).sort((a, b) => (roleDef(b).rank || 0) - (roleDef(a).rank || 0));
 const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels']];
 function renderStaffTabs() {
   if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
@@ -1261,7 +1327,7 @@ async function renderStaffDirectory() {
       body += `<tr>
         <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
         <td class="mono">${esc(u.email)}</td>
-        <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td>
+        <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
         <td><span class="badge ${STATUS_CHIP[st] || 'gray'}">${st}</span></td>
         <td><div class="actions-cell">
@@ -1322,7 +1388,7 @@ async function renderStaffProfile(id) {
         <button class="btn" id="editProf">Edit profile</button>
       </div>` : '<span class="badge gray">View only</span>'}
     </div>
-    <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(d.role)}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
+    <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(roleLabel(d.role))}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
     <p class="sub" style="color:var(--muted);margin-top:0">${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
     <div class="prof-cols">
       <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Employee code', p.employee_code)}</div>
@@ -1382,9 +1448,9 @@ function locFieldOptions(locations, selected, includeAll) {
 }
 function staffModal(u, locations) {
   const isNew = !u;
-  const roleOpts = ACCESS_LEVELS
+  const roleOpts = accessLevels()
     .filter(r => r !== 'owner' || S.user.role === 'owner') // only owner can assign owner
-    .map(r => ({ value: r, label: r.charAt(0).toUpperCase() + r.slice(1) }));
+    .map(r => ({ value: r, label: roleLabel(r) }));
   const fields = [
     { key: 'name', label: 'Full name', value: u ? u.name : '' },
     { key: 'email', label: 'Email', value: u ? u.email : '', type: isNew ? 'email' : 'text' },
@@ -1415,7 +1481,7 @@ function renderStaffAdd(locations) {
   const inp = (k, label, val, type = 'text') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" /></label>`;
   const selRaw = (k, label, val, opts) => `<label class="pfl">${label}<select id="pf_${k}">${opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(val || '') ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>`;
   const selS = (k, label, val, arr) => selRaw(k, label, val, arr.map(x => ({ v: x, n: x || '—' })));
-  const roleOpts = ACCESS_LEVELS.filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: r.charAt(0).toUpperCase() + r.slice(1) }));
+  const roleOpts = accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) }));
   const locOpts = [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') })));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Add staff</h2>
@@ -1452,22 +1518,22 @@ function renderStaffAdd(locations) {
   };
 }
 
-const ACCESS_MATRIX = [
-  ['owner', 'gold', 'Everything', 'All locations · all modules · manage staff & access levels'],
-  ['admin', 'gold', 'Everything (for now)', 'Same as Owner across all locations; cannot create Owner accounts'],
-  ['manager', 'blue', 'Their location', 'Inventory + Menu/Recipes; view staff; manage vendors & purchase orders'],
-  ['support', 'ok', 'Stock operations', 'Receive, transfer, waste & cycle-count at their location; view inventory'],
-  ['employee', 'gray', 'View / request', 'View stock & overview; request orders — no management actions'],
-];
 function renderAccessLevels() {
+  const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+  const rows = accessLevels().map(r => {
+    const d = roleDef(r);
+    const caps = CAP_ORDER.filter(c => d.caps.includes(c)).map(c => CAP_LABEL[c]);
+    const summary = caps.length ? caps.join(' · ') : 'Own schedule, tasks & messages only';
+    return { r, d, summary };
+  });
   $('view').innerHTML = `
-    <h2 class="page">Access Levels</h2>
-    <p class="sub" style="color:var(--muted);margin-top:-.4rem">What each access level can do. Owner and Admin see everything; others are scoped to their location.</p>
-    <div class="table-wrap"><table><thead><tr><th>Level</th><th>Scope</th><th>Capabilities</th></tr></thead><tbody>
-      ${ACCESS_MATRIX.map(([role, chip, scope, caps]) => `<tr>
-        <td><span class="badge ${chip}">${role}</span></td>
-        <td><strong>${esc(scope)}</strong></td>
-        <td style="color:#374151">${esc(caps)}</td>
+    <h2 class="page">Access Levels <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
+    <p class="sub" style="color:var(--muted);margin-top:-.4rem">Every access level and what it can do. <strong>Scope</strong> = how much it can see: all locations, its own location, or just the person's own schedule. Job titles (Server, Chef, Front Desk, …) are self-service levels — same access, different position.</p>
+    <div class="table-wrap"><table><thead><tr><th>Access level</th><th>Scope</th><th>Can do</th></tr></thead><tbody>
+      ${rows.map(({ r, d, summary }) => `<tr>
+        <td><span class="badge ${roleChip(r)}">${esc(d.label)}</span></td>
+        <td><strong>${esc(SCOPE_LABEL[d.scope] || d.scope)}</strong></td>
+        <td style="color:#374151">${esc(summary)}</td>
       </tr>`).join('')}
     </tbody></table></div>`;
 }
@@ -1729,7 +1795,7 @@ async function renderRepTimesheets() {
       <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
     </div>
     <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Role</th><th>Location</th><th class="num">Shifts</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Labor cost</th></tr></thead><tbody>
-      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(s.role)}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">No timesheets in range.</td></tr>'}
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">No timesheets in range.</td></tr>'}
     </tbody></table></div>`;
   wireReportFilters(true);
 }
@@ -1777,7 +1843,7 @@ async function renderInbox() {
     ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
       <div class="msg-card ${m.is_read ? '' : 'unread'}" data-mid="${m.id}">
         <div class="msg-head">
-          <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(m.sender_role)}</span> ${audBadge(m.audience)}</span>
+          <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> ${audBadge(m.audience)}</span>
           <span class="msg-time">${msgTime(m.created_at)}</span>
         </div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
@@ -1821,7 +1887,7 @@ async function renderCompose() {
         <option value="direct">A person</option>
         ${canBroadcast ? '<option value="all">All staff (broadcast)</option><option value="location">A whole location</option>' : ''}
       </select>
-      <div id="cDirect"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(u.role)}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
+      <div id="cDirect"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
       <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
@@ -2060,7 +2126,7 @@ async function renderCkStaff() {
       </tbody></table></div></div>
     <div class="section"><h3>Staff</h3>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th class="num">Rate</th><th>PIN</th></tr></thead><tbody>
-        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(u.role)}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('')}
+        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('')}
       </tbody></table></div></div>`;
   $('ckClockBtn').onclick = async () => {
     $('ckClockErr').textContent = '';
@@ -2093,7 +2159,7 @@ async function openAccount() {
       <div class="section"><h3>My profile</h3>
         <div class="profile-row"><span>Name</span><strong>${esc(me.name || S.user.name)}</strong></div>
         <div class="profile-row"><span>Email</span><strong>${esc(me.email || '—')}</strong></div>
-        <div class="profile-row"><span>Access level</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(me.role || S.user.role)}</span></div>
+        <div class="profile-row"><span>Access level</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(roleLabel(me.role || S.user.role))}</span></div>
         <div class="profile-row"><span>Location</span><strong>${esc((me.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</strong></div>
       </div>
       <div class="section"><h3>Change password</h3>

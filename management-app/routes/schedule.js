@@ -3,14 +3,13 @@
 // owner/admin can schedule any location and curate the job catalog.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 router.use(verifyToken);
 
-const isAdmin = (req) => ['owner', 'admin'].includes(req.user.role);
-const ownsLocation = (req, locId) => isAdmin(req) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
 const COMPLEXITY = ['low', 'medium', 'high'];
 
 // Local-date ISO (YYYY-MM-DD) — avoids the UTC shift that toISOString() causes
@@ -145,7 +144,7 @@ function prepareShift(req, res) {
   if (!ownsLocation(req, locId)) { res.status(403).json({ error: 'You can only schedule your own location.' }); return null; }
   const user = db.prepare(`SELECT id, role FROM users WHERE id=? AND is_active=1`).get(userId);
   if (!user) { res.status(404).json({ error: 'Staff member not found.' }); return null; }
-  if (['owner', 'admin'].includes(user.role)) { res.status(400).json({ error: 'Owners/admins are not scheduled.' }); return null; }
+  if (roleScope(user.role) === 'all') { res.status(400).json({ error: 'This access level is not shift-scheduled.' }); return null; }
   // The person must actually belong to this location (home or also-works).
   const linked = db.prepare(`SELECT 1 FROM users WHERE id=? AND location_id=?
     UNION SELECT 1 FROM staff_locations WHERE user_id=? AND location_id=?`).get(userId, locId, userId, locId);

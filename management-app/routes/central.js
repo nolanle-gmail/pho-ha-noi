@@ -9,7 +9,7 @@ const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 router.use(verifyToken);
-const A = ROLES.ADMIN; // owner/admin
+const A = ROLES.CENTRAL; // owner / admin / general manager
 
 const today = () => new Date().toISOString().slice(0, 10);
 function ckLoc() { return db.prepare(`SELECT * FROM locations WHERE type='central_kitchen' LIMIT 1`).get(); }
@@ -202,7 +202,8 @@ const ROUTES = {
   'South Bay': ['San Jose', 'Santa Clara', 'Sunnyvale', 'Cupertino', 'Milpitas'],
   'SoCal': ['Fountain Valley'],
 };
-router.get('/fulfillment', requireRole(...A), (req, res) => {
+// Drivers can view fulfillment (pick lists / delivery manifests) too, read-only.
+router.get('/fulfillment', requireRole(...ROLES.DELIVERY), (req, res) => {
   const date = req.query.date || today();
   const rows = db.prepare(`
     SELECT sr.location_id, l.name location, p.name product, p.unit, sr.quantity, sr.status

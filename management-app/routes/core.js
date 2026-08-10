@@ -2,7 +2,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
@@ -10,7 +10,7 @@ router.use(verifyToken);
 
 // Staff directory. Owner/admin see all locations; managers see their own (view only).
 router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
-  const scopeAll = ['owner', 'admin'].includes(req.user.role);
+  const scopeAll = seesAllLocations(req.user.role);
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
   const rows = db.prepare(`
@@ -26,7 +26,7 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // Staff overview: per-location roster health (count, manager, status breakdown).
 router.get('/staff/overview', requireRole(...ROLES.MANAGE), (req, res) => {
-  const scopeAll = ['owner', 'admin'].includes(req.user.role);
+  const scopeAll = seesAllLocations(req.user.role);
   const locs = db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ${scopeAll ? '' : 'AND id=?'} ORDER BY name`)
     .all(...(scopeAll ? [] : [req.user.location_id]));
   const displayStatus = (u) => (!u.is_active ? 'inactive' : (u.status || 'active'));
@@ -46,7 +46,7 @@ router.get('/staff/overview', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // Resolve the location for a role: owner/admin have none; others require one.
 function resolveLocation(role, provided, fallback) {
-  if (['owner', 'admin'].includes(role)) return { location_id: null };
+  if (seesAllLocations(role)) return { location_id: null };
   const loc = (provided !== undefined ? provided : fallback) || null;
   if (!loc) return { error: 'This access level requires a location.' };
   return { location_id: loc };

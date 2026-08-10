@@ -10,7 +10,7 @@ function migrate() {
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('owner','admin','manager','support','employee')),
+      role TEXT NOT NULL, -- validated in code against the access-level registry (lib/auth.js)
       location_id INTEGER REFERENCES locations(id),
       hourly_rate REAL NOT NULL DEFAULT 0,
       is_active INTEGER NOT NULL DEFAULT 1,

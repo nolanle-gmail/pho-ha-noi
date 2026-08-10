@@ -267,6 +267,35 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());
 
+    // ── Additional access levels ───────────────────────────────
+    const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
+    const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));
+    check('role registry exposed', Array.isArray(roleReg) && roleReg.length >= 15, 'count=' + (roleReg || []).length);
+    const gmTok = await login('gm@phohanoi.com', 'Gm123456!');
+    const gmStaff = await j(await fetch(base + '/api/staff', { headers: H(gmTok) }));
+    check('GM sees all-location staff', Array.isArray(gmStaff) && gmStaff.length > 20, 'count=' + (gmStaff || []).length);
+    r = await fetch(base + '/api/central/summary', { headers: H(gmTok) });
+    check('GM can access central kitchen', r.status === 200, 'status=' + r.status);
+    const anTok = await login('analyst@phohanoi.com', 'Analyst123!');
+    r = await fetch(base + '/api/reports/sales', { headers: H(anTok) });
+    check('analyst can view reports', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { headers: H(anTok) });
+    check('analyst blocked from staff (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(anTok) });
+    check('analyst blocked from inventory (403)', r.status === 403, 'status=' + r.status);
+    const drTok = await login('driver@phohanoi.com', 'Driver123!');
+    r = await fetch(base + '/api/central/fulfillment', { headers: H(drTok) });
+    check('driver can view fulfillment/deliveries', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(drTok) });
+    check('driver blocked from inventory (403)', r.status === 403, 'status=' + r.status);
+    const svTok = await login('server@phohanoi.com', 'Server123!');
+    r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(svTok) });
+    check('server (position) blocked from inventory (403)', r.status === 403, 'status=' + r.status);
+    const svWk = await j(await fetch(base + '/api/schedule/my-week', { headers: H(svTok) }));
+    check('server sees own schedule', Array.isArray(svWk.shifts) && svWk.days.length === 7, JSON.stringify(svWk).slice(0, 40));
+    r = await fetch(base + '/api/menu/items', { headers: H(svTok) });
+    check('server blocked from menu (403)', r.status === 403, 'status=' + r.status);
+
     // ── Reports module ─────────────────────────────────────────
     const repInv = await j(await fetch(base + '/api/reports/inventory', { headers: H(token) }));
     check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 10 && repInv.top_items.length > 0, JSON.stringify(repInv.total_value));
