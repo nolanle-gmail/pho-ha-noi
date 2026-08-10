@@ -1173,6 +1173,16 @@ function equipmentModal(e) {
 const ROLE_CHIP = {};
 // Assignable access levels, highest rank first (from the registry).
 const accessLevels = () => Object.keys(ROLE_DEFS).sort((a, b) => (roleDef(b).rank || 0) - (roleDef(a).rank || 0));
+
+// Common restaurant job titles — suggestions for the profile field (free-text still allowed).
+const JOB_TITLES = [
+  'Server', 'Host / Front Desk', 'Busser', 'Food Runner', 'Cashier', 'Bartender', 'Barista',
+  'Line Cook', 'Prep Cook', 'Wok Cook', 'Grill Cook', 'Broth Cook', 'Chef', 'Sous Chef', 'Head Chef',
+  'Kitchen Assistant', 'Dishwasher', 'Shift Lead', 'Assistant Manager', 'Kitchen Manager',
+  'General Manager', 'Manager', 'Inventory Support', 'Receiving Clerk', 'Delivery Driver', 'Catering Lead',
+];
+// A text input backed by a <datalist> — type freely or pick a suggestion.
+const dlInput = (k, label, val, opts) => `<label class="pfl">${label}<input id="pf_${k}" list="dl_${k}" value="${esc(val == null ? '' : val)}" autocomplete="off" placeholder="Type or pick…" /><datalist id="dl_${k}">${opts.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist></label>`;
 const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels']];
 function renderStaffTabs() {
   if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
@@ -1325,7 +1335,7 @@ async function renderStaffDirectory() {
     for (const u of shown) {
       const st = staffStatus(u);
       body += `<tr>
-        <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a></td>
+        <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a>${u.job_title ? `<div class="job-title-sub">${esc(u.job_title)}</div>` : ''}</td>
         <td class="mono">${esc(u.email)}</td>
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
@@ -1389,7 +1399,7 @@ async function renderStaffProfile(id) {
       </div>` : '<span class="badge gray">View only</span>'}
     </div>
     <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(roleLabel(d.role))}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
-    <p class="sub" style="color:var(--muted);margin-top:0">${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
+    <p class="sub" style="color:var(--muted);margin-top:0">${p.job_title ? '<strong>' + esc(p.job_title) + '</strong> · ' : ''}${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
     <div class="prof-cols">
       <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Employee code', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${F('Work email', d.email)}${F('Personal email', p.personal_email)}${F('Mobile', p.phone)}${F('Alt phone', p.alt_phone)}${F('Preferred contact', p.preferred_contact)}</div>
@@ -1427,7 +1437,7 @@ function staffProfileEdit(d, locations, staff) {
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
-      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', p.job_title)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
+      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', p.job_title, JOB_TITLES)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', p.pay_type, ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', d.hourly_rate, 'number')}${inp('payroll_ref', 'Payroll reference', p.payroll_ref)}</div>
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', p.skills)}<label class="pfl">Notes<textarea id="pf_notes" rows="3">${esc(p.notes || '')}</textarea></label></div>
@@ -1493,7 +1503,7 @@ function renderStaffAdd(locations) {
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', '')}${inp('emergency_relation', 'Relationship', '')}${inp('emergency_phone', 'Phone', '')}</div>
-      <div class="section"><h3>Employment</h3>${inp('job_title', 'Job title', '')}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
+      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', '', JOB_TITLES)}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', '', ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', '', 'number')}${inp('payroll_ref', 'Payroll reference', '')}</div>
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', '')}<label class="pfl">Notes<textarea id="pf_notes" rows="3"></textarea></label></div>

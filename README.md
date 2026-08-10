@@ -67,9 +67,11 @@ sections have their own horizontal tab bars:
     additional **"also works at"** locations (for cross-location coverage /
     transfers).
   - **Staff profile** — a full HR record per person: personal details, work +
-    personal contact, mailing address, emergency contact, employment (title,
-    department, type, hire date, supervisor, home + additional locations), payroll
-    (pay type + hourly rate), and skills / notes. The view page offers **Edit
+    personal contact, mailing address, emergency contact, employment (**job title**
+    — a standard-titles picker (Server, Line Cook, Front Desk, …) that still allows
+    free text, and is shown under the name in the directory and in the profile
+    header — plus department, type, hire date, supervisor, home + additional
+    locations), payroll (pay type + hourly rate), and skills / notes. The view page offers **Edit
     profile**, **Reset password**, and **Activate/Deactivate**. By design, SSN and
     bank/account numbers are **not** stored here — keep those in your payroll
     provider (only a non-sensitive payroll reference is kept).
