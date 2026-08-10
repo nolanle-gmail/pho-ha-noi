@@ -99,6 +99,10 @@ sections have their own horizontal tab bars:
     provider (only a non-sensitive payroll reference is kept).
   - **Guardrails:** only owners create owners, no self-deactivation, unique
     emails.
+  - **Activity Log** (owner/admin) — a full access trail: every sign-in (success
+    *and* failure with the attempted email + IP), every change (POST/PUT/DELETE),
+    and every **denied** attempt (401/403). Filter by Logins / Denied. Read-only
+    page views are skipped to avoid noise (set `LOG_READS=1` to capture them).
   - The demo seed ships **10 named store managers** (each with a General-Manager
     profile) plus **150 generated staff** spread across the stores, each with a
     full profile, so the directory and reports are populated out of the box.
@@ -213,6 +217,7 @@ join the list**:
 - Live stats: waiting now, longest wait, next-party quote, seated today
 - "Handled today" history; auto-refreshes every 15s
 - **Activity log** — every add / notify / seat / remove is recorded with **who did it** (name + role) and shown in a "who did what" log
+- **Access / Activity Log (owner only)** — a full trail of sign-ins (incl. failed attempts + IP), staff actions, **customer self check-ins**, and denied attempts, filterable by Logins / Check-ins / Denied
 - **Guest history (owner/admin only)** — full history of every guest at any point in time, across all 10 locations, filterable by location, date range and status; **one-click CSV export** of the filtered results
 - **Daily report (owner/admin only)** — guests and parties on the waitlist per day (with seated/left breakdown), for one location or all 10
 - Owner can view any location's live board at any time via the location switcher
@@ -244,5 +249,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 144 checks · waitlist: 42 checks
+npm run smoke      # management: 149 checks · waitlist: 46 checks
 ```

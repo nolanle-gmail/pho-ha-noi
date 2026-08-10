@@ -64,8 +64,24 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Access / activity trail — every login, write (incl. customer self check-ins),
+    -- and denied attempt, with who, what, response status, and client IP.
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id),
+      user_name TEXT,
+      user_role TEXT,
+      method TEXT,
+      path TEXT,
+      status INTEGER,
+      ip TEXT,
+      detail TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_wl_loc_status ON waitlist(location_id, status);
     CREATE INDEX IF NOT EXISTS idx_audit_loc ON audit_log(location_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
   `);
 
   // Migrations for databases created before these columns existed.

@@ -165,4 +165,17 @@ router.get('/report/daily', requireRole('owner'), (req, res) => {
   res.json({ days: rows.length, totals, rows });
 });
 
+// Activity log (owner only) — logins, writes, self check-ins, denied attempts.
+router.get('/activity-log', requireRole('owner'), (req, res) => {
+  const conds = [], args = [];
+  if (req.query.event === 'logins') conds.push(`path='/api/auth/login'`);
+  else if (req.query.event === 'denied') conds.push('status IN (401,403)');
+  else if (req.query.event === 'checkins') conds.push(`path='/api/public/checkin'`);
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const limit = Math.min(1000, parseInt(req.query.limit, 10) || 300);
+  const rows = db.prepare(`SELECT id, user_id, user_name, user_role, method, path, status, ip, detail, created_at
+    FROM activity_log ${where} ORDER BY id DESC LIMIT ${limit}`).all(...args);
+  res.json(rows.map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d }; }));
+});
+
 module.exports = router;

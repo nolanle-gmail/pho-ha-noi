@@ -171,4 +171,17 @@ router.put('/staff/:id/profile', requireRole(...ROLES.ADMIN), (req, res) => {
   res.json({ success: true });
 });
 
+// ── Activity log (access trail: logins, writes, denied attempts) ─────────────
+router.get('/activity', requireRole(...ROLES.ADMIN), (req, res) => {
+  const conds = [], args = [];
+  if (req.query.event === 'logins') conds.push(`path='/api/auth/login'`);
+  else if (req.query.event === 'denied') conds.push('status IN (401,403)');
+  if (req.query.user) { conds.push('user_id=?'); args.push(req.query.user); }
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const limit = Math.min(1000, parseInt(req.query.limit, 10) || 300);
+  const rows = db.prepare(`SELECT id, user_id, user_name, user_role, method, path, status, ip, detail, created_at
+    FROM activity_log ${where} ORDER BY id DESC LIMIT ${limit}`).all(...args);
+  res.json(rows.map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d }; }));
+});
+
 module.exports = router;

@@ -16,6 +16,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Pho Ha Noi — Waitlist' }));
 // Customer self-check-in kiosk (public, no login).
 app.get('/checkin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'checkin.html')));
+// Activity trail — logins, writes (incl. self check-ins), and denied attempts.
+app.use(require('./lib/activity').activityLogger);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/public', require('./routes/public'));
 app.use('/api/waitlist', require('./routes/waitlist'));

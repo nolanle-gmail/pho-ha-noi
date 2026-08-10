@@ -296,6 +296,17 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/menu/items', { headers: H(svTok) });
     check('server blocked from menu (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Activity log (access trail) ────────────────────────────
+    await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'wrong' }) });
+    const acts = await j(await fetch(base + '/api/activity', { headers: H(token) }));
+    check('activity log records events', Array.isArray(acts) && acts.length > 0, 'len=' + (acts || []).length);
+    check('successful login is logged', acts.some(a => a.path === '/api/auth/login' && a.status === 200), 'no login event');
+    check('writes are logged', acts.some(a => ['POST', 'PUT', 'DELETE'].includes(a.method) && a.status < 400), 'no write event');
+    const logins = await j(await fetch(base + '/api/activity?event=logins', { headers: H(token) }));
+    check('failed login is logged', logins.some(a => a.status === 401), 'no failed login');
+    r = await fetch(base + '/api/activity', { headers: H(mgr.token) });
+    check('manager blocked from activity log (403)', r.status === 403, 'status=' + r.status);
+
     // ── Reports module ─────────────────────────────────────────
     const repInv = await j(await fetch(base + '/api/reports/inventory', { headers: H(token) }));
     check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 10 && repInv.top_items.length > 0, JSON.stringify(repInv.total_value));

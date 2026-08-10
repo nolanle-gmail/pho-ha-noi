@@ -1183,10 +1183,13 @@ const JOB_TITLES = [
 ];
 // A text input backed by a <datalist> — type freely or pick a suggestion.
 const dlInput = (k, label, val, opts) => `<label class="pfl">${label}<input id="pf_${k}" list="dl_${k}" value="${esc(val == null ? '' : val)}" autocomplete="off" placeholder="Type or pick…" /><datalist id="dl_${k}">${opts.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist></label>`;
-const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels']];
+const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels'], ['activity', 'Activity Log']];
+// The Activity Log (access trail) is owner/admin only.
+const staffTabsFor = () => STAFF_TABS.filter(([k]) => k !== 'activity' || ['owner', 'admin'].includes(S.user.role));
 function renderStaffTabs() {
-  if (!S.staffTab || !STAFF_TABS.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
-  $('tabs').innerHTML = STAFF_TABS.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
+  const tabs = staffTabsFor();
+  if (!S.staffTab || !tabs.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
+  $('tabs').innerHTML = tabs.map(([k, l]) => `<button data-stab="${k}" class="${S.staffTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => {
     if (b.dataset.stab === 'directory') { staffLetter = 'A'; staffSearch = ''; } // default to letter A
     S.staffTab = b.dataset.stab; renderStaffTabs(); renderStaffModule();
@@ -1194,7 +1197,34 @@ function renderStaffTabs() {
 }
 function renderStaffModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ overview: renderStaffOverview, directory: renderStaffDirectory, jobs: renderJobsCatalog, access: renderAccessLevels }[S.staffTab] || renderStaffOverview)();
+  ({ overview: renderStaffOverview, directory: renderStaffDirectory, jobs: renderJobsCatalog, access: renderAccessLevels, activity: renderActivityLog }[S.staffTab] || renderStaffOverview)();
+}
+
+let activityFilter = 'all';
+async function renderActivityLog() {
+  let rows;
+  try { rows = await api('/activity' + (activityFilter === 'all' ? '' : '?event=' + activityFilter)); }
+  catch (e) { return renderPlaceholder('Activity Log', '🧾', e.message); }
+  const sBadge = (s) => s >= 500 ? 'out' : s >= 400 ? 'low' : 'ok';
+  const label = (r) => {
+    if (r.path === '/api/auth/login') return r.status === 200 ? 'signed in' : 'sign-in failed';
+    return `${r.method} ${r.path.replace('/api', '')}`;
+  };
+  const tab = (k, l) => `<button class="btn sm ${activityFilter === k ? '' : 'ghost'}" data-af="${k}">${l}</button>`;
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
+      <div class="actions-cell">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('denied', 'Denied')}</div></div>
+    <p class="sub" style="color:var(--muted);margin-top:0">Every sign-in, change, and blocked attempt — who, what, status and IP. (Read-only page views aren't logged.)</p>
+    <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
+      ${rows.length ? rows.map(r => `<tr>
+        <td class="mono" style="white-space:nowrap">${esc((r.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+        <td>${r.user_name ? `<strong>${esc(r.user_name)}</strong>${r.user_role ? ` <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(roleLabel(r.user_role))}</span>` : ''}` : '<span style="color:var(--muted)">anonymous</span>'}${r.detail && r.detail.email && !r.user_role ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(r.detail.email)}</span>` : ''}</td>
+        <td>${esc(label(r))}</td>
+        <td><span class="badge ${sBadge(r.status)}">${r.status}</span></td>
+        <td class="mono" style="color:var(--muted)">${esc(r.ip || '—')}</td>
+      </tr>`).join('') : '<tr><td colspan="5" class="empty">No activity recorded yet.</td></tr>'}
+    </tbody></table></div>`;
+  $('view').querySelectorAll('[data-af]').forEach(b => b.onclick = () => { activityFilter = b.dataset.af; renderActivityLog(); });
 }
 
 const STATUS_CHIP = { active: 'ok', inactive: 'out', vacation: 'blue', sick: 'low' };

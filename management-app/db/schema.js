@@ -260,6 +260,23 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Access / activity trail — every login, write, and denied attempt, with who,
+    -- what, the response status, and the client IP. (Complements audit_log's
+    -- richer business events.)
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id),
+      user_name TEXT,
+      user_role TEXT,
+      method TEXT,
+      path TEXT,
+      status INTEGER,
+      ip TEXT,
+      detail TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+
     -- ── Menu & Recipes ────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS menu_categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

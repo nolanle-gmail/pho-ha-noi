@@ -127,6 +127,14 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/waitlist/report/daily', { headers: H(host.token) });
     check('host BLOCKED from daily report', r.status === 403, 'status=' + r.status);
 
+    // ── Activity log (owner-only access trail) ─────────────────
+    const wacts = await j(await fetch(base + '/api/waitlist/activity-log', { headers: H(token) }));
+    check('activity log records events', Array.isArray(wacts) && wacts.length > 0, 'len=' + (wacts || []).length);
+    check('login is logged', wacts.some(a => a.path === '/api/auth/login' && a.status === 200), 'no login event');
+    check('self check-in is logged', wacts.some(a => a.path === '/api/public/checkin'), 'no checkin event');
+    r = await fetch(base + '/api/waitlist/activity-log', { headers: H(host.token) });
+    check('host blocked from activity log (403)', r.status === 403, 'status=' + r.status);
+
     // Manager also blocked (owner-only)
     const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/waitlist/history/all', { headers: H(mgr.token) });

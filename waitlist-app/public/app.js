@@ -61,7 +61,7 @@ function renderNav() {
   const nav = $('subnav');
   if (S.user.role !== 'owner') { nav.classList.add('hidden'); nav.innerHTML = ''; return; }
   nav.classList.remove('hidden');
-  const items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report']];
+  const items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
 }
@@ -70,7 +70,36 @@ function renderNav() {
 function render() {
   if (S.view === 'history') return renderHistory();
   if (S.view === 'report') return renderReport();
+  if (S.view === 'activity') return renderActivity();
   return renderBoard();
+}
+
+let activityFilter = 'all';
+async function renderActivity() {
+  let rows;
+  try { rows = await api('/waitlist/activity-log' + (activityFilter === 'all' ? '' : '?event=' + activityFilter)); }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const sBadge = (s) => s >= 500 ? 'left' : s >= 400 ? 'waiting' : 'seated';
+  const label = (r) => {
+    if (r.path === '/api/auth/login') return r.status === 200 ? 'signed in' : 'sign-in failed';
+    if (r.path === '/api/public/checkin') return 'customer self check-in';
+    return `${r.method} ${r.path.replace('/api/waitlist', '').replace('/api', '')}`;
+  };
+  const tab = (k, l) => `<button class="navbtn ${activityFilter === k ? 'active' : ''}" data-af="${k}">${l}</button>`;
+  $('view').innerHTML = `
+    <div class="section-head"><h2>Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
+      <div style="display:flex;gap:.25rem">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('checkins', 'Check-ins')}${tab('denied', 'Denied')}</div></div>
+    <p style="color:var(--muted);font-size:.85rem;margin:0 0 1rem">Every sign-in, change, and blocked attempt — who, what, status and IP. Read-only page views aren't logged.</p>
+    <div class="hist"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
+      ${rows.length ? rows.map(r => `<tr>
+        <td style="white-space:nowrap">${esc((r.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+        <td>${r.user_name ? esc(r.user_name) : '<span style="color:var(--muted)">customer / anon</span>'}${r.user_role ? ` · <span style="color:var(--muted)">${esc(r.user_role)}</span>` : ''}${r.detail && r.detail.email && !r.user_role ? ` <span style="color:var(--muted)">${esc(r.detail.email)}</span>` : ''}</td>
+        <td>${esc(label(r))}</td>
+        <td><span class="badge ${sBadge(r.status)}">${r.status}</span></td>
+        <td style="color:var(--muted)">${esc(r.ip || '—')}</td>
+      </tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.5rem">No activity recorded yet.</td></tr>'}
+    </tbody></table></div>`;
+  $('view').querySelectorAll('[data-af]').forEach(b => b.onclick = () => { activityFilter = b.dataset.af; render(); });
 }
 
 function modal(title, bodyHtml, onOk, okLabel = 'Add party') {
