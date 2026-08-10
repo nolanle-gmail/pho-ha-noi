@@ -1,0 +1,100 @@
+name: Deploy to Fly
+
+# Auto-deploys each app to Fly.io when its files change on main (or on a manual
+# run). Each job first runs the smoke suite as a gate, then deploys — and skips
+# the deploy step gracefully until the FLY_API_TOKEN secret is configured, so it
+# won't fail red before you've set Fly up.
+#
+# Setup (once):
+#   1. Create each app + volume (see each app's DEPLOY.md).
+#   2. Create a deploy token that can reach both apps:
+#        fly tokens create org           # org-wide, simplest for two apps
+#      and add it to the repo:  Settings → Secrets and variables → Actions →
+#      New repository secret →  name: FLY_API_TOKEN
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # Which app(s) changed in this push?
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      management: ${{ steps.filter.outputs.management }}
+      waitlist: ${{ steps.filter.outputs.waitlist }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            management:
+              - 'management-app/**'
+            waitlist:
+              - 'waitlist-app/**'
+
+  management-app:
+    needs: changes
+    if: needs.changes.outputs.management == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-management
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: management-app
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: management-app/package-lock.json
+      - run: npm ci
+      - name: Smoke test (deploy gate)
+        run: npm run seed && npm run smoke
+      - name: Set up flyctl
+        if: env.FLY_API_TOKEN != ''
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        if: env.FLY_API_TOKEN != ''
+        run: flyctl deploy --remote-only
+      - name: Skip (no FLY_API_TOKEN yet)
+        if: env.FLY_API_TOKEN == ''
+        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable auto-deploy."
+
+  waitlist-app:
+    needs: changes
+    if: needs.changes.outputs.waitlist == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-waitlist
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: waitlist-app
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: waitlist-app/package-lock.json
+      - run: npm ci
+      - name: Smoke test (deploy gate)
+        run: npm run seed && npm run smoke
+      - name: Set up flyctl
+        if: env.FLY_API_TOKEN != ''
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        if: env.FLY_API_TOKEN != ''
+        run: flyctl deploy --remote-only
+      - name: Skip (no FLY_API_TOKEN yet)
+        if: env.FLY_API_TOKEN == ''
+        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable auto-deploy."

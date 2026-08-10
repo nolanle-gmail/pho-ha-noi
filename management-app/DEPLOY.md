@@ -76,6 +76,22 @@ fly volumes snapshots list <vol-id>    # Fly also auto-snapshots daily (5-day re
 
 To pull a copy locally: `fly ssh console -C "cat /data/phohanoi_management.db" > backup.db` (or use `fly sftp get`).
 
+## Auto-deploy on push (GitHub Actions)
+
+`.github/workflows/fly-deploy.yml` deploys each app to Fly when its files change on
+`main` — after the smoke suite passes, and only for the app that changed. To enable
+it, add a Fly deploy token as a repo secret:
+
+```bash
+fly tokens create org        # one token that can reach both apps
+# GitHub → Settings → Secrets and variables → Actions → New repository secret
+#   Name: FLY_API_TOKEN   Value: <the token>
+```
+
+Until that secret exists the workflow still runs and passes — it just skips the
+deploy step — so it won't show red before you're set up. You can also trigger it
+manually from the Actions tab (**Run workflow**).
+
 ## Notes & gotchas
 
 - **Single machine only.** The volume attaches to one machine; `fly scale count 1`
