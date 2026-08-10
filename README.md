@@ -13,6 +13,27 @@ PhoHaNoi/
 └── waitlist-app/    Host check-in / waiting list (port 4002)
 ```
 
+## 🚀 Try it live
+
+Both apps are deployed on Fly.io — sign in with the demo accounts and explore.
+
+| App | URL | Demo login |
+|-----|-----|------------|
+| **Management** (staff) | **https://pho-ha-noi-management.fly.dev** | `harry@phohanoi.com` / `Harry123!` (owner) |
+| **Waitlist** (front desk) | **https://pho-ha-noi-waitlist.fly.dev** | `host1@phohanoi.com` / `Host123!` |
+| **Customer self check-in** (no login) | **https://pho-ha-noi-waitlist.fly.dev/checkin** | — just walk up and join |
+
+Explore the **access levels** on the management app with these logins (all
+password-per-name below): owner `harry@phohanoi.com` / `Harry123!` · general
+manager `gm@phohanoi.com` / `Gm123456!` · analyst `analyst@phohanoi.com` /
+`Analyst123!` · driver `driver@phohanoi.com` / `Driver123!` · server
+`server@phohanoi.com` / `Server123!` · manager `manager1@phohanoi.com` /
+`Manager123!` — each sees a different slice of the app.
+
+> ⚠️ **Shared demo sandbox.** Anyone can sign in and edit the data, so please don't
+> enter real information. The machines idle-sleep to save cost and cold-start in
+> ~1–2 s on the first request.
+
 ## 1. Enterprise Restaurant Management System  (`management-app`, http://localhost:4001)
 
 **Management shell** — a left vertical sidebar (Overview · Locations · Staff ·
