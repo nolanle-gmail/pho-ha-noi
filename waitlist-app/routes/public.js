@@ -5,9 +5,23 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
+const { rateLimit } = require('../lib/rateLimit');
 
 const router = express.Router();
 const genRef = () => crypto.randomBytes(4).toString('hex'); // 8-char code
+
+// ── Abuse protection (public, unauthenticated surface) ───────────────────────
+// A generous backstop across all public reads/writes, plus a stricter cap on the
+// only mutating endpoint (check-in). Tunable per deployment via env so a busy
+// shared-WiFi lobby can be loosened, or a QR-per-phone rollout tightened.
+const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+router.use(rateLimit({ windowMs: 5 * 60000, max: num(process.env.PUBLIC_MAX, 600) }));
+const checkinLimiter = rateLimit({
+  windowMs: num(process.env.CHECKIN_WINDOW_MS, 10 * 60000),
+  max: num(process.env.CHECKIN_MAX, 20),
+  key: (req) => 'checkin|' + (req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'),
+  message: 'You have added several parties recently. Please ask the host if you need another.',
+});
 
 // Current wait at a location: parties ahead × the location's average turn time.
 function statusFor(locId) {
@@ -31,7 +45,7 @@ router.get('/status', (req, res) => {
 });
 
 // Customer adds themselves to the waitlist.
-router.post('/checkin', (req, res) => {
+router.post('/checkin', checkinLimiter, (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const loc = locId && db.prepare(`SELECT id, name FROM locations WHERE id=? AND is_active=1`).get(locId);
   if (!loc) return res.status(400).json({ error: 'Please choose a valid location.' });
@@ -39,6 +53,18 @@ router.post('/checkin', (req, res) => {
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   const size = Math.max(1, Math.min(50, parseInt(req.body.party_size, 10) || 2));
   const phone = (req.body.phone || '').toString().trim().slice(0, 40) || null;
+  // Duplicate-submit guard: if an identical party is already waiting here (double
+  // tap, page reload, back button), return that entry instead of a second one.
+  const dupe = db.prepare(`SELECT public_ref, quoted_minutes FROM waitlist
+    WHERE location_id=? AND status='waiting' AND source='self'
+      AND lower(trim(guest_name))=lower(?) AND IFNULL(phone,'')=IFNULL(?, '')
+      AND created_at >= datetime('now','-30 minutes') ORDER BY id DESC LIMIT 1`).get(locId, name, phone);
+  if (dupe) {
+    const ahead = db.prepare(`SELECT COUNT(*) c FROM waitlist w WHERE location_id=? AND status='waiting'
+      AND created_at < (SELECT created_at FROM waitlist WHERE public_ref=?)`).get(locId, dupe.public_ref).c;
+    return res.json({ success: true, ref: dupe.public_ref, position: ahead + 1, quoted_minutes: dupe.quoted_minutes,
+      guest_name: name, party_size: size, location: loc.name, duplicate: true });
+  }
   const s = statusFor(locId);
   const ref = genRef();
   const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, source, public_ref)

@@ -6,8 +6,11 @@ const { migrate } = require('./db/schema');
 migrate();
 
 const app = express();
+// Behind a reverse proxy (Caddy/nginx/Lightsail LB), set TRUST_PROXY so req.ip is
+// the real client IP (needed for rate limiting). e.g. TRUST_PROXY=1 or "loopback".
+if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '16kb' })); // small bodies only — this is a waitlist
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Pho Ha Noi — Waitlist' }));

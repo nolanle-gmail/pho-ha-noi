@@ -195,6 +195,14 @@ join the list**:
 
 **Logins (front desk):** `host1@phohanoi.com` / `Host123!` (host) · `harry@phohanoi.com` / `Harry123!` (owner, all locations). **Customer self check-in** needs no login: open **`/checkin`**.
 
+**Public-endpoint hardening:** the no-login check-in surface is protected without any
+extra dependencies — a per-IP rate limit on `POST /api/public/checkin` (default 20 /
+10 min) plus a generous backstop across all public routes, a duplicate-submit guard
+(a double-tap / reload returns the same entry instead of a new one), and a 16 KB body
+cap. Tune per deployment with env vars — `CHECKIN_MAX`, `CHECKIN_WINDOW_MS`,
+`PUBLIC_MAX` — and set **`TRUST_PROXY`** (e.g. `1`) when running behind Caddy / nginx
+so the limiter sees real client IPs.
+
 ## Run either app
 
 ```bash
@@ -211,5 +219,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 144 checks · waitlist: 39 checks
+npm run smoke      # management: 144 checks · waitlist: 41 checks
 ```

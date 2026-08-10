@@ -1,5 +1,6 @@
 // End-to-end smoke test for the waitlist API. Run: node tests/smoke.js
 process.env.DB_PATH = process.env.DB_PATH || require('path').join(__dirname, '..', 'db', 'phohanoi_waitlist.db');
+process.env.CHECKIN_MAX = process.env.CHECKIN_MAX || '5'; // low cap so the rate-limit test is cheap
 const app = require('../server');
 
 let pass = 0, fail = 0;
@@ -102,6 +103,18 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('self check-in shows on front-desk board with source', selfInQueue.some(x => x.public_ref === selfIn.ref && x.source === 'self'), 'not found');
     r = await fetch(base + '/api/public/position/nope-nope', {});
     check('unknown reference 404', r.status === 404, 'status=' + r.status);
+
+    // Duplicate submit (double-tap / reload) returns the same entry, not a new one.
+    const dup = await j(await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'Self Serve', party_size: 2, phone: '(408) 555-0123' }) }));
+    check('duplicate submit reuses existing entry', dup.duplicate === true && dup.ref === selfIn.ref, JSON.stringify(dup).slice(0, 60));
+
+    // Rate limit kicks in after CHECKIN_MAX (=5) check-ins per IP.
+    const burst = [];
+    for (let i = 0; i < 8; i++) {
+      const rr = await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'Burst ' + i, party_size: 2 }) });
+      burst.push(rr.status);
+    }
+    check('check-in is rate limited (429)', burst.includes(429), 'statuses=' + burst.join(','));
 
     // ── RBAC: host pinned to own location; cannot see owner history/report ──
     const host = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'host2@phohanoi.com', password: 'Host123!' }) }));
