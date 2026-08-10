@@ -89,8 +89,8 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 /* ── Customer self-check-in kiosk (/checkin) ─────────────────────────────── */
 .kiosk-body { min-height: 100vh; background: linear-gradient(135deg, var(--red-dark), var(--red)); display: flex; align-items: flex-start; justify-content: center; padding: 1.2rem; }
 .kiosk { width: 100%; max-width: 460px; margin-top: 4vh; text-align: center; }
-.kiosk-brand { margin-bottom: .2rem; }
-.kiosk-logo { height: 64px; width: auto; display: inline-block; filter: drop-shadow(0 3px 8px rgba(0,0,0,.35)); }
+.kiosk-brand { display: inline-block; background: #fff; border-radius: 20px; padding: 1.1rem 1.8rem; margin-bottom: .6rem; box-shadow: 0 12px 30px rgba(0,0,0,.28); }
+.kiosk-logo { height: 96px; width: auto; display: block; }
 .kiosk-sub { color: #fde9c8; font-size: 1rem; margin: .1rem 0 1.2rem; }
 .k-card { background: #fff; border-radius: 20px; padding: 1.6rem; box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: left; }
 .k-label { display: block; font-weight: 700; font-size: .92rem; margin: .2rem 0 .35rem; }
