@@ -50,6 +50,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .party .waited b { display: block; font-size: 1.15rem; color: var(--ink); }
 .party .acts { display: flex; gap: .5rem; flex-wrap: wrap; }
 .tag { display: inline-block; background: var(--gold-soft); color: #92400e; border-radius: 999px; padding: .1rem .5rem; font-size: .72rem; font-weight: 700; margin-left: .4rem; }
+.tag.self { background: #e7eefc; color: #2b5bd7; }
 .empty { background: #fff; border: 2px dashed var(--line); border-radius: 16px; padding: 3rem; text-align: center; color: var(--muted); }
 .hist { background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
 .hist table { width: 100%; border-collapse: collapse; font-size: .9rem; }
@@ -83,3 +84,40 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .modal .actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .6rem; }
 .toast { position: fixed; top: 1rem; right: 1rem; background: var(--ink); color: #fff; padding: .8rem 1.1rem; border-radius: 12px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .toast.bad { background: var(--danger); }
+
+/* ── Customer self-check-in kiosk (/checkin) ─────────────────────────────── */
+.kiosk-body { min-height: 100vh; background: linear-gradient(135deg, var(--red-dark), var(--red)); display: flex; align-items: flex-start; justify-content: center; padding: 1.2rem; }
+.kiosk { width: 100%; max-width: 460px; margin-top: 4vh; text-align: center; }
+.kiosk-brand { font-size: 2rem; font-weight: 800; color: #fff; }
+.kiosk-brand .bowl { font-size: 2.8rem; display: block; }
+.kiosk-sub { color: #fde9c8; font-size: 1rem; margin: .1rem 0 1.2rem; }
+.k-card { background: #fff; border-radius: 20px; padding: 1.6rem; box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: left; }
+.k-label { display: block; font-weight: 700; font-size: .92rem; margin: .2rem 0 .35rem; }
+.k-opt { color: var(--muted); font-weight: 400; }
+.k-input { width: 100%; padding: .95rem; font-size: 1.05rem; border: 1px solid var(--line); border-radius: 12px; margin-bottom: 1rem; }
+.k-wait { background: var(--gold-soft); color: #92400e; border-radius: 12px; padding: .7rem .9rem; font-size: .95rem; margin-bottom: 1.1rem; display: flex; align-items: center; gap: .5rem; }
+.k-wait:empty { display: none; }
+.k-dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--warn); display: inline-block; }
+.k-dot.ok { background: var(--ok); }
+.k-stepper { display: flex; align-items: center; justify-content: space-between; max-width: 220px; margin-bottom: 1.1rem; }
+.k-stepper button { width: 3.2rem; height: 3.2rem; border-radius: 50%; border: none; background: var(--gold-soft); color: var(--red-dark); font-size: 1.8rem; font-weight: 800; line-height: 1; }
+.k-stepper button:hover { background: var(--gold); }
+.k-stepper span { font-size: 1.8rem; font-weight: 800; min-width: 2.5rem; text-align: center; }
+.k-btn { width: 100%; background: var(--gold); color: #422006; border: none; border-radius: 14px; padding: 1.05rem; font-weight: 800; font-size: 1.15rem; margin-top: .3rem; }
+.k-btn:hover { filter: brightness(1.05); }
+.k-btn:disabled { opacity: .6; }
+.k-err { color: var(--danger); font-size: .9rem; margin-bottom: .6rem; min-height: 1.1rem; }
+.k-loc-fixed { font-size: 1.3rem; font-weight: 800; color: var(--red); text-align: center; margin-bottom: 1rem; }
+.k-loading, .k-error { color: #fff; padding: 2rem; }
+.kiosk-foot { margin-top: 1.4rem; }
+.kiosk-foot a { color: #fde9c8; font-size: .85rem; text-decoration: none; }
+/* Confirmation */
+.k-hi { font-size: 1.15rem; font-weight: 700; margin-bottom: .6rem; }
+.k-you { color: var(--muted); font-size: .95rem; }
+.k-pos { display: flex; align-items: baseline; gap: .5rem; margin: .2rem 0 .6rem; }
+.k-pos-num { font-size: 3.2rem; font-weight: 900; color: var(--red); line-height: 1; }
+.k-pos-lbl { color: var(--muted); font-weight: 700; }
+.k-note { color: var(--ink); font-size: .95rem; line-height: 1.5; margin: .3rem 0 0; }
+.k-big { font-size: 1.5rem; font-weight: 800; margin: .3rem 0; }
+.k-big.ok { color: var(--ok); }
+.k-ref { color: var(--muted); font-size: .8rem; margin-top: 1.1rem; border-top: 1px solid var(--line); padding-top: .7rem; }

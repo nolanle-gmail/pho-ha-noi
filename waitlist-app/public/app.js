@@ -128,7 +128,7 @@ function partyCard(p, i) {
   return `<div class="party ${notified ? 'notified' : ''}">
     <div class="pos">${i + 1}</div>
     <div class="info">
-      <div class="name">${esc(p.guest_name)}${notified ? '<span class="tag">NOTIFIED</span>' : ''}</div>
+      <div class="name">${esc(p.guest_name)}${p.source === 'self' ? '<span class="tag self">SELF CHECK-IN</span>' : ''}${notified ? '<span class="tag">NOTIFIED</span>' : ''}</div>
       <div class="meta">👥 ${p.party_size}${p.phone ? ' · 📱 ' + esc(p.phone) : ''}${p.notes ? ' · ' + esc(p.notes) : ''}</div>
     </div>
     <div class="waited"><b>${waited(p.created_at)}m</b>waited${p.quoted_minutes != null ? ` · quoted ${p.quoted_minutes}m` : ''}</div>

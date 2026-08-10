@@ -167,10 +167,21 @@ Additional access levels: `gm@phohanoi.com` / `Gm123456!` (general manager) · `
 
 ## 2. Waiting-list app  (`waitlist-app`, http://localhost:4002)
 
-A touch-friendly host station for walk-in check-in and paging.
+A touch-friendly host station for walk-in check-in and paging, with **two ways to
+join the list**:
 
-**Features**
-- Live queue with per-party waited time and quoted wait
+- **Customer self check-in** — a public, no-login page at **`/checkin`** (ideal
+  for a lobby tablet or a per-store QR code, `/checkin?loc=<id>`). The guest sees
+  the current wait, enters name / party size / phone, joins the list, and then
+  **tracks their spot live** by reference code — the screen updates to "🔔 Your
+  table is ready!" the moment the host pages them, and "🎉 You're seated!" when
+  they're seated. These land on the board tagged **SELF CHECK-IN**.
+- **Front-desk entry** — the authenticated host station (below) where staff add
+  parties themselves (phone-ins or walk-ins they're helping) and **manage the
+  whole list**: notify, seat, and remove parties, plus stats, history and reports.
+
+**Front-desk features**
+- Live queue with per-party waited time and quoted wait; self-check-ins flagged
 - **Add party** (name, size stepper, phone, auto-suggested quote = parties ahead × avg turn)
 - **Notify/page** guest their table is ready (SMS stubbed → logged to `notify_log`)
 - **Seat** (with table number) / mark **Left**
@@ -182,7 +193,7 @@ A touch-friendly host station for walk-in check-in and paging.
 - Owner can view any location's live board at any time via the location switcher
 - Roles: owner · manager · frontdesk (host) — location-scoped; history/report are owner-only
 
-**Logins:** `host1@phohanoi.com` / `Host123!` (host) · `harry@phohanoi.com` / `Harry123!` (owner, all locations)
+**Logins (front desk):** `host1@phohanoi.com` / `Host123!` (host) · `harry@phohanoi.com` / `Harry123!` (owner, all locations). **Customer self check-in** needs no login: open **`/checkin`**.
 
 ## Run either app
 
@@ -200,5 +211,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 144 checks · waitlist: 32 checks
+npm run smoke      # management: 144 checks · waitlist: 39 checks
 ```

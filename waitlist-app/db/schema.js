@@ -37,6 +37,8 @@ function migrate() {
       table_number TEXT,
       notified_at TEXT,
       seated_at TEXT,
+      source TEXT NOT NULL DEFAULT 'staff', -- 'staff' (front desk) or 'self' (customer kiosk)
+      public_ref TEXT,                       -- short code so a self-check-in guest can track their spot
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -65,6 +67,12 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_wl_loc_status ON waitlist(location_id, status);
     CREATE INDEX IF NOT EXISTS idx_audit_loc ON audit_log(location_id);
   `);
+
+  // Migrations for databases created before these columns existed.
+  for (const stmt of [
+    `ALTER TABLE waitlist ADD COLUMN source TEXT NOT NULL DEFAULT 'staff'`,
+    `ALTER TABLE waitlist ADD COLUMN public_ref TEXT`,
+  ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 
 module.exports = { migrate };

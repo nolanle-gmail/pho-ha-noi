@@ -87,6 +87,22 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('daily report has rows + totals', report.rows.length >= 1 && report.totals.guests > 0, JSON.stringify(report.totals));
     check('report day has guest headcount', report.rows.every(r => 'guests' in r && 'parties' in r));
 
+    // ── Customer self-check-in (public, no auth) ──────────────────────────
+    const pubLocs = await j(await fetch(base + '/api/public/locations'));
+    check('public locations (no auth)', Array.isArray(pubLocs) && pubLocs.length === 10, 'len=' + (pubLocs || []).length);
+    const pubStatus = await j(await fetch(base + `/api/public/status?location_id=${loc}`));
+    check('public status (no auth)', typeof pubStatus.parties_ahead === 'number' && !!pubStatus.location, JSON.stringify(pubStatus).slice(0, 60));
+    const selfIn = await j(await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'Self Serve', party_size: 2, phone: '(408) 555-0123' }) }));
+    check('self check-in creates entry', selfIn.success === true && !!selfIn.ref && selfIn.position >= 1, JSON.stringify(selfIn).slice(0, 60));
+    r = await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, party_size: 2 }) });
+    check('self check-in requires a name (400)', r.status === 400, 'status=' + r.status);
+    const pos = await j(await fetch(base + `/api/public/position/${selfIn.ref}`));
+    check('guest can track their spot', pos.status === 'waiting' && pos.guest_name === 'Self Serve' && pos.position >= 1, JSON.stringify(pos).slice(0, 60));
+    const selfInQueue = await j(await fetch(base + `/api/waitlist/?location_id=${loc}`, { headers: H(token) }));
+    check('self check-in shows on front-desk board with source', selfInQueue.some(x => x.public_ref === selfIn.ref && x.source === 'self'), 'not found');
+    r = await fetch(base + '/api/public/position/nope-nope', {});
+    check('unknown reference 404', r.status === 404, 'status=' + r.status);
+
     // ── RBAC: host pinned to own location; cannot see owner history/report ──
     const host = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'host2@phohanoi.com', password: 'Host123!' }) }));
     const hostQueue = await j(await fetch(base + '/api/waitlist/', { headers: H(host.token) }));
