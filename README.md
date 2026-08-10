@@ -1,6 +1,7 @@
 # Pho Ha Noi
 
 [![CI](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/ci.yml/badge.svg)](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/ci.yml)
+[![Deploy to Fly](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/fly-deploy.yml/badge.svg)](https://github.com/nolanle-gmail/pho-ha-noi/actions/workflows/fly-deploy.yml)
 
 Two standalone restaurant apps for **Pho Ha Noi** (owner: **Harry Nguyen**), built
 in the same stack as the reference design in `C:\Restaurant_Design`
