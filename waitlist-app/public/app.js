@@ -44,12 +44,23 @@ async function boot() {
   tick(); setInterval(tick, 20000);
   S.locations = await api('/waitlist/locations');
   const picker = $('locPicker');
+  const short = (id) => ((S.locations.find(l => String(l.id) === String(id)) || {}).name || '').replace('Pho Ha Noi — ', '');
   if (S.user.role === 'owner') {
+    // Owner can view any store; remember the last one they were looking at.
     picker.classList.remove('hidden');
     picker.innerHTML = S.locations.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
-    S.loc = String(S.locations[0].id); picker.value = S.loc;
-    picker.onchange = () => { S.loc = picker.value; render(); };
-  } else { S.loc = String(S.user.location_id); picker.classList.add('hidden'); }
+    const saved = localStorage.getItem('phnw_fd_loc');
+    S.loc = (saved && S.locations.some(l => String(l.id) === saved)) ? saved : String(S.locations[0].id);
+    picker.value = S.loc;
+    picker.onchange = () => { S.loc = picker.value; try { localStorage.setItem('phnw_fd_loc', S.loc); } catch { /* private mode */ } render(); };
+  } else {
+    // Host / front-desk staff are pinned to their own store's waitlist.
+    S.loc = String(S.user.location_id);
+    picker.classList.add('hidden');
+    const badge = $('locName');
+    badge.textContent = '📍 ' + short(S.loc);
+    badge.classList.remove('hidden');
+  }
   renderNav();
   render();
   // Live refresh — only the board auto-refreshes (history/report keep filter state).

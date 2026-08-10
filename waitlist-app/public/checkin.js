@@ -17,13 +17,24 @@ const SPECIAL = ['High chair', 'Booster seat', 'Bar seat', 'Booth', 'Wheelchair 
 
 function stopPolling() { if (K.pollTimer) { clearInterval(K.pollTimer); K.pollTimer = null; } }
 
+const SAVED_LOC = 'phnw_kiosk_loc';
 async function start() {
   try { K.locations = await api('/locations'); }
   catch (e) { KV().innerHTML = `<div class="k-error">${esc(e.message)}</div>`; return; }
   const params = new URLSearchParams(location.search);
-  const pre = params.get('loc');
-  if (pre && K.locations.some(l => String(l.id) === String(pre))) { K.loc = String(pre); K.fixed = true; }
-  else if (K.locations.length === 1) { K.loc = String(K.locations[0].id); K.fixed = true; }
+  const byId = (v) => K.locations.find(l => String(l.id) === String(v));
+  // Pin the store from (in order): a /checkin/<slug> path, a ?loc=<id>, or a
+  // location this device was set to before. That way each tablet / QR stays on
+  // its own store's list.
+  const slug = decodeURIComponent(location.pathname.replace(/^\/checkin\/?/, '')).toLowerCase();
+  const chosen = (slug && K.locations.find(l => l.slug === slug))
+    || byId(params.get('loc'))
+    || byId(localStorage.getItem(SAVED_LOC))
+    || (K.locations.length === 1 ? K.locations[0] : null);
+  if (chosen) {
+    K.loc = String(chosen.id); K.fixed = true;
+    try { localStorage.setItem(SAVED_LOC, K.loc); } catch { /* private mode */ }
+  }
   renderForm();
 }
 
@@ -33,7 +44,8 @@ async function renderForm() {
   KV().innerHTML = `
     <div class="k-card">
       ${K.fixed
-        ? `<div class="k-loc-fixed">${esc((locName || '').replace('Pho Ha Noi — ', '')) || 'Select a location'}</div>`
+        ? `<div class="k-loc-fixed">${esc((locName || '').replace('Pho Ha Noi — ', '')) || 'Select a location'}</div>
+           <div class="k-change"><a href="#" id="kChange">Not this location? Change</a></div>`
         : `<label class="k-label">Location</label>
            <select id="kLoc" class="k-input">
              <option value="">Choose your location…</option>
@@ -57,7 +69,16 @@ async function renderForm() {
   const setSize = () => { $('kSize').textContent = K.size; };
   $('kPlus').onclick = () => { K.size = Math.min(50, K.size + 1); setSize(); };
   $('kMinus').onclick = () => { K.size = Math.max(1, K.size - 1); setSize(); };
-  if ($('kLoc')) $('kLoc').onchange = () => { K.loc = $('kLoc').value; refreshWait(); };
+  if ($('kLoc')) $('kLoc').onchange = () => {
+    K.loc = $('kLoc').value || null;
+    if (K.loc) { try { localStorage.setItem(SAVED_LOC, K.loc); } catch { /* private mode */ } } // remember this store on the device
+    refreshWait();
+  };
+  if ($('kChange')) $('kChange').onclick = (e) => {
+    e.preventDefault();
+    try { localStorage.removeItem(SAVED_LOC); } catch { /* private mode */ }
+    K.fixed = false; renderForm();
+  };
   $('kChips').querySelectorAll('[data-req]').forEach(b => b.onclick = () => {
     const v = b.dataset.req;
     if (K.reqs.has(v)) { K.reqs.delete(v); b.classList.remove('active'); }

@@ -196,17 +196,20 @@ Additional access levels: `gm@phohanoi.com` / `Gm123456!` (general manager) · `
 A touch-friendly host station for walk-in check-in and paging, with **two ways to
 join the list**:
 
-- **Customer self check-in** — a public, no-login page at **`/checkin`** (ideal
-  for a lobby tablet or a per-store QR code, `/checkin?loc=<id>`). The guest sees
+- **Customer self check-in** — a public, no-login page at **`/checkin`**. Give each
+  store its own kiosk URL with a **location slug** — `/checkin/berkeley` (or
+  `/checkin?loc=<id>`) — so a lobby tablet / QR shows **only that store's** waitlist;
+  the device also **remembers its store** so a bare `/checkin` stays put. The guest sees
   the current wait, enters name / party size / phone and any **special requests**
   (tap-to-add chips — high chair, booster, bar seat, booth, wheelchair accessible,
   patio, birthday — plus a free-text box for allergies/occasions), joins the list,
   and then **tracks their spot live** by reference code — the screen updates to "🔔 Your
   table is ready!" the moment the host pages them, and "🎉 You're seated!" when
   they're seated. These land on the board tagged **SELF CHECK-IN**.
-- **Front-desk entry** — the authenticated host station (below) where staff add
-  parties themselves (phone-ins or walk-ins they're helping) and **manage the
-  whole list**: notify, seat, and remove parties, plus stats, history and reports.
+- **Front-desk entry** — the authenticated host station (below), **scoped to the
+  signed-in host's store** (shown as a 📍 badge in the header; owners get a store
+  switcher that remembers their last pick), where staff add parties themselves
+  (phone-ins or walk-ins they're helping) and **manage the whole list**: notify, seat, and remove parties, plus stats, history and reports.
   Special requests entered at check-in show inline on each party card.
 
 **Front-desk features**

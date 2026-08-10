@@ -30,9 +30,15 @@ function statusFor(locId) {
   return { parties_ahead: ahead, quoted_minutes: ahead * (location ? location.avg_turn_minutes : 8) };
 }
 
-// Locations to pick from (for the kiosk dropdown / QR landing).
+// A URL-friendly slug from a location name ("Pho Ha Noi — Berkeley" → "berkeley").
+const slugify = (name) => String(name || '').replace(/^pho ha noi\s*[—-]\s*/i, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+// Locations to pick from (for the kiosk dropdown / QR landing). Each carries a
+// slug so a store can use a clean per-location URL like /checkin/berkeley.
 router.get('/locations', (req, res) => {
-  res.json(db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ORDER BY name`).all());
+  const rows = db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ORDER BY name`).all();
+  res.json(rows.map(l => ({ ...l, slug: slugify(l.name) })));
 });
 
 // Live wait for a location.
