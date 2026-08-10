@@ -6,6 +6,13 @@ const db = require('../db/database');
 
 const LOG_READS = process.env.LOG_READS === '1';
 
+// Real client IP: Fly sets Fly-Client-IP; fall back to X-Forwarded-For / req.ip.
+function clientIp(req) {
+  return req.headers['fly-client-ip']
+    || (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    || req.ip || null;
+}
+
 function record({ userId, userName, userRole, method, path, status, ip, detail }) {
   try {
     db.prepare(`INSERT INTO activity_log (user_id, user_name, user_role, method, path, status, ip, detail)
@@ -25,7 +32,7 @@ function logLogin(req, { user, email, success }) {
     userName: user ? user.name : (email || null),
     userRole: user ? user.role : null,
     method: 'POST', path: '/api/auth/login', status: success ? 200 : 401,
-    ip: req.ip, detail: { event: success ? 'login' : 'login_failed', email: email || null },
+    ip: clientIp(req), detail: { event: success ? 'login' : 'login_failed', email: email || null },
   });
 }
 
@@ -46,7 +53,7 @@ function activityLogger(req, res, next) {
       method: req.method,
       path: p,
       status: res.statusCode,
-      ip: req.ip,
+      ip: clientIp(req),
     });
   });
   next();
