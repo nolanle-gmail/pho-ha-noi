@@ -172,13 +172,16 @@ join the list**:
 
 - **Customer self check-in** — a public, no-login page at **`/checkin`** (ideal
   for a lobby tablet or a per-store QR code, `/checkin?loc=<id>`). The guest sees
-  the current wait, enters name / party size / phone, joins the list, and then
-  **tracks their spot live** by reference code — the screen updates to "🔔 Your
+  the current wait, enters name / party size / phone and any **special requests**
+  (tap-to-add chips — high chair, booster, bar seat, booth, wheelchair accessible,
+  patio, birthday — plus a free-text box for allergies/occasions), joins the list,
+  and then **tracks their spot live** by reference code — the screen updates to "🔔 Your
   table is ready!" the moment the host pages them, and "🎉 You're seated!" when
   they're seated. These land on the board tagged **SELF CHECK-IN**.
 - **Front-desk entry** — the authenticated host station (below) where staff add
   parties themselves (phone-ins or walk-ins they're helping) and **manage the
   whole list**: notify, seat, and remove parties, plus stats, history and reports.
+  Special requests entered at check-in show inline on each party card.
 
 **Front-desk features**
 - Live queue with per-party waited time and quoted wait; self-check-ins flagged
@@ -219,5 +222,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 144 checks · waitlist: 41 checks
+npm run smoke      # management: 144 checks · waitlist: 42 checks
 ```

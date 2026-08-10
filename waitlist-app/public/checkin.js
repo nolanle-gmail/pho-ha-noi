@@ -12,7 +12,8 @@ async function api(path, opts = {}) {
   return data;
 }
 
-const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null };
+const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null, reqs: new Set() };
+const SPECIAL = ['High chair', 'Booster seat', 'Bar seat', 'Booth', 'Wheelchair accessible', 'Outdoor / patio', 'Birthday / celebration'];
 
 function stopPolling() { if (K.pollTimer) { clearInterval(K.pollTimer); K.pollTimer = null; } }
 
@@ -45,6 +46,11 @@ async function renderForm() {
       <div class="k-stepper"><button type="button" id="kMinus">−</button><span id="kSize">${K.size}</span><button type="button" id="kPlus">+</button></div>
       <label class="k-label">Mobile number <span class="k-opt">(so we can text you)</span></label>
       <input id="kPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="tel" />
+      <label class="k-label">Special requests <span class="k-opt">(optional)</span></label>
+      <div class="k-chips" id="kChips">
+        ${SPECIAL.map(s => `<button type="button" class="k-chip ${K.reqs.has(s) ? 'active' : ''}" data-req="${esc(s)}">${esc(s)}</button>`).join('')}
+      </div>
+      <input id="kReqOther" class="k-input" placeholder="Anything else? (allergy, occasion…)" />
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>
     </div>`;
@@ -52,6 +58,11 @@ async function renderForm() {
   $('kPlus').onclick = () => { K.size = Math.min(50, K.size + 1); setSize(); };
   $('kMinus').onclick = () => { K.size = Math.max(1, K.size - 1); setSize(); };
   if ($('kLoc')) $('kLoc').onchange = () => { K.loc = $('kLoc').value; refreshWait(); };
+  $('kChips').querySelectorAll('[data-req]').forEach(b => b.onclick = () => {
+    const v = b.dataset.req;
+    if (K.reqs.has(v)) { K.reqs.delete(v); b.classList.remove('active'); }
+    else { K.reqs.add(v); b.classList.add('active'); }
+  });
   $('kJoin').onclick = join;
   refreshWait();
 }
@@ -73,12 +84,14 @@ async function join() {
   if (!loc) { err.textContent = 'Please choose your location.'; return; }
   const name = $('kName').value.trim();
   if (!name) { err.textContent = 'Please enter your name.'; return; }
+  const other = ($('kReqOther') && $('kReqOther').value.trim()) || '';
+  const notes = [[...K.reqs].join(', '), other].filter(Boolean).join(' · ') || null;
   $('kJoin').disabled = true;
   try {
     const r = await api('/checkin', { method: 'POST', body: JSON.stringify({
-      location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null }) });
+      location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null, notes }) });
     sessionStorage.setItem('phnw_ref', r.ref);
-    renderConfirm(r.ref, r);
+    renderConfirm(r.ref, Object.assign({ notes }, r));
   } catch (e) { err.textContent = e.message; $('kJoin').disabled = false; }
 }
 
@@ -98,7 +111,8 @@ function renderConfirm(ref, initial) {
     } else {
       body = `<div class="k-you">You're on the list</div>
         <div class="k-pos"><span class="k-pos-num">#${p.position != null ? p.position : '—'}</span><span class="k-pos-lbl">in line</span></div>
-        <p class="k-note">Party of ${p.party_size} · about <strong>${p.quoted_minutes} min</strong>. Keep this screen open — we'll update it and text you when your table is ready.</p>`;
+        <p class="k-note">Party of ${p.party_size} · about <strong>${p.quoted_minutes} min</strong>. Keep this screen open — we'll update it and text you when your table is ready.</p>
+        ${initial && initial.notes ? `<p class="k-req">✓ Request noted: ${esc(initial.notes)}</p>` : ''}`;
     }
     $('kConfirm').innerHTML = `
       <div class="k-hi">Hi, ${esc(p.guest_name || (initial && initial.guest_name) || '')}!</div>

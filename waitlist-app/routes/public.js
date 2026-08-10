@@ -53,6 +53,7 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   const size = Math.max(1, Math.min(50, parseInt(req.body.party_size, 10) || 2));
   const phone = (req.body.phone || '').toString().trim().slice(0, 40) || null;
+  const notes = (req.body.notes || '').toString().trim().slice(0, 300) || null; // special requests
   // Duplicate-submit guard: if an identical party is already waiting here (double
   // tap, page reload, back button), return that entry instead of a second one.
   const dupe = db.prepare(`SELECT public_ref, quoted_minutes FROM waitlist
@@ -67,8 +68,8 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   }
   const s = statusFor(locId);
   const ref = genRef();
-  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, source, public_ref)
-    VALUES (?,?,?,?,?, 'self', ?)`).run(locId, name.slice(0, 120), size, phone, s.quoted_minutes, ref);
+  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, notes, quoted_minutes, source, public_ref)
+    VALUES (?,?,?,?,?,?, 'self', ?)`).run(locId, name.slice(0, 120), size, phone, notes, s.quoted_minutes, ref);
   // Audit as a self check-in (no staff user).
   try {
     db.prepare(`INSERT INTO audit_log (user_id, location_id, action, entity, entity_id, detail) VALUES (NULL,?,?,?,?,?)`)
