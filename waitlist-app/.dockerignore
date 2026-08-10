@@ -1,0 +1,14 @@
+# Reinstalled in the image
+node_modules
+
+# Never ship the local dev database (production data lives on the Fly volume)
+db/*.db
+db/*.db-shm
+db/*.db-wal
+
+# Not needed at runtime
+.git
+.gitignore
+tests
+*.md
+npm-debug.log*
