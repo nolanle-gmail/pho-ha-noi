@@ -42,9 +42,14 @@ router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
   if (code && db.prepare(`SELECT id FROM jobs WHERE code=?`).get(code)) return res.status(409).json({ error: 'That Job ID is already in use.' });
   const complexity = COMPLEXITY.includes(req.body.complexity) ? req.body.complexity : 'medium';
   const kind = JOB_KINDS.includes(req.body.kind) ? req.body.kind : 'standard';
+  const estNum = req.body.est_minutes === '' || req.body.est_minutes == null ? null : parseInt(req.body.est_minutes, 10);
+  // A day task (specific) must carry an estimate so the manager can plan when to assign it.
+  if (kind === 'specific' && (!Number.isFinite(estNum) || estNum <= 0)) {
+    return res.status(400).json({ error: 'Estimated minutes is required for a task (a positive number).' });
+  }
   const r = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes,kind) VALUES (?,?,?,?,?,?,?,?)`)
     .run(code, name, req.body.description || null, req.body.department || null, complexity,
-      req.body.est_minutes ? parseInt(req.body.est_minutes, 10) : null, req.body.notes || null, kind);
+      estNum, req.body.notes || null, kind);
   auditLog(req, 'job_create', 'job', r.lastInsertRowid, { name, code, kind });
   res.json({ success: true, id: r.lastInsertRowid });
 });
@@ -55,6 +60,13 @@ router.put('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   if (req.body.code !== undefined && req.body.code !== job.code) {
     const dup = db.prepare(`SELECT id FROM jobs WHERE code=? AND id<>?`).get(req.body.code, job.id);
     if (dup) return res.status(409).json({ error: 'That Job ID is already in use.' });
+  }
+  // Keep the "task has an estimate" invariant: don't let an edit leave a specific task without one.
+  const resultKind = req.body.kind !== undefined && JOB_KINDS.includes(req.body.kind) ? req.body.kind : job.kind;
+  if (resultKind === 'specific') {
+    const estIn = req.body.est_minutes;
+    const estNum = estIn === undefined ? job.est_minutes : (estIn === '' || estIn == null ? null : parseInt(estIn, 10));
+    if (!Number.isFinite(estNum) || estNum <= 0) return res.status(400).json({ error: 'Estimated minutes is required for a task (a positive number).' });
   }
   const fields = [], vals = [];
   JOB_FIELDS.forEach(k => {

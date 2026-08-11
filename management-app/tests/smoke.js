@@ -242,6 +242,13 @@ const check = (name, ok, detail = '') => {
     check('duplicate Job ID rejected (409)', r.status === 409, 'status=' + r.status);
     const mgrJob = await j(await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mgr Job', department: 'Front of House' }) }));
     check('manager can add a job', mgrJob.success === true && !!mgrJob.id, JSON.stringify(mgrJob));
+    // A day task (specific) requires an estimate; a standard job does not.
+    r = await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'No-Est Task', department: 'Facilities', kind: 'specific' }) });
+    check('specific task without est rejected (400)', r.status === 400, 'status=' + r.status);
+    const taskJob = await j(await fetch(base + '/api/schedule/jobs', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ code: 'TST-EST', name: 'Est Task', department: 'Facilities', kind: 'specific', est_minutes: 15 }) }));
+    check('specific task with est accepted', taskJob.success === true && !!taskJob.id, JSON.stringify(taskJob));
+    r = await fetch(base + '/api/schedule/jobs/' + taskJob.id, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ est_minutes: '' }) });
+    check('cannot clear est on a specific task (400)', r.status === 400, 'status=' + r.status);
     r = await fetch(base + '/api/schedule/jobs', { headers: H(emp.token) });
     check('employee blocked from job catalog (403)', r.status === 403, 'status=' + r.status);
 

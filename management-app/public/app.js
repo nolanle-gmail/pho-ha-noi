@@ -1351,7 +1351,7 @@ async function openLocTaskListModal(locId, locName) {
           <label style="grid-column:1/3">Name<input id="ntName" placeholder="e.g. Water the patio plants"/></label>
           <label>Department<select id="ntDept"><option>Front of House</option><option>Back of House</option><option>Facilities</option><option>Packaging</option><option>Logistics</option><option>Management</option></select></label>
           <label>Complexity<select id="ntCx"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
-          <label>Est. minutes<input id="ntEst" type="number" min="0" step="5" placeholder="15"/></label>
+          <label>Est. minutes *<input id="ntEst" type="number" min="1" step="5" placeholder="required"/></label>
           <label>Code (optional)<input id="ntCode" placeholder="auto if blank"/></label>
         </div>
         <div class="err" id="ntErr"></div>
@@ -1371,9 +1371,11 @@ async function openLocTaskListModal(locId, locName) {
       $('ntErr').textContent = '';
       const name = $('ntName').value.trim();
       if (!name) { $('ntErr').textContent = 'Name is required.'; return; }
+      const est = parseInt($('ntEst').value, 10);
+      if (!Number.isFinite(est) || est <= 0) { $('ntErr').textContent = 'Estimated minutes is required (a positive number).'; return; }
       const code = $('ntCode').value.trim() || ('TSK-' + Math.random().toString(36).slice(2, 6).toUpperCase());
       try {
-        const job = await api('/schedule/jobs', { method: 'POST', body: JSON.stringify({ code, name, department: $('ntDept').value, complexity: $('ntCx').value, est_minutes: $('ntEst').value || 0, kind: 'specific' }) });
+        const job = await api('/schedule/jobs', { method: 'POST', body: JSON.stringify({ code, name, department: $('ntDept').value, complexity: $('ntCx').value, est_minutes: est, kind: 'specific' }) });
         await api('/schedule/location-tasks', { method: 'PUT', body: JSON.stringify({ location_id: locId, job_id: job.id, enabled: true }) });
         toast('Task added'); await draw();
       } catch (e) { $('ntErr').textContent = e.message; }
@@ -1606,7 +1608,7 @@ function jobModal(job) {
       <label>Department<select id="j_department">${['', ...JOB_DEPTS].map(d => opt(d, j.department || '')).join('')}</select></label>
       <label>Kind<select id="j_kind"><option value="standard" ${(j.kind || 'standard') === 'standard' ? 'selected' : ''}>Standard (schedule duty)</option><option value="specific" ${j.kind === 'specific' ? 'selected' : ''}>Specific (day task)</option></select></label>
       <label>Complexity<select id="j_complexity">${['low', 'medium', 'high'].map(c => opt(c, j.complexity || 'medium')).join('')}</select></label>
-      <label>Est. minutes<input id="j_est_minutes" type="number" min="0" value="${j.est_minutes != null ? j.est_minutes : ''}" /></label>
+      <label>Est. minutes <span style="color:var(--muted);font-weight:400">(required for day tasks)</span><input id="j_est_minutes" type="number" min="0" value="${j.est_minutes != null ? j.est_minutes : ''}" /></label>
     </div>
     <label class="pfl">Description / instructions<textarea id="j_description" rows="3">${esc(j.description || '')}</textarea></label>
     <label class="pfl">Notes<textarea id="j_notes" rows="2">${esc(j.notes || '')}</textarea></label>
@@ -1618,6 +1620,10 @@ function jobModal(job) {
   $('mOk').onclick = async () => {
     const body = {};
     ['code', 'name', 'department', 'kind', 'complexity', 'est_minutes', 'description', 'notes'].forEach(k => { body[k] = $('j_' + k).value; });
+    if (body.kind === 'specific') {
+      const est = parseInt(body.est_minutes, 10);
+      if (!Number.isFinite(est) || est <= 0) { $('mErr').textContent = 'Estimated minutes is required for a day task (a positive number).'; return; }
+    }
     try {
       if (isNew) await api('/schedule/jobs', { method: 'POST', body: JSON.stringify(body) });
       else await api('/schedule/jobs/' + j.id, { method: 'PUT', body: JSON.stringify(body) });
