@@ -161,24 +161,29 @@ function setShiftJobs(shiftId, jobIds) {
   const valid = db.prepare(`SELECT id FROM jobs WHERE id=?`);
   for (const jid of jobIds) if (valid.get(jid)) ins.run(shiftId, jid);
 }
-// Replace a shift's breaks. Each break must be valid HH:MM, end after start, and
-// sit within the shift's own window (skipped otherwise).
+// Replace a shift's breaks. Rules: 10 min each (end auto-computed from start);
+// only within the shift; count capped by shift length (1 at 3.5h+, 2 at 7h+).
+const BREAK_MIN = 10;
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+const fmtMin = (m) => { const x = ((m % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 function setShiftBreaks(shiftId, breaks, shiftStart, shiftEnd) {
   db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shiftId);
-  if (!Array.isArray(breaks)) return;
   const valid = (t) => /^\d{2}:\d{2}$/.test(t);
-  const st = valid(shiftStart) ? toMin(shiftStart) : null;
-  const en = valid(shiftEnd) ? toMin(shiftEnd) : null;
-  const crosses = st != null && en != null && en <= st; // shift spans midnight
+  if (!Array.isArray(breaks) || !valid(shiftStart) || !valid(shiftEnd)) return;
+  const st = toMin(shiftStart); let en = toMin(shiftEnd); if (en <= st) en += 1440; // allow spanning midnight
+  const spanH = (en - st) / 60;
+  const allowed = spanH >= 7 ? 2 : spanH >= 3.5 ? 1 : 0;
+  if (allowed === 0) return;
   const ins = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
+  let count = 0;
   for (const b of breaks) {
-    const s = String(b.start_time || '').slice(0, 5), e = String(b.end_time || '').slice(0, 5);
-    if (!valid(s) || !valid(e)) continue;
-    const bs = toMin(s), be = toMin(e);
-    if (be <= bs) continue;                                        // end after start
-    if (st != null && en != null && !crosses && (bs < st || be > en)) continue; // within the shift
-    ins.run(shiftId, s, e, (b.label ? String(b.label).slice(0, 40) : null));
+    if (count >= allowed) break;
+    const s = String(b.start_time || '').slice(0, 5);
+    if (!valid(s)) continue;
+    let bs = toMin(s); if (bs < st) bs += 1440;              // normalize into the shift window
+    if (bs < st || bs + BREAK_MIN > en) continue;            // must fit inside the shift
+    ins.run(shiftId, s, fmtMin(toMin(s) + BREAK_MIN), (b.label ? String(b.label).slice(0, 40) : null));
+    count++;
   }
 }
 

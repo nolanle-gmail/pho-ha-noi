@@ -974,9 +974,12 @@ function minutesBetween(start, end) {
   return mins;
 }
 const shiftHours = (start, end) => minutesBetween(start, end) / 60;
-const breakMinutes = (s) => (s.breaks || []).reduce((t, b) => t + minutesBetween(b.start_time, b.end_time), 0);
-// Worked hours = shift span minus breaks (non-working time).
-const shiftWorkedHours = (s) => Math.max(0, shiftHours(s.start_time, s.end_time) - breakMinutes(s) / 60);
+// Breaks are paid (10 min each) and do NOT reduce worked hours.
+const shiftWorkedHours = (s) => shiftHours(s.start_time, s.end_time);
+// Break rules: 10 min each; a shift earns 1 break at 3.5h+, a 2nd at 7h+.
+const BREAK_MIN = 10;
+const maxBreaksFor = (hours) => (hours >= 7 ? 2 : hours >= 3.5 ? 1 : 0);
+const addMinutes = (t, m) => { if (!t) return ''; const [h, mm] = t.split(':').map(Number); let x = (h * 60 + mm + m) % 1440; if (x < 0) x += 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftWorkedHours(s), 0);
 const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
 const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.label ? ' ' + b.label : ''}`;
@@ -1076,8 +1079,9 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
       <label>End<input id="s_end" type="time" value="${esc(shift && shift.end_time || '18:00')}" /></label>
       <label style="grid-column:1/-1">Notes<input id="s_notes" value="${esc(shift && shift.notes || '')}" placeholder="Optional" /></label>
     </div>
-    <div class="brk-head"><span class="job-pick-label" style="margin:0">Breaks <span id="brkWindow" style="color:var(--muted);font-weight:400"></span></span>
+    <div class="brk-head"><span class="job-pick-label" style="margin:0">Breaks <span style="color:var(--muted);font-weight:400">(10 min each, paid)</span></span>
       <button type="button" class="btn sm ghost" id="addBrk">+ Add break</button></div>
+    <div id="brkHint" class="brk-hint"></div>
     <div id="brkList" class="brk-list"></div>
     <div class="job-pick-label">Assign jobs / tasks <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
     <div class="job-pick">
@@ -1103,31 +1107,36 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   const curId = shift ? shift.id : null;
   const otherDay = staff.shifts.filter(s => s.shift_date === dayIso && s.id !== curId);
   const otherWeek = staff.shifts.filter(s => s.id !== curId);
-  const collectBreaks = () => [...host.querySelectorAll('[data-brk]')].map(r => ({
-    start_time: r.querySelector('.brk-start').value, end_time: r.querySelector('.brk-end').value, label: r.querySelector('.brk-label').value.trim(),
-  }));
-  const modalBreakMin = () => collectBreaks().reduce((t, b) => t + minutesBetween(b.start_time, b.end_time), 0);
+  // Breaks: manager sets only the start; each break is a fixed 10 minutes.
+  const collectBreaks = () => [...host.querySelectorAll('[data-brk]')]
+    .map(r => ({ start_time: r.querySelector('.brk-start').value, label: r.querySelector('.brk-label').value.trim() }))
+    .filter(b => b.start_time);
   let over = false;
   const recompute = () => {
-    const proposed = Math.max(0, shiftHours($('s_start').value, $('s_end').value) - modalBreakMin() / 60);
+    const proposed = shiftHours($('s_start').value, $('s_end').value); // breaks don't reduce hours
     const day = sumHours(otherDay) + proposed, week = sumHours(otherWeek) + proposed;
     const msgs = [];
-    if (day > DAILY_MAX) msgs.push(`This day totals <strong>${fmtH(day)}h</strong> worked — over the ${DAILY_MAX}h daily limit.`);
-    if (week > WEEKLY_MAX) msgs.push(`This week totals <strong>${fmtH(week)}h</strong> worked — over the ${WEEKLY_MAX}h full-time limit.`);
+    if (day > DAILY_MAX) msgs.push(`This day totals <strong>${fmtH(day)}h</strong> — over the ${DAILY_MAX}h daily limit.`);
+    if (week > WEEKLY_MAX) msgs.push(`This week totals <strong>${fmtH(week)}h</strong> — over the ${WEEKLY_MAX}h full-time limit.`);
     over = msgs.length > 0;
     $('otWarn').innerHTML = over
       ? `<div class="ot-banner">⚠ ${msgs.join('<br>')}<label class="chk ot-ack"><input type="checkbox" id="s_ot"> Approve overtime exception</label></div>`
       : '';
-    // Keep breaks bounded to the shift window they sit inside.
-    const a = $('s_start').value, z = $('s_end').value;
-    const w = $('brkWindow'); if (w) w.textContent = (a && z) ? `(in between ${a}–${z}; deducted from worked hours)` : '(deducted from worked hours)';
-    host.querySelectorAll('.brk-start, .brk-end').forEach(i => { i.min = a || ''; i.max = z || ''; });
+    // How many breaks this shift length allows.
+    const hrs = proposed, allowed = maxBreaksFor(hrs), count = host.querySelectorAll('[data-brk]').length;
+    $('addBrk').disabled = allowed === 0 || count >= allowed;
+    $('brkHint').textContent = allowed === 0
+      ? 'A break can be added once the shift is at least 3.5 hours.'
+      : `${count}/${allowed} break${allowed > 1 ? 's' : ''} — a ${fmtH(hrs)}h shift allows ${allowed} (3.5h+ → 1, 7h+ → 2).`;
+    // Break start must stay inside the shift, leaving room for the 10-min break.
+    host.querySelectorAll('.brk-start').forEach(i => { i.min = $('s_start').value || ''; i.max = addMinutes($('s_end').value, -BREAK_MIN) || ''; });
+    host.querySelectorAll('.brk-end-label').forEach(sp => { const st = sp.closest('[data-brk]').querySelector('.brk-start').value; sp.textContent = st ? addMinutes(st, BREAK_MIN) : '—'; });
   };
-  // Break rows.
+  // Break rows — start time + optional label; end is start + 10 min (shown, not set).
   const addBreakRow = (b = {}) => {
     const row = document.createElement('div');
     row.className = 'brk-row'; row.dataset.brk = '1';
-    row.innerHTML = `<input type="time" class="brk-start" value="${esc(b.start_time || '')}"/><span class="brk-dash">–</span><input type="time" class="brk-end" value="${esc(b.end_time || '')}"/><input class="brk-label" placeholder="Label (e.g. Lunch)" value="${esc(b.label || '')}"/><button type="button" class="brk-del" title="Remove break">✕</button>`;
+    row.innerHTML = `<input type="time" class="brk-start" value="${esc(b.start_time || '')}"/><span class="brk-auto">→ <span class="brk-end-label">—</span> · 10 min</span><input class="brk-label" placeholder="Label (optional)" value="${esc(b.label || '')}"/><button type="button" class="brk-del" title="Remove break">✕</button>`;
     row.querySelector('.brk-del').onclick = () => { row.remove(); recompute(); };
     row.querySelectorAll('input').forEach(i => i.oninput = recompute);
     $('brkList').appendChild(row);
@@ -1141,16 +1150,15 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   $('mOk').onclick = async () => {
     if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
-    const breaks = collectBreaks().filter(b => b.start_time && b.end_time);
-    // Breaks must sit in between the shift's own start/end.
     const s0 = $('s_start').value, s1 = $('s_end').value;
+    let breaks = collectBreaks().slice(0, maxBreaksFor(shiftHours(s0, s1)));
+    // Each 10-min break must fit inside the shift.
     const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     if (s0 && s1) {
       const st = toMin(s0), en = toMin(s1), crosses = en <= st;
       for (const b of breaks) {
-        const bs = toMin(b.start_time), be = toMin(b.end_time);
-        if (be <= bs) { $('mErr').textContent = `A break must end after it starts (${b.start_time}–${b.end_time}).`; return; }
-        if (!crosses && (bs < st || be > en)) { $('mErr').textContent = `Break ${b.start_time}–${b.end_time} must be inside this shift (${s0}–${s1}).`; return; }
+        const bs = toMin(b.start_time);
+        if (!crosses && (bs < st || bs + BREAK_MIN > en)) { $('mErr').textContent = `A break at ${b.start_time} must fit inside the shift (${s0}–${s1}).`; return; }
       }
     }
     const body = { user_id: staff.id, location_id: location.id, shift_date: dayIso, start_time: $('s_start').value, end_time: $('s_end').value, notes: $('s_notes').value, job_ids, breaks };

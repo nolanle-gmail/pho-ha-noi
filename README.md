@@ -133,14 +133,15 @@ sections have their own horizontal tab bars:
   - **Schedule** — a **weekly staff schedule** the location's manager builds from
     the Manage view: a grid of every staff member at that location × the seven
     days of the week. Click **+** on any day to add a shift (start/end time, notes),
-    **pick one or more jobs/tasks** from the catalog, and add **breaks** (e.g. a
-    15-min break 10:45–11:00) — breaks are shown on the shift (☕) and on the
-    staff's My Schedule, and are **netted out of worked hours** so the 8h/40h caps
-    reflect actual time worked. Breaks are constrained to sit **in between** the
-    shift's own start/end (validated client- and server-side). A day can hold
-    **multiple work periods** — e.g. 8:00–12:00 (break 11:45–12:00) *and*
-    12:00–16:00 (break 15:10–15:25) — just click **+** again to add another; and a
-    staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
+    **pick one or more jobs/tasks** from the catalog, and add **breaks**. Breaks are
+    **10 minutes each and paid** (they do *not* reduce worked hours): the manager
+    picks only the **start** and the end auto-fills to +10 min. How many are allowed
+    depends on shift length — **none under 3.5h, one at 3.5h+, two at 7h+** (the
+    "Add break" button enables/caps accordingly, enforced client- and server-side),
+    and each break must sit inside the shift; they show as ☕ chips on the grid and
+    the staff's My Schedule. A day can hold **multiple work periods** — e.g.
+    8:00–12:00 *and* 12:00–16:00, each with its own break — just click **+** again to
+    add another; and a staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
     a highlighted "today". Because each shift carries its own location, a person
     can be scheduled at **different locations on different days** — shifts at
     another store show as read-only "@ store" cards for cross-location visibility,
@@ -258,5 +259,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 150 checks · waitlist: 46 checks
+npm run smoke      # management: 151 checks · waitlist: 46 checks
 ```

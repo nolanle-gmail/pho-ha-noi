@@ -250,12 +250,17 @@ const check = (name, ok, detail = '') => {
     check('manager gets weekly schedule', Array.isArray(wk.staff) && !!wk.week_start && wk.days.length === 7, JSON.stringify(wk).slice(0, 80));
     const schedStaff = wk.staff.find(s => s.role !== 'manager') || wk.staff[0];
     const shiftRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
-      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00', job_ids: jobIds, breaks: [{ start_time: '12:00', end_time: '12:30', label: 'Lunch' }] }) }));
+      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00', job_ids: jobIds, breaks: [{ start_time: '12:00', label: 'Lunch' }] }) }));
     check('manager creates shift with jobs', shiftRes.success === true && !!shiftRes.id, JSON.stringify(shiftRes));
     const wk2 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const savedShift = (wk2.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shiftRes.id);
     check('shift appears with assigned jobs', !!savedShift && savedShift.jobs.length === jobIds.length, JSON.stringify(savedShift || {}).slice(0, 80));
-    check('shift break saved (30 min, netted from hours)', !!savedShift && savedShift.breaks.length === 1 && savedShift.breaks[0].start_time === '12:00' && savedShift.breaks[0].end_time === '12:30', JSON.stringify(savedShift && savedShift.breaks));
+    check('break is 10 min with auto end time', !!savedShift && savedShift.breaks.length === 1 && savedShift.breaks[0].start_time === '12:00' && savedShift.breaks[0].end_time === '12:10', JSON.stringify(savedShift && savedShift.breaks));
+    const shortRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[2], start_time: '09:00', end_time: '11:00', breaks: [{ start_time: '10:00' }] }) }));
+    const wk3 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const shortShift = (wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shortRes.id);
+    check('no break allowed on a short (<3.5h) shift', !!shortShift && shortShift.breaks.length === 0, JSON.stringify(shortShift && shortShift.breaks));
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ start_time: '08:00', job_ids: [jobIds[0]] }) });
     check('manager updates shift', r.status === 200, await r.text());
     r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),

@@ -143,7 +143,10 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .brk-row { display: flex; align-items: center; gap: .4rem; }
 .brk-row input[type="time"] { width: auto; margin: 0; padding: .35rem .4rem; }
 .brk-row .brk-label { flex: 1; margin: 0; padding: .35rem .5rem; }
-.brk-row .brk-dash { color: var(--muted); }
+.brk-row .brk-auto { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.brk-row .brk-end-label { font-weight: 700; color: var(--ink); }
+.brk-hint { font-size: .78rem; color: var(--muted); margin: .1rem 0 .3rem; }
+.btn.sm[disabled], #addBrk[disabled] { opacity: .45; cursor: not-allowed; }
 .brk-row .brk-del { border: none; background: transparent; color: var(--red); font-weight: 800; cursor: pointer; padding: 0 .3rem; }
 .brk-list:empty::after { content: 'No breaks. Add one if the shift includes a break.'; color: var(--muted); font-size: .8rem; }
 .shift-breaks, .myshift-breaks { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .25rem; }
