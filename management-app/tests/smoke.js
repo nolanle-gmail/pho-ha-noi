@@ -261,6 +261,10 @@ const check = (name, ok, detail = '') => {
     const wk3 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const shortShift = (wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shortRes.id);
     check('no break allowed on a short (<3.5h) shift', !!shortShift && shortShift.breaks.length === 0, JSON.stringify(shortShift && shortShift.breaks));
+    // Clear any seeded shifts on the cap-test day so the day total is a controlled 8h (≤10h).
+    for (const os of ((wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts || []).filter(s => s.shift_date === wk.days[5])) {
+      await fetch(base + `/api/schedule/shifts/${os.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    }
     const capRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
       body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[5], start_time: '08:00', end_time: '16:00', breaks: [{ start_time: '09:00' }, { start_time: '10:30' }, { start_time: '13:00' }] }) }));
     const wk4 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
