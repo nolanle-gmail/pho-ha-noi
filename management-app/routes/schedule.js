@@ -126,7 +126,7 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : null;
   if (!locId || !jobId || !date) return res.status(400).json({ error: 'location_id, job_id and date are required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const job = db.prepare(`SELECT id, kind FROM jobs WHERE id=? AND is_active=1`).get(jobId);
+  const job = db.prepare(`SELECT id, kind, est_minutes FROM jobs WHERE id=? AND is_active=1`).get(jobId);
   if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
   const hasUser = Object.prototype.hasOwnProperty.call(req.body, 'user_id');
   const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
@@ -164,6 +164,18 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
         return res.status(400).json({ error: `Pick a time within the staff's working hours (${hrs}).` });
       }
       nt = null; // reassigned to someone whose hours don't cover the old time — drop it
+    }
+  }
+  // Two day tasks for the same person must not overlap in time.
+  if (nt && nu) {
+    const dur = taskDuration(job.est_minutes);
+    const s0 = toMin(nt), e0 = s0 + dur;
+    const others = db.prepare(`SELECT j.name, ta.task_time, j.est_minutes FROM task_assignments ta
+      JOIN jobs j ON j.id = ta.job_id
+      WHERE ta.location_id=? AND ta.task_date=? AND ta.user_id=? AND ta.job_id<>? AND ta.task_time IS NOT NULL`).all(locId, date, nu, jobId);
+    for (const o of others) {
+      const os = toMin(o.task_time), oe = os + taskDuration(o.est_minutes);
+      if (s0 < oe && os < e0) return res.status(400).json({ error: `That overlaps “${o.name}” at ${o.task_time}. Pick a free time.` });
     }
   }
   if (existing) {
@@ -281,6 +293,9 @@ const MAX_SHIFT_BREAKS = 24; // sanity ceiling
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 const spanHours = (a, b) => { let s = toMin(a), e = toMin(b); if (e <= s) e += 1440; return (e - s) / 60; };
 const fmtMin = (m) => { const x = ((m % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+// A day task occupies at least one 15-min slot, rounded up to the slot grid.
+const TASK_SLOT_MIN = 15;
+const taskDuration = (est) => Math.max(TASK_SLOT_MIN, Math.ceil((Number(est) || 0) / TASK_SLOT_MIN) * TASK_SLOT_MIN);
 function setShiftBreaks(shiftId, userId, shiftDate, breaks, shiftStart, shiftEnd) {
   db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shiftId);
   const valid = (t) => /^\d{2}:\d{2}$/.test(t);

@@ -315,6 +315,12 @@ const check = (name, ok, detail = '') => {
     check('time during a break rejected (400)', r.status === 400, 'status=' + r.status);
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '08:10' }) });
     check('time at a break\'s end is allowed', r.status === 200, await r.text());
+    // Two tasks for the same person must not overlap. tasks[0] now sits at 08:10 (a 15-min slot → 08:10–08:25).
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, user_id: schedStaff.id }) });
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, time: '08:15' }) });
+    check('overlapping task time rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, time: '08:25' }) });
+    check('adjacent non-overlapping time allowed', r.status === 200, await r.text());
     const stdJob = allJobs.find(x => x.kind === 'standard');
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: stdJob.id, user_id: schedStaff.id }) });
     check('standard job rejected as a day task (400)', r.status === 400, 'status=' + r.status);

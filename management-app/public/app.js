@@ -1216,14 +1216,42 @@ async function renderLocDayTasks() {
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
   const hoursById = {}; data.working.forEach(w => { hoursById[w.id] = w; });
   const opts = (sel) => `<option value="">— unassigned —</option>` + data.working.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)} · ${esc(w.start_time)}–${esc(w.end_time)}</option>`).join('');
+  // Slot picker: 15-min starts within the assignee's hours, minus breaks and other tasks they already have.
+  const SLOT = 15;
+  const tm = (s) => (+s.slice(0, 2)) * 60 + (+s.slice(3, 5));
+  const mf = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const f12 = (m) => { const h = Math.floor(m / 60), mm = m % 60, ap = h < 12 ? 'AM' : 'PM'; const hh = (h % 12) || 12; return `${hh}:${String(mm).padStart(2, '0')} ${ap}`; };
+  const effDur = (est) => Math.max(SLOT, Math.ceil((Number(est) || 0) / SLOT) * SLOT);
+  const clash = (a, b, c, d) => a < d && c < b;
+  const slotOptions = (t, w) => {
+    const dur = effDur(t.est_minutes);
+    const breaks = (w.breaks || []).map(b => [tm(b.start_time), tm(b.end_time)]);
+    const others = data.tasks.filter(x => x.user_id === t.user_id && x.job_id !== t.job_id && x.task_time)
+      .map(x => [tm(x.task_time), tm(x.task_time) + effDur(x.est_minutes)]);
+    const out = [];
+    (w.hours && w.hours.length ? w.hours : [{ start_time: w.start_time, end_time: w.end_time }]).forEach(span => {
+      const sEnd = tm(span.end_time);
+      for (let s = tm(span.start_time); s + dur <= sEnd; s += SLOT) {
+        const e = s + dur;
+        if (breaks.some(([bs, be]) => clash(s, e, bs, be))) continue;
+        if (others.some(([os, oe]) => clash(s, e, os, oe))) continue;
+        out.push(mf(s));
+      }
+    });
+    return out;
+  };
   const whenCell = (t) => {
     if (!canEdit) return t.task_time ? `<strong>${esc(t.task_time)}</strong>` : '<span style="color:var(--muted)">—</span>';
     if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
     const w = hoursById[t.user_id];
-    const bounds = w ? `min="${w.start_time}" max="${w.end_time}"` : '';
+    const slots = w ? slotOptions(t, w) : [];
+    const cur = t.task_time || '';
+    const options = `<option value="">— time —</option>`
+      + slots.map(s => `<option value="${s}" ${s === cur ? 'selected' : ''}>${f12(tm(s))}</option>`).join('')
+      + (cur && !slots.includes(cur) ? `<option value="${cur}" selected>${f12(tm(cur))} ⚠</option>` : '');
     const brk = w && w.breaks && w.breaks.length ? ` · excl. break ${w.breaks.map(b => `${esc(b.start_time)}–${esc(b.end_time)}`).join(', ')}` : '';
-    const hint = w ? `<div class="job-note">within ${esc(w.start_time)}–${esc(w.end_time)}${brk}</div>` : '';
-    return `<input type="time" data-time="${t.job_id}" value="${t.task_time || ''}" ${bounds} style="margin:0;padding:.35rem .4rem"/>${hint}`;
+    const note = slots.length ? `within ${esc(w.start_time)}–${esc(w.end_time)}${brk}` : 'no free slots — all taken';
+    return `<select data-time="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:160px">${options}</select><div class="job-note">${note}</div>`;
   };
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
     <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
