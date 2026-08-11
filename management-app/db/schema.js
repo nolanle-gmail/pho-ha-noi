@@ -422,6 +422,7 @@ function migrate() {
       task_date   TEXT NOT NULL,               -- ISO date
       job_id      INTEGER NOT NULL REFERENCES jobs(id),
       user_id     INTEGER REFERENCES users(id),  -- NULL = unassigned
+      task_time   TEXT,                          -- HH:MM, within the assignee's working hours
       done        INTEGER NOT NULL DEFAULT 0,
       created_by  INTEGER REFERENCES users(id),
       updated_at  TEXT DEFAULT (datetime('now')),
@@ -479,6 +480,7 @@ function migrate() {
     `ALTER TABLE users ADD COLUMN pin TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
     `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
+    `ALTER TABLE task_assignments ADD COLUMN task_time TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

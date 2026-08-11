@@ -770,7 +770,7 @@ async function renderMySchedule() {
       ${ss.length ? ss.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
-        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}">📋 ${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
+        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}">📋 ${t.task_time ? `<strong>${esc(t.task_time)}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
         ${(s.breaks && s.breaks.length) ? `<div class="myshift-breaks">${s.breaks.map(b => `<span class="brk-chip">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : ''}
         ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
       </div>`).join('') : '<div class="myday-off">Day off</div>'}
@@ -1024,7 +1024,7 @@ async function renderLocSchedule() {
     const brkLine = (s) => (s.breaks && s.breaks.length)
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
     const taskLine = (s) => (s.tasks && s.tasks.length)
-      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" title="Day task">📋 ${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
+      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" title="Day task${t.task_time ? ' at ' + esc(t.task_time) : ''}">📋 ${t.task_time ? esc(t.task_time) + ' ' : ''}${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
     const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
@@ -1214,11 +1214,21 @@ async function renderLocDayTasks() {
   S.dayTaskDate = data.date;
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
-  const opts = (sel) => `<option value="">— unassigned —</option>` + data.working.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const hoursById = {}; data.working.forEach(w => { hoursById[w.id] = w; });
+  const opts = (sel) => `<option value="">— unassigned —</option>` + data.working.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)} · ${esc(w.start_time)}–${esc(w.end_time)}</option>`).join('');
+  const whenCell = (t) => {
+    if (!canEdit) return t.task_time ? `<strong>${esc(t.task_time)}</strong>` : '<span style="color:var(--muted)">—</span>';
+    if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
+    const w = hoursById[t.user_id];
+    const bounds = w ? `min="${w.start_time}" max="${w.end_time}"` : '';
+    const hint = w ? `<div class="job-note">within ${esc(w.start_time)}–${esc(w.end_time)}</div>` : '';
+    return `<input type="time" data-time="${t.job_id}" value="${t.task_time || ''}" ${bounds} style="margin:0;padding:.35rem .4rem"/>${hint}`;
+  };
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
     <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
     <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
-    <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:200px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
+    <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
+    <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
   </tr>`).join('');
   $('locBody').innerHTML = `
@@ -1228,8 +1238,8 @@ async function renderLocDayTasks() {
       <span class="badge ${data.summary.unassigned ? 'out' : 'ok'}">${data.summary.assigned}/${data.summary.total} assigned</span>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
-    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Assigned to</th><th>Status</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : '<tr><td colspan="4" class="empty">No specific day tasks in the catalog. Add some in Staff → Jobs / Tasks (mark them “Specific”).</td></tr>'}
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Assigned to</th><th>When</th><th>Status</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : '<tr><td colspan="5" class="empty">No specific day tasks in the catalog. Add some in Staff → Jobs / Tasks (mark them “Specific”).</td></tr>'}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
@@ -1238,6 +1248,10 @@ async function renderLocDayTasks() {
   if (canEdit) {
     $('locBody').querySelectorAll('[data-assign]').forEach(sel => sel.onchange = async () => {
       try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: sel.dataset.assign, user_id: sel.value || null }) }); toast('Task assigned'); renderLocDayTasks(); }
+      catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+    $('locBody').querySelectorAll('[data-time]').forEach(inp => inp.onchange = async () => {
+      try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: inp.dataset.time, time: inp.value || null }) }); toast(inp.value ? 'Time set' : 'Time cleared'); renderLocDayTasks(); }
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
     $('locBody').querySelectorAll('[data-done]').forEach(cb => cb.onchange = async () => {

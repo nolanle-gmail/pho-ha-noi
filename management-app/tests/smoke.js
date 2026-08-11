@@ -298,6 +298,17 @@ const check = (name, ok, detail = '') => {
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));
+    // Task time must fall within the assignee's shift (schedStaff works 06:00–18:00 here).
+    check('day-tasks lists each worker\'s hours', (dt.working.find(w => w.id === schedStaff.id) || {}).start_time === '06:00', JSON.stringify(dt.working.find(w => w.id === schedStaff.id)));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '10:30' }) });
+    check('set a task time within working hours', r.status === 200, await r.text());
+    const dtT = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('day task shows the picked time', (dtT.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {}).task_time === '10:30', JSON.stringify(dtT.tasks.find(t => t.job_id === dt.tasks[0].job_id)));
+    const wkT = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const stT = (wkT.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
+    check('task time appears on staff schedule summary', !!stT && (stT.tasks || []).some(t => t.id === dt.tasks[0].job_id && t.task_time === '10:30'), JSON.stringify(stT && stT.tasks));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '20:00' }) });
+    check('time outside working hours rejected (400)', r.status === 400, 'status=' + r.status);
     const stdJob = allJobs.find(x => x.kind === 'standard');
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: stdJob.id, user_id: schedStaff.id }) });
     check('standard job rejected as a day task (400)', r.status === 400, 'status=' + r.status);

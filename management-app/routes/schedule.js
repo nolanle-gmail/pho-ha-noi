@@ -89,11 +89,23 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : fmtLocal(new Date());
-  const working = db.prepare(`SELECT DISTINCT u.id, u.name, u.role FROM shifts s JOIN users u ON u.id=s.user_id
-    WHERE s.location_id=? AND s.shift_date=? ORDER BY u.name`).all(locId, date);
+  // Each working person's shift hours that day, so the manager can pick a task time inside them.
+  const shiftRows = db.prepare(`SELECT u.id, u.name, u.role, s.start_time, s.end_time
+    FROM shifts s JOIN users u ON u.id=s.user_id
+    WHERE s.location_id=? AND s.shift_date=? ORDER BY u.name, s.start_time`).all(locId, date);
+  const workingBy = {};
+  for (const r of shiftRows) {
+    const w = workingBy[r.id] || (workingBy[r.id] = { id: r.id, name: r.name, role: r.role, hours: [] });
+    w.hours.push({ start_time: r.start_time, end_time: r.end_time });
+  }
+  const working = Object.values(workingBy).map(w => ({
+    ...w,
+    start_time: w.hours.reduce((a, h) => a < h.start_time ? a : h.start_time, w.hours[0].start_time),
+    end_time: w.hours.reduce((a, h) => a > h.end_time ? a : h.end_time, w.hours[0].end_time),
+  }));
   const tasks = db.prepare(`
     SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
-           ta.user_id, ta.done, u.name AS assignee_name
+           ta.user_id, ta.task_time, ta.done, u.name AS assignee_name
     FROM jobs j
     LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=? AND ta.task_date=?
     LEFT JOIN users u ON u.id=ta.user_id
@@ -114,21 +126,41 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
   const hasUser = Object.prototype.hasOwnProperty.call(req.body, 'user_id');
   const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
-  if (hasUser && userId) {
-    const works = db.prepare(`SELECT 1 FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? LIMIT 1`).get(userId, locId, date);
-    if (!works) return res.status(400).json({ error: 'Assign the task to someone working that day.' });
+  const shiftsFor = (uid) => db.prepare(`SELECT start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`).all(uid, locId, date);
+  if (hasUser && userId && !shiftsFor(userId).length) {
+    return res.status(400).json({ error: 'Assign the task to someone working that day.' });
+  }
+  const hasTime = Object.prototype.hasOwnProperty.call(req.body, 'time');
+  let time = undefined;
+  if (hasTime) {
+    time = req.body.time ? String(req.body.time).trim() : null;
+    if (time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return res.status(400).json({ error: 'Time must be HH:MM (24-hour).' });
   }
   const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : null;
-  const existing = db.prepare(`SELECT id, user_id, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
-  if (existing) {
-    const nu = hasUser ? userId : existing.user_id;
-    const nd = done !== null ? done : existing.done;
-    db.prepare(`UPDATE task_assignments SET user_id=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nd, existing.id);
-  } else {
-    db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, done, created_by) VALUES (?,?,?,?,?,?)`)
-      .run(locId, date, jobId, hasUser ? userId : null, done || 0, req.user.id);
+  const existing = db.prepare(`SELECT id, user_id, task_time, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
+  const nu = hasUser ? userId : (existing ? existing.user_id : null);
+  let nt = hasTime ? time : (existing ? existing.task_time : null);
+  // A task time must fall inside one of the assignee's shifts that day.
+  if (nt) {
+    if (!nu) return res.status(400).json({ error: 'Assign the task to someone before setting a time.' });
+    const spans = shiftsFor(nu);
+    const inHours = spans.some(s => nt >= s.start_time && nt <= s.end_time);
+    if (!inHours) {
+      if (hasTime) {
+        const hrs = spans.map(s => `${s.start_time}–${s.end_time}`).join(', ');
+        return res.status(400).json({ error: `Pick a time within the staff's working hours (${hrs}).` });
+      }
+      nt = null; // reassigned to someone whose hours don't cover the old time — drop it
+    }
   }
-  auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, done });
+  if (existing) {
+    const nd = done !== null ? done : existing.done;
+    db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
+  } else {
+    db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by) VALUES (?,?,?,?,?,?,?)`)
+      .run(locId, date, jobId, nu, nt, done || 0, req.user.id);
+  }
+  auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, time: hasTime ? time : undefined, done });
   res.json({ success: true });
 });
 
@@ -162,9 +194,9 @@ function shiftsForUsers(userIds, weekStartIso) {
     FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id = ?`);
   const breaksBy = db.prepare(`SELECT id, start_time, end_time, label FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   // Specific day-tasks assigned to this person for the shift's date + location.
-  const tasksBy = db.prepare(`SELECT j.id, j.code, j.name, j.complexity, ta.done
+  const tasksBy = db.prepare(`SELECT j.id, j.code, j.name, j.complexity, ta.task_time, ta.done
     FROM task_assignments ta JOIN jobs j ON j.id = ta.job_id
-    WHERE ta.user_id = ? AND ta.task_date = ? AND ta.location_id = ? ORDER BY j.name`);
+    WHERE ta.user_id = ? AND ta.task_date = ? AND ta.location_id = ? ORDER BY ta.task_time IS NULL, ta.task_time, j.name`);
   const byUser = {};
   for (const s of rows) {
     s.jobs = jobsBy.all(s.id);
