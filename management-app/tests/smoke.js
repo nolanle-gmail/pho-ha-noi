@@ -249,6 +249,15 @@ const check = (name, ok, detail = '') => {
     const wk = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     check('manager gets weekly schedule', Array.isArray(wk.staff) && !!wk.week_start && wk.days.length === 7, JSON.stringify(wk).slice(0, 80));
     const schedStaff = wk.staff.find(s => s.role !== 'manager') || wk.staff[0];
+    // Start this person's week from a clean slate so the break-cap checks are deterministic
+    // regardless of the seed's random demo shifts. Use the owner token (scope = all) so
+    // shifts at any location are removed — a leftover shift would change a day's total hours
+    // and flip the ≤10h break cap. Re-fetch fresh so nothing is missed.
+    {
+      const fresh = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(token) }));
+      const seeded = ((fresh.staff || []).find(s => s.id === schedStaff.id) || {}).shifts || [];
+      for (const os of seeded) await fetch(base + `/api/schedule/shifts/${os.id}`, { method: 'DELETE', headers: H(token) });
+    }
     const shiftRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
       body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00', job_ids: jobIds, breaks: [{ start_time: '12:00', label: 'Lunch' }] }) }));
     check('manager creates shift with jobs', shiftRes.success === true && !!shiftRes.id, JSON.stringify(shiftRes));
@@ -261,10 +270,6 @@ const check = (name, ok, detail = '') => {
     const wk3 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const shortShift = (wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shortRes.id);
     check('no break allowed on a short (<3.5h) shift', !!shortShift && shortShift.breaks.length === 0, JSON.stringify(shortShift && shortShift.breaks));
-    // Clear any seeded shifts on the cap-test day so the day total is a controlled 8h (≤10h).
-    for (const os of ((wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts || []).filter(s => s.shift_date === wk.days[5])) {
-      await fetch(base + `/api/schedule/shifts/${os.id}`, { method: 'DELETE', headers: H(mgr.token) });
-    }
     const capRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
       body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[5], start_time: '08:00', end_time: '16:00', breaks: [{ start_time: '09:00' }, { start_time: '10:30' }, { start_time: '13:00' }] }) }));
     const wk4 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
