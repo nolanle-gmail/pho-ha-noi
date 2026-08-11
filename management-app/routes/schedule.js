@@ -80,15 +80,19 @@ router.delete('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // ── Weekly schedule ──────────────────────────────────────────────────────────
 // Staff schedulable at a location: home location OR an "also works at" location.
+// Any shift-scheduled role (manager/support/driver and all job-title positions —
+// i.e. everyone whose scope isn't "all locations").
 function locationStaff(locId) {
+  const roles = ROLES.SCHEDULED;
+  const ph = roles.map(() => '?').join(',');
   return db.prepare(`
     SELECT DISTINCT u.id, u.name, u.role, u.location_id AS home_location_id
     FROM users u
     LEFT JOIN staff_locations sl ON sl.user_id = u.id
-    WHERE u.is_active=1 AND u.role IN ('manager','support','employee')
+    WHERE u.is_active=1 AND u.role IN (${ph})
       AND (u.location_id = ? OR sl.location_id = ?)
-    ORDER BY CASE u.role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, u.name
-  `).all(locId, locId);
+    ORDER BY u.name
+  `).all(...roles, locId, locId);
 }
 function shiftsForUsers(userIds, weekStartIso) {
   if (!userIds.length) return {};

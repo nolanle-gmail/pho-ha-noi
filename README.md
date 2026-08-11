@@ -139,7 +139,8 @@ sections have their own horizontal tab bars:
     depends on shift length — **none under 3.5h, one at 3.5h+, two at 7h+** (the
     "Add break" button enables/caps accordingly, enforced client- and server-side),
     and each break must sit inside the shift; they show as ☕ chips on the grid and
-    the staff's My Schedule. A day can hold **multiple work periods** — e.g.
+    the staff's My Schedule, with a **per-day total break time** on both the grid
+    cell (☕ Nm) and the My Schedule day card. A day can hold **multiple work periods** — e.g.
     8:00–12:00 *and* 12:00–16:00, each with its own break — just click **+** again to
     add another; and a staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
     a highlighted "today". Because each shift carries its own location, a person
