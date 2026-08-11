@@ -327,6 +327,31 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}`, { headers: H(emp.token) });
     check('employee blocked from day-tasks (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Per-location task lists ────────────────────────────────────────────
+    const lt = await j(await fetch(base + `/api/schedule/location-tasks?location_id=${loc1}`, { headers: H(mgr.token) }));
+    check('location-tasks lists catalog with enabled flags', Array.isArray(lt.catalog) && lt.catalog.some(t => t.enabled) && lt.catalog.some(t => !t.enabled), JSON.stringify({ n: lt.catalog.length, on: lt.enabled }));
+    const offTask = lt.catalog.find(t => !t.enabled);
+    // A task not on the location's list can't be assigned.
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: offTask.job_id, user_id: schedStaff.id }) });
+    check('task off the location list is not assignable (400)', r.status === 400, 'status=' + r.status);
+    // Enable it, then it shows on the board and becomes assignable.
+    r = await fetch(base + '/api/schedule/location-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, job_id: offTask.job_id, enabled: true }) });
+    check('enable a task for the location', r.status === 200, await r.text());
+    const dtE = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('enabled task now on the board', dtE.tasks.some(t => t.job_id === offTask.job_id), 'not present');
+    // Disable it again → gone from the board.
+    await fetch(base + '/api/schedule/location-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, job_id: offTask.job_id, enabled: false }) });
+    const dtD = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('disabled task removed from the board', !dtD.tasks.some(t => t.job_id === offTask.job_id), 'still present');
+    // Different locations can have different lists.
+    const lt2 = await j(await fetch(base + `/api/schedule/location-tasks?location_id=${loc2}`, { headers: H(token) }));
+    check('per-location lists are independent', lt2.location.id === loc2 && Array.isArray(lt2.catalog), JSON.stringify(lt2.location));
+    // RBAC on the list manager.
+    r = await fetch(base + `/api/schedule/location-tasks?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from location-tasks (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/location-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc2, job_id: offTask.job_id, enabled: true }) });
+    check('manager cannot edit another location list (403)', r.status === 403, 'status=' + r.status);
+
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());
 

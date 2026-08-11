@@ -429,6 +429,18 @@ function migrate() {
       UNIQUE (location_id, task_date, job_id)
     );
 
+    -- Which specific tasks apply to which location. A row = the task is on that
+    -- location's day-task list. Most restaurants share a set; each can add/remove,
+    -- and the Central Kitchen has its own.
+    CREATE TABLE IF NOT EXISTS location_tasks (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      job_id      INTEGER NOT NULL REFERENCES jobs(id),
+      created_by  INTEGER REFERENCES users(id),
+      created_at  TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, job_id)
+    );
+
     -- Weekly staff schedule — one row per staff member per working day per location.
     -- A person can have shifts at different locations on different days.
     CREATE TABLE IF NOT EXISTS shifts (
@@ -482,6 +494,20 @@ function migrate() {
     `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
     `ALTER TABLE task_assignments ADD COLUMN task_time TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Backfill per-location task lists for databases created before location_tasks
+  // existed: if there are specific tasks but no memberships yet, enable every active
+  // specific task at every active location (preserves the prior "all tasks show
+  // everywhere" behavior). Fresh seeds set memberships explicitly, so this is a no-op there.
+  try {
+    const hasMembership = db.prepare(`SELECT 1 FROM location_tasks LIMIT 1`).get();
+    const hasSpecific = db.prepare(`SELECT 1 FROM jobs WHERE kind='specific' AND is_active=1 LIMIT 1`).get();
+    if (!hasMembership && hasSpecific) {
+      db.exec(`INSERT OR IGNORE INTO location_tasks (location_id, job_id)
+               SELECT l.id, j.id FROM locations l CROSS JOIN jobs j
+               WHERE j.kind='specific' AND j.is_active=1 AND l.is_active=1`);
+    }
+  } catch { /* location_tasks not present yet */ }
 }
 
 module.exports = { migrate };

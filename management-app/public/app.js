@@ -1264,17 +1264,21 @@ async function renderLocDayTasks() {
     <div class="row-between sched-head">
       <div class="week-nav"><button class="btn sm ghost" id="dtPrev">‹ Prev</button><button class="btn sm ghost" id="dtToday">Today</button><button class="btn sm ghost" id="dtNext">Next ›</button></div>
       <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
-      <span class="badge ${data.summary.unassigned ? 'out' : 'ok'}">${data.summary.assigned}/${data.summary.total} assigned</span>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <span class="badge ${data.summary.unassigned ? 'out' : 'ok'}">${data.summary.assigned}/${data.summary.total} assigned</span>
+        ${canEdit ? `<button class="btn sm ghost" id="dtManage">⚙ Manage list</button>` : ''}
+      </div>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
     <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Assigned to</th><th>When</th><th>Status</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : '<tr><td colspan="5" class="empty">No specific day tasks in the catalog. Add some in Staff → Jobs / Tasks (mark them “Specific”).</td></tr>'}
+      ${data.tasks.length ? rows : `<tr><td colspan="5" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('dtNext').onclick = () => go(addDaysIso(data.date, 1));
   $('dtToday').onclick = () => go(fmtLocalIso(new Date()));
   if (canEdit) {
+    if ($('dtManage')) $('dtManage').onclick = () => openLocTaskListModal(S.locDetailId, data.location.name);
     $('locBody').querySelectorAll('[data-assign]').forEach(sel => sel.onchange = async () => {
       try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: sel.dataset.assign, user_id: sel.value || null }) }); toast('Task assigned'); renderLocDayTasks(); }
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
@@ -1288,6 +1292,59 @@ async function renderLocDayTasks() {
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
   }
+}
+
+// Manage which specific tasks apply at this location (per-location task list).
+async function openLocTaskListModal(locId, locName) {
+  const host = $('modalHost');
+  const close = () => { host.innerHTML = ''; renderLocDayTasks(); };
+  const draw = async () => {
+    const data = await api('/schedule/location-tasks?location_id=' + locId);
+    const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
+    const rows = data.catalog.map(t => `<tr>
+      <td><label class="chk" style="align-items:flex-start"><input type="checkbox" data-lt="${t.job_id}" ${t.enabled ? 'checked' : ''}/>
+        <span><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</span></label></td>
+      <td style="white-space:nowrap">${esc(t.department || '')} ${cx(t.complexity)}</td>
+      <td style="white-space:nowrap;color:var(--muted)">${t.est_minutes ? `~${t.est_minutes} min` : ''}</td>
+    </tr>`).join('');
+    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:640px">
+      <h3>Task list — ${esc(locName || data.location.name)}</h3>
+      <p class="sub" style="color:var(--muted);margin:.2rem 0 .8rem">Check the specific tasks that apply here. <strong id="ltCount">${data.enabled}</strong> on this location's list.</p>
+      <div class="table-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <details style="margin-top:.8rem"><summary style="cursor:pointer;font-weight:600">+ Add a new task to the catalog</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.6rem">
+          <label style="grid-column:1/3">Name<input id="ntName" placeholder="e.g. Water the patio plants"/></label>
+          <label>Department<select id="ntDept"><option>Front of House</option><option>Back of House</option><option>Facilities</option><option>Packaging</option><option>Logistics</option><option>Management</option></select></label>
+          <label>Complexity<select id="ntCx"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+          <label>Est. minutes<input id="ntEst" type="number" min="0" step="5" placeholder="15"/></label>
+          <label>Code (optional)<input id="ntCode" placeholder="auto if blank"/></label>
+        </div>
+        <div class="err" id="ntErr"></div>
+        <button class="btn sm" id="ntAdd" style="margin-top:.5rem">Add & enable here</button>
+      </details>
+      <div class="actions"><button class="btn" id="ltDone">Done</button></div>
+    </div></div>`;
+    $('ltDone').onclick = close;
+    host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    host.querySelectorAll('[data-lt]').forEach(cb => cb.onchange = async () => {
+      try {
+        await api('/schedule/location-tasks', { method: 'PUT', body: JSON.stringify({ location_id: locId, job_id: cb.dataset.lt, enabled: cb.checked }) });
+        const n = host.querySelectorAll('[data-lt]:checked').length; $('ltCount').textContent = n;
+      } catch (e) { toast(e.message, true); cb.checked = !cb.checked; }
+    });
+    $('ntAdd').onclick = async () => {
+      $('ntErr').textContent = '';
+      const name = $('ntName').value.trim();
+      if (!name) { $('ntErr').textContent = 'Name is required.'; return; }
+      const code = $('ntCode').value.trim() || ('TSK-' + Math.random().toString(36).slice(2, 6).toUpperCase());
+      try {
+        const job = await api('/schedule/jobs', { method: 'POST', body: JSON.stringify({ code, name, department: $('ntDept').value, complexity: $('ntCx').value, est_minutes: $('ntEst').value || 0, kind: 'specific' }) });
+        await api('/schedule/location-tasks', { method: 'PUT', body: JSON.stringify({ location_id: locId, job_id: job.id, enabled: true }) });
+        toast('Task added'); await draw();
+      } catch (e) { $('ntErr').textContent = e.message; }
+    };
+  };
+  await draw();
 }
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };

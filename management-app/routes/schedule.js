@@ -110,11 +110,12 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const tasks = db.prepare(`
     SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
            ta.user_id, ta.task_time, ta.done, u.name AS assignee_name
-    FROM jobs j
-    LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=? AND ta.task_date=?
+    FROM location_tasks lt
+    JOIN jobs j ON j.id = lt.job_id
+    LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=lt.location_id AND ta.task_date=?
     LEFT JOIN users u ON u.id=ta.user_id
-    WHERE j.kind='specific' AND j.is_active=1
-    ORDER BY j.department, j.name`).all(locId, date);
+    WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
+    ORDER BY j.department, j.name`).all(date, locId);
   const assigned = tasks.filter(t => t.user_id).length;
   res.json({ location: loc, date, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
 });
@@ -128,6 +129,9 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const job = db.prepare(`SELECT id, kind, est_minutes FROM jobs WHERE id=? AND is_active=1`).get(jobId);
   if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
+  if (!db.prepare(`SELECT 1 FROM location_tasks WHERE location_id=? AND job_id=?`).get(locId, jobId)) {
+    return res.status(400).json({ error: "That task isn't on this location's list." });
+  }
   const hasUser = Object.prototype.hasOwnProperty.call(req.body, 'user_id');
   const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
   const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
@@ -186,6 +190,42 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
       .run(locId, date, jobId, nu, nt, done || 0, req.user.id);
   }
   auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, time: hasTime ? time : undefined, done });
+  res.json({ success: true });
+});
+
+// ── Per-location task lists — which specific tasks apply at a location ────────
+// The full specific-task catalog with an `enabled` flag for this location.
+router.get('/location-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const catalog = db.prepare(`
+    SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
+           CASE WHEN lt.job_id IS NULL THEN 0 ELSE 1 END AS enabled
+    FROM jobs j
+    LEFT JOIN location_tasks lt ON lt.job_id=j.id AND lt.location_id=?
+    WHERE j.kind='specific' AND j.is_active=1
+    ORDER BY enabled DESC, j.department, j.name`).all(locId);
+  res.json({ location: loc, catalog, enabled: catalog.filter(t => t.enabled).length });
+});
+
+// Add or remove a specific task from a location's list.
+router.put('/location-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const jobId = parseInt(req.body.job_id, 10);
+  if (!locId || !jobId) return res.status(400).json({ error: 'location_id and job_id are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const job = db.prepare(`SELECT id, kind FROM jobs WHERE id=? AND is_active=1`).get(jobId);
+  if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not a specific task.' });
+  const enabled = req.body.enabled === true || req.body.enabled === 1 || req.body.enabled === 'true';
+  if (enabled) {
+    db.prepare(`INSERT OR IGNORE INTO location_tasks (location_id, job_id, created_by) VALUES (?,?,?)`).run(locId, jobId, req.user.id);
+  } else {
+    db.prepare(`DELETE FROM location_tasks WHERE location_id=? AND job_id=?`).run(locId, jobId);
+  }
+  auditLog(req, enabled ? 'location_task_add' : 'location_task_remove', 'job', jobId, { location_id: locId });
   res.json({ success: true });
 });
 

@@ -433,6 +433,9 @@ function run() {
   const insShift = db.prepare(`INSERT INTO ck_shifts (user_id, shift_date, start_time, end_time) VALUES (?, date('now'), ?, ?)`);
   ckStaff.forEach((s, i) => insShift.run(s.id, ['04:00', '05:00', '06:00'][i], ['12:00', '13:00', '14:00'][i]));
 
+  // Per-location day-task lists (restaurants share the common set; CK has its own).
+  seedLocationTasks(db, locIds, ckId);
+
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
@@ -577,6 +580,7 @@ const JOBS = [
 ];
 
 // Specific day-of tasks a manager assigns to whoever's working that day.
+// COMMON = the shared restaurant set (enabled at every restaurant by default).
 const SPECIFIC_TASKS = [
   ['CLN-01', 'Clean Restrooms', 'Clean and restock the restrooms; check and initial every 2 hours.', 'Facilities', 'low', 15, 'Log the check on the restroom sheet.'],
   ['CLN-02', 'Help Bus & Clean Tables', 'Jump in during the rush to clear, wipe, sanitize, and reset tables.', 'Front of House', 'low', 0, ''],
@@ -585,11 +589,37 @@ const SPECIFIC_TASKS = [
   ['CLN-05', 'Sanitize High-Touch Surfaces', 'Wipe door handles, POS screens, menus, and condiment caddies.', 'Facilities', 'low', 10, ''],
   ['CLN-06', 'Restock To-Go Station', 'Refill to-go containers, bags, lids, utensils, and napkins.', 'Front of House', 'low', 10, ''],
 ];
+// EXTRA = other common restaurant tasks, in the catalog but off by default —
+// each location can turn these on as needed.
+const EXTRA_TASKS = [
+  ['FOH-C1', 'Roll Silverware & Napkins', 'Roll and stock enough silverware sets for the next service.', 'Front of House', 'low', 20, ''],
+  ['FOH-C2', 'Refill Condiments & Sauces', 'Top off hoisin, sriracha, chili oil, soy, and sugar caddies.', 'Front of House', 'low', 15, ''],
+  ['FOH-C3', 'Wipe Down Menus', 'Wipe and sanitize every menu; pull damaged ones.', 'Front of House', 'low', 10, ''],
+  ['FOH-C4', 'Clean & Restock Host Stand', 'Tidy the host stand; restock to-go menus, pens, and business cards.', 'Front of House', 'low', 10, ''],
+  ['FAC-C1', 'Take Out Trash & Recycling', 'Empty all bins, replace liners, and break down boxes for recycling.', 'Facilities', 'low', 10, ''],
+  ['FAC-C2', 'Clean Glass Doors & Windows', 'Wipe entry glass, front windows, and door handles.', 'Facilities', 'low', 15, ''],
+  ['FAC-C3', 'Sweep Sidewalk & Entry', 'Sweep the entry and sidewalk; wipe the patio tables if open.', 'Facilities', 'low', 15, ''],
+  ['BOH-C1', 'Stock Line for Next Shift', 'Restock proteins, herbs, and garnishes so the line is set for the next shift.', 'Back of House', 'medium', 20, ''],
+  ['BOH-C2', 'Label & Date Prep Items', 'Label, date, and rotate prepped items in the walk-in (FIFO).', 'Back of House', 'low', 15, ''],
+  ['BOH-C3', 'Empty & Sanitize Dish Area', 'Clear the dish pit, run final racks, and sanitize the station.', 'Back of House', 'low', 20, ''],
+];
+// CK = Central Kitchen production tasks (enabled only at the Central Kitchen).
+const CK_TASKS = [
+  ['CK-01', 'Sanitize Prep Line & Cutting Boards', 'Break down, wash, and sanitize the prep line and all cutting boards.', 'Back of House', 'medium', 30, ''],
+  ['CK-02', 'Deep-Clean Broth Kettles', 'Drain, scrub, and sanitize the broth kettles after production.', 'Back of House', 'high', 45, ''],
+  ['CK-03', 'Walk-In Cooler Temp Check & Organize', 'Log walk-in temps, organize by FIFO, and pull anything past date.', 'Back of House', 'medium', 20, ''],
+  ['CK-04', 'Label & Rotate Stock (FIFO)', 'Label and date all batches; rotate stock front-to-back.', 'Back of House', 'medium', 20, ''],
+  ['CK-05', 'Wash & Sanitize Prep Tools', 'Run and sanitize knives, pans, and smallwares; return to stations.', 'Back of House', 'low', 20, ''],
+  ['CK-06', 'Sweep & Mop Kitchen Floors', 'Sweep, degrease, and mop the production floor and drains.', 'Facilities', 'low', 20, ''],
+  ['CK-07', 'Sanitize Packaging Line', 'Wipe and sanitize the vacuum sealer and packaging line.', 'Packaging', 'medium', 25, ''],
+  ['CK-08', 'Load & Verify Delivery Van', 'Stage store orders, verify against manifests, and load the refrigerated van.', 'Logistics', 'medium', 20, ''],
+];
+const ALL_SPECIFIC = [...SPECIFIC_TASKS, ...EXTRA_TASKS, ...CK_TASKS];
 function seedJobsAndShifts(db, locIds) {
   const insJob = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes,kind) VALUES (?,?,?,?,?,?,?,?)`);
   // Facilities duties are day-of "specific" tasks; the rest are standard role duties.
   const jobIds = JOBS.map(j => Number(insJob.run(...j, j[3] === 'Facilities' ? 'specific' : 'standard').lastInsertRowid));
-  SPECIFIC_TASKS.forEach(j => insJob.run(...j, 'specific'));
+  ALL_SPECIFIC.forEach(j => insJob.run(...j, 'specific'));
   const jobByCode = {}; JOBS.forEach((j, i) => { jobByCode[j[0]] = jobIds[i]; });
 
   // Monday of the current week.
@@ -629,7 +659,19 @@ function seedJobsAndShifts(db, locIds) {
       }
     });
   });
-  console.log(`Seeded ${JOBS.length + SPECIFIC_TASKS.length} jobs (${SPECIFIC_TASKS.length} specific tasks) and ${shiftCount} demo shifts for the current week.`);
+  console.log(`Seeded ${JOBS.length + ALL_SPECIFIC.length} jobs (${ALL_SPECIFIC.length} specific tasks) and ${shiftCount} demo shifts for the current week.`);
+}
+
+// Per-location task lists: restaurants share the COMMON set; the Central Kitchen gets
+// the CK set. EXTRA tasks stay in the catalog, off by default (managers enable as needed).
+function seedLocationTasks(db, restaurantLocIds, ckId) {
+  const idByCode = {};
+  for (const r of db.prepare(`SELECT id, code FROM jobs WHERE kind='specific'`).all()) idByCode[r.code] = r.id;
+  const ins = db.prepare(`INSERT OR IGNORE INTO location_tasks (location_id, job_id) VALUES (?,?)`);
+  const enable = (locId, rows) => rows.forEach(t => { if (idByCode[t[0]]) ins.run(locId, idByCode[t[0]]); });
+  restaurantLocIds.forEach(lid => enable(lid, SPECIFIC_TASKS));
+  if (ckId) enable(ckId, CK_TASKS);
+  console.log(`Seeded location task lists: ${SPECIFIC_TASKS.length} common tasks × ${restaurantLocIds.length} restaurants, ${CK_TASKS.length} CK tasks, ${EXTRA_TASKS.length} extra tasks available.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }
