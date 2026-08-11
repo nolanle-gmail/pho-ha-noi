@@ -662,16 +662,17 @@ function seedJobsAndShifts(db, locIds) {
   console.log(`Seeded ${JOBS.length + ALL_SPECIFIC.length} jobs (${ALL_SPECIFIC.length} specific tasks) and ${shiftCount} demo shifts for the current week.`);
 }
 
-// Per-location task lists: restaurants share the COMMON set; the Central Kitchen gets
-// the CK set. EXTRA tasks stay in the catalog, off by default (managers enable as needed).
+// Per-location task lists: restaurants get the COMMON + EXTRA sets by default; the
+// Central Kitchen gets the CK set. Any location can still add/remove tasks afterward.
 function seedLocationTasks(db, restaurantLocIds, ckId) {
   const idByCode = {};
   for (const r of db.prepare(`SELECT id, code FROM jobs WHERE kind='specific'`).all()) idByCode[r.code] = r.id;
   const ins = db.prepare(`INSERT OR IGNORE INTO location_tasks (location_id, job_id) VALUES (?,?)`);
   const enable = (locId, rows) => rows.forEach(t => { if (idByCode[t[0]]) ins.run(locId, idByCode[t[0]]); });
-  restaurantLocIds.forEach(lid => enable(lid, SPECIFIC_TASKS));
+  const RESTAURANT = [...SPECIFIC_TASKS, ...EXTRA_TASKS];
+  restaurantLocIds.forEach(lid => enable(lid, RESTAURANT));
   if (ckId) enable(ckId, CK_TASKS);
-  console.log(`Seeded location task lists: ${SPECIFIC_TASKS.length} common tasks × ${restaurantLocIds.length} restaurants, ${CK_TASKS.length} CK tasks, ${EXTRA_TASKS.length} extra tasks available.`);
+  console.log(`Seeded location task lists: ${RESTAURANT.length} restaurant tasks × ${restaurantLocIds.length} restaurants, ${CK_TASKS.length} CK tasks.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }
