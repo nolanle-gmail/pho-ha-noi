@@ -982,6 +982,8 @@ const shiftWorkedHours = (s) => shiftHours(s.start_time, s.end_time);
 // as the manager needs, each within the shift).
 const BREAK_MIN = 10;
 const MIN_BREAK_HOURS = 3.5;
+const DAY_BREAK_CAP = 2;      // max breaks per day…
+const LONG_DAY_HOURS = 10;    // …unless the day totals more than this many worked hours
 const breaksAllowed = (hours) => hours >= MIN_BREAK_HOURS;
 const addMinutes = (t, m) => { if (!t) return ''; const [h, mm] = t.split(':').map(Number); let x = (h * 60 + mm + m) % 1440; if (x < 0) x += 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftWorkedHours(s), 0);
@@ -1129,12 +1131,21 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     $('otWarn').innerHTML = over
       ? `<div class="ot-banner">⚠ ${msgs.join('<br>')}<label class="chk ot-ack"><input type="checkbox" id="s_ot"> Approve overtime exception</label></div>`
       : '';
-    // Breaks unlock at 3.5h; then add as many as needed.
-    const hrs = proposed, canBreak = breaksAllowed(hrs), count = host.querySelectorAll('[data-brk]').length;
-    $('addBrk').disabled = !canBreak;
-    $('brkHint').textContent = !canBreak
+    // Breaks unlock at 3.5h; then max 2 per DAY (across the person's shifts that
+    // day) unless the day totals more than 10h worked.
+    const hrs = proposed;
+    const otherDayBreaks = otherDay.reduce((n, s) => n + (s.breaks ? s.breaks.length : 0), 0);
+    const dayHours = sumHours(otherDay) + hrs;
+    const dayCap = dayHours > LONG_DAY_HOURS ? Infinity : DAY_BREAK_CAP;
+    const count = host.querySelectorAll('[data-brk]').length;
+    const totalDay = otherDayBreaks + count;
+    const gateOk = hrs >= MIN_BREAK_HOURS;
+    $('addBrk').disabled = !gateOk || totalDay >= dayCap;
+    $('brkHint').textContent = !gateOk
       ? 'A break can be added once the shift is at least 3.5 hours.'
-      : `${count} break${count === 1 ? '' : 's'} (10 min each) — add as many as needed.`;
+      : dayCap === Infinity
+        ? `${totalDay} break${totalDay === 1 ? '' : 's'} today (10 min each) — over 10h/day, no limit.`
+        : `${totalDay}/${DAY_BREAK_CAP} breaks today${otherDayBreaks ? ` (${otherDayBreaks} on another shift)` : ''} — max ${DAY_BREAK_CAP}/day unless over 10h.`;
     // Break start must stay inside the shift, leaving room for the 10-min break.
     host.querySelectorAll('.brk-start').forEach(i => { i.min = $('s_start').value || ''; i.max = addMinutes($('s_end').value, -BREAK_MIN) || ''; });
     host.querySelectorAll('.brk-end-label').forEach(sp => { const st = sp.closest('[data-brk]').querySelector('.brk-start').value; sp.textContent = st ? addMinutes(st, BREAK_MIN) : '—'; });
@@ -1158,7 +1169,10 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
     const s0 = $('s_start').value, s1 = $('s_end').value;
-    let breaks = breaksAllowed(shiftHours(s0, s1)) ? collectBreaks() : [];
+    const hrsSave = shiftHours(s0, s1);
+    const otherDayBreaksSave = otherDay.reduce((n, s) => n + (s.breaks ? s.breaks.length : 0), 0);
+    const dayCapSave = (sumHours(otherDay) + hrsSave) > LONG_DAY_HOURS ? Infinity : Math.max(0, DAY_BREAK_CAP - otherDayBreaksSave);
+    let breaks = breaksAllowed(hrsSave) ? collectBreaks().slice(0, dayCapSave) : [];
     // Each 10-min break must fit inside the shift.
     const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     if (s0 && s1) {

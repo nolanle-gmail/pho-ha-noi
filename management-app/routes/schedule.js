@@ -166,22 +166,37 @@ function setShiftJobs(shiftId, jobIds) {
   for (const jid of jobIds) if (valid.get(jid)) ins.run(shiftId, jid);
 }
 // Replace a shift's breaks. Rules: 10 min each (end auto-computed from start);
-// only within the shift; allowed once the shift is 3.5h+ (then no count limit).
+// only within the shift; a break needs the shift to be 3.5h+; and a staff member
+// gets at most 2 breaks per DAY (across all their shifts that day) unless the day
+// totals more than 10 hours worked, in which case there's no per-day limit.
 const BREAK_MIN = 10;
 const MIN_BREAK_HOURS = 3.5;
+const DAY_BREAK_CAP = 2;
+const LONG_DAY_HOURS = 10;
 const MAX_SHIFT_BREAKS = 24; // sanity ceiling
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+const spanHours = (a, b) => { let s = toMin(a), e = toMin(b); if (e <= s) e += 1440; return (e - s) / 60; };
 const fmtMin = (m) => { const x = ((m % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-function setShiftBreaks(shiftId, breaks, shiftStart, shiftEnd) {
+function setShiftBreaks(shiftId, userId, shiftDate, breaks, shiftStart, shiftEnd) {
   db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shiftId);
   const valid = (t) => /^\d{2}:\d{2}$/.test(t);
   if (!Array.isArray(breaks) || !valid(shiftStart) || !valid(shiftEnd)) return;
-  const st = toMin(shiftStart); let en = toMin(shiftEnd); if (en <= st) en += 1440; // allow spanning midnight
-  if ((en - st) / 60 < MIN_BREAK_HOURS) return;              // breaks unlock at 3.5h
+  const st = toMin(shiftStart); let en = toMin(shiftEnd); if (en <= st) en += 1440;
+  const thisH = (en - st) / 60;
+  if (thisH < MIN_BREAK_HOURS) return;                       // per-shift gate
+  // Day totals from the person's OTHER shifts that day (this shift's breaks were just cleared).
+  const others = db.prepare(`SELECT s.start_time, s.end_time,
+      (SELECT COUNT(*) FROM shift_breaks b WHERE b.shift_id=s.id) AS bc
+    FROM shifts s WHERE s.user_id=? AND s.shift_date=? AND s.id<>?`).all(userId, shiftDate, shiftId);
+  let otherH = 0, otherBreaks = 0;
+  for (const o of others) { if (valid(o.start_time) && valid(o.end_time)) otherH += spanHours(o.start_time, o.end_time); otherBreaks += o.bc; }
+  const dayHours = otherH + thisH;
+  const dayAllowed = dayHours > LONG_DAY_HOURS ? MAX_SHIFT_BREAKS : Math.max(0, DAY_BREAK_CAP - otherBreaks);
+  if (dayAllowed <= 0) return;
   const ins = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
   let count = 0;
   for (const b of breaks) {
-    if (count >= MAX_SHIFT_BREAKS) break;
+    if (count >= dayAllowed) break;
     const s = String(b.start_time || '').slice(0, 5);
     if (!valid(s)) continue;
     let bs = toMin(s); if (bs < st) bs += 1440;              // normalize into the shift window
@@ -197,7 +212,7 @@ router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`)
     .run(p.userId, p.locId, req.body.shift_date, req.body.start_time || null, req.body.end_time || null, req.body.notes || null, req.user.id);
   setShiftJobs(Number(r.lastInsertRowid), p.jobIds);
-  setShiftBreaks(Number(r.lastInsertRowid), req.body.breaks, req.body.start_time, req.body.end_time);
+  setShiftBreaks(Number(r.lastInsertRowid), p.userId, req.body.shift_date, req.body.breaks, req.body.start_time, req.body.end_time);
   auditLog(req, 'shift_create', 'shift', r.lastInsertRowid, { user_id: p.userId, location_id: p.locId, date: req.body.shift_date });
   res.json({ success: true, id: r.lastInsertRowid });
 });
@@ -215,7 +230,8 @@ router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   if (Array.isArray(req.body.breaks)) {
     const es = req.body.start_time !== undefined ? req.body.start_time : shift.start_time;
     const ee = req.body.end_time !== undefined ? req.body.end_time : shift.end_time;
-    setShiftBreaks(shift.id, req.body.breaks, es, ee);
+    const ed = req.body.shift_date !== undefined ? req.body.shift_date : shift.shift_date;
+    setShiftBreaks(shift.id, shift.user_id, ed, req.body.breaks, es, ee);
   }
   auditLog(req, 'shift_update', 'shift', shift.id, { date: shift.shift_date });
   res.json({ success: true });
