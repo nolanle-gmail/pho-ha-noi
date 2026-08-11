@@ -136,7 +136,11 @@ sections have their own horizontal tab bars:
     **pick one or more jobs/tasks** from the catalog, and add **breaks** (e.g. a
     15-min break 10:45–11:00) — breaks are shown on the shift (☕) and on the
     staff's My Schedule, and are **netted out of worked hours** so the 8h/40h caps
-    reflect actual time worked. A staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
+    reflect actual time worked. Breaks are constrained to sit **in between** the
+    shift's own start/end (validated client- and server-side). A day can hold
+    **multiple work periods** — e.g. 8:00–12:00 (break 11:45–12:00) *and*
+    12:00–16:00 (break 15:10–15:25) — just click **+** again to add another; and a
+    staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
     a highlighted "today". Because each shift carries its own location, a person
     can be scheduled at **different locations on different days** — shifts at
     another store show as read-only "@ store" cards for cross-location visibility,

@@ -1076,7 +1076,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
       <label>End<input id="s_end" type="time" value="${esc(shift && shift.end_time || '18:00')}" /></label>
       <label style="grid-column:1/-1">Notes<input id="s_notes" value="${esc(shift && shift.notes || '')}" placeholder="Optional" /></label>
     </div>
-    <div class="brk-head"><span class="job-pick-label" style="margin:0">Breaks <span style="color:var(--muted);font-weight:400">(deducted from worked hours)</span></span>
+    <div class="brk-head"><span class="job-pick-label" style="margin:0">Breaks <span id="brkWindow" style="color:var(--muted);font-weight:400"></span></span>
       <button type="button" class="btn sm ghost" id="addBrk">+ Add break</button></div>
     <div id="brkList" class="brk-list"></div>
     <div class="job-pick-label">Assign jobs / tasks <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
@@ -1118,6 +1118,10 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     $('otWarn').innerHTML = over
       ? `<div class="ot-banner">⚠ ${msgs.join('<br>')}<label class="chk ot-ack"><input type="checkbox" id="s_ot"> Approve overtime exception</label></div>`
       : '';
+    // Keep breaks bounded to the shift window they sit inside.
+    const a = $('s_start').value, z = $('s_end').value;
+    const w = $('brkWindow'); if (w) w.textContent = (a && z) ? `(in between ${a}–${z}; deducted from worked hours)` : '(deducted from worked hours)';
+    host.querySelectorAll('.brk-start, .brk-end').forEach(i => { i.min = a || ''; i.max = z || ''; });
   };
   // Break rows.
   const addBreakRow = (b = {}) => {
@@ -1127,6 +1131,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     row.querySelector('.brk-del').onclick = () => { row.remove(); recompute(); };
     row.querySelectorAll('input').forEach(i => i.oninput = recompute);
     $('brkList').appendChild(row);
+    recompute();
   };
   (shift && shift.breaks || []).forEach(addBreakRow);
   $('addBrk').onclick = () => addBreakRow();
@@ -1137,6 +1142,17 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
     const breaks = collectBreaks().filter(b => b.start_time && b.end_time);
+    // Breaks must sit in between the shift's own start/end.
+    const s0 = $('s_start').value, s1 = $('s_end').value;
+    const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    if (s0 && s1) {
+      const st = toMin(s0), en = toMin(s1), crosses = en <= st;
+      for (const b of breaks) {
+        const bs = toMin(b.start_time), be = toMin(b.end_time);
+        if (be <= bs) { $('mErr').textContent = `A break must end after it starts (${b.start_time}–${b.end_time}).`; return; }
+        if (!crosses && (bs < st || be > en)) { $('mErr').textContent = `Break ${b.start_time}–${b.end_time} must be inside this shift (${s0}–${s1}).`; return; }
+      }
+    }
     const body = { user_id: staff.id, location_id: location.id, shift_date: dayIso, start_time: $('s_start').value, end_time: $('s_end').value, notes: $('s_notes').value, job_ids, breaks };
     try {
       if (isNew) await api('/schedule/shifts', { method: 'POST', body: JSON.stringify(body) });

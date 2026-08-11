@@ -161,15 +161,24 @@ function setShiftJobs(shiftId, jobIds) {
   const valid = db.prepare(`SELECT id FROM jobs WHERE id=?`);
   for (const jid of jobIds) if (valid.get(jid)) ins.run(shiftId, jid);
 }
-// Replace a shift's breaks. Each break needs valid HH:MM start/end.
-function setShiftBreaks(shiftId, breaks) {
+// Replace a shift's breaks. Each break must be valid HH:MM, end after start, and
+// sit within the shift's own window (skipped otherwise).
+const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+function setShiftBreaks(shiftId, breaks, shiftStart, shiftEnd) {
   db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shiftId);
   if (!Array.isArray(breaks)) return;
+  const valid = (t) => /^\d{2}:\d{2}$/.test(t);
+  const st = valid(shiftStart) ? toMin(shiftStart) : null;
+  const en = valid(shiftEnd) ? toMin(shiftEnd) : null;
+  const crosses = st != null && en != null && en <= st; // shift spans midnight
   const ins = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
   for (const b of breaks) {
-    const st = String(b.start_time || '').slice(0, 5), en = String(b.end_time || '').slice(0, 5);
-    if (!/^\d{2}:\d{2}$/.test(st) || !/^\d{2}:\d{2}$/.test(en)) continue;
-    ins.run(shiftId, st, en, (b.label ? String(b.label).slice(0, 40) : null));
+    const s = String(b.start_time || '').slice(0, 5), e = String(b.end_time || '').slice(0, 5);
+    if (!valid(s) || !valid(e)) continue;
+    const bs = toMin(s), be = toMin(e);
+    if (be <= bs) continue;                                        // end after start
+    if (st != null && en != null && !crosses && (bs < st || be > en)) continue; // within the shift
+    ins.run(shiftId, s, e, (b.label ? String(b.label).slice(0, 40) : null));
   }
 }
 
@@ -179,7 +188,7 @@ router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`)
     .run(p.userId, p.locId, req.body.shift_date, req.body.start_time || null, req.body.end_time || null, req.body.notes || null, req.user.id);
   setShiftJobs(Number(r.lastInsertRowid), p.jobIds);
-  setShiftBreaks(Number(r.lastInsertRowid), req.body.breaks);
+  setShiftBreaks(Number(r.lastInsertRowid), req.body.breaks, req.body.start_time, req.body.end_time);
   auditLog(req, 'shift_create', 'shift', r.lastInsertRowid, { user_id: p.userId, location_id: p.locId, date: req.body.shift_date });
   res.json({ success: true, id: r.lastInsertRowid });
 });
@@ -194,7 +203,11 @@ router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   });
   if (fields.length) { vals.push(shift.id); db.prepare(`UPDATE shifts SET ${fields.join(',')} WHERE id=?`).run(...vals); }
   if (Array.isArray(req.body.job_ids)) setShiftJobs(shift.id, [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))]);
-  if (Array.isArray(req.body.breaks)) setShiftBreaks(shift.id, req.body.breaks);
+  if (Array.isArray(req.body.breaks)) {
+    const es = req.body.start_time !== undefined ? req.body.start_time : shift.start_time;
+    const ee = req.body.end_time !== undefined ? req.body.end_time : shift.end_time;
+    setShiftBreaks(shift.id, req.body.breaks, es, ee);
+  }
   auditLog(req, 'shift_update', 'shift', shift.id, { date: shift.shift_date });
   res.json({ success: true });
 });
