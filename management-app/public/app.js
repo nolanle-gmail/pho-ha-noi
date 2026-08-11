@@ -978,9 +978,11 @@ function minutesBetween(start, end) {
 const shiftHours = (start, end) => minutesBetween(start, end) / 60;
 // Breaks are paid (10 min each) and do NOT reduce worked hours.
 const shiftWorkedHours = (s) => shiftHours(s.start_time, s.end_time);
-// Break rules: 10 min each; a shift earns 1 break at 3.5h+, a 2nd at 7h+.
+// Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
+// as the manager needs, each within the shift).
 const BREAK_MIN = 10;
-const maxBreaksFor = (hours) => (hours >= 7 ? 2 : hours >= 3.5 ? 1 : 0);
+const MIN_BREAK_HOURS = 3.5;
+const breaksAllowed = (hours) => hours >= MIN_BREAK_HOURS;
 const addMinutes = (t, m) => { if (!t) return ''; const [h, mm] = t.split(':').map(Number); let x = (h * 60 + mm + m) % 1440; if (x < 0) x += 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftWorkedHours(s), 0);
 const breakMinutes = (s) => (s.breaks || []).reduce((t, b) => t + minutesBetween(b.start_time, b.end_time), 0);
@@ -1127,12 +1129,12 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     $('otWarn').innerHTML = over
       ? `<div class="ot-banner">⚠ ${msgs.join('<br>')}<label class="chk ot-ack"><input type="checkbox" id="s_ot"> Approve overtime exception</label></div>`
       : '';
-    // How many breaks this shift length allows.
-    const hrs = proposed, allowed = maxBreaksFor(hrs), count = host.querySelectorAll('[data-brk]').length;
-    $('addBrk').disabled = allowed === 0 || count >= allowed;
-    $('brkHint').textContent = allowed === 0
+    // Breaks unlock at 3.5h; then add as many as needed.
+    const hrs = proposed, canBreak = breaksAllowed(hrs), count = host.querySelectorAll('[data-brk]').length;
+    $('addBrk').disabled = !canBreak;
+    $('brkHint').textContent = !canBreak
       ? 'A break can be added once the shift is at least 3.5 hours.'
-      : `${count}/${allowed} break${allowed > 1 ? 's' : ''} — a ${fmtH(hrs)}h shift allows ${allowed} (3.5h+ → 1, 7h+ → 2).`;
+      : `${count} break${count === 1 ? '' : 's'} (10 min each) — add as many as needed.`;
     // Break start must stay inside the shift, leaving room for the 10-min break.
     host.querySelectorAll('.brk-start').forEach(i => { i.min = $('s_start').value || ''; i.max = addMinutes($('s_end').value, -BREAK_MIN) || ''; });
     host.querySelectorAll('.brk-end-label').forEach(sp => { const st = sp.closest('[data-brk]').querySelector('.brk-start').value; sp.textContent = st ? addMinutes(st, BREAK_MIN) : '—'; });
@@ -1156,7 +1158,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
     const s0 = $('s_start').value, s1 = $('s_end').value;
-    let breaks = collectBreaks().slice(0, maxBreaksFor(shiftHours(s0, s1)));
+    let breaks = breaksAllowed(shiftHours(s0, s1)) ? collectBreaks() : [];
     // Each 10-min break must fit inside the shift.
     const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
     if (s0 && s1) {

@@ -135,10 +135,10 @@ sections have their own horizontal tab bars:
     days of the week. Click **+** on any day to add a shift (start/end time, notes),
     **pick one or more jobs/tasks** from the catalog, and add **breaks**. Breaks are
     **10 minutes each and paid** (they do *not* reduce worked hours): the manager
-    picks only the **start** and the end auto-fills to +10 min. How many are allowed
-    depends on shift length — **none under 3.5h, one at 3.5h+, two at 7h+** (the
-    "Add break" button enables/caps accordingly, enforced client- and server-side),
-    and each break must sit inside the shift; they show as ☕ chips on the grid and
+    picks only the **start** and the end auto-fills to +10 min. Breaks unlock once
+    the shift is **at least 3.5 hours** (enforced client- and server-side); above
+    that the manager can add **as many as needed**, and each break must sit inside
+    the shift. They show as ☕ chips on the grid and
     the staff's My Schedule, with a **per-day total break time** on both the grid
     cell (☕ Nm) and the My Schedule day card. A day can hold **multiple work periods** — e.g.
     8:00–12:00 *and* 12:00–16:00, each with its own break — just click **+** again to
@@ -260,5 +260,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 151 checks · waitlist: 46 checks
+npm run smoke      # management: 152 checks · waitlist: 46 checks
 ```

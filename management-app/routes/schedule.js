@@ -166,8 +166,10 @@ function setShiftJobs(shiftId, jobIds) {
   for (const jid of jobIds) if (valid.get(jid)) ins.run(shiftId, jid);
 }
 // Replace a shift's breaks. Rules: 10 min each (end auto-computed from start);
-// only within the shift; count capped by shift length (1 at 3.5h+, 2 at 7h+).
+// only within the shift; allowed once the shift is 3.5h+ (then no count limit).
 const BREAK_MIN = 10;
+const MIN_BREAK_HOURS = 3.5;
+const MAX_SHIFT_BREAKS = 24; // sanity ceiling
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 const fmtMin = (m) => { const x = ((m % 1440) + 1440) % 1440; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 function setShiftBreaks(shiftId, breaks, shiftStart, shiftEnd) {
@@ -175,13 +177,11 @@ function setShiftBreaks(shiftId, breaks, shiftStart, shiftEnd) {
   const valid = (t) => /^\d{2}:\d{2}$/.test(t);
   if (!Array.isArray(breaks) || !valid(shiftStart) || !valid(shiftEnd)) return;
   const st = toMin(shiftStart); let en = toMin(shiftEnd); if (en <= st) en += 1440; // allow spanning midnight
-  const spanH = (en - st) / 60;
-  const allowed = spanH >= 7 ? 2 : spanH >= 3.5 ? 1 : 0;
-  if (allowed === 0) return;
+  if ((en - st) / 60 < MIN_BREAK_HOURS) return;              // breaks unlock at 3.5h
   const ins = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
   let count = 0;
   for (const b of breaks) {
-    if (count >= allowed) break;
+    if (count >= MAX_SHIFT_BREAKS) break;
     const s = String(b.start_time || '').slice(0, 5);
     if (!valid(s)) continue;
     let bs = toMin(s); if (bs < st) bs += 1440;              // normalize into the shift window

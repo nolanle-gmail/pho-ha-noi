@@ -261,6 +261,11 @@ const check = (name, ok, detail = '') => {
     const wk3 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const shortShift = (wk3.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shortRes.id);
     check('no break allowed on a short (<3.5h) shift', !!shortShift && shortShift.breaks.length === 0, JSON.stringify(shortShift && shortShift.breaks));
+    const manyRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[5], start_time: '08:00', end_time: '16:00', breaks: [{ start_time: '09:00' }, { start_time: '10:30' }, { start_time: '12:00' }, { start_time: '14:00' }] }) }));
+    const wk4 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const manyShift = (wk4.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === manyRes.id);
+    check('many breaks allowed (no cap)', !!manyShift && manyShift.breaks.length === 4, 'count=' + (manyShift && manyShift.breaks.length));
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ start_time: '08:00', job_ids: [jobIds[0]] }) });
     check('manager updates shift', r.status === 200, await r.text());
     r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
