@@ -132,9 +132,11 @@ sections have their own horizontal tab bars:
   hours, equipment & schedule.
   - **Schedule** — a **weekly staff schedule** the location's manager builds from
     the Manage view: a grid of every staff member at that location × the seven
-    days of the week. Click **+** on any day to add a shift (start/end time, notes)
-    and **pick one or more jobs/tasks** from the catalog to assign; a staff member
-    can hold several jobs on a shift. Week navigation (prev / this week / next) and
+    days of the week. Click **+** on any day to add a shift (start/end time, notes),
+    **pick one or more jobs/tasks** from the catalog, and add **breaks** (e.g. a
+    15-min break 10:45–11:00) — breaks are shown on the shift (☕) and on the
+    staff's My Schedule, and are **netted out of worked hours** so the 8h/40h caps
+    reflect actual time worked. A staff member can hold several jobs on a shift. Week navigation (prev / this week / next) and
     a highlighted "today". Because each shift carries its own location, a person
     can be scheduled at **different locations on different days** — shifts at
     another store show as read-only "@ store" cards for cross-location visibility,
@@ -252,5 +254,5 @@ Requires **Node 22+** (uses the built-in `node:sqlite`; Node 24 recommended).
 Each app has an end-to-end smoke test hitting its real API:
 
 ```bash
-npm run smoke      # management: 149 checks · waitlist: 46 checks
+npm run smoke      # management: 150 checks · waitlist: 46 checks
 ```

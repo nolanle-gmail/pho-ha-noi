@@ -102,9 +102,11 @@ function shiftsForUsers(userIds, weekStartIso) {
   `).all(...userIds, weekStartIso, end);
   const jobsBy = db.prepare(`SELECT sj.shift_id, j.id, j.code, j.name, j.complexity, j.department
     FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id = ?`);
+  const breaksBy = db.prepare(`SELECT id, start_time, end_time, label FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   const byUser = {};
   for (const s of rows) {
     s.jobs = jobsBy.all(s.id);
+    s.breaks = breaksBy.all(s.id);
     (byUser[s.user_id] = byUser[s.user_id] || []).push(s);
   }
   return byUser;
@@ -159,6 +161,17 @@ function setShiftJobs(shiftId, jobIds) {
   const valid = db.prepare(`SELECT id FROM jobs WHERE id=?`);
   for (const jid of jobIds) if (valid.get(jid)) ins.run(shiftId, jid);
 }
+// Replace a shift's breaks. Each break needs valid HH:MM start/end.
+function setShiftBreaks(shiftId, breaks) {
+  db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shiftId);
+  if (!Array.isArray(breaks)) return;
+  const ins = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
+  for (const b of breaks) {
+    const st = String(b.start_time || '').slice(0, 5), en = String(b.end_time || '').slice(0, 5);
+    if (!/^\d{2}:\d{2}$/.test(st) || !/^\d{2}:\d{2}$/.test(en)) continue;
+    ins.run(shiftId, st, en, (b.label ? String(b.label).slice(0, 40) : null));
+  }
+}
 
 router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   const p = prepareShift(req, res);
@@ -166,6 +179,7 @@ router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`)
     .run(p.userId, p.locId, req.body.shift_date, req.body.start_time || null, req.body.end_time || null, req.body.notes || null, req.user.id);
   setShiftJobs(Number(r.lastInsertRowid), p.jobIds);
+  setShiftBreaks(Number(r.lastInsertRowid), req.body.breaks);
   auditLog(req, 'shift_create', 'shift', r.lastInsertRowid, { user_id: p.userId, location_id: p.locId, date: req.body.shift_date });
   res.json({ success: true, id: r.lastInsertRowid });
 });
@@ -180,6 +194,7 @@ router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   });
   if (fields.length) { vals.push(shift.id); db.prepare(`UPDATE shifts SET ${fields.join(',')} WHERE id=?`).run(...vals); }
   if (Array.isArray(req.body.job_ids)) setShiftJobs(shift.id, [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))]);
+  if (Array.isArray(req.body.breaks)) setShiftBreaks(shift.id, req.body.breaks);
   auditLog(req, 'shift_update', 'shift', shift.id, { date: shift.shift_date });
   res.json({ success: true });
 });
@@ -189,6 +204,7 @@ router.delete('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!shift) return res.status(404).json({ error: 'Shift not found.' });
   if (!ownsLocation(req, shift.location_id)) return res.status(403).json({ error: 'Not your location.' });
   db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(shift.id);
+  db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shift.id);
   db.prepare(`DELETE FROM shifts WHERE id=?`).run(shift.id);
   auditLog(req, 'shift_delete', 'shift', shift.id, { date: shift.shift_date });
   res.json({ success: true });

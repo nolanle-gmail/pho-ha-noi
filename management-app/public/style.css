@@ -137,6 +137,17 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .myshift-note { font-size: .72rem; color: var(--muted); margin-top: .25rem; }
 .myday-off { color: var(--muted); font-size: .78rem; font-style: italic; padding: .3rem 0; }
 .job-pick-label { font-size: .85rem; font-weight: 700; margin: .3rem 0 .3rem; }
+/* Shift breaks */
+.brk-head { display: flex; justify-content: space-between; align-items: center; margin: .3rem 0 .2rem; }
+.brk-list { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .3rem; }
+.brk-row { display: flex; align-items: center; gap: .4rem; }
+.brk-row input[type="time"] { width: auto; margin: 0; padding: .35rem .4rem; }
+.brk-row .brk-label { flex: 1; margin: 0; padding: .35rem .5rem; }
+.brk-row .brk-dash { color: var(--muted); }
+.brk-row .brk-del { border: none; background: transparent; color: var(--red); font-weight: 800; cursor: pointer; padding: 0 .3rem; }
+.brk-list:empty::after { content: 'No breaks. Add one if the shift includes a break.'; color: var(--muted); font-size: .8rem; }
+.shift-breaks, .myshift-breaks { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .25rem; }
+.brk-chip { display: inline-block; font-size: .68rem; padding: .05rem .35rem; border-radius: 6px; font-weight: 700; background: #efe7db; color: #7a5b1e; }
 .job-pick { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; }
 .jpd-head { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: var(--red); font-weight: 800; margin: .4rem 0 .2rem; }
 .job-pick-dept:first-child .jpd-head { margin-top: 0; }

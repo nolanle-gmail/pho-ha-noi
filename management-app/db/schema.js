@@ -434,6 +434,16 @@ function migrate() {
       job_id   INTEGER NOT NULL REFERENCES jobs(id),
       PRIMARY KEY (shift_id, job_id)
     );
+
+    -- Breaks within a shift (e.g. a 15-min break 10:45–11:00). Non-working time,
+    -- netted out of the shift's worked hours.
+    CREATE TABLE IF NOT EXISTS shift_breaks (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      shift_id   INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+      start_time TEXT,
+      end_time   TEXT,
+      label      TEXT
+    );
   `);
 
   // Migrations for databases created before these columns existed.
