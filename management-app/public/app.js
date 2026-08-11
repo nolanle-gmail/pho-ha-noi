@@ -797,12 +797,12 @@ async function renderMySchedule() {
     const ss = (byDay[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
     const dayH = sumHours(ss);
     const dayBreak = sumBreakMinutes(ss);
-    const dayTask = sumTaskMinutes(ss);
+    const load = taskLoad(ss);
     const over = dayH > DAILY_MAX;
     return `<div class="myday${iso === todayIso() ? ' today' : ''}">
       <div class="myday-head"><span>${WD[i]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
       ${dayBreak ? `<div class="myday-break">☕ ${dayBreak} min break${dayBreak > 10 ? 's' : ''}</div>` : ''}
-      ${dayTask ? `<div class="myday-tasks">📋 ${fmtDur(dayTask)} of tasks</div>` : ''}
+      ${load.min ? `<div class="myday-tasks${load.heavy ? ' heavy' : ''}" title="${fmtDur(load.min)} of tasks on a ${fmtH(dayH)}h shift (${load.pct}%)">${load.heavy ? '⚠ ' : '📋 '}${fmtDur(load.min)} of tasks${load.heavy ? ' — heavy load' : ''}</div>` : ''}
       ${ss.length ? ss.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
@@ -1015,6 +1015,16 @@ const todayIso = () => fmtLocalIso(new Date());
 // Overtime caps: max 8h/day, 40h/week (full-time). Over-cap shifts are flagged,
 // not blocked — the scheduler approves an exception to keep them.
 const DAILY_MAX = 8, WEEKLY_MAX = 40;
+// Flag a heavy task load when assigned day-task minutes exceed this share of the
+// person's worked time that day (they still have their main role to do).
+const TASK_LOAD_RATIO = 0.5;
+// { min, work, pct, heavy } for a day's assigned task load vs worked minutes.
+const taskLoad = (shifts) => {
+  const min = sumTaskMinutes(shifts);
+  const work = Math.round(sumHours(shifts) * 60);
+  const pct = work > 0 ? Math.round((min / work) * 100) : 0;
+  return { min, work, pct, heavy: min > 0 && work > 0 && min > work * TASK_LOAD_RATIO };
+};
 function minutesBetween(start, end) {
   if (!start || !end) return 0;
   const [h1, m1] = start.split(':').map(Number), [h2, m2] = end.split(':').map(Number);
@@ -1079,8 +1089,9 @@ async function renderLocSchedule() {
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
     const dayBreak = sumBreakMinutes(dayShifts);
-    const dayTask = sumTaskMinutes(dayShifts);
-    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}${dayTask ? ` <span class="day-tasks-sum" title="Estimated day-task time">📋 ${fmtDur(dayTask)}</span>` : ''}</div>` : '';
+    const load = taskLoad(dayShifts);
+    const taskChip = load.min ? ` <span class="day-tasks-sum${load.heavy ? ' heavy' : ''}" title="${load.heavy ? '⚠ Heavy task load: ' : 'Est. day-task time: '}${fmtDur(load.min)} of tasks on ${fmtH(dayTotal)}h (${load.pct}% of the shift)">${load.heavy ? '⚠ ' : ''}📋 ${fmtDur(load.min)}</span>` : '';
+    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}${taskChip}</div>` : '';
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
     return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${awayCards}${total}${add}</td>`;
   };

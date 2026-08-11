@@ -103,8 +103,10 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .day-total.over { color: var(--red); }
 .day-total .day-break { color: #7a5b1e; font-weight: 700; }
 .day-total .day-tasks-sum { color: #2b5bd7; font-weight: 700; }
+.day-total .day-tasks-sum.heavy { color: var(--red); }
 .myday-break { font-size: .72rem; color: #7a5b1e; font-weight: 600; margin: -.2rem 0 .3rem; }
 .myday-tasks { font-size: .72rem; color: #2b5bd7; font-weight: 600; margin: -.2rem 0 .3rem; }
+.myday-tasks.heavy { color: var(--red); }
 .sched-cell.cell-over { background: #fdf1f1; }
 .hours-none { color: var(--muted); }
 .ot-banner { background: #fdecea; border: 1px solid #f3b7b0; color: #a12a1c; border-radius: 10px; padding: .55rem .7rem; margin: .3rem 0 .6rem; font-size: .84rem; line-height: 1.4; }
