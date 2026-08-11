@@ -797,10 +797,12 @@ async function renderMySchedule() {
     const ss = (byDay[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
     const dayH = sumHours(ss);
     const dayBreak = sumBreakMinutes(ss);
+    const dayTask = sumTaskMinutes(ss);
     const over = dayH > DAILY_MAX;
     return `<div class="myday${iso === todayIso() ? ' today' : ''}">
       <div class="myday-head"><span>${WD[i]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
       ${dayBreak ? `<div class="myday-break">☕ ${dayBreak} min break${dayBreak > 10 ? 's' : ''}</div>` : ''}
+      ${dayTask ? `<div class="myday-tasks">📋 ${fmtDur(dayTask)} of tasks</div>` : ''}
       ${ss.length ? ss.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
@@ -1034,6 +1036,14 @@ const addMinutes = (t, m) => { if (!t) return ''; const [h, mm] = t.split(':').m
 const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftWorkedHours(s), 0);
 const breakMinutes = (s) => (s.breaks || []).reduce((t, b) => t + minutesBetween(b.start_time, b.end_time), 0);
 const sumBreakMinutes = (shifts) => shifts.reduce((t, s) => t + breakMinutes(s), 0);
+// Total estimated minutes of the day tasks assigned to a person that day (deduped —
+// the same task can appear on more than one of the day's shifts).
+const sumTaskMinutes = (shifts) => {
+  const seen = new Set(); let m = 0;
+  shifts.forEach(s => (s.tasks || []).forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); m += (t.est_minutes || 0); } }));
+  return m;
+};
+const fmtDur = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`;
 const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
 const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.label ? ' ' + b.label : ''}`;
 
@@ -1069,7 +1079,8 @@ async function renderLocSchedule() {
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
     const dayBreak = sumBreakMinutes(dayShifts);
-    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}</div>` : '';
+    const dayTask = sumTaskMinutes(dayShifts);
+    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}${dayTask ? ` <span class="day-tasks-sum" title="Estimated day-task time">📋 ${fmtDur(dayTask)}</span>` : ''}</div>` : '';
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
     return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${awayCards}${total}${add}</td>`;
   };
