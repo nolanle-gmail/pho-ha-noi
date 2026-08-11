@@ -550,41 +550,37 @@ function seedStaffProfiles(db, locIds, managerIds) {
 // ── Job/task catalog + demo shifts ───────────────────────────────────────────
 // The catalog of restaurant jobs a manager can assign to a staff member's shift,
 // plus a demo week of scheduled shifts so the location Schedule tab isn't empty.
+// List 1 — generic scheduling roles (positions). No estimate: a manager assigns
+// one of these to a staff member's shift when building the work week.
 const JOBS = [
-  // [code, name, description, department, complexity, est_minutes, notes]
-  ['FOH-01', 'Greet & Seat Guests', 'Welcome guests, manage the waitlist, seat parties, and present menus.', 'Front of House', 'low', 5, 'Set the tone for the visit — warm and prompt.'],
-  ['FOH-02', 'Take Orders', 'Take food and drink orders accurately, enter them into the POS, and note allergies/modifications.', 'Front of House', 'medium', 10, 'Always confirm spice level and protein choice for pho.'],
-  ['FOH-03', 'Serve Food & Drinks', 'Run and deliver orders to the correct table and verify accuracy before dropping.', 'Front of House', 'low', 5, ''],
-  ['FOH-04', 'Bus & Reset Tables', 'Clear dishes, wipe and sanitize surfaces, and reset the table for the next party.', 'Front of House', 'low', 8, ''],
-  ['FOH-05', 'Handle Payments', 'Process cash and card payments, close checks in the POS, and keep the drawer balanced.', 'Front of House', 'medium', 5, 'Follow cash-handling policy; no shared drawers.'],
-  ['FOH-06', 'Phone & To-Go Orders', 'Take phone and online pickup orders, package to-go correctly, and stage for pickup.', 'Front of House', 'medium', 10, 'Double-check bag contents against the ticket.'],
-  ['FOH-07', 'Stock Herb & Condiment Station', 'Refill hoisin/sriracha, herb plates, bean sprouts, limes, and jalapeños.', 'Front of House', 'low', 20, ''],
-  ['BOH-01', 'Broth Station (Pho)', 'Monitor and season the simmering broth, hold correct temperature, and maintain levels all shift.', 'Back of House', 'high', 30, 'Signature product — taste and adjust regularly.'],
-  ['BOH-02', 'Noodle Station', 'Blanch rice noodles to order, portion bowls, and assemble pho on the line.', 'Back of House', 'medium', 8, ''],
-  ['BOH-03', 'Protein Prep', 'Slice rare beef, portion brisket/meatballs/tendon, and prep chicken for service.', 'Back of House', 'high', 30, 'Follow FIFO and label with prep date.'],
-  ['BOH-04', 'Line Cook (Wok/Grill)', 'Cook stir-fry, grilled, and fried items to the ticket and to standard.', 'Back of House', 'high', 15, ''],
-  ['BOH-05', 'Cold Prep / Garnish', 'Prep vegetables, herbs, garnishes, and roll spring/summer rolls.', 'Back of House', 'medium', 25, ''],
-  ['BOH-06', 'Expo / Plating', 'Assemble and quality-check plates at the pass before they leave the kitchen.', 'Back of House', 'high', 10, 'Own the ticket times and call the line.'],
-  ['BOH-07', 'Dishwashing', 'Run the dish pit, keep clean dishes stocked, and manage kitchen trash.', 'Back of House', 'low', 45, ''],
-  ['BAR-01', 'Prepare Beverages', 'Make Vietnamese coffee, tea, smoothies, and soft drinks to order.', 'Bar', 'medium', 8, ''],
-  ['BAR-02', 'Stock Drink Station', 'Restock ice, cups, lids, syrups, and canned drinks.', 'Bar', 'low', 20, ''],
-  ['FAC-01', 'Opening Checklist', 'Unlock, power on equipment, run temperature checks, and set up all stations for service.', 'Facilities', 'medium', 30, 'Record walk-in temps on the log.'],
-  ['FAC-02', 'Closing Checklist', 'Shut down equipment, secure cash, complete the cleaning list, and lock up.', 'Facilities', 'medium', 30, 'Manager verifies before departure.'],
-  ['FAC-03', 'Deep Clean / Sanitation', 'Deep-clean floors, hood, restrooms, and equipment per the sanitation schedule.', 'Facilities', 'medium', 60, ''],
-  ['FAC-04', 'Receiving & Restock', 'Receive deliveries, verify invoices against the order, and stock dry/cold storage.', 'Facilities', 'medium', 30, 'Reject anything out of temp or damaged.'],
-  ['FAC-05', 'Trash & Recycling', 'Take out trash, break down boxes, and manage recycling/compost.', 'Facilities', 'low', 15, ''],
-  ['MGT-01', 'Shift Lead / Floor Manager', 'Oversee service flow, handle guest issues, and coordinate the team on the floor.', 'Management', 'high', 0, 'Point person for the shift.'],
-  ['MGT-02', 'Cash Reconciliation', 'Count drawers, prepare the deposit, and record daily sales.', 'Management', 'medium', 20, ''],
-  ['MGT-03', 'Inventory Count', 'Perform cycle counts, flag low stock, and place reorders.', 'Management', 'medium', 45, ''],
-  ['MGT-04', 'Staff Scheduling', 'Build and adjust the weekly staff schedule and assign jobs.', 'Management', 'medium', 30, ''],
+  // [code, name, description, department, complexity, est_minutes(null — roles carry none), notes]
+  ['FOH-HOST', 'Host / Front Desk', 'Greet and seat guests, manage the waitlist and reservations, and answer the phone.', 'Front of House', 'low', null, ''],
+  ['FOH-SERV', 'Server', 'Take orders, serve food and drinks, and look after guests through their meal.', 'Front of House', 'medium', null, ''],
+  ['FOH-BUS', 'Busser', 'Clear, wipe, and reset tables; support the servers and keep the floor turning.', 'Front of House', 'low', null, ''],
+  ['FOH-RUN', 'Food Runner', 'Run finished plates from the pass to the correct table — accurate and hot.', 'Front of House', 'low', null, ''],
+  ['FOH-CASH', 'Cashier', 'Handle payments, close checks, and manage phone and to-go/pickup orders.', 'Front of House', 'medium', null, ''],
+  ['BAR-TEND', 'Bartender', 'Prepare drinks and run the bar station, its stock, and cleanliness.', 'Bar', 'medium', null, ''],
+  ['BAR-BARISTA', 'Barista', 'Make Vietnamese coffee, tea, and blended drinks to order.', 'Bar', 'low', null, ''],
+  ['BOH-CHEF', 'Head Chef', 'Run the kitchen, expedite the line, and own food quality and consistency.', 'Back of House', 'high', null, ''],
+  ['BOH-SOUS', 'Sous Chef', 'Second in the kitchen — lead prep, cover stations, and back up the head chef.', 'Back of House', 'high', null, ''],
+  ['BOH-LINE', 'Line Cook', 'Cook wok, grill, and fried items to the ticket and to standard.', 'Back of House', 'medium', null, ''],
+  ['BOH-PREP', 'Prep Cook', 'Prep proteins, vegetables, garnishes, and mise en place for service.', 'Back of House', 'medium', null, ''],
+  ['BOH-BROTH', 'Broth / Pho Cook', 'Tend and season the pho broth; hold temperature and levels all shift.', 'Back of House', 'high', null, 'Signature product.'],
+  ['BOH-EXPO', 'Expeditor', 'Assemble and quality-check plates at the pass and call the line.', 'Back of House', 'high', null, ''],
+  ['BOH-DISH', 'Dishwasher', 'Run the dish pit, keep clean dishes stocked, and manage kitchen trash.', 'Back of House', 'low', null, ''],
+  ['MGT-LEAD', 'Shift Lead / Floor Manager', 'Oversee service flow, handle guest issues, and coordinate the team on shift.', 'Management', 'high', null, ''],
+  ['MGT-ASST', 'Assistant Manager', 'Support store operations, scheduling, cash handling, and staff on duty.', 'Management', 'medium', null, ''],
 ];
 
-// Specific day-of tasks a manager assigns to whoever's working that day.
+// List 2 — day-of subtasks a manager assigns to whoever's working that day. These
+// carry an estimate and are checked off during the shift.
 // COMMON = the shared restaurant set (enabled at every restaurant by default).
 const SPECIFIC_TASKS = [
+  ['OPEN-01', 'Opening Checklist', 'Unlock, power on equipment, run temperature checks, and set up all stations for service.', 'Facilities', 'medium', 30, 'Record walk-in temps on the log.'],
+  ['CLOSE-01', 'Closing Checklist', 'Shut down equipment, secure cash, complete the cleaning list, and lock up.', 'Facilities', 'medium', 30, 'Manager verifies before departure.'],
   ['CLN-01', 'Clean Restrooms', 'Clean and restock the restrooms; check and initial every 2 hours.', 'Facilities', 'low', 15, 'Log the check on the restroom sheet.'],
-  ['CLN-02', 'Help Bus & Clean Tables', 'Jump in during the rush to clear, wipe, sanitize, and reset tables.', 'Front of House', 'low', 0, ''],
-  ['CLN-03', 'Help Chef Clean Up (BOH)', 'Assist the kitchen with end-of-shift cleaning and the dish backlog.', 'Back of House', 'low', 0, ''],
+  ['CLN-02', 'Help Bus & Clean Tables', 'Jump in during the rush to clear, wipe, sanitize, and reset tables.', 'Front of House', 'low', 10, ''],
+  ['CLN-03', 'Help Chef Clean Up (BOH)', 'Assist the kitchen with end-of-shift cleaning and the dish backlog.', 'Back of House', 'low', 15, ''],
   ['CLN-04', 'Sweep & Mop Floors', 'Sweep and mop the dining room, entry, and restroom floors.', 'Facilities', 'low', 15, ''],
   ['CLN-05', 'Sanitize High-Touch Surfaces', 'Wipe door handles, POS screens, menus, and condiment caddies.', 'Facilities', 'low', 10, ''],
   ['CLN-06', 'Restock To-Go Station', 'Refill to-go containers, bags, lids, utensils, and napkins.', 'Front of House', 'low', 10, ''],
@@ -602,6 +598,8 @@ const EXTRA_TASKS = [
   ['BOH-C1', 'Stock Line for Next Shift', 'Restock proteins, herbs, and garnishes so the line is set for the next shift.', 'Back of House', 'medium', 20, ''],
   ['BOH-C2', 'Label & Date Prep Items', 'Label, date, and rotate prepped items in the walk-in (FIFO).', 'Back of House', 'low', 15, ''],
   ['BOH-C3', 'Empty & Sanitize Dish Area', 'Clear the dish pit, run final racks, and sanitize the station.', 'Back of House', 'low', 20, ''],
+  ['FAC-C4', 'Deep Clean / Sanitation', 'Deep-clean floors, hood, restrooms, and equipment per the sanitation schedule.', 'Facilities', 'medium', 60, ''],
+  ['FAC-C5', 'Receiving & Restock', 'Receive deliveries, verify invoices against the order, and stock dry/cold storage.', 'Facilities', 'medium', 30, 'Reject anything out of temp or damaged.'],
 ];
 // CK = Central Kitchen production tasks (enabled only at the Central Kitchen).
 const CK_TASKS = [
@@ -617,8 +615,8 @@ const CK_TASKS = [
 const ALL_SPECIFIC = [...SPECIFIC_TASKS, ...EXTRA_TASKS, ...CK_TASKS];
 function seedJobsAndShifts(db, locIds) {
   const insJob = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes,kind) VALUES (?,?,?,?,?,?,?,?)`);
-  // Facilities duties are day-of "specific" tasks; the rest are standard role duties.
-  const jobIds = JOBS.map(j => Number(insJob.run(...j, j[3] === 'Facilities' ? 'specific' : 'standard').lastInsertRowid));
+  // List 1 (generic roles) are 'standard'; List 2 (day subtasks) are 'specific'.
+  const jobIds = JOBS.map(j => Number(insJob.run(...j, 'standard').lastInsertRowid));
   ALL_SPECIFIC.forEach(j => insJob.run(...j, 'specific'));
   const jobByCode = {}; JOBS.forEach((j, i) => { jobByCode[j[0]] = jobIds[i]; });
 
@@ -635,8 +633,8 @@ function seedJobsAndShifts(db, locIds) {
   const rand = (n) => Math.floor(Math.random() * n);
   const pick = (a) => a[rand(a.length)];
   const AM = ['08:00', '10:00', '17:00']; const shiftLen = { '08:00': '16:00', '10:00': '18:00', '17:00': '23:00' };
-  const FOH = ['FOH-01', 'FOH-02', 'FOH-03', 'FOH-04', 'FOH-05', 'FOH-06', 'FOH-07', 'BAR-01'];
-  const BOH = ['BOH-01', 'BOH-02', 'BOH-03', 'BOH-04', 'BOH-05', 'BOH-06', 'BOH-07', 'FAC-04'];
+  const FOH = ['FOH-HOST', 'FOH-SERV', 'FOH-BUS', 'FOH-RUN', 'FOH-CASH', 'BAR-TEND', 'BAR-BARISTA'];
+  const BOH = ['BOH-CHEF', 'BOH-SOUS', 'BOH-LINE', 'BOH-PREP', 'BOH-BROTH', 'BOH-EXPO', 'BOH-DISH'];
 
   // For the first 4 stores, schedule ~6 staff across Mon–Sat with 1–2 jobs each.
   let shiftCount = 0;
@@ -645,16 +643,14 @@ function seedJobsAndShifts(db, locIds) {
     const boss = mgr.get(lid);
     const staff = db.prepare(`SELECT id FROM users WHERE location_id=? AND role IN ('employee','support') AND is_active=1 LIMIT 6`).all(lid);
     staff.forEach((s, si) => {
+      // Each person holds one role for the week (front- or back-of-house).
+      const role = pick(si % 2 === 0 ? FOH : BOH);
       // Five working days offset per person so it looks like a real rota.
       for (let d = 0; d < 6; d++) {
         if ((d + si) % 6 === 5) continue; // one day off
         const start = pick(AM);
         const r = insShift.run(s.id, lid, dayISO(d), start, shiftLen[start], null, boss ? boss.id : null);
-        const pool = si % 2 === 0 ? FOH : BOH;
-        const nJobs = 1 + rand(2);
-        const chosen = new Set();
-        while (chosen.size < nJobs) chosen.add(pick(pool));
-        chosen.forEach(code => insSJ.run(Number(r.lastInsertRowid), jobByCode[code]));
+        insSJ.run(Number(r.lastInsertRowid), jobByCode[role]);
         shiftCount++;
       }
     });
