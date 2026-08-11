@@ -255,11 +255,11 @@ function shiftsForUsers(userIds, weekStartIso) {
     WHERE s.user_id IN (${ph}) AND s.shift_date BETWEEN ? AND ?
     ORDER BY s.shift_date, s.start_time
   `).all(...userIds, weekStartIso, end);
-  const jobsBy = db.prepare(`SELECT sj.shift_id, j.id, j.code, j.name, j.complexity, j.department
+  const jobsBy = db.prepare(`SELECT sj.shift_id, j.id, j.code, j.name, j.complexity, j.department, j.description, j.est_minutes
     FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id = ?`);
   const breaksBy = db.prepare(`SELECT id, start_time, end_time, label FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   // Specific day-tasks assigned to this person for the shift's date + location.
-  const tasksBy = db.prepare(`SELECT j.id, j.code, j.name, j.complexity, ta.task_time, ta.done
+  const tasksBy = db.prepare(`SELECT j.id, j.code, j.name, j.complexity, j.description, j.est_minutes, ta.task_time, ta.done
     FROM task_assignments ta JOIN jobs j ON j.id = ta.job_id
     WHERE ta.user_id = ? AND ta.task_date = ? AND ta.location_id = ? ORDER BY ta.task_time IS NULL, ta.task_time, j.name`);
   const byUser = {};

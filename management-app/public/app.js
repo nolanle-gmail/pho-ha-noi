@@ -47,6 +47,40 @@ function modal(title, fields, onSubmit, submitLabel = 'Save') {
   };
 }
 
+// Short description shown as a hover popup on a job/task chip.
+function chipTip(o, extra) {
+  const lines = [o.code ? `${o.code} · ${o.name}` : o.name];
+  if (extra) lines.push(extra);
+  if (o.description) lines.push(o.description);
+  const meta = [];
+  if (o.complexity) meta.push(o.complexity);
+  if (o.est_minutes) meta.push('~' + o.est_minutes + ' min');
+  if (meta.length) lines.push(meta.join(' · '));
+  return lines.join('\n');
+}
+// A single floating popup driven by [data-tip]. Positioned in JS so it never clips
+// inside scrolling/overflow containers the way a pure-CSS tooltip would.
+let _tipEl = null;
+document.addEventListener('mouseover', (e) => {
+  const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+  if (!t) return;
+  if (!_tipEl) { _tipEl = document.createElement('div'); _tipEl.className = 'tip-pop'; document.body.appendChild(_tipEl); }
+  _tipEl.textContent = t.getAttribute('data-tip') || '';
+  _tipEl.style.display = 'block';
+  const r = t.getBoundingClientRect();
+  let left = r.left;
+  if (left + _tipEl.offsetWidth > window.innerWidth - 8) left = window.innerWidth - _tipEl.offsetWidth - 8;
+  let top = r.bottom + 6;
+  if (top + _tipEl.offsetHeight > window.innerHeight - 8) top = r.top - _tipEl.offsetHeight - 6;
+  _tipEl.style.left = Math.max(8, left) + 'px';
+  _tipEl.style.top = Math.max(8, top) + 'px';
+});
+document.addEventListener('mouseout', (e) => {
+  const t = e.target.closest ? e.target.closest('[data-tip]') : null;
+  if (t && _tipEl) _tipEl.style.display = 'none';
+});
+document.addEventListener('scroll', () => { if (_tipEl) _tipEl.style.display = 'none'; }, true);
+
 // ── Auth ────────────────────────────────────────────────────────────────
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
@@ -755,7 +789,7 @@ async function renderMySchedule() {
   const days = data.days;
   const weekH = sumHours(data.shifts);
   const overWeek = weekH > WEEKLY_MAX;
-  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" title="${esc((j.code ? j.code + ' · ' : '') + j.name + ' (' + (j.complexity || '') + ')')}">${esc(j.code || j.name)}</span>`;
+  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" data-tip="${esc(chipTip(j))}">${esc(j.code || j.name)}</span>`;
   const byDay = {}; data.shifts.forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
   const overDays = days.filter(iso => sumHours(byDay[iso] || []) > DAILY_MAX).map(iso => WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]);
 
@@ -770,7 +804,7 @@ async function renderMySchedule() {
       ${ss.length ? ss.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
-        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}">📋 ${t.task_time ? `<strong>${esc(t.task_time)}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
+        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? `<strong>${esc(t.task_time)}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
         ${(s.breaks && s.breaks.length) ? `<div class="myshift-breaks">${s.breaks.map(b => `<span class="brk-chip">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : ''}
         ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
       </div>`).join('') : '<div class="myday-off">Day off</div>'}
@@ -1014,7 +1048,7 @@ async function renderLocSchedule() {
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.schedWeek = data.week_start;
   const days = data.days;
-  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" title="${esc((j.code ? j.code + ' · ' : '') + j.name + ' (' + (j.complexity || '') + ')')}">${esc(j.code || j.name)}</span>`;
+  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" data-tip="${esc(chipTip(j))}">${esc(j.code || j.name)}</span>`;
 
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
@@ -1024,7 +1058,7 @@ async function renderLocSchedule() {
     const brkLine = (s) => (s.breaks && s.breaks.length)
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
     const taskLine = (s) => (s.tasks && s.tasks.length)
-      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" title="Day task${t.task_time ? ' at ' + esc(t.task_time) : ''}">📋 ${t.task_time ? esc(t.task_time) + ' ' : ''}${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
+      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? esc(t.task_time) + ' ' : ''}${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
     const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
@@ -1256,6 +1290,7 @@ async function renderLocDayTasks() {
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
     <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
     <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
+    <td style="white-space:nowrap;color:var(--muted)">${t.est_minutes ? `~${t.est_minutes} min` : '—'}</td>
     <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
@@ -1270,8 +1305,8 @@ async function renderLocDayTasks() {
       </div>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
-    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Assigned to</th><th>When</th><th>Status</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : `<tr><td colspan="5" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : `<tr><td colspan="6" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));

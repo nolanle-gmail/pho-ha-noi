@@ -264,6 +264,7 @@ const check = (name, ok, detail = '') => {
     const wk2 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const savedShift = (wk2.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.id === shiftRes.id);
     check('shift appears with assigned jobs', !!savedShift && savedShift.jobs.length === jobIds.length, JSON.stringify(savedShift || {}).slice(0, 80));
+    check('schedule jobs carry est + description (for tooltips)', !!savedShift && savedShift.jobs.length > 0 && ('est_minutes' in savedShift.jobs[0]) && ('description' in savedShift.jobs[0]), JSON.stringify(savedShift && savedShift.jobs[0]));
     check('break is 10 min with auto end time', !!savedShift && savedShift.breaks.length === 1 && savedShift.breaks[0].start_time === '12:00' && savedShift.breaks[0].end_time === '12:10', JSON.stringify(savedShift && savedShift.breaks));
     const shortRes = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token),
       body: JSON.stringify({ user_id: schedStaff.id, location_id: loc1, shift_date: wk.days[2], start_time: '09:00', end_time: '11:00', breaks: [{ start_time: '10:00' }] }) }));
@@ -296,6 +297,7 @@ const check = (name, ok, detail = '') => {
     const dtDay = wk.days[6]; // schedStaff has a 12h shift here
     const dt = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('day-tasks lists specific tasks + working staff', dt.tasks.length > 0 && dt.working.some(w => w.id === schedStaff.id), JSON.stringify(dt.summary));
+    check('day-tasks carry est_minutes (for the Est. column)', dt.tasks.every(t => 'est_minutes' in t), JSON.stringify(dt.tasks[0]));
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
     check('assign a specific day task', r.status === 200, await r.text());
     const dt2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
@@ -303,6 +305,7 @@ const check = (name, ok, detail = '') => {
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));
+    check('schedule subtasks carry est + description (for tooltips)', !!st6 && (st6.tasks || []).length > 0 && ('est_minutes' in st6.tasks[0]) && ('description' in st6.tasks[0]), JSON.stringify(st6 && st6.tasks[0]));
     // Task time must fall within the assignee's shift (schedStaff works 06:00–18:00 here).
     check('day-tasks lists each worker\'s hours', (dt.working.find(w => w.id === schedStaff.id) || {}).start_time === '06:00', JSON.stringify(dt.working.find(w => w.id === schedStaff.id)));
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '10:30' }) });
