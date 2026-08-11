@@ -280,6 +280,26 @@ const check = (name, ok, detail = '') => {
     check('employee blocked from location schedule (403)', r.status === 403, 'status=' + r.status);
     const myWk = await j(await fetch(base + '/api/schedule/my-week', { headers: H(emp.token) }));
     check('employee sees own schedule (my-week)', Array.isArray(myWk.shifts) && !!myWk.week_start && myWk.days.length === 7, JSON.stringify(myWk).slice(0, 60));
+
+    // ── Day tasks (specific tasks assigned to that day's working staff) ─────
+    const allJobs = await j(await fetch(base + '/api/schedule/jobs?active=1', { headers: H(mgr.token) }));
+    check('catalog has specific + standard kinds', allJobs.some(x => x.kind === 'specific') && allJobs.some(x => x.kind === 'standard'), 'kinds missing');
+    const dtDay = wk.days[6]; // schedStaff has a 12h shift here
+    const dt = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('day-tasks lists specific tasks + working staff', dt.tasks.length > 0 && dt.working.some(w => w.id === schedStaff.id), JSON.stringify(dt.summary));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
+    check('assign a specific day task', r.status === 200, await r.text());
+    const dt2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('day task shows the assignee', (dt2.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {}).user_id === schedStaff.id, JSON.stringify(dt2.summary));
+    const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
+    check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));
+    const stdJob = allJobs.find(x => x.kind === 'standard');
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: stdJob.id, user_id: schedStaff.id }) });
+    check('standard job rejected as a day task (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from day-tasks (403)', r.status === 403, 'status=' + r.status);
+
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());
 

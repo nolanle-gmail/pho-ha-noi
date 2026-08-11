@@ -32,7 +32,8 @@ router.get('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
     ORDER BY department, code, name`).all());
 });
 
-const JOB_FIELDS = ['code', 'name', 'description', 'department', 'complexity', 'est_minutes', 'notes'];
+const JOB_KINDS = ['standard', 'specific'];
+const JOB_FIELDS = ['code', 'name', 'description', 'department', 'complexity', 'est_minutes', 'notes', 'kind'];
 // Managers can grow the shared catalog too, not just owner/admin.
 router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
@@ -40,10 +41,11 @@ router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
   const code = (req.body.code || '').toString().trim() || null;
   if (code && db.prepare(`SELECT id FROM jobs WHERE code=?`).get(code)) return res.status(409).json({ error: 'That Job ID is already in use.' });
   const complexity = COMPLEXITY.includes(req.body.complexity) ? req.body.complexity : 'medium';
-  const r = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes) VALUES (?,?,?,?,?,?,?)`)
+  const kind = JOB_KINDS.includes(req.body.kind) ? req.body.kind : 'standard';
+  const r = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes,kind) VALUES (?,?,?,?,?,?,?,?)`)
     .run(code, name, req.body.description || null, req.body.department || null, complexity,
-      req.body.est_minutes ? parseInt(req.body.est_minutes, 10) : null, req.body.notes || null);
-  auditLog(req, 'job_create', 'job', r.lastInsertRowid, { name, code });
+      req.body.est_minutes ? parseInt(req.body.est_minutes, 10) : null, req.body.notes || null, kind);
+  auditLog(req, 'job_create', 'job', r.lastInsertRowid, { name, code, kind });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
@@ -58,6 +60,7 @@ router.put('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   JOB_FIELDS.forEach(k => {
     if (req.body[k] === undefined) return;
     if (k === 'complexity' && !COMPLEXITY.includes(req.body[k])) return;
+    if (k === 'kind' && !JOB_KINDS.includes(req.body[k])) return;
     if (k === 'est_minutes') { fields.push('est_minutes=?'); vals.push(req.body[k] === '' || req.body[k] == null ? null : parseInt(req.body[k], 10)); return; }
     fields.push(`${k}=?`); vals.push(req.body[k] === '' ? null : req.body[k]);
   });
@@ -75,6 +78,57 @@ router.delete('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   db.prepare(`UPDATE jobs SET is_active=0 WHERE id=?`).run(job.id);
   auditLog(req, 'job_retire', 'job', job.id, { name: job.name });
+  res.json({ success: true });
+});
+
+// ── Day tasks — assign specific tasks to that day's working staff ────────────
+router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : fmtLocal(new Date());
+  const working = db.prepare(`SELECT DISTINCT u.id, u.name, u.role FROM shifts s JOIN users u ON u.id=s.user_id
+    WHERE s.location_id=? AND s.shift_date=? ORDER BY u.name`).all(locId, date);
+  const tasks = db.prepare(`
+    SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
+           ta.user_id, ta.done, u.name AS assignee_name
+    FROM jobs j
+    LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=? AND ta.task_date=?
+    LEFT JOIN users u ON u.id=ta.user_id
+    WHERE j.kind='specific' AND j.is_active=1
+    ORDER BY j.department, j.name`).all(locId, date);
+  const assigned = tasks.filter(t => t.user_id).length;
+  res.json({ location: loc, date, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
+});
+
+// Assign / unassign / complete a specific task for a location + date.
+router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const jobId = parseInt(req.body.job_id, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : null;
+  if (!locId || !jobId || !date) return res.status(400).json({ error: 'location_id, job_id and date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const job = db.prepare(`SELECT id, kind FROM jobs WHERE id=? AND is_active=1`).get(jobId);
+  if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
+  const hasUser = Object.prototype.hasOwnProperty.call(req.body, 'user_id');
+  const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
+  if (hasUser && userId) {
+    const works = db.prepare(`SELECT 1 FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? LIMIT 1`).get(userId, locId, date);
+    if (!works) return res.status(400).json({ error: 'Assign the task to someone working that day.' });
+  }
+  const done = req.body.done !== undefined ? (req.body.done ? 1 : 0) : null;
+  const existing = db.prepare(`SELECT id, user_id, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
+  if (existing) {
+    const nu = hasUser ? userId : existing.user_id;
+    const nd = done !== null ? done : existing.done;
+    db.prepare(`UPDATE task_assignments SET user_id=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nd, existing.id);
+  } else {
+    db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, done, created_by) VALUES (?,?,?,?,?,?)`)
+      .run(locId, date, jobId, hasUser ? userId : null, done || 0, req.user.id);
+  }
+  auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, done });
   res.json({ success: true });
 });
 
@@ -107,10 +161,15 @@ function shiftsForUsers(userIds, weekStartIso) {
   const jobsBy = db.prepare(`SELECT sj.shift_id, j.id, j.code, j.name, j.complexity, j.department
     FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id = ?`);
   const breaksBy = db.prepare(`SELECT id, start_time, end_time, label FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
+  // Specific day-tasks assigned to this person for the shift's date + location.
+  const tasksBy = db.prepare(`SELECT j.id, j.code, j.name, j.complexity, ta.done
+    FROM task_assignments ta JOIN jobs j ON j.id = ta.job_id
+    WHERE ta.user_id = ? AND ta.task_date = ? AND ta.location_id = ? ORDER BY j.name`);
   const byUser = {};
   for (const s of rows) {
     s.jobs = jobsBy.all(s.id);
     s.breaks = breaksBy.all(s.id);
+    s.tasks = tasksBy.all(s.user_id, s.shift_date, s.location_id);
     (byUser[s.user_id] = byUser[s.user_id] || []).push(s);
   }
   return byUser;

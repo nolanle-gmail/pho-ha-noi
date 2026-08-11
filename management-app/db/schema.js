@@ -410,8 +410,22 @@ function migrate() {
       complexity  TEXT DEFAULT 'medium',        -- low / medium / high
       est_minutes INTEGER,                      -- typical duration
       notes       TEXT,
+      kind        TEXT NOT NULL DEFAULT 'standard', -- 'standard' (role duty) or 'specific' (day task)
       is_active   INTEGER NOT NULL DEFAULT 1,
       created_at  TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Day-of assignment of a specific task to a working staff member.
+    CREATE TABLE IF NOT EXISTS task_assignments (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      task_date   TEXT NOT NULL,               -- ISO date
+      job_id      INTEGER NOT NULL REFERENCES jobs(id),
+      user_id     INTEGER REFERENCES users(id),  -- NULL = unassigned
+      done        INTEGER NOT NULL DEFAULT 0,
+      created_by  INTEGER REFERENCES users(id),
+      updated_at  TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, task_date, job_id)
     );
 
     -- Weekly staff schedule — one row per staff member per working day per location.
@@ -464,6 +478,7 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN type TEXT NOT NULL DEFAULT 'restaurant'`,
     `ALTER TABLE users ADD COLUMN pin TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
+    `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

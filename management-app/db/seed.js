@@ -576,9 +576,20 @@ const JOBS = [
   ['MGT-04', 'Staff Scheduling', 'Build and adjust the weekly staff schedule and assign jobs.', 'Management', 'medium', 30, ''],
 ];
 
+// Specific day-of tasks a manager assigns to whoever's working that day.
+const SPECIFIC_TASKS = [
+  ['CLN-01', 'Clean Restrooms', 'Clean and restock the restrooms; check and initial every 2 hours.', 'Facilities', 'low', 15, 'Log the check on the restroom sheet.'],
+  ['CLN-02', 'Help Bus & Clean Tables', 'Jump in during the rush to clear, wipe, sanitize, and reset tables.', 'Front of House', 'low', 0, ''],
+  ['CLN-03', 'Help Chef Clean Up (BOH)', 'Assist the kitchen with end-of-shift cleaning and the dish backlog.', 'Back of House', 'low', 0, ''],
+  ['CLN-04', 'Sweep & Mop Floors', 'Sweep and mop the dining room, entry, and restroom floors.', 'Facilities', 'low', 15, ''],
+  ['CLN-05', 'Sanitize High-Touch Surfaces', 'Wipe door handles, POS screens, menus, and condiment caddies.', 'Facilities', 'low', 10, ''],
+  ['CLN-06', 'Restock To-Go Station', 'Refill to-go containers, bags, lids, utensils, and napkins.', 'Front of House', 'low', 10, ''],
+];
 function seedJobsAndShifts(db, locIds) {
-  const insJob = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes) VALUES (?,?,?,?,?,?,?)`);
-  const jobIds = JOBS.map(j => Number(insJob.run(...j).lastInsertRowid));
+  const insJob = db.prepare(`INSERT INTO jobs (code,name,description,department,complexity,est_minutes,notes,kind) VALUES (?,?,?,?,?,?,?,?)`);
+  // Facilities duties are day-of "specific" tasks; the rest are standard role duties.
+  const jobIds = JOBS.map(j => Number(insJob.run(...j, j[3] === 'Facilities' ? 'specific' : 'standard').lastInsertRowid));
+  SPECIFIC_TASKS.forEach(j => insJob.run(...j, 'specific'));
   const jobByCode = {}; JOBS.forEach((j, i) => { jobByCode[j[0]] = jobIds[i]; });
 
   // Monday of the current week.
@@ -618,7 +629,7 @@ function seedJobsAndShifts(db, locIds) {
       }
     });
   });
-  console.log(`Seeded ${JOBS.length} jobs and ${shiftCount} demo shifts for the current week.`);
+  console.log(`Seeded ${JOBS.length + SPECIFIC_TASKS.length} jobs (${SPECIFIC_TASKS.length} specific tasks) and ${shiftCount} demo shifts for the current week.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }

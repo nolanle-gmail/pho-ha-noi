@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -618,13 +618,14 @@ async function renderOverview() {
 async function renderManagerDashboard() {
   const loc = S.user.location_id;
   const safe = (p, fb) => p.then(x => x).catch(() => fb);
-  const [week, overview, reorder, equip, dash, locDetail] = await Promise.all([
+  const [week, overview, reorder, equip, dash, locDetail, dayTasks] = await Promise.all([
     safe(api(`/schedule/week?location_id=${loc}`), { staff: [], days: [], location: {} }),
     safe(api('/staff/overview'), []),
     safe(api(`/inventory/reorder-suggestions?location_id=${loc}`), []),
     safe(api(`/locations/${loc}/equipment`), []),
     safe(api(`/inventory/dashboard?location_id=${loc}`), null),
     safe(api(`/locations/${loc}`), { hours: [] }),
+    safe(api(`/schedule/day-tasks?location_id=${loc}`), { tasks: [], summary: { total: 0, assigned: 0, unassigned: 0 } }),
   ]);
   const locName = shortLoc(week.location && week.location.name) || 'your location';
   const rs = overview[0] || { total: week.staff.length, active: 0, vacation: 0, sick: 0, inactive: 0, manager: null };
@@ -674,11 +675,19 @@ async function renderManagerDashboard() {
     <div class="kpis">
       ${stat('Staff', rs.total, '', 'staff')}
       ${stat('On today', onToday.length, onToday.length ? 'ok' : '')}
+      ${stat('Tasks to assign', dayTasks.summary.unassigned, dayTasks.summary.unassigned ? 'bad' : '')}
       ${stat('Over 40h this week', overWeek.length, overWeek.length ? 'bad' : '')}
       ${stat('Low stock', reorder.length, reorder.length ? 'warn' : '', 'inventory')}
       ${stat('Equipment issues', equipIssues.length + serviceDue.length, (equipIssues.length + serviceDue.length) ? 'warn' : '')}
-      ${stat('Unread messages', S.unread || 0, S.unread ? 'warn' : '', 'messages')}
     </div>
+
+    ${dayTasks.summary.total ? `<div class="section">
+      <div class="row-between"><h3 style="margin:0">Today's tasks <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${dayTasks.summary.assigned}/${dayTasks.summary.total} assigned</span></h3>
+        <button class="btn sm" data-daytasks="1">Assign tasks →</button></div>
+      ${dayTasks.summary.unassigned
+    ? `<p class="sub" style="margin:.4rem 0 0;color:var(--red);font-size:.85rem">⚠ ${dayTasks.summary.unassigned} still unassigned: ${dayTasks.tasks.filter(t => !t.user_id).slice(0, 6).map(t => esc(t.name)).join(', ')}${dayTasks.summary.unassigned > 6 ? '…' : ''} — assign so nothing's left behind.</p>`
+    : `<p class="sub" style="margin:.4rem 0 0;color:#1e7e34;font-size:.85rem">✓ Every task today is assigned.</p>`}
+    </div>` : ''}
 
     <div class="dash-cols">
       <div class="section">
@@ -734,6 +743,7 @@ async function renderManagerDashboard() {
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
   $('view').querySelectorAll('[data-sched]').forEach(b => b.onclick = () => openLocationDetail(loc, 'schedule'));
   $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
+  $('view').querySelectorAll('[data-daytasks]').forEach(b => b.onclick = () => openLocationDetail(loc, 'daytasks'));
 }
 
 // ── My Schedule (a staff member's own week, read-only, with OT warnings) ─────
@@ -760,6 +770,7 @@ async function renderMySchedule() {
       ${ss.length ? ss.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
+        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}">📋 ${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
         ${(s.breaks && s.breaks.length) ? `<div class="myshift-breaks">${s.breaks.map(b => `<span class="brk-chip">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : ''}
         ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
       </div>`).join('') : '<div class="myday-off">Day off</div>'}
@@ -887,7 +898,7 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['equipment', 'Equipment']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['equipment', 'Equipment']];
 function renderLocDetailTabs() {
   $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -901,7 +912,7 @@ async function renderLocDetail() {
     </div>
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, equipment: renderLocEquipment }[S.locTab])();
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, equipment: renderLocEquipment }[S.locTab])();
 }
 
 function renderLocInfo(loc) {
@@ -1012,10 +1023,12 @@ async function renderLocSchedule() {
     const dayTotal = sumHours(dayShifts);
     const brkLine = (s) => (s.breaks && s.breaks.length)
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
+    const taskLine = (s) => (s.tasks && s.tasks.length)
+      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" title="Day task">📋 ${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
     const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
-        ${brkLine(s)}
+        ${taskLine(s)}${brkLine(s)}
       </div>`).join('');
     const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
@@ -1189,6 +1202,49 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
       toast(isNew ? 'Shift added' : 'Shift saved'); close(); renderLocSchedule();
     } catch (e) { $('mErr').textContent = e.message; }
   };
+}
+
+// ── Day Tasks — assign specific tasks to the day's working staff ─────────────
+async function renderLocDayTasks() {
+  const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  if (!S.dayTaskDate) S.dayTaskDate = fmtLocalIso(new Date());
+  let data;
+  try { data = await api('/schedule/day-tasks?location_id=' + S.locDetailId + '&date=' + S.dayTaskDate); }
+  catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  S.dayTaskDate = data.date;
+  const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
+  const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
+  const opts = (sel) => `<option value="">— unassigned —</option>` + data.working.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)}</option>`).join('');
+  const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
+    <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
+    <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
+    <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:200px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
+    <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
+  </tr>`).join('');
+  $('locBody').innerHTML = `
+    <div class="row-between sched-head">
+      <div class="week-nav"><button class="btn sm ghost" id="dtPrev">‹ Prev</button><button class="btn sm ghost" id="dtToday">Today</button><button class="btn sm ghost" id="dtNext">Next ›</button></div>
+      <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
+      <span class="badge ${data.summary.unassigned ? 'out' : 'ok'}">${data.summary.assigned}/${data.summary.total} assigned</span>
+    </div>
+    <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Assigned to</th><th>Status</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : '<tr><td colspan="4" class="empty">No specific day tasks in the catalog. Add some in Staff → Jobs / Tasks (mark them “Specific”).</td></tr>'}
+    </tbody></table></div>`;
+  const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
+  $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
+  $('dtNext').onclick = () => go(addDaysIso(data.date, 1));
+  $('dtToday').onclick = () => go(fmtLocalIso(new Date()));
+  if (canEdit) {
+    $('locBody').querySelectorAll('[data-assign]').forEach(sel => sel.onchange = async () => {
+      try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: sel.dataset.assign, user_id: sel.value || null }) }); toast('Task assigned'); renderLocDayTasks(); }
+      catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+    $('locBody').querySelectorAll('[data-done]').forEach(cb => cb.onchange = async () => {
+      try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: cb.dataset.done, done: cb.checked }) }); renderLocDayTasks(); }
+      catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+  }
 }
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };
@@ -1368,14 +1424,16 @@ async function renderJobsCatalog() {
   active.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
   const depts = Object.keys(byDept).sort((a, b) => JOB_DEPTS.indexOf(a) - JOB_DEPTS.indexOf(b));
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '—')}</span>`;
+  const kindBadge = (k) => `<span class="badge ${k === 'specific' ? 'blue' : 'gray'}">${k === 'specific' ? 'specific' : 'standard'}</span>`;
   const section = (d) => `
     <h3 class="dept-head">${esc(d)} <span style="font-weight:400;color:var(--muted);font-size:.8rem">— ${byDept[d].length}</span></h3>
     <div class="table-wrap"><table><thead><tr>
-      <th>Job ID</th><th>Job / task</th><th>Complexity</th><th class="num">Est.</th><th>Description &amp; instructions</th>${canManage ? '<th>Actions</th>' : ''}
+      <th>Job ID</th><th>Job / task</th><th>Kind</th><th>Complexity</th><th class="num">Est.</th><th>Description &amp; instructions</th>${canManage ? '<th>Actions</th>' : ''}
     </tr></thead><tbody>
       ${byDept[d].map(j => `<tr>
         <td class="mono"><strong>${esc(j.code || '—')}</strong></td>
         <td><strong>${esc(j.name)}</strong>${j.notes ? `<div class="job-note">📌 ${esc(j.notes)}</div>` : ''}</td>
+        <td>${kindBadge(j.kind)}</td>
         <td>${cx(j.complexity)}</td>
         <td class="num">${j.est_minutes != null ? j.est_minutes + 'm' : '—'}</td>
         <td class="job-desc">${esc(j.description || '—')}</td>
@@ -1384,10 +1442,11 @@ async function renderJobsCatalog() {
           <button class="btn sm ghost" data-jretire="${j.id}">Retire</button></div></td>` : ''}
       </tr>`).join('')}
     </tbody></table></div>`;
+  const specificCount = active.filter(j => j.kind === 'specific').length;
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Jobs &amp; Tasks <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${active.length} active</span></h2>
       ${canManage ? '<button class="btn" id="addJob">+ Add job</button>' : '<span class="badge gray">View only</span>'}</div>
-    <p class="sub" style="color:var(--muted);margin-top:0">The catalog of jobs a manager can assign to a staff member's shift on the schedule.</p>
+    <p class="sub" style="color:var(--muted);margin-top:0"><span class="badge gray">standard</span> role duties assigned when building the weekly schedule; <span class="badge blue">specific</span> (${specificCount}) day-of tasks the manager assigns to working staff on the <strong>Day Tasks</strong> tab.</p>
     ${depts.length ? depts.map(section).join('') : '<div class="empty">No jobs in the catalog yet.</div>'}`;
   if (canManage) {
     $('addJob').onclick = () => jobModal(null);
@@ -1410,6 +1469,7 @@ function jobModal(job) {
       <label>Job ID<input id="j_code" value="${esc(j.code || '')}" placeholder="e.g. FOH-08" /></label>
       <label>Job / task name<input id="j_name" value="${esc(j.name || '')}" /></label>
       <label>Department<select id="j_department">${['', ...JOB_DEPTS].map(d => opt(d, j.department || '')).join('')}</select></label>
+      <label>Kind<select id="j_kind"><option value="standard" ${(j.kind || 'standard') === 'standard' ? 'selected' : ''}>Standard (schedule duty)</option><option value="specific" ${j.kind === 'specific' ? 'selected' : ''}>Specific (day task)</option></select></label>
       <label>Complexity<select id="j_complexity">${['low', 'medium', 'high'].map(c => opt(c, j.complexity || 'medium')).join('')}</select></label>
       <label>Est. minutes<input id="j_est_minutes" type="number" min="0" value="${j.est_minutes != null ? j.est_minutes : ''}" /></label>
     </div>
@@ -1422,7 +1482,7 @@ function jobModal(job) {
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('mOk').onclick = async () => {
     const body = {};
-    ['code', 'name', 'department', 'complexity', 'est_minutes', 'description', 'notes'].forEach(k => { body[k] = $('j_' + k).value; });
+    ['code', 'name', 'department', 'kind', 'complexity', 'est_minutes', 'description', 'notes'].forEach(k => { body[k] = $('j_' + k).value; });
     try {
       if (isNew) await api('/schedule/jobs', { method: 'POST', body: JSON.stringify(body) });
       else await api('/schedule/jobs/' + j.id, { method: 'PUT', body: JSON.stringify(body) });
