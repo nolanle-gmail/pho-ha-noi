@@ -89,17 +89,21 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : fmtLocal(new Date());
-  // Each working person's shift hours that day, so the manager can pick a task time inside them.
-  const shiftRows = db.prepare(`SELECT u.id, u.name, u.role, s.start_time, s.end_time
+  // Each working person's shift hours + breaks that day, so the manager can pick a
+  // task time inside their hours but not during a break.
+  const shiftRows = db.prepare(`SELECT u.id, u.name, u.role, s.id AS shift_id, s.start_time, s.end_time
     FROM shifts s JOIN users u ON u.id=s.user_id
     WHERE s.location_id=? AND s.shift_date=? ORDER BY u.name, s.start_time`).all(locId, date);
+  const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   const workingBy = {};
   for (const r of shiftRows) {
-    const w = workingBy[r.id] || (workingBy[r.id] = { id: r.id, name: r.name, role: r.role, hours: [] });
+    const w = workingBy[r.id] || (workingBy[r.id] = { id: r.id, name: r.name, role: r.role, hours: [], breaks: [] });
     w.hours.push({ start_time: r.start_time, end_time: r.end_time });
+    for (const b of breaksForShift.all(r.shift_id)) w.breaks.push(b);
   }
   const working = Object.values(workingBy).map(w => ({
     ...w,
+    breaks: w.breaks.sort((a, b) => a.start_time < b.start_time ? -1 : 1),
     start_time: w.hours.reduce((a, h) => a < h.start_time ? a : h.start_time, w.hours[0].start_time),
     end_time: w.hours.reduce((a, h) => a > h.end_time ? a : h.end_time, w.hours[0].end_time),
   }));
@@ -126,7 +130,12 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
   const hasUser = Object.prototype.hasOwnProperty.call(req.body, 'user_id');
   const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
-  const shiftsFor = (uid) => db.prepare(`SELECT start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`).all(uid, locId, date);
+  const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
+  const shiftsFor = (uid) => {
+    const rows = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`).all(uid, locId, date);
+    rows.forEach(s => { s.breaks = breaksForShift.all(s.id); });
+    return rows;
+  };
   if (hasUser && userId && !shiftsFor(userId).length) {
     return res.status(400).json({ error: 'Assign the task to someone working that day.' });
   }
@@ -140,14 +149,18 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const existing = db.prepare(`SELECT id, user_id, task_time, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
   const nu = hasUser ? userId : (existing ? existing.user_id : null);
   let nt = hasTime ? time : (existing ? existing.task_time : null);
-  // A task time must fall inside one of the assignee's shifts that day.
+  // A task time must fall inside one of the assignee's shifts that day, and not during a break.
   if (nt) {
     if (!nu) return res.status(400).json({ error: 'Assign the task to someone before setting a time.' });
     const spans = shiftsFor(nu);
-    const inHours = spans.some(s => nt >= s.start_time && nt <= s.end_time);
+    const inHours = spans.some(s => nt >= s.start_time && nt <= s.end_time
+      && !s.breaks.some(b => nt >= b.start_time && nt < b.end_time));
     if (!inHours) {
       if (hasTime) {
-        const hrs = spans.map(s => `${s.start_time}–${s.end_time}`).join(', ');
+        const hrs = spans.map(s => {
+          const br = s.breaks.map(b => `${b.start_time}–${b.end_time}`).join(', ');
+          return `${s.start_time}–${s.end_time}${br ? ` excl. break ${br}` : ''}`;
+        }).join(', ');
         return res.status(400).json({ error: `Pick a time within the staff's working hours (${hrs}).` });
       }
       nt = null; // reassigned to someone whose hours don't cover the old time — drop it

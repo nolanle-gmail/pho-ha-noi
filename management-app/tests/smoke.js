@@ -309,6 +309,12 @@ const check = (name, ok, detail = '') => {
     check('task time appears on staff schedule summary', !!stT && (stT.tasks || []).some(t => t.id === dt.tasks[0].job_id && t.task_time === '10:30'), JSON.stringify(stT && stT.tasks));
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '20:00' }) });
     check('time outside working hours rejected (400)', r.status === 400, 'status=' + r.status);
+    // schedStaff's 06:00–18:00 shift has 10-min breaks starting 08:00/10:00/12:00/14:00.
+    check('day-tasks lists the worker\'s breaks', ((dt.working.find(w => w.id === schedStaff.id) || {}).breaks || []).length > 0, JSON.stringify((dt.working.find(w => w.id === schedStaff.id) || {}).breaks));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '08:05' }) });
+    check('time during a break rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, time: '08:10' }) });
+    check('time at a break\'s end is allowed', r.status === 200, await r.text());
     const stdJob = allJobs.find(x => x.kind === 'standard');
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: stdJob.id, user_id: schedStaff.id }) });
     check('standard job rejected as a day task (400)', r.status === 400, 'status=' + r.status);

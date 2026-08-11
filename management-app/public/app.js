@@ -1221,7 +1221,8 @@ async function renderLocDayTasks() {
     if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
     const w = hoursById[t.user_id];
     const bounds = w ? `min="${w.start_time}" max="${w.end_time}"` : '';
-    const hint = w ? `<div class="job-note">within ${esc(w.start_time)}–${esc(w.end_time)}</div>` : '';
+    const brk = w && w.breaks && w.breaks.length ? ` · excl. break ${w.breaks.map(b => `${esc(b.start_time)}–${esc(b.end_time)}`).join(', ')}` : '';
+    const hint = w ? `<div class="job-note">within ${esc(w.start_time)}–${esc(w.end_time)}${brk}</div>` : '';
     return `<input type="time" data-time="${t.job_id}" value="${t.task_time || ''}" ${bounds} style="margin:0;padding:.35rem .4rem"/>${hint}`;
   };
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
