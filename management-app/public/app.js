@@ -1014,11 +1014,12 @@ async function renderLocInfo(loc) {
         ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}
       </div>
     </div>
-    ${canViewFloor ? `<div class="section" id="locFloorSnap" style="margin-top:1rem"><div class="row-between"><h3>Floor status <span style="font-weight:400;color:var(--muted);font-size:.82rem">— live, right now</span></h3><button class="btn sm ghost" id="locFloorOpen">Open Floor Plan →</button></div>
+    ${canViewFloor ? `<div class="section" id="locFloorSnap" style="margin-top:1rem"><div class="row-between"><h3>Floor status <span style="font-weight:400;color:var(--muted);font-size:.82rem">— live, right now</span></h3><div style="display:flex;gap:.4rem;align-items:center">${guestsToggleBtn('locFloorGuests')}<button class="btn sm ghost" id="locFloorOpen">Open Floor Plan →</button></div></div>
       <div id="locFloorSnapBody"><div class="empty">Loading floor status…</div></div></div>` : ''}`;
   if (canEdit) $('editLoc').onclick = () => locationModal(loc);
   if (canEditHours) $('editHours').onclick = () => editHoursModal(loc);
   if (canViewFloor) {
+    $('locFloorGuests').onclick = () => { toggleGuests(); renderLocDetail(); };
     $('locFloorOpen').onclick = () => { S.locTab = 'floorplan'; renderLocDetailTabs(); renderLocDetail(); };
     try {
       const fp = await api('/floorplan?location_id=' + loc.id);
@@ -1034,7 +1035,7 @@ function fpMiniTable(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
   const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.minutes_to_free != null ? ' · free ~' + t.minutes_to_free + 'm' : ''}` : `Available · ${t.seats} seats`;
-  const sub = occ && t.party_size ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
+  const sub = occ && t.party_size && showGuests() ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
   return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span>${sub}</div>`;
 }
 function fpSnapshotHtml(fp) {
@@ -1655,6 +1656,12 @@ const TABLE_STATUS = {
   cleaning: ['Cleaning up', '#6b7280', '#ededed'],
 };
 const FP_AREA_COLORS = ['#2b5bd7', '#b4630b', '#1e7e34', '#7a1420', '#6d28d9', '#0e7490', '#be185d'];
+// Guest count is optional — some managers prefer a cleaner board. The choice is a
+// per-user preference (stored locally) and governs the party-size chip on every
+// floor view (Details snapshot + Floor Plan status). Tooltips always keep detail.
+function showGuests() { return localStorage.getItem('phn_show_guests') !== '0'; }
+function toggleGuests() { localStorage.setItem('phn_show_guests', showGuests() ? '0' : '1'); }
+const guestsToggleBtn = (id) => `<button class="btn sm ghost" id="${id}">${showGuests() ? '👤 Guests shown' : '👤 Guests hidden'}</button>`;
 async function renderLocFloorPlan() {
   let fp;
   try { fp = await api('/floorplan?location_id=' + S.locDetailId); }
@@ -1668,7 +1675,7 @@ async function renderLocFloorPlan() {
     if (edit) return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}" data-tid="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${FP_AREA_COLORS[t._ci % FP_AREA_COLORS.length]}" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
     const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
     const occ = t.status !== 'available';
-    const sub = occ ? `${t.party_size ? t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}` : `${t.seats}p`;
+    const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '👤' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
     return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') : 'available, ' + t.seats + ' seats'}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
   };
   const boardInner = roomSvgM(outline) + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
@@ -1679,7 +1686,7 @@ async function renderLocFloorPlan() {
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div>
-      ${canEdit ? `<div style="display:flex;gap:.4rem">${edit ? `<button class="btn sm" id="fpEditRoom">${S.fpEditRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn sm ghost" id="fpAddArea">+ Area</button><button class="btn sm ghost" id="fpAddTable">+ Table</button>` : ''}<button class="btn sm ${edit ? '' : 'ghost'}" id="fpToggle">${edit ? '✓ Done editing' : '✎ Edit layout'}</button></div>` : '<span class="badge gray">View only</span>'}
+      <div style="display:flex;gap:.4rem;align-items:center">${!edit ? guestsToggleBtn('fpGuests') : ''}${canEdit ? `${edit ? `<button class="btn sm" id="fpEditRoom">${S.fpEditRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn sm ghost" id="fpAddArea">+ Area</button><button class="btn sm ghost" id="fpAddTable">+ Table</button>` : ''}<button class="btn sm ${edit ? '' : 'ghost'}" id="fpToggle">${edit ? '✓ Done editing' : '✎ Edit layout'}</button>` : (edit ? '' : '<span class="badge gray">View only</span>')}</div>
     </div>
     ${legend}
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem;font-size:.8rem">${edit ? 'Drag tables to arrange the room; tap a table to edit; “Edit room” reshapes the walls.' : 'Tap an available table to seat a guest; tap an occupied table to change its status. Shared live with the Front Desk.'}</p>
@@ -1693,6 +1700,7 @@ async function renderLocFloorPlan() {
     $('locBody').querySelectorAll('[data-area]').forEach(b => b.onclick = () => openFpAreaModal(fp.areas.find(a => String(a.id) === String(b.dataset.area))));
     if (S.fpEditRoom) wireFpRoom(outline); else wireFpDrag();
   } else if (canEdit || true) {
+    $('fpGuests') && ($('fpGuests').onclick = () => { toggleGuests(); renderLocFloorPlan(); });
     $('fpToggle') && ($('fpToggle').onclick = () => { S.fpEdit = true; renderLocFloorPlan(); });
     $('locBody').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
       const t = all.find(x => String(x.id) === String(el.dataset.tbl));

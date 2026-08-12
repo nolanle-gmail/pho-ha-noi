@@ -107,10 +107,14 @@ const TABLE_STATUS = {
   waiting_to_pay: ['Waiting to pay', '#b4630b', '#fdecd8'],
   cleaning: ['Cleaning up', '#6b7280', '#ededed'],
 };
+// Guest count is optional to display — governs the party-size chip on the Table
+// Map. Stored per-device; tooltips always keep the detail on hover.
+function showGuests() { return localStorage.getItem('phn_show_guests') !== '0'; }
+function toggleGuests() { localStorage.setItem('phn_show_guests', showGuests() ? '0' : '1'); }
 function statusTableEl(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
-  const sub = occ ? `${t.party_size ? t.party_size + '\u{1F464}' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
+  const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '\u{1F464}' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
   const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') : 'available, ' + t.seats + ' seats';
   return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
 }
@@ -130,10 +134,11 @@ async function renderTables() {
   const sm = fp.summary || { available: 0, occupied: 0, tables: 0 };
   $('view').innerHTML = `
     <div class="section-head"><h2>Table Map</h2>
-      <div><span class="badge seated">${sm.available} available</span> <span class="badge ${sm.occupied ? 'waiting' : 'left'}">${sm.occupied} occupied</span></div></div>
+      <div style="display:flex;gap:.4rem;align-items:center"><span class="badge seated">${sm.available} available</span> <span class="badge ${sm.occupied ? 'waiting' : 'left'}">${sm.occupied} occupied</span><button class="btn sm ghost" id="tmGuests">${showGuests() ? '👤 Guests shown' : '👤 Guests hidden'}</button></div></div>
     ${statusLegend(fp)}
     <p class="sub" style="margin:.1rem 0 .6rem">Tap an available table to seat a guest; tap an occupied table to change its status.</p>
     <div class="floor-board" id="fpBoard">${fpBoardHtml(fp)}</div>`;
+  $('tmGuests').onclick = () => { toggleGuests(); renderTables(); };
   $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
     const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(el.dataset.tbl));
     if (t.status === 'available') seatAtTable(t.id, t.label, t.seats, () => renderTables());
