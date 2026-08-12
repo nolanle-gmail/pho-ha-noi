@@ -14,7 +14,7 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
   const rows = db.prepare(`
-    SELECT u.id, u.name, u.email, u.role, u.location_id, u.is_active, l.name AS location_name,
+    SELECT u.id, u.name, u.email, u.employee_code, u.role, u.location_id, u.is_active, l.name AS location_name,
            sp.status AS work_status, sp.job_title
     FROM users u LEFT JOIN locations l ON u.location_id=l.id
     LEFT JOIN staff_profiles sp ON sp.user_id=u.id

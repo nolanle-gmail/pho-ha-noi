@@ -998,8 +998,8 @@ async function renderLocStaff() {
   const staff = await api('/locations/' + S.locDetailId + '/staff');
   $('locBody').innerHTML = `
     <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location. Add or reassign staff in the Staff section.</p>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
-      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="4" class="empty">No staff assigned to this location yet.</td></tr>'}
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
+      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.employee_code || '—')}</td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
 }
 
@@ -1720,7 +1720,7 @@ async function renderStaffDirectory() {
   // Which first-letters actually have people (for the A–Z bar).
   const present = new Set(rows.map(letterOf));
   const shown = (searching
-    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role).toLowerCase().includes(q))
+    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role + ' ' + (u.employee_code || '')).toLowerCase().includes(q))
     : rows.filter(u => letterOf(u) === staffLetter))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1733,12 +1733,13 @@ async function renderStaffDirectory() {
   }).join('');
 
   let body = '';
-  if (!shown.length) body = `<tr><td colspan="6" class="empty">${searching ? 'No staff match your search.' : 'No staff with names starting “' + staffLetter + '”.'}</td></tr>`;
+  if (!shown.length) body = `<tr><td colspan="7" class="empty">${searching ? 'No staff match your search.' : 'No staff with names starting “' + staffLetter + '”.'}</td></tr>`;
   else {
     for (const u of shown) {
       const st = staffStatus(u);
       body += `<tr>
         <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a>${u.job_title ? `<div class="job-title-sub">${esc(u.job_title)}</div>` : ''}</td>
+        <td class="mono">${esc(u.employee_code || '—')}</td>
         <td class="mono">${esc(u.email)}</td>
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
@@ -1756,10 +1757,10 @@ async function renderStaffDirectory() {
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
       ${canManage ? '<button class="btn" id="addStaff">+ Add staff</button>' : '<span class="badge gray">View only</span>'}</div>
     <div class="letter-bar">${bar}</div>
-    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
+    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Name</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
+      <th>Name</th><th>Code</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 
   // A–Z letter bar — clicking a letter filters to it and clears any search.

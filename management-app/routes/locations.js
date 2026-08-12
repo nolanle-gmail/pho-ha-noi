@@ -46,7 +46,7 @@ router.get('/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 // Staff at a location.
 router.get('/:id/staff', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
-  res.json(db.prepare(`SELECT id, name, email, role, is_active FROM users WHERE location_id=?
+  res.json(db.prepare(`SELECT id, name, email, employee_code, role, is_active FROM users WHERE location_id=?
     ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(req.params.id));
 });
 

@@ -197,6 +197,8 @@ const check = (name, ok, detail = '') => {
     check('manager can access menu (200)', r.status === 200, 'status=' + r.status);
 
     // ── Staff management ───────────────────────────────────────
+    const staffList = await j(await fetch(base + '/api/staff', { headers: H(token) }));
+    check('staff list exposes employee codes', Array.isArray(staffList) && staffList.length > 0 && staffList.every(s => 'employee_code' in s) && staffList.some(s => s.employee_code), JSON.stringify((staffList[0] || {}).employee_code));
     const newStaff = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
       body: JSON.stringify({ name: 'Test Support', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) }));
     check('create staff account', newStaff.success === true && !!newStaff.id, JSON.stringify(newStaff));
