@@ -663,7 +663,7 @@ async function renderOverview() {
 async function renderManagerDashboard() {
   const loc = S.user.location_id;
   const safe = (p, fb) => p.then(x => x).catch(() => fb);
-  const [week, overview, reorder, equip, dash, locDetail, dayTasks, clock] = await Promise.all([
+  const [week, overview, reorder, equip, dash, locDetail, dayTasks, clock, payroll] = await Promise.all([
     safe(api(`/schedule/week?location_id=${loc}`), { staff: [], days: [], location: {} }),
     safe(api('/staff/overview'), []),
     safe(api(`/inventory/reorder-suggestions?location_id=${loc}`), []),
@@ -672,6 +672,7 @@ async function renderManagerDashboard() {
     safe(api(`/locations/${loc}`), { hours: [] }),
     safe(api(`/schedule/day-tasks?location_id=${loc}`), { tasks: [], summary: { total: 0, assigned: 0, unassigned: 0 } }),
     safe(api(`/timeclock/board?location_id=${loc}`), { entries: [], not_in: [], summary: {} }),
+    safe(api(`/timeclock/payroll?location_id=${loc}`), { ot_days: [], totals: {} }),
   ]);
   const locName = shortLoc(week.location && week.location.name) || 'your location';
   const rs = overview[0] || { total: week.staff.length, active: 0, vacation: 0, sick: 0, inactive: 0, manager: null };
@@ -712,6 +713,10 @@ async function renderManagerDashboard() {
   const hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const stat = (label, value, cls, goto) => `<button class="card stat-btn" ${goto ? `data-goto="${goto}"` : ''}><div class="label">${label}</div><div class="value ${cls || ''}">${value}</div></button>`;
+  // Overtime awaiting approval this week (won't be paid until approved).
+  const otPending = (payroll.ot_days || []).filter(d => !d.approved);
+  const otPendStaff = new Set(otPending.map(d => d.user_id)).size;
+  const otPendHours = Math.round((((payroll.totals || {}).ot_pending_hours || 0) + ((payroll.totals || {}).dt_pending_hours || 0)) * 10) / 10;
 
   $('view').innerHTML = `
     <div class="overview-hero">
@@ -723,10 +728,17 @@ async function renderManagerDashboard() {
       ${stat('On today', onToday.length, onToday.length ? 'ok' : '')}
       ${stat('On the clock', clock.summary.on_clock || 0, (clock.summary.on_clock || 0) ? 'ok' : '')}
       ${stat('Tasks to assign', dayTasks.summary.unassigned, dayTasks.summary.unassigned ? 'bad' : '')}
+      ${stat('OT to approve', otPending.length, otPending.length ? 'bad' : '')}
       ${stat('Over 40h this week', overWeek.length, overWeek.length ? 'bad' : '')}
       ${stat('Low stock', reorder.length, reorder.length ? 'warn' : '', 'inventory')}
       ${stat('Equipment issues', equipIssues.length + serviceDue.length, (equipIssues.length + serviceDue.length) ? 'warn' : '')}
     </div>
+
+    ${otPending.length ? `<div class="section" style="border-left:4px solid var(--red)">
+      <div class="row-between"><h3 style="margin:0;color:var(--red)">⏱ Overtime needs approval</h3>
+        <button class="btn sm" data-timeclock="1">Review & approve →</button></div>
+      <p class="sub" style="margin:.35rem 0 0;font-size:.85rem"><strong>${otPending.length}</strong> overtime day${otPending.length === 1 ? '' : 's'} across <strong>${otPendStaff}</strong> staff (${otPendHours}h) this week won't be paid until approved with a note. Approve on the Time Clock tab before the pay run.</p>
+    </div>` : ''}
 
     ${dayTasks.summary.total ? `<div class="section">
       <div class="row-between"><h3 style="margin:0">Today's tasks <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${dayTasks.summary.assigned}/${dayTasks.summary.total} assigned</span></h3>
