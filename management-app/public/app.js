@@ -663,7 +663,7 @@ async function renderOverview() {
 async function renderManagerDashboard() {
   const loc = S.user.location_id;
   const safe = (p, fb) => p.then(x => x).catch(() => fb);
-  const [week, overview, reorder, equip, dash, locDetail, dayTasks] = await Promise.all([
+  const [week, overview, reorder, equip, dash, locDetail, dayTasks, clock] = await Promise.all([
     safe(api(`/schedule/week?location_id=${loc}`), { staff: [], days: [], location: {} }),
     safe(api('/staff/overview'), []),
     safe(api(`/inventory/reorder-suggestions?location_id=${loc}`), []),
@@ -671,10 +671,11 @@ async function renderManagerDashboard() {
     safe(api(`/inventory/dashboard?location_id=${loc}`), null),
     safe(api(`/locations/${loc}`), { hours: [] }),
     safe(api(`/schedule/day-tasks?location_id=${loc}`), { tasks: [], summary: { total: 0, assigned: 0, unassigned: 0 } }),
+    safe(api(`/timeclock/board?location_id=${loc}`), { entries: [], not_in: [], summary: {} }),
   ]);
   const locName = shortLoc(week.location && week.location.name) || 'your location';
   const rs = overview[0] || { total: week.staff.length, active: 0, vacation: 0, sick: 0, inactive: 0, manager: null };
-  const today = todayIso();
+  const today = week.today || todayIso(); // location-local today
 
   // Who's on today (at this location; note anyone away).
   const onToday = week.staff.map(st => {
@@ -720,6 +721,7 @@ async function renderManagerDashboard() {
     <div class="kpis">
       ${stat('Staff', rs.total, '', 'staff')}
       ${stat('On today', onToday.length, onToday.length ? 'ok' : '')}
+      ${stat('On the clock', clock.summary.on_clock || 0, (clock.summary.on_clock || 0) ? 'ok' : '')}
       ${stat('Tasks to assign', dayTasks.summary.unassigned, dayTasks.summary.unassigned ? 'bad' : '')}
       ${stat('Over 40h this week', overWeek.length, overWeek.length ? 'bad' : '')}
       ${stat('Low stock', reorder.length, reorder.length ? 'warn' : '', 'inventory')}
@@ -733,6 +735,22 @@ async function renderManagerDashboard() {
     ? `<p class="sub" style="margin:.4rem 0 0;color:var(--red);font-size:.85rem">⚠ ${dayTasks.summary.unassigned} still unassigned: ${dayTasks.tasks.filter(t => !t.user_id).slice(0, 6).map(t => esc(t.name)).join(', ')}${dayTasks.summary.unassigned > 6 ? '…' : ''} — assign so nothing's left behind.</p>`
     : `<p class="sub" style="margin:.4rem 0 0;color:#1e7e34;font-size:.85rem">✓ Every task today is assigned.</p>`}
     </div>` : ''}
+
+    <div class="section">
+      <div class="row-between"><h3 style="margin:0">Check-in / Check-out <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${clock.summary.on_clock || 0} on the clock · ${clock.summary.done || 0} checked out${clock.summary.not_in ? ` · ${clock.summary.not_in} not in` : ''}</span></h3>
+        <button class="btn sm" data-timeclock="1">Open time clock →</button></div>
+      ${clock.summary.short ? `<p class="sub" style="margin:.4rem 0 .2rem;color:var(--red);font-size:.85rem">⚠ ${clock.summary.short} checked out early today — review on the Time Clock tab.</p>` : ''}
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Worked</th><th>Status</th></tr></thead><tbody>
+        ${clock.entries.length ? clock.entries.map(e => `<tr>
+          <td><strong>${esc(e.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(e.employee_code || '')}</span></td>
+          <td class="mono">${e.clock_in || '—'}</td>
+          <td class="mono">${e.clock_out || '—'}</td>
+          <td>${fmtDur(e.worked_minutes)}${e.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
+          <td>${e.status === 'in' ? '<span class="badge ok">🟢 On clock</span>' : `<span class="badge gray">Checked out</span>${e.short ? ' <span class="badge out">⚠ short</span>' : ''}${e.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(e.overtime_minutes)} OT</span>` : ''}`}</td>
+        </tr>`).join('') : '<tr><td colspan="5" class="empty">No check-ins yet today.</td></tr>'}
+        ${clock.not_in && clock.not_in.length ? `<tr><td colspan="5" style="color:var(--muted);font-size:.83rem;background:#fafafa">Scheduled, not checked in: ${clock.not_in.slice(0, 8).map(n => esc(n.name)).join(', ')}${clock.not_in.length > 8 ? ` +${clock.not_in.length - 8} more` : ''}</td></tr>` : ''}
+      </tbody></table></div>
+    </div>
 
     <div class="dash-cols">
       <div class="section">
@@ -789,6 +807,7 @@ async function renderManagerDashboard() {
   $('view').querySelectorAll('[data-sched]').forEach(b => b.onclick = () => openLocationDetail(loc, 'schedule'));
   $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
   $('view').querySelectorAll('[data-daytasks]').forEach(b => b.onclick = () => openLocationDetail(loc, 'daytasks'));
+  $('view').querySelectorAll('[data-timeclock]').forEach(b => b.onclick = () => openLocationDetail(loc, 'timeclock'));
 }
 
 // ── My Schedule (a staff member's own week, read-only, with OT warnings) ─────
@@ -1457,7 +1476,7 @@ async function renderLocTimeClock() {
       ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
     </div>
     ${alertCards}
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>In</th><th>Out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
       ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>`;
