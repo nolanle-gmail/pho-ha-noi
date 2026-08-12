@@ -1033,8 +1033,9 @@ async function renderLocInfo(loc) {
 function fpMiniTable(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
-  const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' · free ~' + t.minutes_to_free + 'm' : ''}` : `Available · ${t.seats} seats`;
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span></div>`;
+  const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.minutes_to_free != null ? ' · free ~' + t.minutes_to_free + 'm' : ''}` : `Available · ${t.seats} seats`;
+  const sub = occ && t.party_size ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span>${sub}</div>`;
 }
 function fpSnapshotHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
