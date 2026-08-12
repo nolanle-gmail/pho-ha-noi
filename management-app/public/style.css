@@ -407,3 +407,5 @@ tr:hover .order-hover { opacity: 1; }
 .room-vtx { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--red); cursor: grab; z-index: 5; box-shadow: 0 1px 3px #0003; touch-action: none; }
 .room-vtx.drag { transform: translate(-50%, -50%) scale(1.15); }
 .floor-board.roomedit .ftable { opacity: .45; pointer-events: none; }
+.floor-board.snapshot { padding-bottom: 46%; }
+.floor-board.snapshot .ftable { cursor: default; width: clamp(28px, 7%, 46px); }

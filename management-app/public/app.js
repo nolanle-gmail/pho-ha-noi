@@ -993,9 +993,10 @@ async function renderLocDetail() {
   ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, floorplan: renderLocFloorPlan, equipment: renderLocEquipment }[S.locTab])();
 }
 
-function renderLocInfo(loc) {
+async function renderLocInfo(loc) {
   const canEdit = ['owner', 'admin'].includes(S.user.role);
   const canEditHours = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const canViewFloor = ['owner', 'admin', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
   $('locBody').innerHTML = `
@@ -1012,9 +1013,36 @@ function renderLocInfo(loc) {
       <div class="section"><div class="row-between"><h3>Operating hours</h3>${canEditHours ? '<button class="btn sm ghost" id="editHours">Edit</button>' : ''}</div>
         ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}
       </div>
-    </div>`;
+    </div>
+    ${canViewFloor ? `<div class="section" id="locFloorSnap" style="margin-top:1rem"><div class="row-between"><h3>Floor status <span style="font-weight:400;color:var(--muted);font-size:.82rem">— live, right now</span></h3><button class="btn sm ghost" id="locFloorOpen">Open Floor Plan →</button></div>
+      <div id="locFloorSnapBody"><div class="empty">Loading floor status…</div></div></div>` : ''}`;
   if (canEdit) $('editLoc').onclick = () => locationModal(loc);
   if (canEditHours) $('editHours').onclick = () => editHoursModal(loc);
+  if (canViewFloor) {
+    $('locFloorOpen').onclick = () => { S.locTab = 'floorplan'; renderLocDetailTabs(); renderLocDetail(); };
+    try {
+      const fp = await api('/floorplan?location_id=' + loc.id);
+      // Guard against the user having navigated away while the fetch was in flight.
+      if (S.locTab !== 'details' || String(S.locDetailId) !== String(loc.id)) return;
+      const body = $('locFloorSnapBody'); if (body) body.innerHTML = fpSnapshotHtml(fp);
+    } catch (e) { const body = $('locFloorSnapBody'); if (body) body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  }
+}
+// Read-only floor snapshot for the Location Details tab — a point-in-time picture
+// of who's seated. Reuses the Floor Plan status colors; no interaction.
+function fpMiniTable(t) {
+  const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const occ = t.status !== 'available';
+  const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' · free ~' + t.minutes_to_free + 'm' : ''}` : `Available · ${t.seats} seats`;
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span></div>`;
+}
+function fpSnapshotHtml(fp) {
+  const all = fp.areas.flatMap(a => a.tables);
+  if (!all.length) return '<div class="empty">No floor plan for this location yet. Open the Floor Plan tab to set one up.</div>';
+  const sm = fp.summary;
+  const legend = `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
+  const board = `<div class="floor-board snapshot">${roomSvgM(fp.room_outline || []) + all.map(fpMiniTable).join('')}</div>`;
+  return `<div class="row-between" style="margin-bottom:.2rem"><div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div></div>${legend}${board}`;
 }
 
 function editHoursModal(loc) {
