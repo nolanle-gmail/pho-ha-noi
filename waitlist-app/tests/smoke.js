@@ -140,45 +140,14 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/waitlist/history/all', { headers: H(mgr.token) });
     check('manager BLOCKED from guest history', r.status === 403, 'status=' + r.status);
 
-    // ── Floor plan (areas + tables) ────────────────────────────
-    const fpLocs = await j(await fetch(base + '/api/waitlist/locations', { headers: H(token) }));
-    const l1 = fpLocs[0].id;
-    const fp = await j(await fetch(base + `/api/floorplan?location_id=${l1}`, { headers: H(token) }));
-    check('floor plan seeded with areas + tables', Array.isArray(fp.areas) && fp.areas.length >= 3 && fp.areas.some(a => a.tables.length > 0), JSON.stringify((fp.areas || []).map(a => a.name)));
-    const tp = await j(await fetch(base + `/api/floorplan/tables?location_id=${l1}`, { headers: H(token) }));
-    check('table picker returns areas with tables + occupancy', Array.isArray(tp.areas) && tp.table_count > 0 && 'occupied_count' in tp && tp.areas[0].tables.every(t => 'occupied' in t), JSON.stringify({ n: tp.table_count }));
-    check('tables carry map positions + shape', tp.areas[0].tables.every(t => Number.isFinite(t.pos_x) && Number.isFinite(t.pos_y) && (t.shape === 'round' || t.shape === 'square')), JSON.stringify(tp.areas[0].tables[0]));
-    check('floor plan includes a room outline', Array.isArray(tp.room_outline) && tp.room_outline.length >= 3 && 'x' in tp.room_outline[0], JSON.stringify((tp.room_outline || []).slice(0, 2)));
-    // Reshape the room (owner).
-    const newRoom = [{ x: 5, y: 5 }, { x: 95, y: 5 }, { x: 95, y: 60 }, { x: 50, y: 95 }, { x: 5, y: 60 }];
-    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: l1, outline: newRoom }) });
-    check('room outline can be reshaped', r.status === 200, await r.text());
-    const fpR = await j(await fetch(base + `/api/floorplan?location_id=${l1}`, { headers: H(token) }));
-    check('reshaped room outline persists (5 corners)', Array.isArray(fpR.room_outline) && fpR.room_outline.length === 5, JSON.stringify(fpR.room_outline && fpR.room_outline.length));
-    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: l1, outline: [{ x: 1, y: 1 }, { x: 2, y: 2 }] }) });
-    check('room outline needs 3+ points (400)', r.status === 400, 'status=' + r.status);
-    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(host.token), body: JSON.stringify({ outline: newRoom }) });
-    check('front desk cannot reshape the room (403)', r.status === 403, 'status=' + r.status);
-    // Manager configures their own location's plan.
-    const area = await j(await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Test Mezzanine' }) }));
-    check('manager adds an area', area.success === true && !!area.id, JSON.stringify(area));
-    const tbl = await j(await fetch(base + '/api/floorplan/tables', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ area_id: area.id, label: 'M9', seats: 6 }) }));
-    check('manager adds a table', tbl.success === true && !!tbl.id, JSON.stringify(tbl));
-    const fpM = await j(await fetch(base + '/api/floorplan', { headers: H(mgr.token) }));
-    check('new area + table appear in the plan', fpM.areas.some(a => a.id === area.id && a.tables.some(t => t.label === 'M9')), 'not found');
-    // Drag → move the table on the map.
-    r = await fetch(base + `/api/floorplan/tables/${tbl.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ pos_x: 22, pos_y: 71, shape: 'round' }) });
-    check('table can be repositioned (drag)', r.status === 200, await r.text());
-    const fpM2 = await j(await fetch(base + '/api/floorplan', { headers: H(mgr.token) }));
-    const movedT = fpM2.areas.flatMap(a => a.tables).find(t => t.id === tbl.id);
-    check('new table position persists', movedT && movedT.pos_x === 22 && movedT.pos_y === 71, JSON.stringify(movedT && { x: movedT.pos_x, y: movedT.pos_y }));
-    r = await fetch(base + `/api/floorplan/tables/${tbl.id}`, { method: 'DELETE', headers: H(mgr.token) });
-    check('manager removes a table', r.status === 200, await r.text());
-    // Front desk can view tables (to seat) but cannot edit the plan.
-    r = await fetch(base + '/api/floorplan/tables', { headers: H(host.token) });
-    check('front desk can view tables (for seating)', r.status === 200, 'status=' + r.status);
-    r = await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(host.token), body: JSON.stringify({ name: 'Nope' }) });
-    check('front desk cannot edit the floor plan (403)', r.status === 403, 'status=' + r.status);
+    // ── Table map (proxied to the Management app) ──────────────
+    // The floor plan now lives in the Management app; the Front Desk reads/seats
+    // through /api/floormap. Auth + wiring are checked here (Management isn't up
+    // during this smoke, so a proxied call returns 502 — proving it forwards).
+    r = await fetch(base + '/api/floormap');
+    check('table map requires auth (401)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/floormap', { headers: H(host.token) });
+    check('front desk table map proxies to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
   } catch (e) { fail++; console.log('  FAIL  exception: ' + e.message); }
   finally { server.close(); }
   console.log(`\n${pass} passed, ${fail} failed`);

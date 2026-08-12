@@ -487,6 +487,36 @@ function migrate() {
       created_at    TEXT DEFAULT (datetime('now'))
     );
 
+    -- Floor plan: areas + numbered tables per location, with a live seating status.
+    -- The Management "Floor Plan" tab is the editor + status; the Waitlist Front Desk
+    -- reads/seats through this (via a service key) so both apps share one source.
+    CREATE TABLE IF NOT EXISTS floor_areas (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      name        TEXT NOT NULL,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS restaurant_tables (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id   INTEGER NOT NULL REFERENCES locations(id),
+      area_id       INTEGER REFERENCES floor_areas(id),
+      label         TEXT NOT NULL,
+      seats         INTEGER NOT NULL DEFAULT 2,
+      is_active     INTEGER NOT NULL DEFAULT 1,
+      sort_order    INTEGER NOT NULL DEFAULT 0,
+      pos_x         INTEGER NOT NULL DEFAULT 50,
+      pos_y         INTEGER NOT NULL DEFAULT 50,
+      shape         TEXT NOT NULL DEFAULT 'round',
+      status        TEXT NOT NULL DEFAULT 'available', -- available|waiting_to_order|served|waiting_to_pay|cleaning
+      guest_name    TEXT,
+      party_size    INTEGER,
+      seated_at     TEXT,
+      est_free_at   TEXT,
+      created_at    TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_tables_loc ON restaurant_tables(location_id);
+
     -- Weekly staff schedule — one row per staff member per working day per location.
     -- A person can have shifts at different locations on different days.
     CREATE TABLE IF NOT EXISTS shifts (
@@ -539,6 +569,7 @@ function migrate() {
     `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
     `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
     `ALTER TABLE task_assignments ADD COLUMN task_time TEXT`,
+    `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
     `ALTER TABLE users ADD COLUMN employee_code TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 

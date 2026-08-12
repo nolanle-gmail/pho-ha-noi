@@ -455,6 +455,41 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/timeclock/payroll?location_id=${loc2}`, { headers: H(mgr.token) });
     check('manager blocked from another location payroll (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Floor plan (shared with the Waitlist Front Desk) ───────────────────
+    const svc = (extra) => ({ 'Content-Type': 'application/json', 'X-Service-Key': 'dev-floorplan-key', ...(extra || {}) });
+    const fp = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(mgr.token) }));
+    check('floor plan: areas + tables + status + outline', Array.isArray(fp.areas) && fp.areas.some(a => a.tables.length) && Array.isArray(fp.room_outline) && fp.summary.tables > 0 && fp.can_edit === true, JSON.stringify(fp.summary));
+    const aTable = fp.areas.flatMap(a => a.tables).find(t => t.status === 'available');
+    r = await fetch(base + `/api/floorplan/tables/${aTable.id}/seat`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ guest_name: 'Kim', party_size: 3 }) });
+    check('seat a guest → table occupied', r.status === 200, await r.text());
+    const fp2 = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const seated = fp2.areas.flatMap(a => a.tables).find(t => t.id === aTable.id);
+    check('seated table shows status + ETA', seated.status === 'waiting_to_order' && seated.occupied === true && seated.minutes_to_free > 0 && fp2.summary.occupied >= 1, JSON.stringify({ s: seated.status, m: seated.minutes_to_free }));
+    r = await fetch(base + `/api/floorplan/tables/${aTable.id}/seat`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ guest_name: 'X' }) });
+    check('cannot seat an occupied table (409)', r.status === 409, 'status=' + r.status);
+    r = await fetch(base + `/api/floorplan/tables/${aTable.id}/status`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'waiting_to_pay' }) });
+    check('advance table status', r.status === 200, await r.text());
+    r = await fetch(base + `/api/floorplan/tables/${aTable.id}/status`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'available' }) });
+    check('free the table (back to available)', r.status === 200, await r.text());
+    // Layout editing — manager own location; RBAC.
+    const fArea = await j(await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Mezzanine' }) }));
+    check('manager adds a floor area', fArea.success === true && !!fArea.id, JSON.stringify(fArea));
+    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, outline: [{ x: 5, y: 5 }, { x: 95, y: 5 }, { x: 95, y: 95 }, { x: 5, y: 95 }] }) });
+    check('manager reshapes the room', r.status === 200, await r.text());
+    r = await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from floor plan (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/floorplan?location_id=${loc2}`, { headers: H(mgr.token) });
+    check('manager blocked from another location floor plan (403)', r.status === 403, 'status=' + r.status);
+    // Waitlist service key: can view + seat, cannot edit layout.
+    r = await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: svc() });
+    const svcFp = await j(r);
+    check('service key can view the floor plan', r.status === 200 && svcFp.can_edit === false, 'status=' + r.status);
+    const aTable2 = svcFp.areas.flatMap(a => a.tables).find(t => t.status === 'available');
+    r = await fetch(base + `/api/floorplan/tables/${aTable2.id}/seat`, { method: 'PUT', headers: svc(), body: JSON.stringify({ guest_name: 'FrontDesk', party_size: 2 }) });
+    check('service key can seat a guest', r.status === 200, await r.text());
+    r = await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: svc(), body: JSON.stringify({ location_id: loc1, name: 'Nope' }) });
+    check('service key cannot edit layout (403)', r.status === 403, 'status=' + r.status);
+
     // ── Additional access levels ───────────────────────────────
     const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));

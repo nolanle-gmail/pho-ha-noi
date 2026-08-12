@@ -383,3 +383,27 @@ tr:hover .order-hover { opacity: 1; }
 .seg-btn { flex: 1; border: none; background: transparent; padding: .5rem; border-radius: 8px; font-weight: 700; font-size: .85rem; color: var(--muted); }
 .seg-btn.active { background: #fff; color: var(--red); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 .modal { max-height: 90vh; overflow-y: auto; }
+
+/* Floor plan — visual board (status view + editor) */
+.fp-legend { display: flex; flex-wrap: wrap; gap: .5rem; margin: .5rem 0 .4rem; }
+.fp-leg { display: inline-flex; align-items: center; gap: .35rem; font-size: .8rem; font-weight: 600; background: #f3f3f5; border: 1px solid transparent; border-radius: 999px; padding: .2rem .6rem; color: #333; }
+.fp-leg.ed { cursor: pointer; } .fp-leg.ed:hover { border-color: #d5d0c8; }
+.fp-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.fp-leg-n { color: var(--muted); font-weight: 400; }
+.floor-board { position: relative; width: 100%; padding-bottom: 58%; background-color: #faf8f5;
+  background-image: linear-gradient(#0000000a 1px, transparent 1px), linear-gradient(90deg, #0000000a 1px, transparent 1px);
+  background-size: 5% 8.333%, 5% 8.333%; border: 1px solid #e4ded5; border-radius: 14px; overflow: hidden; touch-action: none; }
+.floor-board .ftable { position: absolute; transform: translate(-50%, -50%); width: clamp(36px, 8.4%, 60px); aspect-ratio: 1; z-index: 2;
+  border-radius: 50%; background: var(--abg, #fff); border: 2px solid var(--ac, #2b5bd7); color: var(--ac, #2b5bd7);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 3px #0002; user-select: none; cursor: pointer; }
+.floor-board .ftable.sq { border-radius: 9px; }
+.ftable-l { font-size: .8rem; font-weight: 800; }
+.ftable-s { font-size: .56rem; font-weight: 600; opacity: .75; margin-top: 1px; }
+.floor-board.editable .ftable { cursor: grab; }
+.ftable.drag { cursor: grabbing; box-shadow: 0 8px 18px #0003; z-index: 6; }
+.ftable.off { opacity: .4; }
+.room-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.room-svg polygon { fill: #ffffff55; stroke: #9c8f7a; stroke-width: 3; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.room-vtx { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--red); cursor: grab; z-index: 5; box-shadow: 0 1px 3px #0003; touch-action: none; }
+.room-vtx.drag { transform: translate(-50%, -50%) scale(1.15); }
+.floor-board.roomedit .ftable { opacity: .45; pointer-events: none; }

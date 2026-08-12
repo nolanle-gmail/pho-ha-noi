@@ -976,7 +976,7 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['equipment', 'Equipment']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment']];
 function renderLocDetailTabs() {
   $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -990,7 +990,7 @@ async function renderLocDetail() {
     </div>
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, equipment: renderLocEquipment }[S.locTab])();
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, floorplan: renderLocFloorPlan, equipment: renderLocEquipment }[S.locTab])();
 }
 
 function renderLocInfo(loc) {
@@ -1616,6 +1616,139 @@ function exportPayrollCSV(pr) {
   toast(`Exported ${pr.staff.length} staff to CSV`);
 }
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ── Floor Plan — live table status + layout editor (owner/admin/GM/manager) ──
+const TABLE_STATUS = {
+  available: ['Available', '#1e7e34', '#e6f4ea'],
+  waiting_to_order: ['Waiting to order', '#2b5bd7', '#e7eefc'],
+  served: ['Served', '#0e7490', '#e0f2fe'],
+  waiting_to_pay: ['Waiting to pay', '#b4630b', '#fdecd8'],
+  cleaning: ['Cleaning up', '#6b7280', '#ededed'],
+};
+const FP_AREA_COLORS = ['#2b5bd7', '#b4630b', '#1e7e34', '#7a1420', '#6d28d9', '#0e7490', '#be185d'];
+async function renderLocFloorPlan() {
+  let fp;
+  try { fp = await api('/floorplan?location_id=' + S.locDetailId); }
+  catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const canEdit = fp.can_edit;
+  const edit = canEdit && S.fpEdit;
+  const outline = fp.room_outline || [];
+  const all = fp.areas.flatMap((a, ai) => a.tables.map(t => ({ ...t, _ci: ai })));
+  const areaOptions = (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
+  const tEl = (t) => {
+    if (edit) return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}" data-tid="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${FP_AREA_COLORS[t._ci % FP_AREA_COLORS.length]}" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+    const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+    const occ = t.status !== 'available';
+    const sub = occ ? `${t.party_size ? t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}` : `${t.seats}p`;
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') : 'available, ' + t.seats + ' seats'}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
+  };
+  const boardInner = roomSvgM(outline) + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
+  const legend = edit
+    ? `<div class="fp-legend">${fp.areas.map((a, i) => `<button class="fp-leg ed" data-area="${a.id}"><span class="fp-dot" style="background:${FP_AREA_COLORS[i % FP_AREA_COLORS.length]}"></span>${esc(a.name)} <span class="fp-leg-n">${a.tables.length}</span></button>`).join('')}</div>`
+    : `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
+  const sm = fp.summary;
+  $('locBody').innerHTML = `
+    <div class="row-between sched-head">
+      <div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div>
+      ${canEdit ? `<div style="display:flex;gap:.4rem">${edit ? `<button class="btn sm" id="fpEditRoom">${S.fpEditRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn sm ghost" id="fpAddArea">+ Area</button><button class="btn sm ghost" id="fpAddTable">+ Table</button>` : ''}<button class="btn sm ${edit ? '' : 'ghost'}" id="fpToggle">${edit ? '✓ Done editing' : '✎ Edit layout'}</button></div>` : '<span class="badge gray">View only</span>'}
+    </div>
+    ${legend}
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem;font-size:.8rem">${edit ? 'Drag tables to arrange the room; tap a table to edit; “Edit room” reshapes the walls.' : 'Tap an available table to seat a guest; tap an occupied table to change its status. Shared live with the Front Desk.'}</p>
+    <div class="floor-board${edit ? ' editable' : ''}${S.fpEditRoom && edit ? ' roomedit' : ''}" id="fpBoard">${boardInner}</div>`;
+
+  if (edit) {
+    $('fpToggle').onclick = () => { S.fpEdit = false; S.fpEditRoom = false; renderLocFloorPlan(); };
+    $('fpEditRoom').onclick = () => { S.fpEditRoom = !S.fpEditRoom; renderLocFloorPlan(); };
+    $('fpAddArea').onclick = () => modal('Add area', [{ key: 'name', label: 'Area name', placeholder: 'e.g. Patio' }], async (v) => { await api('/floorplan/areas', { method: 'POST', body: JSON.stringify({ location_id: S.locDetailId, name: v.name }) }); toast('Area added'); renderLocFloorPlan(); }, 'Add');
+    $('fpAddTable').onclick = () => { if (!fp.areas.length) return toast('Add an area first.', true); openFpTableModal(null, areaOptions); };
+    $('locBody').querySelectorAll('[data-area]').forEach(b => b.onclick = () => openFpAreaModal(fp.areas.find(a => String(a.id) === String(b.dataset.area))));
+    if (S.fpEditRoom) wireFpRoom(outline); else wireFpDrag();
+  } else if (canEdit || true) {
+    $('fpToggle') && ($('fpToggle').onclick = () => { S.fpEdit = true; renderLocFloorPlan(); });
+    $('locBody').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
+      const t = all.find(x => String(x.id) === String(el.dataset.tbl));
+      if (t.status === 'available') openSeatModal(t); else openTableStatusModal(t);
+    });
+  }
+}
+function roomSvgM(outline) {
+  if (!Array.isArray(outline) || outline.length < 3) return '';
+  return `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${outline.map(p => `${p.x},${p.y}`).join(' ')}"/></svg>`;
+}
+function openSeatModal(t) {
+  modal(`Seat at table ${t.label}`, [{ key: 'guest_name', label: 'Guest name (optional)', value: '' }, { key: 'party_size', label: `Party size (table seats ${t.seats})`, type: 'number', value: Math.min(t.seats, 2) }],
+    async (v) => { await api(`/floorplan/tables/${t.id}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: v.guest_name, party_size: v.party_size }) }); toast(`Seated at ${t.label}`); renderLocFloorPlan(); }, 'Seat');
+}
+function openTableStatusModal(t) {
+  const host = $('modalHost');
+  const [lbl] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const btns = [['waiting_to_order', 'Waiting to order'], ['served', 'Served'], ['waiting_to_pay', 'Waiting to pay'], ['cleaning', 'Cleaning up']]
+    .map(([k, l]) => `<button class="btn sm ${t.status === k ? '' : 'ghost'}" data-st="${k}" style="justify-content:flex-start">${t.status === k ? '● ' : ''}${l}</button>`).join('');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Table ${esc(t.label)} — ${lbl}</h3>
+    <p class="sub" style="margin:.1rem 0 .6rem">${t.guest_name ? esc(t.guest_name) + ' · ' : ''}${t.party_size ? t.party_size + ' guests · ' : ''}${t.minutes_to_free != null ? 'free in ~' + t.minutes_to_free + ' min' : ''}</p>
+    <div style="display:grid;gap:.4rem">${btns}</div>
+    <div class="actions"><button class="btn ghost" id="mCancel">Close</button><button class="btn" id="fpFree">✓ Free the table</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const setStatus = async (s) => { try { await api(`/floorplan/tables/${t.id}/status`, { method: 'PUT', body: JSON.stringify({ status: s }) }); toast('Status updated'); close(); renderLocFloorPlan(); } catch (e) { toast(e.message, true); } };
+  host.querySelectorAll('[data-st]').forEach(b => b.onclick = () => setStatus(b.dataset.st));
+  $('fpFree').onclick = () => setStatus('available');
+}
+function openFpAreaModal(a) {
+  const host = $('modalHost');
+  modal(`Area — ${a.name}`, [{ key: 'name', label: 'Area name', value: a.name }], async (v) => { await api('/floorplan/areas/' + a.id, { method: 'PUT', body: JSON.stringify({ name: v.name }) }); toast('Area updated'); renderLocFloorPlan(); }, 'Save');
+  const btn = document.createElement('button'); btn.className = 'btn ghost'; btn.style.cssText = 'margin-top:.5rem;color:var(--red)'; btn.textContent = `Remove area & its ${a.tables.length} tables`;
+  host.querySelector('.modal .actions').before(btn);
+  btn.onclick = async () => { try { await api('/floorplan/areas/' + a.id, { method: 'DELETE' }); toast('Area removed'); renderLocFloorPlan(); } catch (e) { toast(e.message, true); } };
+}
+function openFpTableModal(t, areaOptions) {
+  const fields = [
+    { key: 'label', label: 'Table label', value: t ? t.label : '', placeholder: 'e.g. 13' },
+    { key: 'seats', label: 'Seats', type: 'number', value: t ? t.seats : 4 },
+    { key: 'shape', label: 'Shape', type: 'select', value: t ? t.shape : 'round', options: [{ value: 'round', label: 'Round' }, { value: 'square', label: 'Square' }] },
+    { key: 'area_id', label: 'Area', type: 'select', value: t ? t.area_id : '', options: [] },
+  ];
+  const host = $('modalHost');
+  modal(t ? `Table ${t.label}` : 'Add table', fields, async (v) => {
+    if (t) await api('/floorplan/tables/' + t.id, { method: 'PUT', body: JSON.stringify(v) });
+    else await api('/floorplan/tables', { method: 'POST', body: JSON.stringify({ ...v, location_id: S.locDetailId }) });
+    toast(t ? 'Table updated' : 'Table added'); renderLocFloorPlan();
+  }, t ? 'Save' : 'Add');
+  // fill the area select options (modal helper doesn't build them from html string)
+  const areaSel = host.querySelector('[data-k="area_id"]'); if (areaSel) areaSel.innerHTML = areaOptions(t ? t.area_id : '');
+  if (t) { const rm = document.createElement('button'); rm.className = 'btn ghost'; rm.style.cssText = 'margin-top:.5rem;color:var(--red)'; rm.textContent = 'Remove table'; host.querySelector('.modal .actions').before(rm); rm.onclick = async () => { try { await api('/floorplan/tables/' + t.id, { method: 'DELETE' }); toast('Table removed'); renderLocFloorPlan(); } catch (e) { toast(e.message, true); } }; }
+}
+function wireFpDrag() {
+  const board = $('fpBoard');
+  board.querySelectorAll('.ftable').forEach(el => el.onpointerdown = (e) => {
+    e.preventDefault(); const rect = board.getBoundingClientRect(); const sx = e.clientX, sy = e.clientY; let moved = false, px, py;
+    el.setPointerCapture(e.pointerId); el.classList.add('drag');
+    const onMove = (ev) => { if (Math.abs(ev.clientX - sx) > 3 || Math.abs(ev.clientY - sy) > 3) moved = true; px = Math.max(2, Math.min(98, Math.round((ev.clientX - rect.left) / rect.width * 100))); py = Math.max(2, Math.min(98, Math.round((ev.clientY - rect.top) / rect.height * 100))); el.style.left = px + '%'; el.style.top = py + '%'; };
+    const onUp = async () => { el.classList.remove('drag'); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp);
+      if (moved && px != null) { try { await api('/floorplan/tables/' + el.dataset.tid, { method: 'PUT', body: JSON.stringify({ pos_x: px, pos_y: py }) }); } catch (err) { toast(err.message, true); } }
+      else { const a = []; renderFpTableEdit(el.dataset.tid); } };
+    el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
+  });
+}
+async function renderFpTableEdit(tid) {
+  const fp = await api('/floorplan?location_id=' + S.locDetailId);
+  const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(tid));
+  if (t) openFpTableModal(t, (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join(''));
+}
+function wireFpRoom(outline) {
+  const board = $('fpBoard'); const poly = board.querySelector('.room-svg polygon');
+  const setPoly = () => poly && poly.setAttribute('points', outline.map(p => `${p.x},${p.y}`).join(' '));
+  const save = async () => { try { await api('/floorplan/room', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, outline }) }); } catch (e) { toast(e.message, true); } };
+  board.querySelectorAll('.room-vtx').forEach(el => el.onpointerdown = (e) => {
+    e.preventDefault(); const rect = board.getBoundingClientRect(); const i = +el.dataset.vi; const sx = e.clientX, sy = e.clientY; let moved = false, px, py;
+    el.setPointerCapture(e.pointerId); el.classList.add('drag');
+    const onMove = (ev) => { if (Math.abs(ev.clientX - sx) > 3 || Math.abs(ev.clientY - sy) > 3) moved = true; px = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100))); py = Math.max(0, Math.min(100, Math.round((ev.clientY - rect.top) / rect.height * 100))); el.style.left = px + '%'; el.style.top = py + '%'; outline[i] = { x: px, y: py }; setPoly(); };
+    const onUp = async () => { el.classList.remove('drag'); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp);
+      if (moved) await save(); else if (outline.length > 3) { outline.splice(i, 1); await save(); renderLocFloorPlan(); } else toast('A room needs 3+ corners.', true); };
+    el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
+  });
+}
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };
 function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }

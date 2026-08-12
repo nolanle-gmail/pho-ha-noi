@@ -83,9 +83,8 @@ function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
   let items;
-  if (role === 'owner') items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log'], ['floorplan', '🍽️ Floor Plan']];
-  else if (role === 'manager') items = [['board', '🍜 Front Desk'], ['floorplan', '🍽️ Floor Plan']];
-  else { nav.classList.add('hidden'); nav.innerHTML = ''; return; }
+  if (role === 'owner') items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
+  else items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map']];
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
@@ -96,116 +95,70 @@ function render() {
   if (S.view === 'history') return renderHistory();
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
-  if (S.view === 'floorplan') return renderFloorPlan();
+  if (S.view === 'tables') return renderTables();
   return renderBoard();
 }
 
-async function renderFloorPlan() {
-  let fp;
-  try { fp = await api(q('/floorplan')); } catch (e) { $('view').innerHTML = `<p class="sub" style="color:var(--red)">${esc(e.message)}</p>`; return; }
-  const canEdit = fp.can_edit;
-  const totalT = fp.areas.reduce((n, a) => n + a.tables.length, 0);
-  const outline = fp.room_outline || [];
-  const editRoom = canEdit && S.editRoom;
-  const tablesHtml = fp.areas.map((a, ai) => a.tables.map(t => ftableEl(t, ai, canEdit && !editRoom ? 'edit' : null)).join('')).join('');
-  const vtxHtml = editRoom ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '';
-  $('view').innerHTML = `
-    <div class="row-between"><h2 style="margin:0">Floor Plan <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${fp.areas.length} areas · ${totalT} tables</span></h2>
-      ${canEdit ? `<div style="display:flex;gap:.4rem"><button class="btn ${editRoom ? '' : 'ghost'}" id="editRoom">${editRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn ghost" id="addArea">+ Area</button><button class="btn" id="addTable">+ Table</button></div>` : '<span class="badge">View only</span>'}</div>
-    <div class="fp-legend">${fpLegend(fp.areas, canEdit && !editRoom)}</div>
-    ${editRoom ? `<div class="fp-hint" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">Drag the corners to shape the room. Tap a corner to remove it.<button class="btn ghost sm" id="addCorner">+ Corner</button><button class="btn ghost sm" id="resetRoom">Reset shape</button></div>`
-    : canEdit ? '<p class="fp-hint">Drag tables to arrange the room. Tap a table to edit; tap an area chip to rename. Use “Edit room” to reshape the walls.</p>' : '<p class="fp-hint">This map is used by the Front Desk to seat guests.</p>'}
-    <div class="floor-board${canEdit && !editRoom ? ' editable' : ''}${editRoom ? ' roomedit' : ''}" id="floorBoard">${roomSvg(outline)}${vtxHtml}${tablesHtml || '<div class="fp-empty">No tables yet — add one to start.</div>'}</div>`;
-  if (!canEdit) return;
-  $('editRoom').onclick = () => { S.editRoom = !S.editRoom; renderFloorPlan(); };
-  if (editRoom) { wireRoomEdit(outline); return; }
-  const areaOptions = (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
-  $('addArea').onclick = () => modal('Add area', `<label>Area name</label><input id="aName" placeholder="e.g. Patio" />`,
-    async () => { await api('/floorplan/areas', { method: 'POST', body: JSON.stringify({ location_id: S.loc, name: $('aName').value.trim() }) }); toast('Area added'); render(); }, 'Add');
-  $('addTable').onclick = () => {
-    if (!fp.areas.length) return toast('Add an area first.', true);
-    modal('Add table', `<label>Table label</label><input id="tLabel" placeholder="e.g. 13 or P9" /><label>Seats</label><input id="tSeats" type="number" min="1" max="50" value="4" /><label>Shape</label><select id="tShape"><option value="round">Round</option><option value="square">Square</option></select><label>Area</label><select id="tArea">${areaOptions()}</select>`,
-      async () => { await api('/floorplan/tables', { method: 'POST', body: JSON.stringify({ location_id: S.loc, area_id: $('tArea').value, label: $('tLabel').value.trim(), seats: $('tSeats').value, shape: $('tShape').value }) }); toast('Table added'); render(); }, 'Add');
-  };
-  // Area chips → rename / remove.
-  $('view').querySelectorAll('[data-area]').forEach(b => b.onclick = () => {
-    const a = fp.areas.find(x => String(x.id) === String(b.dataset.area));
-    modal(`Area — ${a.name}`, `<label>Area name</label><input id="aName" value="${esc(a.name)}" /><button class="btn ghost" id="aRemove" style="margin-top:.6rem;color:var(--red)">Remove area & its ${a.tables.length} tables</button>`,
-      async () => { await api('/floorplan/areas/' + a.id, { method: 'PUT', body: JSON.stringify({ name: $('aName').value.trim() }) }); toast('Area updated'); render(); }, 'Save');
-    $('aRemove').onclick = async () => { try { await api('/floorplan/areas/' + a.id, { method: 'DELETE' }); toast('Area removed'); render(); } catch (e) { toast(e.message, true); } };
-  });
-  // Drag tables to reposition; a tap (no drag) opens the table editor.
-  const board = $('floorBoard');
-  board.querySelectorAll('.ftable').forEach(el => el.onpointerdown = (e) => {
-    e.preventDefault();
-    const rect = board.getBoundingClientRect();
-    const sx = e.clientX, sy = e.clientY; let moved = false, px, py;
-    el.setPointerCapture(e.pointerId); el.classList.add('drag');
-    const onMove = (ev) => {
-      if (Math.abs(ev.clientX - sx) > 3 || Math.abs(ev.clientY - sy) > 3) moved = true;
-      px = Math.max(2, Math.min(98, Math.round((ev.clientX - rect.left) / rect.width * 100)));
-      py = Math.max(2, Math.min(98, Math.round((ev.clientY - rect.top) / rect.height * 100)));
-      el.style.left = px + '%'; el.style.top = py + '%';
-    };
-    const onUp = async () => {
-      el.classList.remove('drag');
-      el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp);
-      if (moved && px != null) { try { await api('/floorplan/tables/' + el.dataset.tid, { method: 'PUT', body: JSON.stringify({ pos_x: px, pos_y: py }) }); } catch (err) { toast(err.message, true); render(); } }
-      else openTableEdit(fp, el.dataset.tid, areaOptions);
-    };
-    el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
-  });
+// ── Live table map (status is the source of truth in the Management app) ──────
+const TABLE_STATUS = {
+  available: ['Available', '#16a34a', '#dcfce7'],
+  waiting_to_order: ['Waiting to order', '#2b5bd7', '#e7eefc'],
+  served: ['Served', '#0e7490', '#e0f2fe'],
+  waiting_to_pay: ['Waiting to pay', '#b4630b', '#fdecd8'],
+  cleaning: ['Cleaning up', '#6b7280', '#ededed'],
+};
+function statusTableEl(t) {
+  const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const occ = t.status !== 'available';
+  const sub = occ ? `${t.party_size ? t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}` : `${t.seats}p`;
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') : 'available, ' + t.seats + ' seats'}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
 }
-function openTableEdit(fp, tid, areaOptions) {
-  const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(tid));
-  if (!t) return;
-  modal(`Table ${t.label}`, `<label>Label</label><input id="tLabel" value="${esc(t.label)}" />
-    <label>Seats</label><input id="tSeats" type="number" min="1" max="50" value="${t.seats}" />
-    <label>Shape</label><select id="tShape"><option value="round" ${t.shape !== 'square' ? 'selected' : ''}>Round</option><option value="square" ${t.shape === 'square' ? 'selected' : ''}>Square</option></select>
-    <label>Area</label><select id="tArea">${areaOptions(t.area_id)}</select>
-    <button class="btn ghost" id="tRemove" style="margin-top:.6rem;color:var(--red)">Remove table</button>`,
-    async () => { await api('/floorplan/tables/' + t.id, { method: 'PUT', body: JSON.stringify({ label: $('tLabel').value.trim(), seats: $('tSeats').value, shape: $('tShape').value, area_id: $('tArea').value }) }); toast('Table updated'); render(); }, 'Save');
-  $('tRemove').onclick = async () => { try { await api('/floorplan/tables/' + t.id, { method: 'DELETE' }); toast('Table removed'); render(); } catch (e) { toast(e.message, true); } };
+function fpBoardHtml(fp) {
+  const all = fp.areas.flatMap(a => a.tables);
+  return `${roomSvg(fp.room_outline)}${all.map(statusTableEl).join('') || '<div class="fp-empty">No tables set up \u2014 add them in the Management app.</div>'}`;
+}
+function statusLegend(fp) {
+  const all = fp.areas.flatMap(a => a.tables);
+  return `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
 }
 
-async function saveRoom(outline) {
-  try { await api('/floorplan/room', { method: 'PUT', body: JSON.stringify({ location_id: S.loc, outline }) }); }
-  catch (e) { toast(e.message, true); }
-}
-function wireRoomEdit(outline) {
-  const board = $('floorBoard');
-  const poly = board.querySelector('.room-svg polygon');
-  const setPoly = () => poly && poly.setAttribute('points', outline.map(p => `${p.x},${p.y}`).join(' '));
-  board.querySelectorAll('.room-vtx').forEach(el => el.onpointerdown = (e) => {
-    e.preventDefault();
-    const rect = board.getBoundingClientRect(); const i = +el.dataset.vi;
-    const sx = e.clientX, sy = e.clientY; let moved = false, px, py;
-    el.setPointerCapture(e.pointerId); el.classList.add('drag');
-    const onMove = (ev) => {
-      if (Math.abs(ev.clientX - sx) > 3 || Math.abs(ev.clientY - sy) > 3) moved = true;
-      px = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100)));
-      py = Math.max(0, Math.min(100, Math.round((ev.clientY - rect.top) / rect.height * 100)));
-      el.style.left = px + '%'; el.style.top = py + '%'; outline[i] = { x: px, y: py }; setPoly();
-    };
-    const onUp = async () => {
-      el.classList.remove('drag'); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp);
-      if (moved) await saveRoom(outline);
-      else if (outline.length > 3) { outline.splice(i, 1); await saveRoom(outline); renderFloorPlan(); }
-      else toast('A room needs at least 3 corners.', true);
-    };
-    el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
+// The Table Map view (Front Desk): live status, tap to seat / change status.
+async function renderTables() {
+  let fp;
+  try { fp = await api(q('/floormap')); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const sm = fp.summary || { available: 0, occupied: 0, tables: 0 };
+  $('view').innerHTML = `
+    <div class="section-head"><h2>Table Map</h2>
+      <div><span class="badge seated">${sm.available} available</span> <span class="badge ${sm.occupied ? 'waiting' : 'left'}">${sm.occupied} occupied</span></div></div>
+    ${statusLegend(fp)}
+    <p class="sub" style="margin:.1rem 0 .6rem">Tap an available table to seat a guest; tap an occupied table to change its status.</p>
+    <div class="floor-board" id="fpBoard">${fpBoardHtml(fp)}</div>`;
+  $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
+    const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(el.dataset.tbl));
+    if (t.status === 'available') seatAtTable(t.id, t.label, t.seats, () => renderTables());
+    else tableStatusModal(t, () => renderTables());
   });
-  $('addCorner').onclick = async () => {
-    let bi = 0, bd = -1;
-    for (let i = 0; i < outline.length; i++) {
-      const a = outline[i], b = outline[(i + 1) % outline.length];
-      const d = Math.hypot(a.x - b.x, a.y - b.y); if (d > bd) { bd = d; bi = i; }
-    }
-    const a = outline[bi], b = outline[(bi + 1) % outline.length];
-    outline.splice(bi + 1, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
-    await saveRoom(outline); renderFloorPlan();
-  };
-  $('resetRoom').onclick = async () => { await saveRoom([{ x: 3, y: 4 }, { x: 97, y: 4 }, { x: 97, y: 96 }, { x: 3, y: 96 }]); renderFloorPlan(); };
+}
+// Seat directly at a chosen table (no waiting-list party).
+function seatAtTable(tid, label, seats, after) {
+  modal(`Seat at table ${label}`, `<label>Guest name (optional)</label><input id="fGuest" placeholder="Name" /><label>Party size</label><input id="fSize" type="number" min="1" max="${seats}" value="${Math.min(seats, 2)}" />`,
+    async () => { await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: $('fGuest').value.trim(), party_size: $('fSize').value }) }); toast(`Seated at ${label}`); after(); }, 'Seat');
+}
+function tableStatusModal(t, after) {
+  const host = $('modalHost');
+  const [lbl] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const btns = [['waiting_to_order', 'Waiting to order'], ['served', 'Served'], ['waiting_to_pay', 'Waiting to pay'], ['cleaning', 'Cleaning up']]
+    .map(([k, l]) => `<button class="btn ${t.status === k ? '' : 'ghost'}" data-st="${k}" style="justify-content:flex-start">${t.status === k ? '\u25cf ' : ''}${l}</button>`).join('');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Table ${esc(t.label)} \u2014 ${lbl}</h3>
+    <p class="sub" style="margin:.1rem 0 .6rem">${t.guest_name ? esc(t.guest_name) + ' \u00b7 ' : ''}${t.party_size ? t.party_size + ' guests \u00b7 ' : ''}${t.minutes_to_free != null ? 'free in ~' + t.minutes_to_free + ' min' : ''}</p>
+    <div style="display:grid;gap:.4rem">${btns}</div>
+    <div class="actions"><button class="btn ghost" id="mCancel">Close</button><button class="btn green" id="fpFree">\u2713 Free the table</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const set = async (s) => { try { await api(`/floormap/tables/${t.id}/status`, { method: 'PUT', body: JSON.stringify({ status: s }) }); toast('Updated'); close(); after(); } catch (e) { toast(e.message, true); } };
+  host.querySelectorAll('[data-st]').forEach(b => b.onclick = () => set(b.dataset.st));
+  $('fpFree').onclick = () => set('available');
 }
 
 let activityFilter = 'all';
@@ -289,27 +242,31 @@ function ftableEl(t, ci, mode) {
 }
 
 // Seat a party by tapping a table on the floor map (occupied tables are greyed).
+// Seat a waiting party: pick a free table on the live map → mark it occupied
+// (in the Management floor plan) and mark the party seated at that table.
 async function seatModal(id, name) {
   let fp;
-  try { fp = await api(q('/floorplan/tables')); } catch { fp = { areas: [] }; }
-  const areas = (fp.areas || []).filter(a => a.tables.length);
-  const tablesHtml = areas.map((a, ai) => a.tables.map(t => ftableEl(t, ai, 'pick')).join('')).join('');
-  const body = `<p class="sub" style="margin:.1rem 0 .5rem;color:var(--muted)">Tap a table for <strong>${esc(name)}</strong>. Grey tables are occupied.</p>
-    <div class="fp-legend sm">${fpLegend(areas, false)}</div>
-    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No floor plan set up for this location yet.</div>'}</div>
-    <label style="margin-top:.6rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="selName">none</strong> — or type another <input id="fTable" placeholder="e.g. 12" style="max-width:130px;display:inline-block" /></label>
-    <input type="hidden" id="fSel" />`;
+  try { fp = await api(q('/floormap')); } catch { fp = { areas: [] }; }
+  const tablesHtml = fp.areas.flatMap(a => a.tables).map(t => {
+    if (t.status !== 'available') return statusTableEl(t); // occupied → shown greyed, not pickable
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+  }).join('');
+  const body = `<p class="sub" style="margin:.1rem 0 .5rem">Tap a free (green) table for <strong>${esc(name)}</strong>.</p>
+    ${statusLegend(fp)}
+    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
+    <label style="margin-top:.5rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="selName">none</strong></label>
+    <input type="hidden" id="fSel" /><input type="hidden" id="fSelLabel" />`;
   modal(`Seat ${name}`, body, async () => {
-    const sel = ($('fSel').value || $('fTable').value.trim()) || null;
-    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: sel }) });
-    toast(`${name} seated${sel ? ' at ' + sel : ''}`); render();
+    const tid = $('fSel').value, label = $('fSelLabel').value;
+    if (tid) await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2 }) });
+    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });
+    toast(`${name} seated${label ? ' at ' + label : ''}`); render();
   }, 'Seat party');
   const host = $('modalHost');
   host.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => {
     host.querySelectorAll('.ftable').forEach(x => x.classList.remove('sel'));
-    el.classList.add('sel'); $('fSel').value = el.dataset.pick; $('selName').textContent = el.dataset.pick; $('fTable').value = '';
+    el.classList.add('sel'); $('fSel').value = el.dataset.pick; $('fSelLabel').value = el.dataset.label; $('selName').textContent = el.dataset.label;
   });
-  host.querySelector('#fTable').oninput = (e) => { host.querySelectorAll('.ftable').forEach(x => x.classList.remove('sel')); $('fSel').value = ''; $('selName').textContent = e.target.value.trim() || 'none'; };
 }
 
 const ACTION_LABEL = {

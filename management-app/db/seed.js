@@ -435,6 +435,7 @@ function run() {
 
   // Per-location day-task lists (restaurants share the common set; CK has its own).
   seedLocationTasks(db, locIds, ckId);
+  seedFloorPlan(db, locIds);
 
   // Login employee codes: reuse the HR profile code where present, else generate one.
   db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
@@ -696,6 +697,35 @@ function seedLocationTasks(db, restaurantLocIds, ckId) {
   restaurantLocIds.forEach(lid => enable(lid, RESTAURANT));
   if (ckId) enable(ckId, CK_TASKS);
   console.log(`Seeded location task lists: ${RESTAURANT.length} restaurant tasks × ${restaurantLocIds.length} restaurants, ${CK_TASKS.length} CK tasks.`);
+}
+
+// Default floor plan per location: areas laid out on the visual map, plus a room
+// outline (a rectangle with an entrance notch). Tables start 'available'.
+function seedFloorPlan(db, locIds) {
+  const ROOM = JSON.stringify([{ x: 3, y: 4 }, { x: 97, y: 4 }, { x: 97, y: 96 }, { x: 58, y: 96 }, { x: 58, y: 90 }, { x: 42, y: 90 }, { x: 42, y: 96 }, { x: 3, y: 96 }]);
+  const insArea = db.prepare(`INSERT INTO floor_areas (location_id, name, sort_order) VALUES (?,?,?)`);
+  const insTable = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order, pos_x, pos_y, shape) VALUES (?,?,?,?,?,?,?,?)`);
+  const PLAN = [
+    ['Dining Room', '', 12, 4, 'round', 4, [8, 12, 46, 52]],
+    ['Bar', 'B', 6, 2, 'square', 6, [56, 10, 94, 20]],
+    ['Lounge', 'L', 4, 4, 'round', 2, [58, 34, 82, 54]],
+    ['Patio', 'P', 8, 4, 'square', 4, [10, 64, 92, 90]],
+  ];
+  let n = 0;
+  locIds.forEach((lid) => {
+    db.prepare(`UPDATE locations SET room_outline=? WHERE id=?`).run(ROOM, lid);
+    PLAN.forEach(([area, prefix, count, seats, shape, cols, box], si) => {
+      const aid = insArea.run(lid, area, si).lastInsertRowid;
+      const rows = Math.ceil(count / cols); const [x0, y0, x1, y1] = box;
+      for (let i = 0; i < count; i++) {
+        const c = i % cols, r = Math.floor(i / cols);
+        const px = cols === 1 ? Math.round((x0 + x1) / 2) : Math.round(x0 + c * (x1 - x0) / (cols - 1));
+        const py = rows === 1 ? Math.round((y0 + y1) / 2) : Math.round(y0 + r * (y1 - y0) / (rows - 1));
+        insTable.run(lid, aid, `${prefix}${i + 1}`, seats, i, px, py, shape); n++;
+      }
+    });
+  });
+  console.log(`Seeded floor plan: ${n} tables across ${locIds.length} locations.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }
