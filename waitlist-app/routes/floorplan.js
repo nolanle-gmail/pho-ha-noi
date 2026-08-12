@@ -14,6 +14,7 @@ const EDIT = ['owner', 'manager'];
 // Owner may target any location (via query/body); others are pinned to their own.
 const loc = (req, fromQuery) => (req.user.role === 'owner' ? (fromQuery ? req.query.location_id : req.body.location_id) : req.user.location_id) || null;
 const ownsLoc = (req, locId) => req.user.role === 'owner' || String(req.user.location_id) === String(locId);
+const clampPos = (v, fallback) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.max(2, Math.min(98, n)) : Math.round(fallback); };
 
 // Areas + tables with live occupancy — for the Front Desk table picker.
 router.get('/tables', requireRole(...HOST), (req, res) => {
@@ -21,10 +22,10 @@ router.get('/tables', requireRole(...HOST), (req, res) => {
   if (!l) return res.status(400).json({ error: 'A location is required.' });
   if (!ownsLoc(req, l)) return res.status(403).json({ error: 'Not your location.' });
   const areas = db.prepare(`SELECT id, name FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(l);
-  const tables = db.prepare(`SELECT id, area_id, label, seats, is_active FROM restaurant_tables WHERE location_id=? AND is_active=1 ORDER BY sort_order, id`).all(l);
+  const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, pos_x, pos_y, shape FROM restaurant_tables WHERE location_id=? AND is_active=1 ORDER BY sort_order, id`).all(l);
   const occ = {};
   for (const r of db.prepare(`SELECT table_number, guest_name FROM waitlist WHERE location_id=? AND status='seated' AND date(seated_at)=date('now') AND table_number IS NOT NULL AND table_number<>''`).all(l)) occ[String(r.table_number)] = r.guest_name;
-  const mapT = (t) => ({ id: t.id, area_id: t.area_id, label: t.label, seats: t.seats, occupied: !!occ[t.label], guest: occ[t.label] || null });
+  const mapT = (t) => ({ id: t.id, area_id: t.area_id, label: t.label, seats: t.seats, pos_x: t.pos_x, pos_y: t.pos_y, shape: t.shape, occupied: !!occ[t.label], guest: occ[t.label] || null });
   const byArea = areas.map(a => ({ id: a.id, name: a.name, tables: tables.filter(t => t.area_id === a.id).map(mapT) }));
   const noArea = tables.filter(t => !t.area_id).map(mapT);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });
@@ -37,7 +38,7 @@ router.get('/', requireRole(...HOST), (req, res) => {
   if (!l) return res.status(400).json({ error: 'A location is required.' });
   if (!ownsLoc(req, l)) return res.status(403).json({ error: 'Not your location.' });
   const areas = db.prepare(`SELECT id, name, sort_order FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(l);
-  const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order FROM restaurant_tables WHERE location_id=? ORDER BY sort_order, id`).all(l);
+  const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order, pos_x, pos_y, shape FROM restaurant_tables WHERE location_id=? ORDER BY sort_order, id`).all(l);
   res.json({ location_id: Number(l), can_edit: EDIT.includes(req.user.role), areas: areas.map(a => ({ ...a, tables: tables.filter(t => t.area_id === a.id) })) });
 });
 
@@ -81,7 +82,10 @@ router.post('/tables', requireRole(...EDIT), (req, res) => {
   if (!ownsLoc(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   if (areaId) { const a = db.prepare(`SELECT location_id FROM floor_areas WHERE id=?`).get(areaId); if (!a || String(a.location_id) !== String(locId)) return res.status(400).json({ error: 'Area is not at this location.' }); }
   const sort = db.prepare(`SELECT COALESCE(MAX(sort_order)+1,0) s FROM restaurant_tables WHERE location_id=?`).get(locId).s;
-  const id = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order) VALUES (?,?,?,?,?)`).run(locId, areaId, label, seats, sort).lastInsertRowid;
+  const px = clampPos(req.body.pos_x, 50 + (Math.random() * 8 - 4));
+  const py = clampPos(req.body.pos_y, 50 + (Math.random() * 8 - 4));
+  const shape = req.body.shape === 'square' ? 'square' : 'round';
+  const id = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order, pos_x, pos_y, shape) VALUES (?,?,?,?,?,?,?,?)`).run(locId, areaId, label, seats, sort, px, py, shape).lastInsertRowid;
   auditLog(req, locId, 'table_add', id, { label, seats });
   res.json({ success: true, id });
 });
@@ -98,7 +102,10 @@ router.put('/tables/:id', requireRole(...EDIT), (req, res) => {
     areaId = req.body.area_id ? parseInt(req.body.area_id, 10) : null;
     if (areaId) { const a = db.prepare(`SELECT location_id FROM floor_areas WHERE id=?`).get(areaId); if (!a || String(a.location_id) !== String(t.location_id)) return res.status(400).json({ error: 'Area is not at this location.' }); }
   }
-  db.prepare(`UPDATE restaurant_tables SET label=?, seats=?, is_active=?, area_id=? WHERE id=?`).run(label, seats, isActive, areaId, t.id);
+  const px = req.body.pos_x !== undefined ? clampPos(req.body.pos_x, t.pos_x) : t.pos_x;
+  const py = req.body.pos_y !== undefined ? clampPos(req.body.pos_y, t.pos_y) : t.pos_y;
+  const shape = req.body.shape !== undefined ? (req.body.shape === 'square' ? 'square' : 'round') : t.shape;
+  db.prepare(`UPDATE restaurant_tables SET label=?, seats=?, is_active=?, area_id=?, pos_x=?, pos_y=?, shape=? WHERE id=?`).run(label, seats, isActive, areaId, px, py, shape, t.id);
   res.json({ success: true });
 });
 router.delete('/tables/:id', requireRole(...EDIT), (req, res) => {

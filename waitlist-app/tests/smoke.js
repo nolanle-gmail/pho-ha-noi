@@ -147,6 +147,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('floor plan seeded with areas + tables', Array.isArray(fp.areas) && fp.areas.length >= 3 && fp.areas.some(a => a.tables.length > 0), JSON.stringify((fp.areas || []).map(a => a.name)));
     const tp = await j(await fetch(base + `/api/floorplan/tables?location_id=${l1}`, { headers: H(token) }));
     check('table picker returns areas with tables + occupancy', Array.isArray(tp.areas) && tp.table_count > 0 && 'occupied_count' in tp && tp.areas[0].tables.every(t => 'occupied' in t), JSON.stringify({ n: tp.table_count }));
+    check('tables carry map positions + shape', tp.areas[0].tables.every(t => Number.isFinite(t.pos_x) && Number.isFinite(t.pos_y) && (t.shape === 'round' || t.shape === 'square')), JSON.stringify(tp.areas[0].tables[0]));
     // Manager configures their own location's plan.
     const area = await j(await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Test Mezzanine' }) }));
     check('manager adds an area', area.success === true && !!area.id, JSON.stringify(area));
@@ -154,6 +155,12 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('manager adds a table', tbl.success === true && !!tbl.id, JSON.stringify(tbl));
     const fpM = await j(await fetch(base + '/api/floorplan', { headers: H(mgr.token) }));
     check('new area + table appear in the plan', fpM.areas.some(a => a.id === area.id && a.tables.some(t => t.label === 'M9')), 'not found');
+    // Drag → move the table on the map.
+    r = await fetch(base + `/api/floorplan/tables/${tbl.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ pos_x: 22, pos_y: 71, shape: 'round' }) });
+    check('table can be repositioned (drag)', r.status === 200, await r.text());
+    const fpM2 = await j(await fetch(base + '/api/floorplan', { headers: H(mgr.token) }));
+    const movedT = fpM2.areas.flatMap(a => a.tables).find(t => t.id === tbl.id);
+    check('new table position persists', movedT && movedT.pos_x === 22 && movedT.pos_y === 71, JSON.stringify(movedT && { x: movedT.pos_x, y: movedT.pos_y }));
     r = await fetch(base + `/api/floorplan/tables/${tbl.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager removes a table', r.status === 200, await r.text());
     // Front desk can view tables (to seat) but cannot edit the plan.

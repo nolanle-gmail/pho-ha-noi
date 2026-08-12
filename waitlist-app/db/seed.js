@@ -32,23 +32,30 @@ function run() {
   const locIds = LOCATIONS.map(([name, addr, turn]) =>
     db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,?)`).run(name, addr, turn).lastInsertRowid);
 
-  // Default floor plan for every location: areas with numbered tables.
+  // Default floor plan for every location: areas with numbered tables, laid out on
+  // the visual floor map. Each area occupies a region [x0,y0 .. x1,y1] (% of board)
+  // and its tables are placed on a grid within it.
   const insArea = db.prepare(`INSERT INTO floor_areas (location_id, name, sort_order) VALUES (?,?,?)`);
-  const insTable = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order) VALUES (?,?,?,?,?)`);
-  // [area, sort, [ [labelPrefix, count, seats] ... ]]
+  const insTable = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order, pos_x, pos_y, shape) VALUES (?,?,?,?,?,?,?,?)`);
+  // [area, prefix, count, seats, shape, cols, [x0,y0,x1,y1]]
   const PLAN = [
-    ['Dining Room', 0, [['', 12, 4]]],       // 1..12
-    ['Bar', 1, [['B', 6, 2]]],               // B1..B6
-    ['Lounge', 2, [['L', 4, 4]]],            // L1..L4
-    ['Patio', 3, [['P', 8, 4]]],             // P1..P8
+    ['Dining Room', '', 12, 4, 'round', 4, [8, 12, 46, 52]],
+    ['Bar', 'B', 6, 2, 'square', 6, [56, 10, 94, 20]],
+    ['Lounge', 'L', 4, 4, 'round', 2, [58, 34, 82, 54]],
+    ['Patio', 'P', 8, 4, 'square', 4, [10, 64, 92, 90]],
   ];
   let tableCount = 0;
-  locIds.forEach((lid) => PLAN.forEach(([area, sort, groups]) => {
-    const aid = insArea.run(lid, area, sort).lastInsertRowid;
-    let n = 0;
-    groups.forEach(([prefix, count, seats]) => {
-      for (let i = 1; i <= count; i++) { insTable.run(lid, aid, `${prefix}${i}`, seats, n++); tableCount++; }
-    });
+  locIds.forEach((lid) => PLAN.forEach(([area, prefix, count, seats, shape, cols, box], si) => {
+    const aid = insArea.run(lid, area, si).lastInsertRowid;
+    const rows = Math.ceil(count / cols);
+    const [x0, y0, x1, y1] = box;
+    for (let i = 0; i < count; i++) {
+      const c = i % cols, r = Math.floor(i / cols);
+      const px = cols === 1 ? Math.round((x0 + x1) / 2) : Math.round(x0 + (c * (x1 - x0)) / (cols - 1));
+      const py = rows === 1 ? Math.round((y0 + y1) / 2) : Math.round(y0 + (r * (y1 - y0)) / (rows - 1));
+      insTable.run(lid, aid, `${prefix}${i + 1}`, seats, i, px, py, shape);
+      tableCount++;
+    }
   }));
 
   const hash = (p) => bcrypt.hashSync(p, 10);

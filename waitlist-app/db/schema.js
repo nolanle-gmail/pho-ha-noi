@@ -96,6 +96,9 @@ function migrate() {
       seats       INTEGER NOT NULL DEFAULT 2,
       is_active   INTEGER NOT NULL DEFAULT 1,
       sort_order  INTEGER NOT NULL DEFAULT 0,
+      pos_x       INTEGER NOT NULL DEFAULT 50,  -- % of board width  (0–100)
+      pos_y       INTEGER NOT NULL DEFAULT 50,  -- % of board height (0–100)
+      shape       TEXT NOT NULL DEFAULT 'round',-- 'round' | 'square'
       created_at  TEXT DEFAULT (datetime('now'))
     );
 
@@ -109,6 +112,9 @@ function migrate() {
   for (const stmt of [
     `ALTER TABLE waitlist ADD COLUMN source TEXT NOT NULL DEFAULT 'staff'`,
     `ALTER TABLE waitlist ADD COLUMN public_ref TEXT`,
+    `ALTER TABLE restaurant_tables ADD COLUMN pos_x INTEGER NOT NULL DEFAULT 50`,
+    `ALTER TABLE restaurant_tables ADD COLUMN pos_y INTEGER NOT NULL DEFAULT 50`,
+    `ALTER TABLE restaurant_tables ADD COLUMN shape TEXT NOT NULL DEFAULT 'round'`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 
