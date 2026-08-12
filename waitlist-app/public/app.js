@@ -110,8 +110,9 @@ const TABLE_STATUS = {
 function statusTableEl(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
-  const sub = occ ? `${t.party_size ? t.party_size + 'p' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}` : `${t.seats}p`;
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') : 'available, ' + t.seats + ' seats'}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
+  const sub = occ ? `${t.party_size ? t.party_size + '\u{1F464}' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
+  const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') : 'available, ' + t.seats + ' seats';
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
 }
 function fpBoardHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
