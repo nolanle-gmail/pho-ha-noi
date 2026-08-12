@@ -138,9 +138,13 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
 // Overtime is derived from clocked hours per California's daily rule:
 //   regular ≤ 8h/day, overtime (1.5×) for 8–12h/day, double-time (2×) beyond 12h/day.
 const OT_AFTER_MIN = 8 * 60, DT_AFTER_MIN = 12 * 60, OT_MULT = 1.5, DT_MULT = 2;
+const OT_EDIT_ROLES = ['owner', 'admin', 'general_manager']; // may change approved OT later
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const mondayOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const round2 = (n) => Math.round(n * 100) / 100;
+// California daily split of a day's clocked minutes.
+const daySplit = (m) => ({ reg: Math.min(m, OT_AFTER_MIN), ot: Math.min(Math.max(m - OT_AFTER_MIN, 0), DT_AFTER_MIN - OT_AFTER_MIN), dt: Math.max(m - DT_AFTER_MIN, 0) });
+const dayWorkedMin = (locId, userId, date) => db.prepare(`SELECT COALESCE(SUM(worked_minutes),0) AS m FROM time_entries WHERE location_id=? AND user_id=? AND work_date=? AND clock_out IS NOT NULL`).get(locId, userId, date).m;
 
 router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
@@ -153,8 +157,7 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
   const start = validDate(req.query.start) || mondayOf(today);
   const end = validDate(req.query.end) || addDaysIso(start, 6);
 
-  // Completed punches in range → sum worked minutes per person per day, then apply
-  // the daily overtime split.
+  // Clocked minutes per person per day (completed punches — the time clock).
   const rows = db.prepare(`SELECT te.user_id, u.name, u.employee_code, u.role, u.hourly_rate,
       te.work_date, te.worked_minutes
     FROM time_entries te JOIN users u ON u.id=te.user_id
@@ -164,31 +167,92 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
     const u = byUser[r.user_id] || (byUser[r.user_id] = { user_id: r.user_id, name: r.name, employee_code: r.employee_code, role: r.role, rate: r.hourly_rate || 0, days: {} });
     u.days[r.work_date] = (u.days[r.work_date] || 0) + (r.worked_minutes || 0);
   }
+  // Scheduled minutes per person in range (the work schedule).
+  const schedByUser = {};
+  for (const s of db.prepare(`SELECT user_id, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ?`).all(locId, start, end)) {
+    schedByUser[s.user_id] = (schedByUser[s.user_id] || 0) + spanMin(s.start_time, s.end_time);
+  }
+  // OT approvals in range.
+  const apprBy = {};
+  for (const a of db.prepare(`SELECT oa.*, ub.name AS approver FROM ot_approvals oa LEFT JOIN users ub ON ub.id=oa.approved_by
+      WHERE oa.location_id=? AND oa.work_date BETWEEN ? AND ?`).all(locId, start, end)) {
+    apprBy[a.user_id + '|' + a.work_date] = a;
+  }
+
+  const h = (min) => round2(min / 60);
+  const otDays = []; // every OT occurrence (for the approvals UI)
   const staff = Object.values(byUser).map(u => {
-    let reg = 0, ot = 0, dt = 0, total = 0;
-    const days = Object.values(u.days);
-    for (const m of days) {
+    let reg = 0, otAppr = 0, dtAppr = 0, otPend = 0, dtPend = 0, total = 0;
+    for (const [date, m] of Object.entries(u.days)) {
       total += m;
-      reg += Math.min(m, OT_AFTER_MIN);
-      ot += Math.min(Math.max(m - OT_AFTER_MIN, 0), DT_AFTER_MIN - OT_AFTER_MIN);
-      dt += Math.max(m - DT_AFTER_MIN, 0);
+      const sp = daySplit(m);
+      reg += sp.reg;
+      if (sp.ot > 0 || sp.dt > 0) {
+        const a = apprBy[u.user_id + '|' + date];
+        const ok = a && a.approved;
+        if (ok) { otAppr += a.ot_minutes; dtAppr += a.dt_minutes; } else { otPend += sp.ot; dtPend += sp.dt; }
+        otDays.push({
+          user_id: u.user_id, name: u.name, employee_code: u.employee_code, work_date: date,
+          worked_minutes: m, computed_ot_minutes: sp.ot, computed_dt_minutes: sp.dt,
+          ot_minutes: ok ? a.ot_minutes : sp.ot, dt_minutes: ok ? a.dt_minutes : sp.dt,
+          approved: ok ? 1 : 0, note: a ? a.note : null, approver: a ? a.approver : null,
+        });
+      }
     }
-    const h = (min) => round2(min / 60);
     const rate = u.rate || 0;
-    const gross = rate ? round2(h(reg) * rate + h(ot) * rate * OT_MULT + h(dt) * rate * DT_MULT) : null;
+    const gross = rate ? round2(h(reg) * rate + h(otAppr) * rate * OT_MULT + h(dtAppr) * rate * DT_MULT) : null;
     return {
       user_id: u.user_id, name: u.name, employee_code: u.employee_code, role: u.role,
-      days: days.length, total_hours: h(total), regular_hours: h(reg), ot_hours: h(ot), dt_hours: h(dt),
+      scheduled_hours: h(schedByUser[u.user_id] || 0), days: Object.keys(u.days).length,
+      total_hours: h(total), regular_hours: h(reg),
+      ot_hours: h(otAppr), dt_hours: h(dtAppr), ot_pending_hours: h(otPend), dt_pending_hours: h(dtPend),
       rate: rate || null, gross_pay: gross,
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
+  otDays.sort((a, b) => a.work_date.localeCompare(b.work_date) || a.name.localeCompare(b.name));
   const sum = (k) => round2(staff.reduce((t, s) => t + (s[k] || 0), 0));
   res.json({
-    location: loc, start, end, timezone: tz,
+    location: loc, start, end, timezone: tz, today, can_edit_ot: OT_EDIT_ROLES.includes(req.user.role),
     rules: { ot_after_h: OT_AFTER_MIN / 60, dt_after_h: DT_AFTER_MIN / 60, ot_mult: OT_MULT, dt_mult: DT_MULT },
-    staff,
-    totals: { staff: staff.length, total_hours: sum('total_hours'), regular_hours: sum('regular_hours'), ot_hours: sum('ot_hours'), dt_hours: sum('dt_hours'), gross_pay: sum('gross_pay') },
+    staff, ot_days: otDays,
+    totals: {
+      staff: staff.length, scheduled_hours: sum('scheduled_hours'), total_hours: sum('total_hours'), regular_hours: sum('regular_hours'),
+      ot_hours: sum('ot_hours'), dt_hours: sum('dt_hours'), ot_pending_hours: sum('ot_pending_hours'), dt_pending_hours: sum('dt_pending_hours'), gross_pay: sum('gross_pay'),
+    },
   });
+});
+
+// Approve (or revoke) a staff member's overtime for a day. A note is required to
+// approve; only Owner / General Manager may change the approved OT/DT amount.
+router.put('/ot-approval', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const userId = parseInt(req.body.user_id, 10);
+  const date = validDate(req.body.work_date);
+  if (!locId || !userId || !date) return res.status(400).json({ error: 'location_id, user_id and work_date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const sp = daySplit(dayWorkedMin(locId, userId, date));
+  if (sp.ot <= 0 && sp.dt <= 0) return res.status(400).json({ error: 'No overtime on that day to approve.' });
+  const approved = req.body.approved === false ? 0 : 1;
+  const note = (req.body.note || '').toString().trim();
+  if (approved && !note) return res.status(400).json({ error: 'An approval note is required.' });
+  const existing = db.prepare(`SELECT * FROM ot_approvals WHERE location_id=? AND user_id=? AND work_date=?`).get(locId, userId, date);
+  let otMin = existing ? existing.ot_minutes : sp.ot;
+  let dtMin = existing ? existing.dt_minutes : sp.dt;
+  if (req.body.ot_minutes !== undefined || req.body.dt_minutes !== undefined) {
+    if (!OT_EDIT_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'Only an Owner or General Manager can change the overtime amount.' });
+    if (req.body.ot_minutes !== undefined) otMin = Math.max(0, Math.min(parseInt(req.body.ot_minutes, 10) || 0, sp.ot));
+    if (req.body.dt_minutes !== undefined) dtMin = Math.max(0, Math.min(parseInt(req.body.dt_minutes, 10) || 0, sp.dt));
+  }
+  const now = new Date().toISOString();
+  if (existing) {
+    db.prepare(`UPDATE ot_approvals SET approved=?, ot_minutes=?, dt_minutes=?, note=?, approved_by=?, approved_at=?, updated_at=datetime('now') WHERE id=?`)
+      .run(approved, otMin, dtMin, note || existing.note, approved ? req.user.id : existing.approved_by, approved ? now : existing.approved_at, existing.id);
+  } else {
+    db.prepare(`INSERT INTO ot_approvals (location_id, user_id, work_date, approved, ot_minutes, dt_minutes, note, approved_by, approved_at) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(locId, userId, date, approved, otMin, dtMin, note || null, approved ? req.user.id : null, approved ? now : null);
+  }
+  auditLog(req, approved ? 'ot_approve' : 'ot_revoke', 'user', userId, { location_id: locId, work_date: date, ot_minutes: otMin, dt_minutes: dtMin });
+  res.json({ success: true, approved, ot_minutes: otMin, dt_minutes: dtMin });
 });
 
 // ── Short-shift alerts for a location ─────────────────────────────────────────

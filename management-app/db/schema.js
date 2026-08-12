@@ -457,6 +457,24 @@ function migrate() {
       created_at        TEXT DEFAULT (datetime('now'))
     );
 
+    -- Overtime approvals: a manager (or authorized person) must approve a staff
+    -- member's overtime for a day, with a note, before it counts on payroll.
+    -- Owner / General Manager can later adjust the approved minutes.
+    CREATE TABLE IF NOT EXISTS ot_approvals (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id   INTEGER NOT NULL REFERENCES locations(id),
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      work_date     TEXT NOT NULL,               -- ISO date the OT was worked
+      approved      INTEGER NOT NULL DEFAULT 0,
+      ot_minutes    INTEGER NOT NULL DEFAULT 0,  -- approved overtime (1.5×) minutes
+      dt_minutes    INTEGER NOT NULL DEFAULT 0,  -- approved double-time (2×) minutes
+      note          TEXT,
+      approved_by   INTEGER REFERENCES users(id),
+      approved_at   TEXT,
+      updated_at    TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, user_id, work_date)
+    );
+
     -- Alerts raised to a location's manager (e.g. a staff member left early).
     CREATE TABLE IF NOT EXISTS staff_alerts (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,

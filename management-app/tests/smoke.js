@@ -410,19 +410,48 @@ const check = (name, ok, detail = '') => {
     r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, emp.token);
     check('non-manager cannot open a station / punch (403)', r.status === 403, 'status=' + r.status);
 
-    // ── Payroll / overtime export ──────────────────────────────────────────
+    // ── Payroll / overtime approval + export ───────────────────────────────
     const p2 = (x) => String(x).padStart(2, '0');
     const dOff = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
-    const pr = await j(await fetch(base + `/api/timeclock/payroll?location_id=${loc1}&start=${dOff(-8)}&end=${dOff(0)}`, { headers: H(mgr.token) }));
-    check('payroll returns per-staff hours + OT rules', Array.isArray(pr.staff) && pr.rules.ot_after_h === 8 && pr.rules.dt_after_h === 12 && pr.rules.ot_mult === 1.5, JSON.stringify(pr.rules));
-    // Support Staff fixture: a 10h day (2h OT) + a 13h day (4h OT incl. 1h double-time).
-    const sup = pr.staff.find(s => /Support Staff/.test(s.name));
-    check('overtime + double-time computed from clocked hours', !!sup && sup.regular_hours === 16 && sup.ot_hours === 6 && sup.dt_hours === 1 && sup.total_hours === 23, JSON.stringify(sup));
-    const expectGross = sup ? Math.round((16 * sup.rate + 6 * sup.rate * 1.5 + 1 * sup.rate * 2) * 100) / 100 : -1;
-    check('payroll gross = regular + 1.5×OT + 2×DT at the hourly rate', !!sup && sup.rate > 0 && sup.gross_pay === expectGross, JSON.stringify(sup && { rate: sup.rate, gross: sup.gross_pay, expect: expectGross }));
-    check('payroll totals present', pr.totals && pr.totals.ot_hours >= 6 && pr.totals.staff >= 1, JSON.stringify(pr.totals));
+    const range = `location_id=${loc1}&start=${dOff(-8)}&end=${dOff(0)}`;
+    const pr = await j(await fetch(base + `/api/timeclock/payroll?${range}`, { headers: H(mgr.token) }));
+    check('payroll returns rules + scheduled + OT days', Array.isArray(pr.staff) && pr.rules.ot_after_h === 8 && pr.rules.ot_mult === 1.5 && Array.isArray(pr.ot_days) && 'scheduled_hours' in (pr.staff[0] || {}), JSON.stringify(pr.rules));
+    const supName = 'Support Staff';
+    const sup0 = pr.staff.find(s => s.name === supName);
+    // Fixture: 10h (2h OT) + 13h (4h OT incl. 1h DT). Unapproved → pending, not counted.
+    check('unapproved OT is pending and NOT counted', !!sup0 && sup0.ot_hours === 0 && sup0.dt_hours === 0 && sup0.ot_pending_hours === 6 && sup0.dt_pending_hours === 1, JSON.stringify(sup0));
+    check('gross excludes unapproved OT (regular only)', !!sup0 && sup0.gross_pay === Math.round(16 * sup0.rate * 100) / 100, JSON.stringify({ gross: sup0.gross_pay, rate: sup0.rate }));
+    const supDays = pr.ot_days.filter(d => d.name === supName);
+    check('OT occurrences are listed for approval', supDays.length === 2 && supDays.every(d => d.approved === 0), JSON.stringify(supDays.map(d => d.work_date)));
+    // Approval requires a note.
+    r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: supDays[0].user_id, work_date: supDays[0].work_date, approved: true }) });
+    check('OT approval requires a note (400)', r.status === 400, 'status=' + r.status);
+    // Manager cannot change the OT amount.
+    r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: supDays[0].user_id, work_date: supDays[0].work_date, approved: true, note: 'ok', ot_minutes: 30 }) });
+    check('manager cannot change OT amount (403)', r.status === 403, 'status=' + r.status);
+    // Manager approves both OT days (with a note).
+    for (const d of supDays) {
+      r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: d.user_id, work_date: d.work_date, approved: true, note: 'Approved — covered a call-out' }) });
+      check('manager approves an OT day', r.status === 200, await r.text());
+    }
+    const pr2 = await j(await fetch(base + `/api/timeclock/payroll?${range}`, { headers: H(mgr.token) }));
+    const sup2 = pr2.staff.find(s => s.name === supName);
+    check('approved OT now counts on payroll', sup2.ot_hours === 6 && sup2.dt_hours === 1 && sup2.ot_pending_hours === 0, JSON.stringify(sup2));
+    const expectGross = Math.round((16 * sup2.rate + 6 * sup2.rate * 1.5 + 1 * sup2.rate * 2) * 100) / 100;
+    check('gross now includes approved OT/DT', sup2.gross_pay === expectGross, JSON.stringify({ gross: sup2.gross_pay, expect: expectGross }));
+    // Owner can change (reduce) the approved OT amount — trim one day by 1h (60 min).
+    r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: loc1, user_id: supDays[0].user_id, work_date: supDays[0].work_date, approved: true, note: 'Trimmed 1h', ot_minutes: supDays[0].computed_ot_minutes - 60 }) });
+    check('owner can change the approved OT amount', r.status === 200, await r.text());
+    const pr3 = await j(await fetch(base + `/api/timeclock/payroll?${range}`, { headers: H(mgr.token) }));
+    const sup3 = pr3.staff.find(s => s.name === supName);
+    check('owner OT adjustment reflected (6h → 5h)', sup3.ot_hours === 5, JSON.stringify({ ot: sup3.ot_hours }));
+    // Period ranges + RBAC.
+    const mo = await j(await fetch(base + `/api/timeclock/payroll?location_id=${loc1}&start=${dOff(-8).slice(0, 8)}01&end=${dOff(0)}`, { headers: H(mgr.token) }));
+    check('payroll accepts an arbitrary (monthly) range', !!mo.start && !!mo.end, JSON.stringify({ start: mo.start, end: mo.end }));
     r = await fetch(base + `/api/timeclock/payroll?location_id=${loc1}`, { headers: H(emp.token) });
     check('employee blocked from payroll (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(emp.token), body: JSON.stringify({ location_id: loc1, user_id: supDays[0].user_id, work_date: supDays[0].work_date, approved: true, note: 'x' }) });
+    check('employee blocked from approving OT (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/timeclock/payroll?location_id=${loc2}`, { headers: H(mgr.token) });
     check('manager blocked from another location payroll (403)', r.status === 403, 'status=' + r.status);
 

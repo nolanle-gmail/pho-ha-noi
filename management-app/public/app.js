@@ -1445,8 +1445,10 @@ async function renderLocTimeClock() {
     data = await api('/timeclock/board?location_id=' + S.locDetailId + (S.tcDate ? '&date=' + S.tcDate : ''));
     S.tcDate = data.date;
     if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
-    const pStart = mondayOf(data.date), pEnd = addDaysIso(pStart, 6);
-    payroll = await api(`/timeclock/payroll?location_id=${S.locDetailId}&start=${pStart}&end=${pEnd}`).catch(() => null);
+    if (!S.payPeriod) S.payPeriod = 'weekly';
+    if (!S.payAnchor) S.payAnchor = data.today;
+    const pRange = payRange(S.payPeriod, S.payAnchor);
+    payroll = await api(`/timeclock/payroll?location_id=${S.locDetailId}&start=${pRange.start}&end=${pRange.end}`).catch(() => null);
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const sm = data.summary;
@@ -1491,38 +1493,109 @@ async function renderLocTimeClock() {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
   });
-  if ($('prCsv') && payroll) $('prCsv').onclick = () => exportPayrollCSV(payroll);
+  if (payroll) {
+    if ($('prCsv')) $('prCsv').onclick = () => exportPayrollCSV(payroll);
+    $('locBody').querySelectorAll('[data-payperiod]').forEach(b => b.onclick = () => { S.payPeriod = b.dataset.payperiod; renderLocTimeClock(); });
+    $('locBody').querySelectorAll('[data-paynav]').forEach(b => b.onclick = () => payNav(parseInt(b.dataset.paynav, 10)));
+    const otDay = (i) => payroll.ot_days[i];
+    $('locBody').querySelectorAll('[data-otappr]').forEach(b => b.onclick = () => openOtApproveModal(otDay(+b.dataset.otappr), payroll.can_edit_ot, S.locDetailId, payroll.rules));
+    $('locBody').querySelectorAll('[data-otrevoke]').forEach(b => b.onclick = async () => {
+      const d = otDay(+b.dataset.otrevoke);
+      try { await api('/timeclock/ot-approval', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, user_id: d.user_id, work_date: d.work_date, approved: false }) }); toast('Overtime approval revoked'); renderLocTimeClock(); }
+      catch (e) { toast(e.message, true); }
+    });
+  }
+}
+
+// Weekly / bi-weekly / monthly pay period → { start, end, label }.
+function payRange(period, anchor) {
+  const p2 = (n) => String(n).padStart(2, '0');
+  if (period === 'monthly') {
+    const d = new Date(anchor + 'T00:00:00');
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}`, label: `${MON[d.getMonth()]} ${d.getFullYear()}` };
+  }
+  const start = mondayOf(anchor), end = addDaysIso(start, period === 'biweekly' ? 13 : 6);
+  return { start, end, label: `${fmtDay(start)} – ${fmtDay(end)}, ${end.slice(0, 4)}` };
+}
+function payNav(dir) {
+  if (S.payPeriod === 'monthly') { const d = new Date(S.payAnchor + 'T00:00:00'); d.setMonth(d.getMonth() + dir); S.payAnchor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; }
+  else S.payAnchor = addDaysIso(S.payAnchor, dir * (S.payPeriod === 'biweekly' ? 14 : 7));
+  renderLocTimeClock();
+}
+function openOtApproveModal(d, canEdit, locId, rules) {
+  if (!d) return;
+  const fields = [{ key: 'note', label: `Approval note — ${d.name}, ${fmtDay(d.work_date)} (worked ${fmtDur(d.worked_minutes)})`, value: d.note || '', placeholder: 'e.g. Covered a late call-out — approved' }];
+  if (canEdit) {
+    fields.push({ key: 'ot_minutes', label: `Overtime minutes (${rules.ot_mult}× · worked ${d.computed_ot_minutes})`, type: 'number', value: d.ot_minutes });
+    if (d.computed_dt_minutes > 0) fields.push({ key: 'dt_minutes', label: `Double-time minutes (${rules.dt_mult}× · worked ${d.computed_dt_minutes})`, type: 'number', value: d.dt_minutes });
+  }
+  modal(`Approve overtime`, fields, async (vals) => {
+    const body = { location_id: locId, user_id: d.user_id, work_date: d.work_date, approved: true, note: vals.note };
+    if (canEdit) { body.ot_minutes = vals.ot_minutes; if (vals.dt_minutes !== undefined) body.dt_minutes = vals.dt_minutes; }
+    await api('/timeclock/ot-approval', { method: 'PUT', body: JSON.stringify(body) });
+    toast('Overtime approved'); renderLocTimeClock();
+  }, d.approved ? 'Save' : 'Approve');
 }
 
 function payrollSection(pr) {
   if (!pr) return '';
   const R = pr.rules, t = pr.totals;
-  const otc = (h, color) => h ? `<strong style="color:${color}">${h}</strong>` : '0';
+  const period = S.payPeriod || 'weekly';
+  const pill = (k, l) => `<button class="btn sm ${period === k ? '' : 'ghost'}" data-payperiod="${k}">${l}</button>`;
+  const otc = (h, pend, color) => `${h ? `<strong style="color:${color}">${h}</strong>` : '0'}${pend ? ` <span class="badge out" title="pending approval">+${pend}?</span>` : ''}`;
   const rows = pr.staff.map(s => `<tr>
     <td><strong>${esc(s.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(s.employee_code || '')}</span></td>
-    <td class="num">${s.days}</td><td class="num">${s.total_hours}</td><td class="num">${s.regular_hours}</td>
-    <td class="num">${otc(s.ot_hours, '#b4630b')}</td><td class="num">${otc(s.dt_hours, 'var(--red)')}</td>
+    <td class="num">${s.scheduled_hours}</td><td class="num">${s.total_hours}</td><td class="num">${s.regular_hours}</td>
+    <td class="num">${otc(s.ot_hours, s.ot_pending_hours, '#b4630b')}</td>
+    <td class="num">${otc(s.dt_hours, s.dt_pending_hours, 'var(--red)')}</td>
     <td class="num">${s.rate != null ? '$' + s.rate.toFixed(2) : '—'}</td>
     <td class="num">${s.gross_pay != null ? money(s.gross_pay) : '—'}</td></tr>`).join('');
+  const pending = pr.ot_days.filter(d => !d.approved).length;
+  const otRows = pr.ot_days.map((d, i) => `<tr class="${d.approved ? '' : 'task-unassigned'}">
+    <td><strong>${esc(d.name)}</strong></td>
+    <td>${fmtDay(d.work_date)}</td>
+    <td class="num">${fmtDur(d.worked_minutes)}</td>
+    <td class="num">${d.ot_minutes ? fmtDur(d.ot_minutes) : '—'}${d.computed_ot_minutes !== d.ot_minutes ? ` <span class="mono" style="color:var(--muted)">(worked ${fmtDur(d.computed_ot_minutes)})</span>` : ''}</td>
+    <td class="num">${d.dt_minutes ? fmtDur(d.dt_minutes) : '—'}</td>
+    <td>${d.approved ? `<span class="badge ok">✓ approved</span>${d.approver ? ` <span style="color:var(--muted)">by ${esc(d.approver)}</span>` : ''}${d.note ? `<div class="job-note">“${esc(d.note)}”</div>` : ''}` : '<span class="badge out">pending</span>'}</td>
+    <td>${d.approved
+    ? `<button class="btn sm ghost" data-otappr="${i}">${pr.can_edit_ot ? 'Edit' : 'Note'}</button> <button class="btn sm ghost" data-otrevoke="${i}">Revoke</button>`
+    : `<button class="btn sm" data-otappr="${i}">Approve</button>`}</td>
+  </tr>`).join('');
   return `<div class="section" style="margin-top:1.5rem">
-    <div class="row-between"><h3 style="margin:0">Payroll & overtime <span style="font-weight:400;color:var(--muted);font-size:.85rem">— week of ${fmtDay(pr.start)}–${fmtDay(pr.end)}, ${pr.end.slice(0, 4)}</span></h3>
+    <div class="row-between"><h3 style="margin:0">Payroll & overtime</h3>
       ${pr.staff.length ? '<button class="btn sm" id="prCsv">⬇ Export CSV</button>' : ''}</div>
-    <p class="sub" style="color:var(--muted);margin:.2rem 0 .7rem;font-size:.8rem">From actual clocked hours. Overtime <strong>${R.ot_mult}×</strong> after ${R.ot_after_h}h/day, double-time <strong>${R.dt_mult}×</strong> after ${R.dt_after_h}h/day.</p>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Days</th><th class="num">Total h</th><th class="num">Regular</th><th class="num">OT ${R.ot_mult}×</th><th class="num">Double ${R.dt_mult}×</th><th class="num">Rate</th><th class="num">Gross</th></tr></thead><tbody>
-      ${rows || '<tr><td colspan="8" class="empty">No completed shifts clocked this week yet.</td></tr>'}
-      ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">—</td><td class="num">${t.total_hours}</td><td class="num">${t.regular_hours}</td><td class="num">${t.ot_hours}</td><td class="num">${t.dt_hours}</td><td class="num">—</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td></tr>` : ''}
+    <div class="row-between" style="margin:.5rem 0 .3rem;flex-wrap:wrap;gap:.5rem">
+      <div style="display:flex;gap:.35rem;align-items:center">${pill('weekly', 'Weekly')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Monthly')}</div>
+      <div class="week-nav"><button class="btn sm ghost" data-paynav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${payRange(period, S.payAnchor).label}</span><button class="btn sm ghost" data-paynav="1">Next ›</button></div>
+    </div>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem;font-size:.8rem">Scheduled vs clocked hours. Overtime (<strong>${R.ot_mult}×</strong> after ${R.ot_after_h}h/day, <strong>${R.dt_mult}×</strong> after ${R.dt_after_h}h/day) counts on payroll <strong>only once approved</strong> with a note.</p>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Scheduled</th><th class="num">Clocked</th><th class="num">Regular</th><th class="num">OT ${R.ot_mult}×</th><th class="num">Double ${R.dt_mult}×</th><th class="num">Rate</th><th class="num">Gross</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="8" class="empty">No completed shifts clocked in this period.</td></tr>'}
+      ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">${t.scheduled_hours}</td><td class="num">${t.total_hours}</td><td class="num">${t.regular_hours}</td><td class="num">${t.ot_hours}${t.ot_pending_hours ? ` <span class="badge out">+${t.ot_pending_hours}?</span>` : ''}</td><td class="num">${t.dt_hours}</td><td class="num">—</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td></tr>` : ''}
     </tbody></table></div>
+    ${pr.ot_days.length ? `<div style="margin-top:1.1rem">
+      <h4 style="margin:0 0 .4rem">Overtime approvals ${pending ? `<span class="badge out">${pending} pending</span>` : '<span class="badge ok">all approved</span>'}</h4>
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Day</th><th class="num">Clocked</th><th class="num">OT</th><th class="num">Double</th><th>Status</th><th>Action</th></tr></thead><tbody>${otRows}</tbody></table></div>
+    </div>` : ''}
   </div>`;
 }
 
 function exportPayrollCSV(pr) {
   const R = pr.rules;
-  const headers = ['Employee', 'Code', 'Role', 'Days', 'Total hours', 'Regular hours', `OT hours (${R.ot_mult}x)`, `Double-time hours (${R.dt_mult}x)`, 'Hourly rate', 'Gross pay'];
-  const lines = [headers.join(',')];
+  const headers = ['Employee', 'Code', 'Role', 'Days', 'Scheduled hours', 'Clocked hours', 'Regular hours',
+    `Approved OT hours (${R.ot_mult}x)`, `Approved double-time hours (${R.dt_mult}x)`, 'Pending OT hours (unapproved, not paid)', 'Hourly rate', 'Gross pay'];
+  const lines = [
+    [`Payroll ${pr.start} to ${pr.end}`, pr.location.name || ''].map(csvCell).join(','),
+    headers.join(','),
+  ];
   for (const s of pr.staff) lines.push([
-    s.name, s.employee_code || '', roleLabel(s.role), s.days, s.total_hours, s.regular_hours,
-    s.ot_hours, s.dt_hours, s.rate != null ? s.rate : '', s.gross_pay != null ? s.gross_pay : '',
+    s.name, s.employee_code || '', roleLabel(s.role), s.days, s.scheduled_hours, s.total_hours, s.regular_hours,
+    s.ot_hours, s.dt_hours, (s.ot_pending_hours || 0) + (s.dt_pending_hours || 0), s.rate != null ? s.rate : '', s.gross_pay != null ? s.gross_pay : '',
   ].map(csvCell).join(','));
+  const t = pr.totals;
+  lines.push(['TOTAL', '', '', '', t.scheduled_hours, t.total_hours, t.regular_hours, t.ot_hours, t.dt_hours, round2((t.ot_pending_hours || 0) + (t.dt_pending_hours || 0)), '', t.gross_pay != null ? t.gross_pay : ''].map(csvCell).join(','));
   const csv = '﻿' + lines.join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a');
@@ -1530,6 +1603,7 @@ function exportPayrollCSV(pr) {
   document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   toast(`Exported ${pr.staff.length} staff to CSV`);
 }
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };
 function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }
