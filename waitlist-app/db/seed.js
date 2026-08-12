@@ -32,6 +32,13 @@ function run() {
   const locIds = LOCATIONS.map(([name, addr, turn]) =>
     db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,?)`).run(name, addr, turn).lastInsertRowid);
 
+  // Default room outline (a rectangle with an entrance notch) for the floor map.
+  const DEFAULT_ROOM = JSON.stringify([
+    { x: 3, y: 4 }, { x: 97, y: 4 }, { x: 97, y: 96 }, { x: 58, y: 96 },
+    { x: 58, y: 90 }, { x: 42, y: 90 }, { x: 42, y: 96 }, { x: 3, y: 96 },
+  ]);
+  locIds.forEach((lid) => db.prepare(`UPDATE locations SET room_outline=? WHERE id=?`).run(DEFAULT_ROOM, lid));
+
   // Default floor plan for every location: areas with numbered tables, laid out on
   // the visual floor map. Each area occupies a region [x0,y0 .. x1,y1] (% of board)
   // and its tables are placed on a grid within it.

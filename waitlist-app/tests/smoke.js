@@ -148,6 +148,17 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     const tp = await j(await fetch(base + `/api/floorplan/tables?location_id=${l1}`, { headers: H(token) }));
     check('table picker returns areas with tables + occupancy', Array.isArray(tp.areas) && tp.table_count > 0 && 'occupied_count' in tp && tp.areas[0].tables.every(t => 'occupied' in t), JSON.stringify({ n: tp.table_count }));
     check('tables carry map positions + shape', tp.areas[0].tables.every(t => Number.isFinite(t.pos_x) && Number.isFinite(t.pos_y) && (t.shape === 'round' || t.shape === 'square')), JSON.stringify(tp.areas[0].tables[0]));
+    check('floor plan includes a room outline', Array.isArray(tp.room_outline) && tp.room_outline.length >= 3 && 'x' in tp.room_outline[0], JSON.stringify((tp.room_outline || []).slice(0, 2)));
+    // Reshape the room (owner).
+    const newRoom = [{ x: 5, y: 5 }, { x: 95, y: 5 }, { x: 95, y: 60 }, { x: 50, y: 95 }, { x: 5, y: 60 }];
+    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: l1, outline: newRoom }) });
+    check('room outline can be reshaped', r.status === 200, await r.text());
+    const fpR = await j(await fetch(base + `/api/floorplan?location_id=${l1}`, { headers: H(token) }));
+    check('reshaped room outline persists (5 corners)', Array.isArray(fpR.room_outline) && fpR.room_outline.length === 5, JSON.stringify(fpR.room_outline && fpR.room_outline.length));
+    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: l1, outline: [{ x: 1, y: 1 }, { x: 2, y: 2 }] }) });
+    check('room outline needs 3+ points (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/floorplan/room', { method: 'PUT', headers: H(host.token), body: JSON.stringify({ outline: newRoom }) });
+    check('front desk cannot reshape the room (403)', r.status === 403, 'status=' + r.status);
     // Manager configures their own location's plan.
     const area = await j(await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Test Mezzanine' }) }));
     check('manager adds an area', area.success === true && !!area.id, JSON.stringify(area));

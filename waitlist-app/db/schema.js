@@ -9,6 +9,7 @@ function migrate() {
       address TEXT,
       avg_turn_minutes INTEGER NOT NULL DEFAULT 8,  -- per party ahead, used to quote waits
       is_active INTEGER NOT NULL DEFAULT 1,
+      room_outline TEXT,                            -- JSON polygon [{x,y}…] in % of the floor board
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -115,6 +116,7 @@ function migrate() {
     `ALTER TABLE restaurant_tables ADD COLUMN pos_x INTEGER NOT NULL DEFAULT 50`,
     `ALTER TABLE restaurant_tables ADD COLUMN pos_y INTEGER NOT NULL DEFAULT 50`,
     `ALTER TABLE restaurant_tables ADD COLUMN shape TEXT NOT NULL DEFAULT 'round'`,
+    `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

@@ -105,14 +105,20 @@ async function renderFloorPlan() {
   try { fp = await api(q('/floorplan')); } catch (e) { $('view').innerHTML = `<p class="sub" style="color:var(--red)">${esc(e.message)}</p>`; return; }
   const canEdit = fp.can_edit;
   const totalT = fp.areas.reduce((n, a) => n + a.tables.length, 0);
-  const tablesHtml = fp.areas.map((a, ai) => a.tables.map(t => ftableEl(t, ai, canEdit ? 'edit' : null)).join('')).join('');
+  const outline = fp.room_outline || [];
+  const editRoom = canEdit && S.editRoom;
+  const tablesHtml = fp.areas.map((a, ai) => a.tables.map(t => ftableEl(t, ai, canEdit && !editRoom ? 'edit' : null)).join('')).join('');
+  const vtxHtml = editRoom ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '';
   $('view').innerHTML = `
     <div class="row-between"><h2 style="margin:0">Floor Plan <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${fp.areas.length} areas · ${totalT} tables</span></h2>
-      ${canEdit ? '<div style="display:flex;gap:.4rem"><button class="btn ghost" id="addArea">+ Area</button><button class="btn" id="addTable">+ Table</button></div>' : '<span class="badge">View only</span>'}</div>
-    <div class="fp-legend">${fpLegend(fp.areas, canEdit)}</div>
-    ${canEdit ? '<p class="fp-hint">Drag tables to arrange the room. Tap a table to edit or remove it; tap an area chip to rename it.</p>' : '<p class="fp-hint">This map is used by the Front Desk to seat guests.</p>'}
-    <div class="floor-board${canEdit ? ' editable' : ''}" id="floorBoard">${tablesHtml || '<div class="fp-empty">No tables yet — add one to start.</div>'}</div>`;
+      ${canEdit ? `<div style="display:flex;gap:.4rem"><button class="btn ${editRoom ? '' : 'ghost'}" id="editRoom">${editRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn ghost" id="addArea">+ Area</button><button class="btn" id="addTable">+ Table</button></div>` : '<span class="badge">View only</span>'}</div>
+    <div class="fp-legend">${fpLegend(fp.areas, canEdit && !editRoom)}</div>
+    ${editRoom ? `<div class="fp-hint" style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">Drag the corners to shape the room. Tap a corner to remove it.<button class="btn ghost sm" id="addCorner">+ Corner</button><button class="btn ghost sm" id="resetRoom">Reset shape</button></div>`
+    : canEdit ? '<p class="fp-hint">Drag tables to arrange the room. Tap a table to edit; tap an area chip to rename. Use “Edit room” to reshape the walls.</p>' : '<p class="fp-hint">This map is used by the Front Desk to seat guests.</p>'}
+    <div class="floor-board${canEdit && !editRoom ? ' editable' : ''}${editRoom ? ' roomedit' : ''}" id="floorBoard">${roomSvg(outline)}${vtxHtml}${tablesHtml || '<div class="fp-empty">No tables yet — add one to start.</div>'}</div>`;
   if (!canEdit) return;
+  $('editRoom').onclick = () => { S.editRoom = !S.editRoom; renderFloorPlan(); };
+  if (editRoom) { wireRoomEdit(outline); return; }
   const areaOptions = (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
   $('addArea').onclick = () => modal('Add area', `<label>Area name</label><input id="aName" placeholder="e.g. Patio" />`,
     async () => { await api('/floorplan/areas', { method: 'POST', body: JSON.stringify({ location_id: S.loc, name: $('aName').value.trim() }) }); toast('Area added'); render(); }, 'Add');
@@ -160,6 +166,46 @@ function openTableEdit(fp, tid, areaOptions) {
     <button class="btn ghost" id="tRemove" style="margin-top:.6rem;color:var(--red)">Remove table</button>`,
     async () => { await api('/floorplan/tables/' + t.id, { method: 'PUT', body: JSON.stringify({ label: $('tLabel').value.trim(), seats: $('tSeats').value, shape: $('tShape').value, area_id: $('tArea').value }) }); toast('Table updated'); render(); }, 'Save');
   $('tRemove').onclick = async () => { try { await api('/floorplan/tables/' + t.id, { method: 'DELETE' }); toast('Table removed'); render(); } catch (e) { toast(e.message, true); } };
+}
+
+async function saveRoom(outline) {
+  try { await api('/floorplan/room', { method: 'PUT', body: JSON.stringify({ location_id: S.loc, outline }) }); }
+  catch (e) { toast(e.message, true); }
+}
+function wireRoomEdit(outline) {
+  const board = $('floorBoard');
+  const poly = board.querySelector('.room-svg polygon');
+  const setPoly = () => poly && poly.setAttribute('points', outline.map(p => `${p.x},${p.y}`).join(' '));
+  board.querySelectorAll('.room-vtx').forEach(el => el.onpointerdown = (e) => {
+    e.preventDefault();
+    const rect = board.getBoundingClientRect(); const i = +el.dataset.vi;
+    const sx = e.clientX, sy = e.clientY; let moved = false, px, py;
+    el.setPointerCapture(e.pointerId); el.classList.add('drag');
+    const onMove = (ev) => {
+      if (Math.abs(ev.clientX - sx) > 3 || Math.abs(ev.clientY - sy) > 3) moved = true;
+      px = Math.max(0, Math.min(100, Math.round((ev.clientX - rect.left) / rect.width * 100)));
+      py = Math.max(0, Math.min(100, Math.round((ev.clientY - rect.top) / rect.height * 100)));
+      el.style.left = px + '%'; el.style.top = py + '%'; outline[i] = { x: px, y: py }; setPoly();
+    };
+    const onUp = async () => {
+      el.classList.remove('drag'); el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp);
+      if (moved) await saveRoom(outline);
+      else if (outline.length > 3) { outline.splice(i, 1); await saveRoom(outline); renderFloorPlan(); }
+      else toast('A room needs at least 3 corners.', true);
+    };
+    el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
+  });
+  $('addCorner').onclick = async () => {
+    let bi = 0, bd = -1;
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i], b = outline[(i + 1) % outline.length];
+      const d = Math.hypot(a.x - b.x, a.y - b.y); if (d > bd) { bd = d; bi = i; }
+    }
+    const a = outline[bi], b = outline[(bi + 1) % outline.length];
+    outline.splice(bi + 1, 0, { x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2) });
+    await saveRoom(outline); renderFloorPlan();
+  };
+  $('resetRoom').onclick = async () => { await saveRoom([{ x: 3, y: 4 }, { x: 97, y: 4 }, { x: 97, y: 96 }, { x: 3, y: 96 }]); renderFloorPlan(); };
 }
 
 let activityFilter = 'all';
@@ -231,6 +277,10 @@ function fpLegend(areas, editable) {
   const tag = editable ? 'button' : 'span';
   return areas.map((a, i) => `<${tag} class="fp-leg${editable ? ' ed' : ''}"${editable ? ` data-area="${a.id}"` : ''}><span class="fp-dot" style="background:${areaColorHex(i)}"></span>${esc(a.name)}${a.tables ? ` <span class="fp-leg-n">${a.tables.length}</span>` : ''}</${tag}>`).join('');
 }
+function roomSvg(outline) {
+  if (!Array.isArray(outline) || outline.length < 3) return '';
+  return `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${outline.map(p => `${p.x},${p.y}`).join(' ')}"/></svg>`;
+}
 function ftableEl(t, ci, mode) {
   const cls = ['ftable', t.shape === 'square' ? 'sq' : '', t.occupied ? 'occ' : '', t.is_active === 0 ? 'off' : ''].filter(Boolean).join(' ');
   const attr = mode === 'pick' ? (t.occupied ? '' : ` data-pick="${esc(t.label)}"`) : (mode === 'edit' ? ` data-tid="${t.id}"` : '');
@@ -246,7 +296,7 @@ async function seatModal(id, name) {
   const tablesHtml = areas.map((a, ai) => a.tables.map(t => ftableEl(t, ai, 'pick')).join('')).join('');
   const body = `<p class="sub" style="margin:.1rem 0 .5rem;color:var(--muted)">Tap a table for <strong>${esc(name)}</strong>. Grey tables are occupied.</p>
     <div class="fp-legend sm">${fpLegend(areas, false)}</div>
-    <div class="floor-board picker" id="floorBoard">${tablesHtml || '<div class="fp-empty">No floor plan set up for this location yet.</div>'}</div>
+    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No floor plan set up for this location yet.</div>'}</div>
     <label style="margin-top:.6rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="selName">none</strong> — or type another <input id="fTable" placeholder="e.g. 12" style="max-width:130px;display:inline-block" /></label>
     <input type="hidden" id="fSel" />`;
   modal(`Seat ${name}`, body, async () => {

@@ -15,12 +15,18 @@ const EDIT = ['owner', 'manager'];
 const loc = (req, fromQuery) => (req.user.role === 'owner' ? (fromQuery ? req.query.location_id : req.body.location_id) : req.user.location_id) || null;
 const ownsLoc = (req, locId) => req.user.role === 'owner' || String(req.user.location_id) === String(locId);
 const clampPos = (v, fallback) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.max(2, Math.min(98, n)) : Math.round(fallback); };
+const DEFAULT_OUTLINE = [{ x: 3, y: 4 }, { x: 97, y: 4 }, { x: 97, y: 96 }, { x: 3, y: 96 }];
+function roomOutline(raw) {
+  try { const p = JSON.parse(raw); if (Array.isArray(p) && p.length >= 3) return p.map(v => ({ x: Math.max(0, Math.min(100, +v.x)), y: Math.max(0, Math.min(100, +v.y)) })); } catch { /* fall through */ }
+  return DEFAULT_OUTLINE;
+}
 
 // Areas + tables with live occupancy — for the Front Desk table picker.
 router.get('/tables', requireRole(...HOST), (req, res) => {
   const l = loc(req, true);
   if (!l) return res.status(400).json({ error: 'A location is required.' });
   if (!ownsLoc(req, l)) return res.status(403).json({ error: 'Not your location.' });
+  const locRow = db.prepare(`SELECT room_outline FROM locations WHERE id=?`).get(l);
   const areas = db.prepare(`SELECT id, name FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(l);
   const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, pos_x, pos_y, shape FROM restaurant_tables WHERE location_id=? AND is_active=1 ORDER BY sort_order, id`).all(l);
   const occ = {};
@@ -29,7 +35,7 @@ router.get('/tables', requireRole(...HOST), (req, res) => {
   const byArea = areas.map(a => ({ id: a.id, name: a.name, tables: tables.filter(t => t.area_id === a.id).map(mapT) }));
   const noArea = tables.filter(t => !t.area_id).map(mapT);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });
-  res.json({ location_id: Number(l), areas: byArea, occupied_count: Object.keys(occ).length, table_count: tables.length });
+  res.json({ location_id: Number(l), room_outline: roomOutline(locRow && locRow.room_outline), areas: byArea, occupied_count: Object.keys(occ).length, table_count: tables.length });
 });
 
 // Full plan for management (includes inactive tables + sort orders).
@@ -37,9 +43,24 @@ router.get('/', requireRole(...HOST), (req, res) => {
   const l = loc(req, true);
   if (!l) return res.status(400).json({ error: 'A location is required.' });
   if (!ownsLoc(req, l)) return res.status(403).json({ error: 'Not your location.' });
+  const locRow = db.prepare(`SELECT room_outline FROM locations WHERE id=?`).get(l);
   const areas = db.prepare(`SELECT id, name, sort_order FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(l);
   const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order, pos_x, pos_y, shape FROM restaurant_tables WHERE location_id=? ORDER BY sort_order, id`).all(l);
-  res.json({ location_id: Number(l), can_edit: EDIT.includes(req.user.role), areas: areas.map(a => ({ ...a, tables: tables.filter(t => t.area_id === a.id) })) });
+  res.json({ location_id: Number(l), can_edit: EDIT.includes(req.user.role), room_outline: roomOutline(locRow && locRow.room_outline), areas: areas.map(a => ({ ...a, tables: tables.filter(t => t.area_id === a.id) })) });
+});
+
+// ── Room outline (wall polygon) ──────────────────────────────────────────────
+router.put('/room', requireRole(...EDIT), (req, res) => {
+  const locId = loc(req, false);
+  if (!locId) return res.status(400).json({ error: 'A location is required.' });
+  if (!ownsLoc(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const pts = req.body.outline;
+  if (!Array.isArray(pts) || pts.length < 3 || pts.length > 40) return res.status(400).json({ error: 'An outline needs 3–40 points.' });
+  const clean = pts.map(p => ({ x: Math.max(0, Math.min(100, Math.round(+p.x))), y: Math.max(0, Math.min(100, Math.round(+p.y))) }));
+  if (clean.some(p => !Number.isFinite(p.x) || !Number.isFinite(p.y))) return res.status(400).json({ error: 'Invalid points.' });
+  db.prepare(`UPDATE locations SET room_outline=? WHERE id=?`).run(JSON.stringify(clean), locId);
+  auditLog(req, locId, 'room_outline', null, { points: clean.length });
+  res.json({ success: true, outline: clean });
 });
 
 // ── Areas ────────────────────────────────────────────────────────────────────
