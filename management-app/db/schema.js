@@ -441,6 +441,34 @@ function migrate() {
       UNIQUE (location_id, job_id)
     );
 
+    -- Time clock: staff check-in / check-out punches from the Front-Desk kiosk.
+    -- One row per work day per staff member; clock_out is null until they leave.
+    CREATE TABLE IF NOT EXISTS time_entries (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id           INTEGER NOT NULL REFERENCES users(id),
+      location_id       INTEGER NOT NULL REFERENCES locations(id),
+      work_date         TEXT NOT NULL,               -- ISO date (local)
+      clock_in          TEXT NOT NULL,               -- ISO datetime
+      clock_out         TEXT,                        -- ISO datetime, null while on the clock
+      scheduled_minutes INTEGER NOT NULL DEFAULT 0,  -- snapshot of the day's scheduled span at check-in
+      worked_minutes    INTEGER,                     -- filled at check-out
+      short_confirmed   INTEGER NOT NULL DEFAULT 0,  -- staff confirmed leaving early
+      opened_by         INTEGER REFERENCES users(id),-- manager/opener who opened the station
+      created_at        TEXT DEFAULT (datetime('now'))
+    );
+
+    -- Alerts raised to a location's manager (e.g. a staff member left early).
+    CREATE TABLE IF NOT EXISTS staff_alerts (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id   INTEGER NOT NULL REFERENCES locations(id),
+      user_id       INTEGER REFERENCES users(id),
+      kind          TEXT NOT NULL,                   -- 'short_shift'
+      message       TEXT NOT NULL,
+      time_entry_id INTEGER REFERENCES time_entries(id),
+      resolved      INTEGER NOT NULL DEFAULT 0,
+      created_at    TEXT DEFAULT (datetime('now'))
+    );
+
     -- Weekly staff schedule — one row per staff member per working day per location.
     -- A person can have shifts at different locations on different days.
     CREATE TABLE IF NOT EXISTS shifts (
@@ -493,7 +521,17 @@ function migrate() {
     `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
     `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
     `ALTER TABLE task_assignments ADD COLUMN task_time TEXT`,
+    `ALTER TABLE users ADD COLUMN employee_code TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Give every user a login employee code: reuse their HR profile code if present,
+  // otherwise generate a stable one from their id (E0001, E0002, …).
+  try {
+    db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
+             WHERE (employee_code IS NULL OR employee_code = '')
+               AND EXISTS (SELECT 1 FROM staff_profiles sp WHERE sp.user_id = users.id AND sp.employee_code IS NOT NULL AND sp.employee_code <> '')`);
+    db.exec(`UPDATE users SET employee_code = 'E' || substr('0000' || id, -4) WHERE employee_code IS NULL OR employee_code = ''`);
+  } catch { /* staff_profiles not present yet */ }
 
   // Backfill per-location task lists for databases created before location_tasks
   // existed: if there are specific tasks but no memberships yet, enable every active

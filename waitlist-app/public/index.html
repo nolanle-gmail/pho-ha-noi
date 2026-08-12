@@ -27,6 +27,7 @@
         <span id="locName" class="loc-badge hidden"></span>
         <select id="locPicker" class="hidden"></select>
         <span class="clock" id="clock"></span>
+        <a class="btn ghost" id="staffClock" target="_blank" rel="noopener" style="padding:.5rem .8rem" title="Open the staff check-in / check-out kiosk">⏱ Staff Clock</a>
         <button class="btn ghost" id="logout" style="padding:.5rem .8rem">Sign out</button>
       </div>
     </div>
@@ -35,6 +36,16 @@
   </div>
 
   <div id="modalHost"></div>
+  <script>
+    // Point the "Staff Clock" link at the Management app's clock kiosk.
+    (function () {
+      var h = location.hostname, url;
+      if (h === 'localhost' || h === '127.0.0.1') url = 'http://localhost:4001/clock';
+      else if (h.indexOf('waitlist') !== -1) url = location.protocol + '//' + h.replace('waitlist', 'management') + '/clock';
+      else url = 'https://pho-ha-noi-management.fly.dev/clock';
+      var a = document.getElementById('staffClock'); if (a) a.href = url;
+    })();
+  </script>
   <script src="/app.js"></script>
 </body>
 </html>

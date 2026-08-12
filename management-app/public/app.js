@@ -934,7 +934,7 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['equipment', 'Equipment']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['equipment', 'Equipment']];
 function renderLocDetailTabs() {
   $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -948,7 +948,7 @@ async function renderLocDetail() {
     </div>
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, equipment: renderLocEquipment }[S.locTab])();
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, equipment: renderLocEquipment }[S.locTab])();
 }
 
 function renderLocInfo(loc) {
@@ -1404,6 +1404,59 @@ async function openLocTaskListModal(locId, locName) {
     };
   };
   await draw();
+}
+
+// ── Time Clock — check-in/out status for the location (manager/GM/owner) ──────
+async function renderLocTimeClock() {
+  const canManage = ['owner', 'admin'].includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
+  if (!S.tcDate) S.tcDate = fmtLocalIso(new Date());
+  let data, alerts = { alerts: [] };
+  try {
+    data = await api('/timeclock/board?location_id=' + S.locDetailId + '&date=' + S.tcDate);
+    if (S.tcDate === fmtLocalIso(new Date())) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
+  } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
+  const sm = data.summary;
+  const statusChip = (r) => r.status === 'in' ? '<span class="badge ok">🟢 On clock</span>'
+    : `<span class="badge gray">Checked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
+  const entryRows = data.entries.map(r => `<tr>
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
+    <td>${r.clock_in || '—'}</td><td>${r.clock_out || '—'}</td>
+    <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
+    <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
+    <td>${statusChip(r)}</td></tr>`).join('');
+  const notInRows = data.not_in.map(r => `<tr class="task-unassigned">
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
+    <td>—</td><td>—</td><td>${fmtDur(r.scheduled_minutes)}</td><td>—</td>
+    <td><span class="badge low">Not checked in</span></td></tr>`).join('');
+  const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
+    <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
+  $('locBody').innerHTML = `
+    <div class="row-between sched-head">
+      <div class="week-nav"><button class="btn sm ghost" id="tcPrev">‹ Prev</button><button class="btn sm ghost" id="tcToday">Today</button><button class="btn sm ghost" id="tcNext">Next ›</button></div>
+      <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
+      <a class="btn sm" href="/clock" target="_blank" rel="noopener">⏱ Open clock kiosk</a>
+    </div>
+    <div class="tc-summary">
+      <span class="badge ok">${sm.on_clock} on the clock</span>
+      <span class="badge gray">${sm.done} checked out</span>
+      <span class="badge ${sm.not_in ? 'low' : 'gray'}">${sm.not_in} not in</span>
+      ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}
+      ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
+    </div>
+    ${alertCards}
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>In</th><th>Out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
+      ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
+    </tbody></table></div>
+    <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>`;
+  const go = (iso) => { S.tcDate = iso; renderLocTimeClock(); };
+  $('tcPrev').onclick = () => go(addDaysIso(data.date, -1));
+  $('tcNext').onclick = () => go(addDaysIso(data.date, 1));
+  $('tcToday').onclick = () => go(fmtLocalIso(new Date()));
+  $('locBody').querySelectorAll('[data-resolve]').forEach(b => b.onclick = async () => {
+    try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
+    catch (e) { toast(e.message, true); }
+  });
 }
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };

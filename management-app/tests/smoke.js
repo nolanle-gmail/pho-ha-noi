@@ -370,6 +370,42 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());
 
+    // ── Time clock (check-in / check-out) ──────────────────────────────────
+    const pad = (n) => String(n).padStart(2, '0');
+    const nowD = new Date();
+    const today = `${nowD.getFullYear()}-${pad(nowD.getMonth() + 1)}-${pad(nowD.getDate())}`;
+    // Give Employee One (code PHN-0014) an 8h shift today so scheduled time is known.
+    for (const os of ((await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(token) }))).staff.find(s => s.id === emp.user.id) || { shifts: [] }).shifts.filter(s => s.shift_date === today)) {
+      await fetch(base + `/api/schedule/shifts/${os.id}`, { method: 'DELETE', headers: H(token) });
+    }
+    await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ user_id: emp.user.id, location_id: loc1, shift_date: today, start_time: '09:00', end_time: '17:00' }) });
+    const punch = (body, tok = mgr.token) => fetch(base + '/api/timeclock/punch', { method: 'POST', headers: H(tok), body: JSON.stringify(body) });
+    r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' });
+    const inRes = await j(r);
+    check('staff check-in (code + password)', r.status === 200 && inRes.action === 'in' && inRes.scheduled_minutes === 480, JSON.stringify(inRes));
+    r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'wrong', action: 'in' });
+    check('wrong password rejected (401)', r.status === 401, 'status=' + r.status);
+    r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' });
+    check('double check-in rejected (409)', r.status === 409, 'status=' + r.status);
+    r = await punch({ location_id: loc2, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, token); // owner opens loc2
+    check('cannot clock at a location you are not assigned to (403)', r.status === 403, 'status=' + r.status);
+    const warn = await j(await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'out' }));
+    check('short check-out returns a warning (no finalize)', warn.warning === 'short_shift' && warn.scheduled_minutes === 480, JSON.stringify(warn));
+    const outRes = await j(await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'out', confirm_short: true }));
+    check('confirmed short check-out finalizes + flags short', outRes.action === 'out' && outRes.short === true, JSON.stringify(outRes));
+    const board = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+    check('board shows the entry + summary', board.entries.some(e => e.user_id === emp.user.id && e.status === 'out') && board.summary.short >= 1, JSON.stringify(board.summary));
+    const al = await j(await fetch(base + `/api/timeclock/alerts?location_id=${loc1}`, { headers: H(mgr.token) }));
+    check('short check-out raised a manager alert', al.alerts.some(a => a.kind === 'short_shift'), JSON.stringify(al.alerts.length));
+    r = await fetch(base + `/api/timeclock/alerts/${al.alerts[0].id}/resolve`, { method: 'POST', headers: H(mgr.token) });
+    check('manager resolves an alert', r.status === 200, await r.text());
+    r = await fetch(base + `/api/timeclock/board?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from clock board (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/timeclock/board?location_id=${loc2}`, { headers: H(mgr.token) });
+    check('manager blocked from another location board (403)', r.status === 403, 'status=' + r.status);
+    r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, emp.token);
+    check('non-manager cannot open a station / punch (403)', r.status === 403, 'status=' + r.status);
+
     // ── Additional access levels ───────────────────────────────
     const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));

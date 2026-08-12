@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Staff Clock — Pho Ha Noi</title>
+<style>
+  :root { --red:#7a1420; --red2:#9e1b2b; --ink:#1f2430; --muted:#6b7280; --line:#e6e6e9; --ok:#1e7e34; --okbg:#e6f4ea; --warn:#b4630b; --warnbg:#fdf1e3; --err:#b3261e; --errbg:#fdecea; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#f4f4f6; color:var(--ink); }
+  .bar { background:var(--red); color:#fff; padding:.9rem 1.2rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+  .bar .title { font-weight:800; letter-spacing:.02em; }
+  .bar .loc { font-size:.9rem; opacity:.95; }
+  .bar button { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:8px; padding:.4rem .7rem; font-size:.85rem; cursor:pointer; }
+  .wrap { max-width:520px; margin:2.2rem auto; padding:0 1rem; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:1.4rem 1.4rem 1.6rem; box-shadow:0 8px 30px rgba(0,0,0,.06); }
+  h1 { font-size:1.25rem; margin:.2rem 0 1rem; }
+  h2 { font-size:1rem; margin:0 0 .2rem; }
+  .sub { color:var(--muted); font-size:.85rem; margin:.1rem 0 1.1rem; }
+  label { display:block; font-size:.8rem; font-weight:600; color:#374151; margin:.7rem 0 .25rem; }
+  input, select { width:100%; padding:.85rem .8rem; font-size:1.05rem; border:1px solid #cfd3da; border-radius:10px; }
+  input:focus, select:focus { outline:2px solid var(--red2); border-color:var(--red2); }
+  .btn { width:100%; padding:.9rem; font-size:1.05rem; font-weight:700; border:none; border-radius:11px; cursor:pointer; background:var(--red); color:#fff; margin-top:1rem; }
+  .btn:active { transform:translateY(1px); }
+  .punch { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; margin-top:1.1rem; }
+  .punch button { padding:1.15rem; font-size:1.15rem; font-weight:800; border:none; border-radius:14px; cursor:pointer; color:#fff; }
+  .in { background:var(--ok); } .out { background:#334155; }
+  .msg { margin-top:1rem; padding:.8rem .9rem; border-radius:10px; font-size:.95rem; display:none; }
+  .msg.ok { background:var(--okbg); color:var(--ok); display:block; }
+  .msg.warn { background:var(--warnbg); color:var(--warn); display:block; }
+  .msg.err { background:var(--errbg); color:var(--err); display:block; }
+  .onclock { margin-top:1.4rem; }
+  .onclock h2 { font-size:.85rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  .chip { display:inline-flex; gap:.4rem; align-items:center; background:#eef2ff; color:#3949ab; border-radius:999px; padding:.25rem .7rem; font-size:.85rem; margin:.2rem .3rem .2rem 0; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:1rem; }
+  .modal { background:#fff; border-radius:14px; padding:1.3rem; max-width:420px; width:100%; }
+  .modal h3 { margin:.1rem 0 .5rem; }
+  .modal .row { display:flex; gap:.6rem; margin-top:1.1rem; }
+  .modal .row button { flex:1; padding:.8rem; border-radius:10px; font-weight:700; border:none; cursor:pointer; }
+  .modal .cancel { background:#eee; color:#333; } .modal .confirm { background:var(--warn); color:#fff; }
+  .hide { display:none !important; }
+  .foot { text-align:center; color:var(--muted); font-size:.75rem; margin-top:1.4rem; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="title">⏱ Pho Ha Noi — Staff Clock</span>
+    <span id="barRight"></span>
+  </div>
+
+  <div class="wrap">
+    <!-- Station not opened -->
+    <div id="openCard" class="card">
+      <h1>Open the clock station</h1>
+      <p class="sub">A manager or opener signs in to start the working day. Staff then check in and out on this tablet.</p>
+      <label>Manager email</label>
+      <input id="oEmail" type="email" autocomplete="username" placeholder="you@phohanoi.com" />
+      <label>Password</label>
+      <input id="oPass" type="password" autocomplete="current-password" />
+      <div id="oLocWrap" class="hide">
+        <label>Location this tablet is at</label>
+        <select id="oLoc"></select>
+      </div>
+      <div id="oErr" class="msg"></div>
+      <button class="btn" id="oBtn">Open station</button>
+    </div>
+
+    <!-- Station opened: staff punch -->
+    <div id="punchCard" class="card hide">
+      <h1>Check in / Check out</h1>
+      <p class="sub">Enter your employee code and password.</p>
+      <label>Employee code</label>
+      <input id="sCode" autocomplete="off" autocapitalize="characters" placeholder="e.g. E0018" />
+      <label>Password</label>
+      <input id="sPass" type="password" autocomplete="off" />
+      <div class="punch">
+        <button class="in" data-action="in">✓ Check In</button>
+        <button class="out" data-action="out">◱ Check Out</button>
+      </div>
+      <div id="pMsg" class="msg"></div>
+      <div class="onclock">
+        <h2>On the clock now</h2>
+        <div id="onclockList"><span class="sub">—</span></div>
+      </div>
+    </div>
+
+    <div class="foot">This station is bound to one location. Staff can only clock in where they are scheduled.</div>
+  </div>
+
+  <!-- Short-shift confirm -->
+  <div id="confirmBg" class="modal-bg hide">
+    <div class="modal">
+      <h3>⚠ Leaving early</h3>
+      <p id="confirmMsg"></p>
+      <p class="sub">Confirming will notify the manager for follow-up.</p>
+      <div class="row">
+        <button class="cancel" id="cCancel">Cancel</button>
+        <button class="confirm" id="cConfirm">Check out anyway</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const KEY = 'phn_clock_station';
+let station = JSON.parse(localStorage.getItem(KEY) || 'null'); // { token, location_id, location_name, opener }
+let pending = null; // for the short-shift confirm
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(station ? { Authorization: 'Bearer ' + station.token } : {}) }, ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+function showMsg(el, text, kind) { el.className = 'msg ' + kind; el.textContent = text; }
+
+// ── Open station ──────────────────────────────────────────────────────────
+const ALL_SCOPE = ['owner', 'admin', 'general_manager', 'regional_manager', 'analyst', 'accountant'];
+$('oEmail').addEventListener('input', () => $('oErr').className = 'msg');
+$('oBtn').onclick = async () => {
+  $('oErr').className = 'msg';
+  const email = $('oEmail').value.trim(), password = $('oPass').value;
+  if (!email || !password) return showMsg($('oErr'), 'Email and password are required.', 'err');
+  try {
+    const d = await (async () => {
+      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Login failed.'); return j;
+    })();
+    const scopeAll = ALL_SCOPE.includes(d.user.role);
+    if (scopeAll && !$('oLoc').value) {
+      // Need to pick which location this tablet serves.
+      const locs = await (await fetch('/api/inventory/locations', { headers: { Authorization: 'Bearer ' + d.token } })).json();
+      $('oLoc').innerHTML = locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+      $('oLocWrap').classList.remove('hide');
+      station = { token: d.token, opener: d.user.name, _pickLoc: true };
+      return showMsg($('oErr'), 'Choose the location for this tablet, then Open station again.', 'warn');
+    }
+    const location_id = scopeAll ? Number($('oLoc').value) : d.user.location_id;
+    let location_name = d.user.location_name || '';
+    if (!location_name) {
+      const locs = await (await fetch('/api/inventory/locations', { headers: { Authorization: 'Bearer ' + d.token } })).json();
+      location_name = (locs.find(l => String(l.id) === String(location_id)) || {}).name || 'This location';
+    }
+    station = { token: d.token, location_id, location_name, opener: d.user.name };
+    localStorage.setItem(KEY, JSON.stringify(station));
+    render();
+  } catch (e) { showMsg($('oErr'), e.message, 'err'); }
+};
+
+function closeStation() { localStorage.removeItem(KEY); station = null; render(); }
+
+// ── Staff punch ───────────────────────────────────────────────────────────
+document.querySelectorAll('.punch button').forEach(b => b.onclick = () => punch(b.dataset.action));
+async function punch(action, confirm_short) {
+  const employee_code = $('sCode').value.trim(), password = $('sPass').value;
+  if (!employee_code || !password) return showMsg($('pMsg'), 'Enter your employee code and password.', 'err');
+  try {
+    const d = await api('/api/timeclock/punch', { method: 'POST', body: JSON.stringify({ location_id: station.location_id, employee_code, password, action, confirm_short }) });
+    if (d.warning === 'short_shift') { pending = { action, employee_code, password }; $('confirmMsg').textContent = d.message; $('confirmBg').classList.remove('hide'); return; }
+    if (d.action === 'in') showMsg($('pMsg'), `✓ ${d.staff} checked in at ${d.at}.`, 'ok');
+    else showMsg($('pMsg'), `◱ ${d.staff} checked out at ${d.at} — worked ${fmtMin(d.worked_minutes)}${d.overtime_minutes ? ` (${fmtMin(d.overtime_minutes)} overtime)` : ''}${d.short ? ' — flagged short' : ''}.`, d.short ? 'warn' : 'ok');
+    $('sCode').value = ''; $('sPass').value = ''; $('sCode').focus();
+    refreshOnClock();
+    clearTimeout(window._mt); window._mt = setTimeout(() => $('pMsg').className = 'msg', 6000);
+  } catch (e) {
+    if (e.message === 'Invalid or expired session') { showMsg($('pMsg'), 'Station session expired — a manager must open it again.', 'err'); return setTimeout(closeStation, 1500); }
+    showMsg($('pMsg'), e.message, 'err');
+  }
+}
+$('cCancel').onclick = () => { $('confirmBg').classList.add('hide'); pending = null; };
+$('cConfirm').onclick = () => { $('confirmBg').classList.add('hide'); if (pending) punch(pending.action, true); pending = null; };
+$('sPass').addEventListener('keydown', e => { if (e.key === 'Enter') punch('in'); });
+
+async function refreshOnClock() {
+  try {
+    const b = await api('/api/timeclock/board?location_id=' + station.location_id);
+    const on = b.entries.filter(e => e.status === 'in');
+    $('onclockList').innerHTML = on.length ? on.map(e => `<span class="chip">🟢 ${esc(e.name)} · in ${e.clock_in}</span>`).join('') : '<span class="sub">Nobody checked in yet.</span>';
+  } catch { /* ignore */ }
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtMin = (m) => { m = Math.max(0, Math.round(m || 0)); return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`; };
+
+// ── Render ────────────────────────────────────────────────────────────────
+function render() {
+  const opened = station && station.location_id && !station._pickLoc;
+  $('openCard').classList.toggle('hide', opened);
+  $('punchCard').classList.toggle('hide', !opened);
+  if (opened) {
+    $('barRight').innerHTML = `<span class="loc">${esc(station.location_name)} · opened by ${esc(station.opener)}</span> <button id="closeBtn">Close station</button>`;
+    $('closeBtn').onclick = closeStation;
+    $('sCode').focus();
+    refreshOnClock();
+    clearInterval(window._ri); window._ri = setInterval(refreshOnClock, 30000);
+  } else {
+    $('barRight').innerHTML = '';
+    clearInterval(window._ri);
+  }
+}
+render();
+</script>
+</body>
+</html>

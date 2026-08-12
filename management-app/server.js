@@ -14,6 +14,8 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Enterprise Restaurant Management System' }));
+// Front-Desk time-clock kiosk (staff check-in / check-out tablet).
+app.get('/clock', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clock.html')));
 
 // Activity trail — records logins, writes, and denied attempts across the API.
 app.use(require('./lib/activity').activityLogger);
@@ -27,6 +29,7 @@ app.use('/api/messages', require('./routes/messages'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/central', require('./routes/central'));
 app.use('/api/schedule', require('./routes/schedule'));
+app.use('/api/timeclock', require('./routes/timeclock'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

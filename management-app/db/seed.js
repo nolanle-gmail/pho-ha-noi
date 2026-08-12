@@ -436,6 +436,12 @@ function run() {
   // Per-location day-task lists (restaurants share the common set; CK has its own).
   seedLocationTasks(db, locIds, ckId);
 
+  // Login employee codes: reuse the HR profile code where present, else generate one.
+  db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
+           WHERE (employee_code IS NULL OR employee_code = '')
+             AND EXISTS (SELECT 1 FROM staff_profiles sp WHERE sp.user_id = users.id AND sp.employee_code IS NOT NULL AND sp.employee_code <> '')`);
+  db.exec(`UPDATE users SET employee_code = 'E' || substr('0000' || id, -4) WHERE employee_code IS NULL OR employee_code = ''`);
+
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }
