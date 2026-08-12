@@ -139,6 +139,28 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/waitlist/history/all', { headers: H(mgr.token) });
     check('manager BLOCKED from guest history', r.status === 403, 'status=' + r.status);
+
+    // ── Floor plan (areas + tables) ────────────────────────────
+    const fpLocs = await j(await fetch(base + '/api/waitlist/locations', { headers: H(token) }));
+    const l1 = fpLocs[0].id;
+    const fp = await j(await fetch(base + `/api/floorplan?location_id=${l1}`, { headers: H(token) }));
+    check('floor plan seeded with areas + tables', Array.isArray(fp.areas) && fp.areas.length >= 3 && fp.areas.some(a => a.tables.length > 0), JSON.stringify((fp.areas || []).map(a => a.name)));
+    const tp = await j(await fetch(base + `/api/floorplan/tables?location_id=${l1}`, { headers: H(token) }));
+    check('table picker returns areas with tables + occupancy', Array.isArray(tp.areas) && tp.table_count > 0 && 'occupied_count' in tp && tp.areas[0].tables.every(t => 'occupied' in t), JSON.stringify({ n: tp.table_count }));
+    // Manager configures their own location's plan.
+    const area = await j(await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Test Mezzanine' }) }));
+    check('manager adds an area', area.success === true && !!area.id, JSON.stringify(area));
+    const tbl = await j(await fetch(base + '/api/floorplan/tables', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ area_id: area.id, label: 'M9', seats: 6 }) }));
+    check('manager adds a table', tbl.success === true && !!tbl.id, JSON.stringify(tbl));
+    const fpM = await j(await fetch(base + '/api/floorplan', { headers: H(mgr.token) }));
+    check('new area + table appear in the plan', fpM.areas.some(a => a.id === area.id && a.tables.some(t => t.label === 'M9')), 'not found');
+    r = await fetch(base + `/api/floorplan/tables/${tbl.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('manager removes a table', r.status === 200, await r.text());
+    // Front desk can view tables (to seat) but cannot edit the plan.
+    r = await fetch(base + '/api/floorplan/tables', { headers: H(host.token) });
+    check('front desk can view tables (for seating)', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: H(host.token), body: JSON.stringify({ name: 'Nope' }) });
+    check('front desk cannot edit the floor plan (403)', r.status === 403, 'status=' + r.status);
   } catch (e) { fail++; console.log('  FAIL  exception: ' + e.message); }
   finally { server.close(); }
   console.log(`\n${pass} passed, ${fail} failed`);

@@ -78,12 +78,15 @@ async function boot() {
   setInterval(() => { if (S.view === 'board' && !$('modalHost').innerHTML) render(); }, 15000);
 }
 
-// Owner-only sub-navigation between the host board, guest history and report.
+// Sub-navigation: owner sees everything; managers get the Front Desk + Floor Plan.
 function renderNav() {
   const nav = $('subnav');
-  if (S.user.role !== 'owner') { nav.classList.add('hidden'); nav.innerHTML = ''; return; }
+  const role = S.user.role;
+  let items;
+  if (role === 'owner') items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log'], ['floorplan', '🍽️ Floor Plan']];
+  else if (role === 'manager') items = [['board', '🍜 Front Desk'], ['floorplan', '🍽️ Floor Plan']];
+  else { nav.classList.add('hidden'); nav.innerHTML = ''; return; }
   nav.classList.remove('hidden');
-  const items = [['board', '🍜 Front Desk'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
 }
@@ -93,7 +96,36 @@ function render() {
   if (S.view === 'history') return renderHistory();
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
+  if (S.view === 'floorplan') return renderFloorPlan();
   return renderBoard();
+}
+
+async function renderFloorPlan() {
+  let fp;
+  try { fp = await api(q('/floorplan')); } catch (e) { $('view').innerHTML = `<p class="sub" style="color:var(--red)">${esc(e.message)}</p>`; return; }
+  const canEdit = fp.can_edit;
+  const totalT = fp.areas.reduce((n, a) => n + a.tables.length, 0);
+  const chips = (a) => a.tables.map(t => `<span class="fp-chip${t.is_active ? '' : ' off'}">${esc(t.label)} <span class="fp-chip-seats">${t.seats}p</span>${canEdit ? ` <button class="fp-x" data-tdel="${t.id}" title="Remove table">✕</button>` : ''}</span>`).join('') || '<span class="sub" style="color:var(--muted)">No tables yet.</span>';
+  const areasHtml = fp.areas.map(a => `<div class="card fp-card">
+    <div class="row-between"><h3 style="margin:0">${esc(a.name)} <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${a.tables.length} tables</span></h3>
+      ${canEdit ? `<div style="display:flex;gap:.4rem"><button class="btn ghost sm" data-addtable="${a.id}">+ Table</button><button class="btn ghost sm" data-areadel="${a.id}">Remove</button></div>` : ''}</div>
+    <div class="fp-chips">${chips(a)}</div></div>`).join('');
+  $('view').innerHTML = `
+    <div class="row-between"><h2 style="margin:0">Floor Plan <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${fp.areas.length} areas · ${totalT} tables</span></h2>
+      ${canEdit ? '<button class="btn" id="addArea">+ Add area</button>' : '<span class="badge">View only</span>'}</div>
+    <p class="sub" style="color:var(--muted);margin:.3rem 0 1rem">These tables appear in the Front Desk seating picker, grouped by area.</p>
+    <div class="fp-grid">${areasHtml || '<p class="sub" style="color:var(--muted)">No areas yet — add one to start.</p>'}</div>`;
+  if (!canEdit) return;
+  if ($('addArea')) $('addArea').onclick = () => modal('Add area', `<label>Area name</label><input id="aName" placeholder="e.g. Patio" />`,
+    async () => { await api('/floorplan/areas', { method: 'POST', body: JSON.stringify({ location_id: S.loc, name: $('aName').value.trim() }) }); toast('Area added'); render(); }, 'Add');
+  $('view').querySelectorAll('[data-areadel]').forEach(b => b.onclick = async () => {
+    try { await api('/floorplan/areas/' + b.dataset.areadel, { method: 'DELETE' }); toast('Area removed'); render(); } catch (e) { toast(e.message, true); }
+  });
+  $('view').querySelectorAll('[data-addtable]').forEach(b => b.onclick = () => modal('Add table', `<label>Table label</label><input id="tLabel" placeholder="e.g. 12 or P3" /><label>Seats</label><input id="tSeats" type="number" min="1" max="50" value="4" />`,
+    async () => { await api('/floorplan/tables', { method: 'POST', body: JSON.stringify({ location_id: S.loc, area_id: b.dataset.addtable, label: $('tLabel').value.trim(), seats: $('tSeats').value }) }); toast('Table added'); render(); }, 'Add'));
+  $('view').querySelectorAll('[data-tdel]').forEach(b => b.onclick = async () => {
+    try { await api('/floorplan/tables/' + b.dataset.tdel, { method: 'DELETE' }); toast('Table removed'); render(); } catch (e) { toast(e.message, true); }
+  });
 }
 
 let activityFilter = 'all';
@@ -158,9 +190,37 @@ function modal(title, bodyHtml, onOk, okLabel = 'Add party') {
   $('mOk').onclick = async () => { try { await onOk(); close(); } catch (e) { $('mErr').textContent = e.message; } };
 }
 
+// Seat a party by picking a table from the floor plan (occupied tables disabled).
+async function seatModal(id, name) {
+  let fp;
+  try { fp = await api(q('/floorplan/tables')); } catch { fp = { areas: [] }; }
+  const areasHtml = (fp.areas || []).filter(a => a.tables.length).map(a => `<div class="fp-area">
+    <div class="fp-area-name">${esc(a.name)} <span class="fp-count">${a.tables.filter(t => !t.occupied).length}/${a.tables.length} open</span></div>
+    <div class="fp-tables">${a.tables.map(t => `<button type="button" class="fp-table${t.occupied ? ' occupied' : ''}" data-tlabel="${esc(t.label)}" ${t.occupied ? 'disabled' : ''} title="${t.occupied ? 'Occupied · ' + esc(t.guest || '') : t.seats + ' seats'}">${esc(t.label)}<span class="fp-seats">${t.seats}p</span></button>`).join('')}</div>
+  </div>`).join('');
+  const body = `<p class="sub" style="margin:.1rem 0 .6rem;color:var(--muted)">Pick a table for <strong>${esc(name)}</strong>. Grey tables are occupied.</p>
+    <div class="fp-pick">${areasHtml || '<p class="sub" style="color:var(--muted)">No floor plan set up for this location yet.</p>'}</div>
+    <label style="margin-top:.7rem;display:block;font-size:.85rem;color:var(--muted)">Or type another table (optional)</label>
+    <input id="fTable" placeholder="e.g. 12" />
+    <input type="hidden" id="fSel" />`;
+  modal(`Seat ${name}`, body, async () => {
+    const sel = ($('fSel').value || $('fTable').value.trim()) || null;
+    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: sel }) });
+    toast(`${name} seated${sel ? ' at ' + sel : ''}`); render();
+  }, 'Seat party');
+  const host = $('modalHost');
+  host.querySelectorAll('[data-tlabel]').forEach(b => b.onclick = () => {
+    host.querySelectorAll('[data-tlabel]').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel'); $('fSel').value = b.dataset.tlabel; $('fTable').value = '';
+  });
+  host.querySelector('#fTable').oninput = () => { host.querySelectorAll('[data-tlabel]').forEach(x => x.classList.remove('sel')); $('fSel').value = ''; };
+}
+
 const ACTION_LABEL = {
   party_added: ['Added', 'gold'], party_notified: ['Notified', 'gold'],
   party_seated: ['Seated', 'seated'], party_left: ['Removed', 'left'],
+  area_add: ['Area added', 'gold'], area_remove: ['Area removed', 'left'],
+  table_add: ['Table added', 'gold'], table_remove: ['Table removed', 'left'],
 };
 function auditSummary(a) {
   const d = a.detail || {};
@@ -243,8 +303,7 @@ async function act(action, id, name) {
       const r = await api(`/waitlist/${id}/notify`, { method: 'POST' });
       toast(r.sent ? `Paged ${name} by SMS 🔔` : `Marked notified (no phone on file)`);
     } else if (action === 'seat') {
-      return modal(`Seat ${name}`, `<label>Table number (optional)</label><input id="fTable" placeholder="e.g. 12" />`,
-        async () => { await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: $('fTable').value.trim() }) }); toast(`${name} seated`); render(); }, 'Seat party');
+      return seatModal(id, name);
     } else if (action === 'leave') {
       await api(`/waitlist/${id}/leave`, { method: 'PUT' }); toast(`${name || 'Party'} removed`);
     }

@@ -79,6 +79,27 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Floor plan: areas (Dining, Bar, Lounge, Patio…) and the numbered tables in
+    -- them, per location. The Front Desk picks a table from here when seating.
+    CREATE TABLE IF NOT EXISTS floor_areas (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      name        TEXT NOT NULL,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS restaurant_tables (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL REFERENCES locations(id),
+      area_id     INTEGER REFERENCES floor_areas(id),
+      label       TEXT NOT NULL,               -- table number/code, e.g. "12" or "P3"
+      seats       INTEGER NOT NULL DEFAULT 2,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tables_loc ON restaurant_tables(location_id);
     CREATE INDEX IF NOT EXISTS idx_wl_loc_status ON waitlist(location_id, status);
     CREATE INDEX IF NOT EXISTS idx_audit_loc ON audit_log(location_id);
     CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);

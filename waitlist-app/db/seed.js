@@ -27,10 +27,29 @@ const PARTIES = [
 ];
 
 function run() {
-  for (const t of ['audit_log', 'notify_log', 'waitlist', 'users', 'locations']) db.exec(`DELETE FROM ${t}`);
+  for (const t of ['audit_log', 'notify_log', 'waitlist', 'restaurant_tables', 'floor_areas', 'users', 'locations']) db.exec(`DELETE FROM ${t}`);
 
   const locIds = LOCATIONS.map(([name, addr, turn]) =>
     db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,?)`).run(name, addr, turn).lastInsertRowid);
+
+  // Default floor plan for every location: areas with numbered tables.
+  const insArea = db.prepare(`INSERT INTO floor_areas (location_id, name, sort_order) VALUES (?,?,?)`);
+  const insTable = db.prepare(`INSERT INTO restaurant_tables (location_id, area_id, label, seats, sort_order) VALUES (?,?,?,?,?)`);
+  // [area, sort, [ [labelPrefix, count, seats] ... ]]
+  const PLAN = [
+    ['Dining Room', 0, [['', 12, 4]]],       // 1..12
+    ['Bar', 1, [['B', 6, 2]]],               // B1..B6
+    ['Lounge', 2, [['L', 4, 4]]],            // L1..L4
+    ['Patio', 3, [['P', 8, 4]]],             // P1..P8
+  ];
+  let tableCount = 0;
+  locIds.forEach((lid) => PLAN.forEach(([area, sort, groups]) => {
+    const aid = insArea.run(lid, area, sort).lastInsertRowid;
+    let n = 0;
+    groups.forEach(([prefix, count, seats]) => {
+      for (let i = 1; i <= count; i++) { insTable.run(lid, aid, `${prefix}${i}`, seats, n++); tableCount++; }
+    });
+  }));
 
   const hash = (p) => bcrypt.hashSync(p, 10);
   db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run('Harry Nguyen', 'harry@phohanoi.com', hash('Harry123!'), 'owner', null);
@@ -83,7 +102,7 @@ function run() {
   // after arrival). Done in a follow-up pass so the insert stays simple.
   db.prepare(`UPDATE waitlist SET seated_at=datetime(created_at, '+' || (10 + (id % 30)) || ' minutes') WHERE status='seated' AND seated_at IS NULL`).run();
 
-  console.log(`Seeded ${LOCATIONS.length} locations, ${PARTIES.length} waiting parties, ${histCount} historical guests.`);
+  console.log(`Seeded ${LOCATIONS.length} locations, ${tableCount} tables (floor plan), ${PARTIES.length} waiting parties, ${histCount} historical guests.`);
   console.log('Owner: harry@phohanoi.com / Harry123!  ·  Host: host1@phohanoi.com / Host123!');
 }
 
