@@ -134,6 +134,63 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
   });
 });
 
+// ── Payroll / overtime export for a pay period ───────────────────────────────
+// Overtime is derived from clocked hours per California's daily rule:
+//   regular ≤ 8h/day, overtime (1.5×) for 8–12h/day, double-time (2×) beyond 12h/day.
+const OT_AFTER_MIN = 8 * 60, DT_AFTER_MIN = 12 * 60, OT_MULT = 1.5, DT_MULT = 2;
+const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const mondayOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const round2 = (n) => Math.round(n * 100) / 100;
+
+router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const tz = loc.timezone || DEFAULT_TZ;
+  const today = localDate(tz);
+  const start = validDate(req.query.start) || mondayOf(today);
+  const end = validDate(req.query.end) || addDaysIso(start, 6);
+
+  // Completed punches in range → sum worked minutes per person per day, then apply
+  // the daily overtime split.
+  const rows = db.prepare(`SELECT te.user_id, u.name, u.employee_code, u.role, u.hourly_rate,
+      te.work_date, te.worked_minutes
+    FROM time_entries te JOIN users u ON u.id=te.user_id
+    WHERE te.location_id=? AND te.work_date BETWEEN ? AND ? AND te.clock_out IS NOT NULL`).all(locId, start, end);
+  const byUser = {};
+  for (const r of rows) {
+    const u = byUser[r.user_id] || (byUser[r.user_id] = { user_id: r.user_id, name: r.name, employee_code: r.employee_code, role: r.role, rate: r.hourly_rate || 0, days: {} });
+    u.days[r.work_date] = (u.days[r.work_date] || 0) + (r.worked_minutes || 0);
+  }
+  const staff = Object.values(byUser).map(u => {
+    let reg = 0, ot = 0, dt = 0, total = 0;
+    const days = Object.values(u.days);
+    for (const m of days) {
+      total += m;
+      reg += Math.min(m, OT_AFTER_MIN);
+      ot += Math.min(Math.max(m - OT_AFTER_MIN, 0), DT_AFTER_MIN - OT_AFTER_MIN);
+      dt += Math.max(m - DT_AFTER_MIN, 0);
+    }
+    const h = (min) => round2(min / 60);
+    const rate = u.rate || 0;
+    const gross = rate ? round2(h(reg) * rate + h(ot) * rate * OT_MULT + h(dt) * rate * DT_MULT) : null;
+    return {
+      user_id: u.user_id, name: u.name, employee_code: u.employee_code, role: u.role,
+      days: days.length, total_hours: h(total), regular_hours: h(reg), ot_hours: h(ot), dt_hours: h(dt),
+      rate: rate || null, gross_pay: gross,
+    };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+  const sum = (k) => round2(staff.reduce((t, s) => t + (s[k] || 0), 0));
+  res.json({
+    location: loc, start, end, timezone: tz,
+    rules: { ot_after_h: OT_AFTER_MIN / 60, dt_after_h: DT_AFTER_MIN / 60, ot_mult: OT_MULT, dt_mult: DT_MULT },
+    staff,
+    totals: { staff: staff.length, total_hours: sum('total_hours'), regular_hours: sum('regular_hours'), ot_hours: sum('ot_hours'), dt_hours: sum('dt_hours'), gross_pay: sum('gross_pay') },
+  });
+});
+
 // ── Short-shift alerts for a location ─────────────────────────────────────────
 router.get('/alerts', requireRole(...ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);

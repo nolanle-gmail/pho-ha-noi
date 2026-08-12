@@ -442,6 +442,27 @@ function run() {
              AND EXISTS (SELECT 1 FROM staff_profiles sp WHERE sp.user_id = users.id AND sp.employee_code IS NOT NULL AND sp.employee_code <> '')`);
   db.exec(`UPDATE users SET employee_code = 'E' || substr('0000' || id, -4) WHERE employee_code IS NULL OR employee_code = ''`);
 
+  // Hourly pay rates by role (for the payroll export). Only fills unset rates.
+  const RATE_BY_ROLE = { general_manager: 40, manager: 34, assistant_manager: 30, kitchen_manager: 30, support: 19, driver: 20, server: 18, host: 17, cashier: 17, bartender: 19, barista: 17, busser: 16, chef: 28, line_cook: 22, prep_cook: 19, dishwasher: 16, employee: 18 };
+  const setRate = db.prepare(`UPDATE users SET hourly_rate=? WHERE role=? AND (hourly_rate IS NULL OR hourly_rate=0)`);
+  for (const [role, rate] of Object.entries(RATE_BY_ROLE)) setRate.run(rate, role);
+
+  // Demo time-clock history at San Jose (loc 1) so the payroll export isn't empty.
+  // Support Staff is a fixed fixture (a 10h and a 13h day → overtime + double-time).
+  const p2 = (n) => String(n).padStart(2, '0');
+  const dISO = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+  const insTE = db.prepare(`INSERT INTO time_entries (user_id,location_id,work_date,clock_in,clock_out,scheduled_minutes,worked_minutes,short_confirmed) VALUES (?,?,?,?,?,?,?,0)`);
+  const teFor = (uid, offset, workedMin, sched = 480) => {
+    const date = dISO(offset);
+    const co = `${date}T${p2(9 + Math.floor(workedMin / 60))}:${p2(workedMin % 60)}:00`;
+    insTE.run(uid, 1, date, `${date}T09:00:00`, co, sched, workedMin);
+  };
+  const uBy = (email) => db.prepare(`SELECT id FROM users WHERE email=?`).get(email);
+  const supU = uBy('support@phohanoi.com'), srvU = uBy('server@phohanoi.com'), empU = uBy('employee@phohanoi.com');
+  if (supU) { teFor(supU.id, -1, 600); teFor(supU.id, -2, 780); }                    // 10h (OT), 13h (OT+DT)
+  if (srvU) { teFor(srvU.id, -1, 480); teFor(srvU.id, -2, 480); teFor(srvU.id, -3, 540); } // one 9h (OT)
+  if (empU) { teFor(empU.id, -3, 480); teFor(empU.id, -4, 480); }
+
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
   console.log('Owner login: harry@phohanoi.com / Harry123!');
 }

@@ -1439,12 +1439,14 @@ async function openLocTaskListModal(locId, locName) {
 // ── Time Clock — check-in/out status for the location (manager/GM/owner) ──────
 async function renderLocTimeClock() {
   const canManage = ['owner', 'admin'].includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
-  let data, alerts = { alerts: [] };
+  let data, alerts = { alerts: [] }, payroll = null;
   try {
     // No stored date → server defaults to the location's local "today".
     data = await api('/timeclock/board?location_id=' + S.locDetailId + (S.tcDate ? '&date=' + S.tcDate : ''));
     S.tcDate = data.date;
     if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
+    const pStart = mondayOf(data.date), pEnd = addDaysIso(pStart, 6);
+    payroll = await api(`/timeclock/payroll?location_id=${S.locDetailId}&start=${pStart}&end=${pEnd}`).catch(() => null);
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const sm = data.summary;
@@ -1479,7 +1481,8 @@ async function renderLocTimeClock() {
     <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
       ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
-    <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>`;
+    <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>
+    ${payrollSection(payroll)}`;
   const go = (iso) => { S.tcDate = iso; renderLocTimeClock(); };
   $('tcPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('tcNext').onclick = () => go(addDaysIso(data.date, 1));
@@ -1488,6 +1491,44 @@ async function renderLocTimeClock() {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
   });
+  if ($('prCsv') && payroll) $('prCsv').onclick = () => exportPayrollCSV(payroll);
+}
+
+function payrollSection(pr) {
+  if (!pr) return '';
+  const R = pr.rules, t = pr.totals;
+  const otc = (h, color) => h ? `<strong style="color:${color}">${h}</strong>` : '0';
+  const rows = pr.staff.map(s => `<tr>
+    <td><strong>${esc(s.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(s.employee_code || '')}</span></td>
+    <td class="num">${s.days}</td><td class="num">${s.total_hours}</td><td class="num">${s.regular_hours}</td>
+    <td class="num">${otc(s.ot_hours, '#b4630b')}</td><td class="num">${otc(s.dt_hours, 'var(--red)')}</td>
+    <td class="num">${s.rate != null ? '$' + s.rate.toFixed(2) : '—'}</td>
+    <td class="num">${s.gross_pay != null ? money(s.gross_pay) : '—'}</td></tr>`).join('');
+  return `<div class="section" style="margin-top:1.5rem">
+    <div class="row-between"><h3 style="margin:0">Payroll & overtime <span style="font-weight:400;color:var(--muted);font-size:.85rem">— week of ${fmtDay(pr.start)}–${fmtDay(pr.end)}, ${pr.end.slice(0, 4)}</span></h3>
+      ${pr.staff.length ? '<button class="btn sm" id="prCsv">⬇ Export CSV</button>' : ''}</div>
+    <p class="sub" style="color:var(--muted);margin:.2rem 0 .7rem;font-size:.8rem">From actual clocked hours. Overtime <strong>${R.ot_mult}×</strong> after ${R.ot_after_h}h/day, double-time <strong>${R.dt_mult}×</strong> after ${R.dt_after_h}h/day.</p>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Days</th><th class="num">Total h</th><th class="num">Regular</th><th class="num">OT ${R.ot_mult}×</th><th class="num">Double ${R.dt_mult}×</th><th class="num">Rate</th><th class="num">Gross</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="8" class="empty">No completed shifts clocked this week yet.</td></tr>'}
+      ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">—</td><td class="num">${t.total_hours}</td><td class="num">${t.regular_hours}</td><td class="num">${t.ot_hours}</td><td class="num">${t.dt_hours}</td><td class="num">—</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td></tr>` : ''}
+    </tbody></table></div>
+  </div>`;
+}
+
+function exportPayrollCSV(pr) {
+  const R = pr.rules;
+  const headers = ['Employee', 'Code', 'Role', 'Days', 'Total hours', 'Regular hours', `OT hours (${R.ot_mult}x)`, `Double-time hours (${R.dt_mult}x)`, 'Hourly rate', 'Gross pay'];
+  const lines = [headers.join(',')];
+  for (const s of pr.staff) lines.push([
+    s.name, s.employee_code || '', roleLabel(s.role), s.days, s.total_hours, s.regular_hours,
+    s.ot_hours, s.dt_hours, s.rate != null ? s.rate : '', s.gross_pay != null ? s.gross_pay : '',
+  ].map(csvCell).join(','));
+  const csv = '﻿' + lines.join('\r\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `payroll_${(pr.location.name || 'location').replace(/[^a-z0-9]+/gi, '-')}_${pr.start}_${pr.end}.csv`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  toast(`Exported ${pr.staff.length} staff to CSV`);
 }
 
 const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational'], needs_service: ['low', 'needs service'], out_of_order: ['out', 'out of order'] }[s] || ['gray', s]; return `<span class="badge ${m[0]}">${m[1]}</span>`; };

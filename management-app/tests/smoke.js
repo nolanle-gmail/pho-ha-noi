@@ -410,6 +410,22 @@ const check = (name, ok, detail = '') => {
     r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, emp.token);
     check('non-manager cannot open a station / punch (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Payroll / overtime export ──────────────────────────────────────────
+    const p2 = (x) => String(x).padStart(2, '0');
+    const dOff = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+    const pr = await j(await fetch(base + `/api/timeclock/payroll?location_id=${loc1}&start=${dOff(-8)}&end=${dOff(0)}`, { headers: H(mgr.token) }));
+    check('payroll returns per-staff hours + OT rules', Array.isArray(pr.staff) && pr.rules.ot_after_h === 8 && pr.rules.dt_after_h === 12 && pr.rules.ot_mult === 1.5, JSON.stringify(pr.rules));
+    // Support Staff fixture: a 10h day (2h OT) + a 13h day (4h OT incl. 1h double-time).
+    const sup = pr.staff.find(s => /Support Staff/.test(s.name));
+    check('overtime + double-time computed from clocked hours', !!sup && sup.regular_hours === 16 && sup.ot_hours === 6 && sup.dt_hours === 1 && sup.total_hours === 23, JSON.stringify(sup));
+    const expectGross = sup ? Math.round((16 * sup.rate + 6 * sup.rate * 1.5 + 1 * sup.rate * 2) * 100) / 100 : -1;
+    check('payroll gross = regular + 1.5×OT + 2×DT at the hourly rate', !!sup && sup.rate > 0 && sup.gross_pay === expectGross, JSON.stringify(sup && { rate: sup.rate, gross: sup.gross_pay, expect: expectGross }));
+    check('payroll totals present', pr.totals && pr.totals.ot_hours >= 6 && pr.totals.staff >= 1, JSON.stringify(pr.totals));
+    r = await fetch(base + `/api/timeclock/payroll?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from payroll (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/timeclock/payroll?location_id=${loc2}`, { headers: H(mgr.token) });
+    check('manager blocked from another location payroll (403)', r.status === 403, 'status=' + r.status);
+
     // ── Additional access levels ───────────────────────────────
     const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));
