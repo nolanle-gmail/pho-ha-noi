@@ -2,6 +2,17 @@
 const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', via SQLite datetime('now')).
+// Show them in the viewer's local time instead of raw UTC.
+function fmtLocalTs(ts) {
+  if (!ts) return '';
+  let s = String(ts).includes('T') ? String(ts) : String(ts).replace(' ', 'T');
+  if (!/[Z+]/.test(s.slice(10))) s += 'Z'; // mark as UTC if no zone
+  const d = new Date(s);
+  if (isNaN(d)) return ts;
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const numf = (n) => (Number(n) || 0).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -1114,7 +1125,7 @@ async function renderLocSchedule() {
     </div>
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
-      ${days.map((d, i) => `<th class="${d === todayIso() ? 'is-today' : ''}">${WD[i]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
+      ${days.map((d, i) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[i]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
       <th class="sched-week">Week<div class="sched-date">/ ${WEEKLY_MAX}h</div></th>
     </tr></thead><tbody>
       ${data.staff.length ? data.staff.map(st => `<tr>
@@ -1263,9 +1274,9 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
 // ── Day Tasks — assign specific tasks to the day's working staff ─────────────
 async function renderLocDayTasks() {
   const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
-  if (!S.dayTaskDate) S.dayTaskDate = fmtLocalIso(new Date());
   let data;
-  try { data = await api('/schedule/day-tasks?location_id=' + S.locDetailId + '&date=' + S.dayTaskDate); }
+  // No stored date → let the server default to the location's local "today".
+  try { data = await api('/schedule/day-tasks?location_id=' + S.locDetailId + (S.dayTaskDate ? '&date=' + S.dayTaskDate : '')); }
   catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.dayTaskDate = data.date;
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
@@ -1333,7 +1344,7 @@ async function renderLocDayTasks() {
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('dtNext').onclick = () => go(addDaysIso(data.date, 1));
-  $('dtToday').onclick = () => go(fmtLocalIso(new Date()));
+  $('dtToday').onclick = () => go(data.today || fmtLocalIso(new Date()));
   if (canEdit) {
     if ($('dtManage')) $('dtManage').onclick = () => openLocTaskListModal(S.locDetailId, data.location.name);
     $('locBody').querySelectorAll('[data-assign]').forEach(sel => sel.onchange = async () => {
@@ -1409,11 +1420,12 @@ async function openLocTaskListModal(locId, locName) {
 // ── Time Clock — check-in/out status for the location (manager/GM/owner) ──────
 async function renderLocTimeClock() {
   const canManage = ['owner', 'admin'].includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
-  if (!S.tcDate) S.tcDate = fmtLocalIso(new Date());
   let data, alerts = { alerts: [] };
   try {
-    data = await api('/timeclock/board?location_id=' + S.locDetailId + '&date=' + S.tcDate);
-    if (S.tcDate === fmtLocalIso(new Date())) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
+    // No stored date → server defaults to the location's local "today".
+    data = await api('/timeclock/board?location_id=' + S.locDetailId + (S.tcDate ? '&date=' + S.tcDate : ''));
+    S.tcDate = data.date;
+    if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const sm = data.summary;
@@ -1452,7 +1464,7 @@ async function renderLocTimeClock() {
   const go = (iso) => { S.tcDate = iso; renderLocTimeClock(); };
   $('tcPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('tcNext').onclick = () => go(addDaysIso(data.date, 1));
-  $('tcToday').onclick = () => go(fmtLocalIso(new Date()));
+  $('tcToday').onclick = () => go(data.today || fmtLocalIso(new Date()));
   $('locBody').querySelectorAll('[data-resolve]').forEach(b => b.onclick = async () => {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
@@ -1556,9 +1568,9 @@ async function renderActivityLog() {
     <div class="row-between"><h2 class="page">Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
       <div class="actions-cell">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('denied', 'Denied')}<button class="btn sm" id="expCsv">⬇ Export CSV</button></div></div>
     <p class="sub" style="color:var(--muted);margin-top:0">Every sign-in, change, and blocked attempt — who, what, status and IP. (Read-only page views aren't logged.)</p>
-    <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>When (local)</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
       ${rows.length ? rows.map(r => `<tr>
-        <td class="mono" style="white-space:nowrap">${esc((r.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+        <td class="mono" style="white-space:nowrap">${esc(fmtLocalTs(r.created_at))}</td>
         <td>${r.user_name ? `<strong>${esc(r.user_name)}</strong>${r.user_role ? ` <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(roleLabel(r.user_role))}</span>` : ''}` : '<span style="color:var(--muted)">anonymous</span>'}${r.detail && r.detail.email && !r.user_role ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(r.detail.email)}</span>` : ''}</td>
         <td>${esc(label(r))}</td>
         <td><span class="badge ${sBadge(r.status)}">${r.status}</span></td>
@@ -1576,10 +1588,10 @@ async function exportActivityCSV() {
     const q = '/activity?' + (activityFilter === 'all' ? '' : 'event=' + activityFilter + '&') + 'limit=1000';
     const rows = await api(q);
     const act = (r) => r.path === '/api/auth/login' ? (r.status === 200 ? 'signed in' : 'sign-in failed') : `${r.method} ${r.path.replace('/api', '')}`;
-    const headers = ['When', 'Who', 'Role', 'Email', 'Action', 'Status', 'IP'];
+    const headers = ['When (local)', 'Who', 'Role', 'Email', 'Action', 'Status', 'IP'];
     const lines = [headers.join(',')];
     for (const r of rows) lines.push([
-      (r.created_at || '').replace('T', ' ').slice(0, 19), r.user_name || '', r.user_role || '',
+      fmtLocalTs(r.created_at), r.user_name || '', r.user_role || '',
       (r.detail && r.detail.email) || '', act(r), r.status, r.ip || '',
     ].map(csvCell).join(','));
     const csv = '﻿' + lines.join('\r\n'); // BOM so Excel reads UTF-8

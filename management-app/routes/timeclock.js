@@ -11,16 +11,16 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
 
 const router = express.Router();
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
-const fmtLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 const validDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : null);
 const spanMin = (a, b) => { if (!a || !b) return 0; const [ah, am] = a.split(':').map(Number), [bh, bm] = b.split(':').map(Number); let s = ah * 60 + am, e = bh * 60 + bm; if (e <= s) e += 1440; return e - s; };
 const fmtDurMin = (m) => { m = Math.max(0, Math.round(m)); return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`; };
-const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
 
 // Minutes a staff member is scheduled to work at a location on a date.
 function scheduledMinutes(userId, locId, date) {
@@ -52,17 +52,18 @@ router.post('/punch', requireRole(...ROLES.MANAGE), (req, res) => {
     UNION SELECT 1 FROM staff_locations WHERE user_id=? AND location_id=?`).get(staff.id, locId, staff.id, locId);
   if (!linked) return res.status(403).json({ error: `${staff.name} is not assigned to this location.` });
 
-  const date = fmtLocal(new Date());
+  const tz = locTz(locId);
+  const date = localDate(tz); // "today" in the location's local timezone
   const open = db.prepare(`SELECT * FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NULL ORDER BY id DESC LIMIT 1`).get(staff.id, locId, date);
 
   if (action === 'in') {
-    if (open) return res.status(409).json({ error: `${staff.name} is already checked in (since ${hhmm(open.clock_in)}).` });
+    if (open) return res.status(409).json({ error: `${staff.name} is already checked in (since ${localTime(tz, new Date(open.clock_in))}).` });
     const sched = scheduledMinutes(staff.id, locId, date);
-    const now = new Date().toISOString();
+    const now = new Date();
     db.prepare(`INSERT INTO time_entries (user_id, location_id, work_date, clock_in, scheduled_minutes, opened_by) VALUES (?,?,?,?,?,?)`)
-      .run(staff.id, locId, date, now, sched, req.user.id);
+      .run(staff.id, locId, date, now.toISOString(), sched, req.user.id);
     auditLog(req, 'clock_in', 'user', staff.id, { location_id: locId, scheduled_minutes: sched });
-    return res.json({ success: true, action: 'in', staff: staff.name, at: hhmm(now), scheduled_minutes: sched });
+    return res.json({ success: true, action: 'in', staff: staff.name, at: localTime(tz, now), scheduled_minutes: sched });
   }
 
   // check-out
@@ -82,7 +83,7 @@ router.post('/punch', requireRole(...ROLES.MANAGE), (req, res) => {
     db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(locId, staff.id, 'short_shift', msg, open.id);
   }
   auditLog(req, 'clock_out', 'user', staff.id, { location_id: locId, worked_minutes: worked, short: isShort ? 1 : 0 });
-  return res.json({ success: true, action: 'out', staff: staff.name, at: hhmm(now.toISOString()), worked_minutes: worked, scheduled_minutes: sched,
+  return res.json({ success: true, action: 'out', staff: staff.name, at: localTime(tz, now), worked_minutes: worked, scheduled_minutes: sched,
     overtime_minutes: Math.max(0, worked - sched), short: isShort });
 });
 
@@ -91,9 +92,11 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
+  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
-  const date = validDate(req.query.date) || fmtLocal(new Date());
+  const tz = loc.timezone || DEFAULT_TZ;
+  const today = localDate(tz);
+  const date = validDate(req.query.date) || today;
 
   const entries = db.prepare(`SELECT te.*, u.name, u.employee_code FROM time_entries te JOIN users u ON u.id=te.user_id
     WHERE te.location_id=? AND te.work_date=? ORDER BY te.clock_in`).all(locId, date);
@@ -103,7 +106,7 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
     byUser[e.user_id] = true;
     return {
       user_id: e.user_id, name: e.name, employee_code: e.employee_code,
-      clock_in: hhmm(e.clock_in), clock_out: e.clock_out ? hhmm(e.clock_out) : null,
+      clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
       status: e.clock_out ? 'out' : 'in',
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
@@ -120,7 +123,7 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
     scheduled_minutes: spanMin(s.start_time, s.end_time), start_time: s.start_time, end_time: s.end_time,
   }));
   res.json({
-    location: loc, date, entries: rows, not_in: notIn,
+    location: loc, date, today, timezone: tz, entries: rows, not_in: notIn,
     summary: {
       on_clock: rows.filter(r => r.status === 'in').length,
       done: rows.filter(r => r.status === 'out').length,

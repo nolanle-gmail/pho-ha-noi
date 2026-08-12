@@ -5,6 +5,8 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { localDate, DEFAULT_TZ } = require('../lib/tz');
+const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 
 const router = express.Router();
 router.use(verifyToken);
@@ -100,7 +102,9 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : fmtLocal(new Date());
+  const tz = locTz(locId);
+  const today = localDate(tz);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : today;
   // Each working person's shift hours + breaks that day, so the manager can pick a
   // task time inside their hours but not during a break.
   const shiftRows = db.prepare(`SELECT u.id, u.name, u.role, s.id AS shift_id, s.start_time, s.end_time
@@ -129,7 +133,7 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
     WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
     ORDER BY j.department, j.name`).all(date, locId);
   const assigned = tasks.filter(t => t.user_id).length;
-  res.json({ location: loc, date, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
+  res.json({ location: loc, date, today, timezone: tz, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
 });
 
 // Assign / unassign / complete a specific task for a location + date.
@@ -288,7 +292,7 @@ router.get('/week', requireRole(...ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(locId);
+  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const ws = weekStart(req.query.week);
   const staff = locationStaff(locId);
@@ -298,6 +302,8 @@ router.get('/week', requireRole(...ROLES.MANAGE), (req, res) => {
     location: loc,
     week_start: ws,
     days,
+    today: localDate(loc.timezone || DEFAULT_TZ), // location-local "today" for the grid highlight
+    timezone: loc.timezone || DEFAULT_TZ,
     staff: staff.map(s => ({ ...s, shifts: byUser[s.id] || [] })),
   });
 });

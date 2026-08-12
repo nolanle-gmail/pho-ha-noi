@@ -373,9 +373,11 @@ const check = (name, ok, detail = '') => {
     check('manager deletes shift', r.status === 200, await r.text());
 
     // ── Time clock (check-in / check-out) ──────────────────────────────────
-    const pad = (n) => String(n).padStart(2, '0');
-    const nowD = new Date();
-    const today = `${nowD.getFullYear()}-${pad(nowD.getMonth() + 1)}-${pad(nowD.getDate())}`;
+    // The clock uses each location's local timezone, so read "today" from the board
+    // rather than the (possibly different) server-local date.
+    const board0 = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}`, { headers: H(mgr.token) }));
+    check('board reports location-local today + timezone', /^\d{4}-\d{2}-\d{2}$/.test(board0.today) && !!board0.timezone, JSON.stringify({ today: board0.today, tz: board0.timezone }));
+    const today = board0.today;
     // Give Employee One (code PHN-0014) an 8h shift today so scheduled time is known.
     for (const os of ((await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(token) }))).staff.find(s => s.id === emp.user.id) || { shifts: [] }).shifts.filter(s => s.shift_date === today)) {
       await fetch(base + `/api/schedule/shifts/${os.id}`, { method: 'DELETE', headers: H(token) });

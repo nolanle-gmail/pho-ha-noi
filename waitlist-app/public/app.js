@@ -2,6 +2,17 @@
 const S = { token: null, user: null, locations: [], loc: null, view: 'board' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
+function fmtLocalTs(ts) {
+  if (!ts) return '';
+  let s = String(ts).includes('T') ? String(ts) : String(ts).replace(' ', 'T');
+  if (!/[Z+]/.test(s.slice(10))) s += 'Z';
+  const d = new Date(s);
+  if (isNaN(d)) return ts;
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+const fmtLocalHm = (ts) => { const f = fmtLocalTs(ts); return f ? f.slice(11, 16) : ''; };
 
 async function api(path, opts = {}) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
@@ -101,9 +112,9 @@ async function renderActivity() {
     <div class="section-head"><h2>Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
       <div style="display:flex;gap:.25rem;align-items:center">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('checkins', 'Check-ins')}${tab('denied', 'Denied')}<button class="btn" id="expCsv" style="padding:.4rem .7rem;margin-left:.4rem">⬇ Export CSV</button></div></div>
     <p style="color:var(--muted);font-size:.85rem;margin:0 0 1rem">Every sign-in, change, and blocked attempt — who, what, status and IP. Read-only page views aren't logged.</p>
-    <div class="hist"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
+    <div class="hist"><table><thead><tr><th>When (local)</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
       ${rows.length ? rows.map(r => `<tr>
-        <td style="white-space:nowrap">${esc((r.created_at || '').replace('T', ' ').slice(0, 19))}</td>
+        <td style="white-space:nowrap">${esc(fmtLocalTs(r.created_at))}</td>
         <td>${r.user_name ? esc(r.user_name) : '<span style="color:var(--muted)">customer / anon</span>'}${r.user_role ? ` · <span style="color:var(--muted)">${esc(r.user_role)}</span>` : ''}${r.detail && r.detail.email && !r.user_role ? ` <span style="color:var(--muted)">${esc(r.detail.email)}</span>` : ''}</td>
         <td>${esc(label(r))}</td>
         <td><span class="badge ${sBadge(r.status)}">${r.status}</span></td>
@@ -122,10 +133,10 @@ async function exportActivityCSV() {
     const act = (r) => r.path === '/api/auth/login' ? (r.status === 200 ? 'signed in' : 'sign-in failed')
       : r.path === '/api/public/checkin' ? 'customer self check-in'
         : `${r.method} ${r.path.replace('/api/waitlist', '').replace('/api', '')}`;
-    const headers = ['When', 'Who', 'Role', 'Email', 'Action', 'Status', 'IP'];
+    const headers = ['When (local)', 'Who', 'Role', 'Email', 'Action', 'Status', 'IP'];
     const lines = [headers.join(',')];
     for (const r of rows) lines.push([
-      (r.created_at || '').replace('T', ' ').slice(0, 19), r.user_name || '', r.user_role || '',
+      fmtLocalTs(r.created_at), r.user_name || '', r.user_role || '',
       (r.detail && r.detail.email) || '', act(r), r.status, r.ip || '',
     ].map(csvCell).join(','));
     const csv = '﻿' + lines.join('\r\n'); // BOM so Excel reads UTF-8
@@ -181,7 +192,7 @@ async function renderBoard() {
 
     <div class="section-head" style="margin-top:2rem"><h2>Activity log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— who did what</span></h2></div>
     <div class="hist"><table><thead><tr><th>When</th><th>Action</th><th>Details</th><th>Who</th></tr></thead><tbody>
-      ${audit.length ? audit.map(a => { const [lbl, tone] = ACTION_LABEL[a.action] || [a.action, 'left']; return `<tr><td>${esc((a.created_at || '').slice(11, 16))}</td><td><span class="badge ${tone === 'gold' ? 'seated' : tone}" style="${tone === 'gold' ? 'background:var(--gold-soft);color:#92400e' : ''}">${lbl}</span></td><td>${auditSummary(a)}</td><td><strong>${esc(a.user_name || '—')}</strong>${a.user_role ? ` <span style="color:var(--muted)">· ${esc(a.user_role)}</span>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No activity logged yet today.</td></tr>'}
+      ${audit.length ? audit.map(a => { const [lbl, tone] = ACTION_LABEL[a.action] || [a.action, 'left']; return `<tr><td>${esc(fmtLocalHm(a.created_at))}</td><td><span class="badge ${tone === 'gold' ? 'seated' : tone}" style="${tone === 'gold' ? 'background:var(--gold-soft);color:#92400e' : ''}">${lbl}</span></td><td>${auditSummary(a)}</td><td><strong>${esc(a.user_name || '—')}</strong>${a.user_role ? ` <span style="color:var(--muted)">· ${esc(a.user_role)}</span>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No activity logged yet today.</td></tr>'}
     </tbody></table></div>`;
 
   $('addBtn').onclick = openAdd;
