@@ -173,6 +173,8 @@ function run() {
   mkUser('Aaron Bell', 'analyst@phohanoi.com', 'Analyst123!', 'analyst', null);
   mkUser('Dean Vo', 'driver@phohanoi.com', 'Driver123!', 'driver', locIds[0]);
   mkUser('Sara Tran', 'server@phohanoi.com', 'Server123!', 'server', locIds[0]);
+  mkUser('Bao Le', 'server2@phohanoi.com', 'Server123!', 'server', locIds[0]);
+  mkUser('Mai Pham', 'server3@phohanoi.com', 'Server123!', 'server', locIds[0]);
   mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0]);
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
@@ -436,6 +438,7 @@ function run() {
   // Per-location day-task lists (restaurants share the common set; CK has its own).
   seedLocationTasks(db, locIds, ckId);
   seedFloorPlan(db, locIds);
+  seedVisits(db, locIds);
 
   // Login employee codes: reuse the HR profile code where present, else generate one.
   db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
@@ -726,6 +729,72 @@ function seedFloorPlan(db, locIds) {
     });
   });
   console.log(`Seeded floor plan: ${n} tables across ${locIds.length} locations.`);
+}
+
+// Demo guest-visit lifecycle at San Jose: a spread across every list so the
+// Management "Service" section and the Staff app have something live to show.
+function seedVisits(db, locIds) {
+  const loc = locIds[0];
+  const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+  const ahead = (min) => new Date(Date.now() + min * 60000).toISOString();
+  const servers = db.prepare(`SELECT id, name FROM users WHERE location_id=? AND role='server' AND is_active=1 ORDER BY id`).all(loc);
+  const sv = (i) => servers[i % servers.length] || { id: null, name: 'Server' };
+  const tables = db.prepare(`SELECT id, label FROM restaurant_tables WHERE location_id=? AND is_active=1 ORDER BY id`).all(loc);
+  let ti = 0; const nextTable = () => tables[ti++];
+
+  const COLS = ['location_id', 'source', 'guest_name', 'party_size', 'phone', 'notes', 'stage', 'table_id', 'server_id', 'server_name',
+    'check_interval_min', 'next_check_at', 'last_checked_at', 'check_count', 'quoted_minutes',
+    'created_at', 'seated_at', 'service_started_at', 'paying_at', 'done_at'];
+  const insVisit = db.prepare(`INSERT INTO service_visits (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`);
+  const insEvent = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role, created_at)
+    VALUES (?,?,?,?,?,?,?,?)`);
+  const base = { location_id: loc, source: 'walkin', guest_name: null, party_size: 1, phone: null, notes: null, stage: 'waiting',
+    table_id: null, server_id: null, server_name: null, check_interval_min: null, next_check_at: null, last_checked_at: null,
+    check_count: 0, quoted_minutes: null, created_at: ago(0), seated_at: null, service_started_at: null, paying_at: null, done_at: null };
+  const occupy = (tableId, status, v) => db.prepare(`UPDATE restaurant_tables SET status=?, guest_name=?, party_size=?, seated_at=?, est_free_at=? WHERE id=?`)
+    .run(status, v.guest_name ?? null, v.party_size ?? null, v.seated_at ?? null, v.next_check_at ?? null, tableId);
+  const add = (v) => {
+    const row = { ...base, ...v };
+    const id = insVisit.run(...COLS.map(c => row[c] === undefined ? null : row[c])).lastInsertRowid;
+    insEvent.run(id, loc, 'created', null, 'waiting', 'Seed', 'system', row.created_at);
+    if (row.stage !== 'waiting') insEvent.run(id, loc, row.stage, 'waiting', row.stage, 'Seed', 'system', row.seated_at || row.created_at);
+    return id;
+  };
+
+  // Waiting (still on the list)
+  add({ source: 'waitlist', guest_name: 'Nguyen, Kim', party_size: 4, notes: 'Booth if possible', stage: 'waiting', quoted_minutes: 20, created_at: ago(22) });
+  add({ source: 'waitlist', guest_name: 'Tran, David', party_size: 2, stage: 'waiting', quoted_minutes: 15, created_at: ago(12) });
+  add({ source: 'walkin', guest_name: 'Pham, Lily', party_size: 5, notes: 'High chair', stage: 'waiting', quoted_minutes: 25, created_at: ago(4) });
+
+  // Seated (awaiting a server)
+  [['Le, Anh', 2, 28], ['Vo, Minh', 3, 16]].forEach(([g, p, mins]) => {
+    const t = nextTable(); const v = { source: 'walkin', guest_name: g, party_size: p, stage: 'seated', table_id: t.id, check_interval_min: 10, created_at: ago(mins + 3), seated_at: ago(mins) };
+    add(v); occupy(t.id, 'waiting_to_order', v);
+  });
+
+  // In-service (server assigned; one is overdue for a check)
+  [['Do, Hana', 4, 52, 10, ago(3)], ['Bui, Sam', 2, 40, 5, ahead(2)], ['Ho, Grace', 6, 33, 20, ahead(11)]].forEach(([g, p, mins, iv, next], i) => {
+    const t = nextTable(); const s = sv(i);
+    const v = { guest_name: g, party_size: p, stage: 'in_service', table_id: t.id, server_id: s.id, server_name: s.name,
+      check_interval_min: iv, next_check_at: next, last_checked_at: ago(iv), check_count: 2, created_at: ago(mins + 5), seated_at: ago(mins), service_started_at: ago(mins - 4) };
+    add(v); occupy(t.id, 'served', v);
+  });
+
+  // Paying
+  { const t = nextTable(); const s = sv(1);
+    const v = { guest_name: 'Ngo, Peter', party_size: 3, stage: 'paying', table_id: t.id, server_id: s.id, server_name: s.name,
+      check_interval_min: 10, check_count: 4, created_at: ago(95), seated_at: ago(90), service_started_at: ago(86), paying_at: ago(4) };
+    add(v); occupy(t.id, 'waiting_to_pay', v); }
+
+  // Done today (for the server report) — tables already freed
+  [['Vu, Tom', 2, 0], ['Dang, May', 4, 1]].forEach(([g, p, si]) => {
+    const s = sv(si);
+    add({ guest_name: g, party_size: p, stage: 'done', server_id: s.id, server_name: s.name, check_interval_min: 10, check_count: 5,
+      created_at: ago(150), seated_at: ago(145), service_started_at: ago(140), done_at: ago(35) });
+  });
+
+  const n = db.prepare(`SELECT COUNT(*) c FROM service_visits WHERE location_id=?`).get(loc).c;
+  console.log(`Seeded ${n} guest visits across the service lists at ${db.prepare('SELECT name FROM locations WHERE id=?').get(loc).name}.`);
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }

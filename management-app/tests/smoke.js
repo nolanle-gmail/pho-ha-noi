@@ -490,6 +490,84 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: svc(), body: JSON.stringify({ location_id: loc1, name: 'Nope' }) });
     check('service key cannot edit layout (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Guest-visit lifecycle (the six Service lists) ──────────────────────
+    const V = '/api/visits';
+    const vl = await j(await fetch(base + `${V}?location_id=${loc1}`, { headers: H(token) }));
+    check('visit lists: seeded stages present', vl.summary.waiting >= 3 && vl.summary.seated >= 2 && vl.summary.in_service >= 3 && vl.summary.paying >= 1, JSON.stringify(vl.summary));
+    check('visit lists: checks due surfaced', vl.summary.checks_due >= 1 && vl.lists.in_service.some(v => v.check_due), 'due=' + vl.summary.checks_due);
+    check('visit lists: servers offered for assignment', Array.isArray(vl.servers) && vl.servers.length >= 1, 'servers=' + vl.servers.length);
+    const vAll = await j(await fetch(base + V, { headers: H(token) }));
+    check('owner sees all-location visits', vAll.all_locations === true && (vAll.lists.waiting.length + vAll.lists.in_service.length) >= 3, JSON.stringify(vAll.summary));
+
+    const fpNow = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
+    const freeT = fpNow.areas.flatMap(a => a.tables).filter(t => t.status === 'available');
+    const [T1, T2, T3] = freeT;
+    const srv = vl.servers[0];
+
+    let cr = await j(await fetch(base + V, { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, guest_name: 'Smoke Party', party_size: 2, source: 'walkin' }) }));
+    check('create a waiting visit', cr.success === true && cr.visit.stage === 'waiting', JSON.stringify(cr.visit && cr.visit.stage));
+    const vid = cr.id;
+    let sd = await j(await fetch(base + `${V}/${vid}/seat`, { method: 'PUT', headers: H(token), body: JSON.stringify({ table_id: T1.id, check_interval_min: 10 }) }));
+    check('seat a visit → seated + table', sd.visit && sd.visit.stage === 'seated' && sd.visit.table_label === T1.label, JSON.stringify(sd.visit && { s: sd.visit.stage, t: sd.visit.table_label }));
+    const fpOcc = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
+    const occT = fpOcc.areas.flatMap(a => a.tables).find(t => t.id === T1.id);
+    check('seating reflects on the floor plan', occT.occupied === true && occT.status === 'waiting_to_order', occT.status);
+    const dup = await j(await fetch(base + V, { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, guest_name: 'Dupe', party_size: 2 }) }));
+    r = await fetch(base + `${V}/${dup.id}/seat`, { method: 'PUT', headers: H(token), body: JSON.stringify({ table_id: T1.id }) });
+    check('cannot seat two parties at one table (409)', r.status === 409, 'status=' + r.status);
+
+    let cl = await j(await fetch(base + `${V}/${vid}/claim`, { method: 'PUT', headers: H(token), body: JSON.stringify({ server_id: srv.id, server_name: srv.name }) }));
+    check('claim → in_service + server + check timer', cl.visit && cl.visit.stage === 'in_service' && cl.visit.server_name === srv.name && cl.visit.minutes_to_check > 0, JSON.stringify(cl.visit && { s: cl.visit.stage, m: cl.visit.minutes_to_check }));
+    const fpSrv = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
+    check('in-service reflects on the floor plan (served)', fpSrv.areas.flatMap(a => a.tables).find(t => t.id === T1.id).status === 'served');
+    let ck = await j(await fetch(base + `${V}/${vid}/check`, { method: 'PUT', headers: H(token), body: JSON.stringify({ note: 'all good' }) }));
+    check('log a check → count up + timer reset', ck.visit.check_count >= 1 && ck.visit.minutes_to_check > 0, JSON.stringify({ c: ck.visit.check_count }));
+    r = await fetch(base + `${V}/${vid}/interval`, { method: 'PUT', headers: H(token), body: JSON.stringify({ check_interval_min: 7 }) });
+    check('invalid check interval rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `${V}/${vid}/interval`, { method: 'PUT', headers: H(token), body: JSON.stringify({ check_interval_min: 5 }) });
+    check('set check interval (5 min)', r.status === 200, await r.text());
+    let py = await j(await fetch(base + `${V}/${vid}/pay`, { method: 'PUT', headers: H(token), body: JSON.stringify({}) }));
+    check('move to paying', py.visit.stage === 'paying', py.visit.stage);
+    let dn = await j(await fetch(base + `${V}/${vid}/done`, { method: 'PUT', headers: H(token), body: JSON.stringify({}) }));
+    check('done → visit done', dn.visit.stage === 'done', dn.visit.stage);
+    const fpFree = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
+    check('done frees the table (available again)', fpFree.areas.flatMap(a => a.tables).find(t => t.id === T1.id).status === 'available');
+
+    r = await fetch(base + `${V}/${dup.id}/cancel`, { method: 'PUT', headers: H(token), body: JSON.stringify({ reason: 'left' }) });
+    check('cancel a waiting visit', r.status === 200, await r.text());
+
+    const wi = await j(await fetch(base + V, { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, guest_name: 'Mover', party_size: 2, table_id: T2.id }) }));
+    check('walk-in seated directly (no wait)', wi.visit.stage === 'seated' && wi.visit.table_label === T2.label, JSON.stringify(wi.visit && wi.visit.stage));
+    let tr = await j(await fetch(base + `${V}/${wi.id}/transfer`, { method: 'PUT', headers: H(token), body: JSON.stringify({ table_id: T3.id }) }));
+    check('transfer to another table', tr.visit.table_label === T3.label, JSON.stringify(tr.visit && tr.visit.table_label));
+    const fpTr = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
+    check('transfer frees the old table', fpTr.areas.flatMap(a => a.tables).find(t => t.id === T2.id).status === 'available');
+
+    const det = await j(await fetch(base + `${V}/${vid}`, { headers: H(token) }));
+    check('visit history logs every movement', Array.isArray(det.events) && det.events.length >= 5 && det.events.some(e => e.event === 'seated') && det.events.some(e => e.event === 'done'), 'n=' + (det.events || []).length);
+    const rep = await j(await fetch(base + `${V}/reports/servers?location_id=${loc1}`, { headers: H(token) }));
+    check('server performance report', Array.isArray(rep.servers) && rep.servers.length >= 1 && rep.servers[0].tables_served >= 1, 'n=' + (rep.servers || []).length);
+
+    // RBAC
+    r = await fetch(base + `${V}?location_id=${loc1}`, { headers: H(emp.token) });
+    check('employee blocked from service lists (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `${V}?location_id=${loc2}`, { headers: H(mgr.token) });
+    check('manager blocked from another location visits (403)', r.status === 403, 'status=' + r.status);
+    const mgrV = await j(await fetch(base + V, { headers: H(mgr.token) }));
+    check('manager sees only own location visits', mgrV.all_locations === false && mgrV.location && mgrV.location.id === loc1, JSON.stringify(mgrV.location));
+
+    // Staff app (service key): Front Desk creates+seats, server claims
+    const fpS = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: svc() }));
+    const freeS = fpS.areas.flatMap(a => a.tables).filter(t => t.status === 'available');
+    const cs = await j(await fetch(base + V, { method: 'POST', headers: svc(), body: JSON.stringify({ location_id: loc1, guest_name: 'SvcWalk', party_size: 2, source: 'walkin', actor_name: 'Host', actor_role: 'host' }) }));
+    check('service key creates a visit', cs.success === true && cs.visit.stage === 'waiting', JSON.stringify(cs.visit && cs.visit.stage));
+    r = await fetch(base + `${V}/${cs.id}/seat`, { method: 'PUT', headers: svc(), body: JSON.stringify({ location_id: loc1, table_id: freeS[0].id }) });
+    check('service key seats a visit', r.status === 200, await r.text());
+    r = await fetch(base + `${V}/${cs.id}/claim`, { method: 'PUT', headers: svc(), body: JSON.stringify({ location_id: loc1, server_id: srv.id, server_name: srv.name, actor_name: srv.name, actor_role: 'server' }) });
+    check('service key (server) claims a table', r.status === 200, await r.text());
+    r = await fetch(base + V, { headers: svc() });
+    check('service key requires a location (400)', r.status === 400, 'status=' + r.status);
+
     // ── Additional access levels ───────────────────────────────
     const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));

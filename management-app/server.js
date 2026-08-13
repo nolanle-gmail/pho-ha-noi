@@ -24,6 +24,7 @@ app.use('/api/auth', require('./routes/auth'));
 // Mounted before the '/api' core router: floor-plan accepts a Waitlist service
 // key (no JWT), which core's verifyToken would otherwise reject.
 app.use('/api/floorplan', require('./routes/floorplan'));
+app.use('/api/visits', require('./routes/visits'));
 app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/menu', require('./routes/menu'));

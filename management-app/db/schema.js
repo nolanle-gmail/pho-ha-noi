@@ -517,6 +517,56 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_tables_loc ON restaurant_tables(location_id);
 
+    -- Guest-visit lifecycle: the spine that tracks a party from the waitlist through
+    -- seating, service, timed checks, paying and done. Single source of truth — the
+    -- Staff app (Front Desk + Servers) reads/writes this via a service key, and the
+    -- floor plan reflects each visit's stage. A walk-in starts at 'seated' (no wait).
+    CREATE TABLE IF NOT EXISTS service_visits (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id        INTEGER NOT NULL REFERENCES locations(id),
+      source             TEXT NOT NULL DEFAULT 'walkin',   -- waitlist|walkin
+      guest_name         TEXT,
+      party_size         INTEGER NOT NULL DEFAULT 1,
+      phone              TEXT,
+      notes              TEXT,
+      stage              TEXT NOT NULL DEFAULT 'waiting',  -- waiting|seated|in_service|paying|done|canceled
+      table_id           INTEGER REFERENCES restaurant_tables(id),
+      server_id          INTEGER REFERENCES users(id),
+      server_name        TEXT,                             -- denormalized for display + history
+      check_interval_min INTEGER,                          -- 5|10|20 (null = no timed checks)
+      next_check_at      TEXT,
+      last_checked_at    TEXT,
+      check_count        INTEGER NOT NULL DEFAULT 0,
+      waitlist_ref       TEXT,                             -- links to the Staff app's waitlist party
+      quoted_minutes     INTEGER,
+      created_at         TEXT DEFAULT (datetime('now')),
+      seated_at          TEXT,
+      service_started_at TEXT,
+      paying_at          TEXT,
+      done_at            TEXT,
+      canceled_at        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_visits_loc_stage ON service_visits(location_id, stage);
+    CREATE INDEX IF NOT EXISTS idx_visits_server ON service_visits(server_id);
+    CREATE INDEX IF NOT EXISTS idx_visits_table ON service_visits(table_id);
+
+    -- Every stage transition + check, for movement history and performance reporting.
+    CREATE TABLE IF NOT EXISTS visit_events (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      visit_id     INTEGER NOT NULL REFERENCES service_visits(id) ON DELETE CASCADE,
+      location_id  INTEGER NOT NULL REFERENCES locations(id),
+      event        TEXT NOT NULL,   -- created|seated|claimed|assigned|checked|paying|done|canceled|transferred|reopened
+      from_stage   TEXT,
+      to_stage     TEXT,
+      actor_id     INTEGER REFERENCES users(id),
+      actor_name   TEXT,
+      actor_role   TEXT,
+      detail       TEXT,            -- JSON
+      created_at   TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_visit_events_visit ON visit_events(visit_id);
+    CREATE INDEX IF NOT EXISTS idx_visit_events_loc ON visit_events(location_id);
+
     -- Weekly staff schedule — one row per staff member per working day per location.
     -- A person can have shifts at different locations on different days.
     CREATE TABLE IF NOT EXISTS shifts (
