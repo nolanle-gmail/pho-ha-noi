@@ -401,7 +401,7 @@ async function seatModal(id, name) {
     <input type="hidden" id="fSel" /><input type="hidden" id="fSelLabel" />`;
   modal(`Seat ${name}`, body, async () => {
     const tid = $('fSel').value, label = $('fSelLabel').value;
-    if (tid) await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2 }) });
+    if (tid) await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id) }) });
     await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });
     toast(`${name} seated${label ? ' at ' + label : ''}`); render();
   }, 'Seat party');
