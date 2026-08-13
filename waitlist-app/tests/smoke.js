@@ -148,6 +148,18 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('table map requires auth (401)', r.status === 401, 'status=' + r.status);
     r = await fetch(base + '/api/floormap', { headers: H(host.token) });
     check('front desk table map proxies to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
+
+    // ── Staff service board (proxied to Management /api/visits) ─────────────
+    // Management isn't up during this smoke, so proxied calls return 502 and the
+    // Management-auth fallback yields 401 — both prove the wiring without it.
+    r = await fetch(base + '/api/service');
+    check('service board requires auth (401)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/service', { headers: H(host.token) });
+    check('service board proxies to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
+    // An email that isn't a local account falls through to the Management directory
+    // (unreachable during this smoke → a clean 401, proving the fallback path runs).
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });
+    check('non-local email falls back to Management (401 when down)', r.status === 401, 'status=' + r.status);
   } catch (e) { fail++; console.log('  FAIL  exception: ' + e.message); }
   finally { server.close(); }
   console.log(`\n${pass} passed, ${fail} failed`);

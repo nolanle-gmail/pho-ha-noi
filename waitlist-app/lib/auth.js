@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const SECRET = process.env.JWT_SECRET || 'pho-ha-noi-waitlist-dev-secret';
 
 function signToken(user) {
-  return jwt.sign({ id: user.id, name: user.name, role: user.role, location_id: user.location_id }, SECRET, { expiresIn: '12h' });
+  return jwt.sign({ id: user.id, name: user.name, role: user.role, location_id: user.location_id, src: user.src || 'local' }, SECRET, { expiresIn: '12h' });
 }
 function verifyToken(req, res, next) {
   const h = req.headers.authorization || '';

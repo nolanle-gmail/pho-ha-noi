@@ -22,6 +22,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/public', require('./routes/public'));
 app.use('/api/waitlist', require('./routes/waitlist'));
 app.use('/api/floormap', require('./routes/floormap'));
+app.use('/api/service', require('./routes/service'));
 
 const PORT = process.env.PORT || 4002;
 if (require.main === module) app.listen(PORT, () => console.log(`Pho Ha Noi Waitlist running on http://localhost:${PORT}`));
