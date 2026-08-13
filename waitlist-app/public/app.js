@@ -96,7 +96,7 @@ function renderNav() {
   if (isServerRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
-  if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
+  if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });

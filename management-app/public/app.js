@@ -1140,9 +1140,12 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
+// The Activity trail is limited to Owner / Admin / General Manager / Manager.
+const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'general_manager', 'manager'];
+const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) => k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role));
 function renderLocDetailTabs() {
-  $('tabs').innerHTML = LOC_DETAIL_TABS.map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
+  $('tabs').innerHTML = locTabsForMe().map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
 }
 async function renderLocDetail() {
@@ -1154,7 +1157,35 @@ async function renderLocDetail() {
     </div>
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, floorplan: renderLocFloorPlan, equipment: renderLocEquipment }[S.locTab])();
+  if (S.locTab === 'activity' && !LOC_ACTIVITY_ROLES.includes(S.user.role)) S.locTab = 'details';
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
+}
+
+// ── Location activity trail (Owner/Admin/GM/Manager; manager = own location) ──
+const actTime = (ts) => { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + (/[Z+]/.test(String(ts).slice(10)) ? '' : 'Z')); return isNaN(d) ? ts : d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+function actLabel(r) {
+  if (r.detail && r.detail.event === 'login') return 'Signed in';
+  if (r.detail && r.detail.event === 'login_failed') return 'Failed sign-in' + (r.detail.email ? ` (${r.detail.email})` : '');
+  const verb = { POST: 'Created', PUT: 'Updated', PATCH: 'Updated', DELETE: 'Deleted', GET: 'Viewed' }[r.method] || r.method || '';
+  return `${verb} ${(r.path || '').replace(/^\/api\//, '')}`.trim();
+}
+function actStatusBadge(s) { if (!s) return ''; const cls = s >= 200 && s < 300 ? 'ok' : (s === 401 || s === 403 ? 'out' : 'low'); return `<span class="badge ${cls}">${s}</span>`; }
+async function renderLocActivity() {
+  let rows;
+  try { rows = await api('/locations/' + S.locDetailId + '/activity?limit=500'); }
+  catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!rows.length) { $('locBody').innerHTML = '<div class="empty">No activity recorded for this location yet.</div>'; return; }
+  $('locBody').innerHTML = `
+    <p class="sub" style="color:var(--muted);margin-top:0">Access trail for this location — sign-ins, changes, and denied attempts.</p>
+    <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th class="num">Status</th><th>IP</th></tr></thead><tbody>
+      ${rows.map(r => `<tr>
+        <td class="mono">${esc(actTime(r.created_at))}</td>
+        <td>${r.user_name ? `<strong>${esc(r.user_name)}</strong>${r.user_role ? ` <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(roleLabel(r.user_role))}</span>` : ''}` : '<span class="badge gray">system</span>'}</td>
+        <td class="mono">${esc(actLabel(r))}</td>
+        <td class="num">${actStatusBadge(r.status)}</td>
+        <td class="mono" style="color:var(--muted)">${esc(r.ip || '—')}</td>
+      </tr>`).join('')}
+    </tbody></table></div>`;
 }
 
 async function renderLocInfo(loc) {

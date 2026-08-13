@@ -273,9 +273,11 @@ function migrate() {
       status INTEGER,
       ip TEXT,
       detail TEXT,
+      location_id INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_activity_loc ON activity_log(location_id, created_at);
 
     -- ── Menu & Recipes ────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS menu_categories (
@@ -631,6 +633,7 @@ function migrate() {
     `ALTER TABLE service_visits ADD COLUMN bus_flag INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE service_visits ADD COLUMN bus_at TEXT`,
     `ALTER TABLE service_visits ADD COLUMN tip_amount REAL`,
+    `ALTER TABLE activity_log ADD COLUMN location_id INTEGER`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Give every user a login employee code: reuse their HR profile code if present,

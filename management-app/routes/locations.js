@@ -50,6 +50,20 @@ router.get('/:id/staff', requireRole(...ROLES.MANAGE), (req, res) => {
     ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(req.params.id));
 });
 
+// ── Activity trail for this location (logins, writes, denied attempts) ────────
+// Owner / Admin / General Manager see any location; a manager only their own.
+router.get('/:id/activity', requireRole('owner', 'admin', 'general_manager', 'manager'), (req, res) => {
+  const locId = parseInt(req.params.id, 10);
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const conds = ['location_id=?'], args = [locId];
+  if (req.query.event === 'logins') conds.push(`path='/api/auth/login'`);
+  else if (req.query.event === 'denied') conds.push('status IN (401,403)');
+  const limit = Math.min(1000, parseInt(req.query.limit, 10) || 300);
+  const rows = db.prepare(`SELECT id, user_id, user_name, user_role, method, path, status, ip, detail, location_id, created_at
+    FROM activity_log WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ${limit}`).all(...args);
+  res.json(rows.map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d }; }));
+});
+
 // ── Create / edit location (owner/admin) ─────────────────────────────────────
 const LOC_FIELDS = ['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'timezone', 'opening_date'];
 router.post('/', requireRole(...ROLES.ADMIN), (req, res) => {

@@ -581,6 +581,17 @@ const check = (name, ok, detail = '') => {
       check('cannot complete a task that is not yours (403)', r.status === 403, 'status=' + r.status);
     }
 
+    // ── Location activity trail (moved from the Staff app) ─────────────────
+    const act1 = await j(await fetch(base + `/api/locations/${loc1}/activity?limit=100`, { headers: H(token) }));
+    check('owner sees location activity', Array.isArray(act1) && act1.length >= 1, 'n=' + (act1 || []).length);
+    check('activity is scoped to the location', act1.every(a => a.location_id === loc1), 'leak');
+    r = await fetch(base + `/api/locations/${loc1}/activity`, { headers: H(mgr.token) });
+    check('manager sees own location activity', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + `/api/locations/${loc2}/activity`, { headers: H(mgr.token) });
+    check('manager blocked from another location activity (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/locations/${loc1}/activity`, { headers: H(emp.token) });
+    check('employee blocked from location activity (403)', r.status === 403, 'status=' + r.status);
+
     // RBAC
     r = await fetch(base + `${V}?location_id=${loc1}`, { headers: H(emp.token) });
     check('employee blocked from service lists (403)', r.status === 403, 'status=' + r.status);
