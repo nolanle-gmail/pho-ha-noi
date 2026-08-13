@@ -750,7 +750,7 @@ function seedVisits(db, locIds) {
   const insVisit = db.prepare(`INSERT INTO service_visits (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`);
   const insEvent = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role, created_at)
     VALUES (?,?,?,?,?,?,?,?)`);
-  const base = { location_id: loc, source: 'walkin', guest_name: null, party_size: 1, phone: null, notes: null, stage: 'waiting',
+  const base = { location_id: loc, source: 'waitlist', guest_name: null, party_size: 1, phone: null, notes: null, stage: 'waiting',
     table_id: null, server_id: null, server_name: null, check_interval_min: null, next_check_at: null, last_checked_at: null,
     check_count: 0, quoted_minutes: null, created_at: ago(0), seated_at: null, service_started_at: null, paying_at: null, done_at: null };
   const occupy = (tableId, status, v) => db.prepare(`UPDATE restaurant_tables SET status=?, guest_name=?, party_size=?, seated_at=?, est_free_at=? WHERE id=?`)
@@ -766,18 +766,18 @@ function seedVisits(db, locIds) {
   // Waiting (still on the list)
   add({ source: 'waitlist', guest_name: 'Nguyen, Kim', party_size: 4, notes: 'Booth if possible', stage: 'waiting', quoted_minutes: 20, created_at: ago(22) });
   add({ source: 'waitlist', guest_name: 'Tran, David', party_size: 2, stage: 'waiting', quoted_minutes: 15, created_at: ago(12) });
-  add({ source: 'walkin', guest_name: 'Pham, Lily', party_size: 5, notes: 'High chair', stage: 'waiting', quoted_minutes: 25, created_at: ago(4) });
+  add({ source: 'waitlist', guest_name: 'Pham, Lily', party_size: 5, notes: 'High chair', stage: 'waiting', quoted_minutes: 25, created_at: ago(4) });
 
-  // Seated (awaiting a server)
-  [['Le, Anh', 2, 28], ['Vo, Minh', 3, 16]].forEach(([g, p, mins]) => {
-    const t = nextTable(); const v = { source: 'walkin', guest_name: g, party_size: p, stage: 'seated', table_id: t.id, check_interval_min: 10, created_at: ago(mins + 3), seated_at: ago(mins) };
+  // Seated (awaiting a server) — mostly from the waitlist, one walk-in.
+  [['Le, Anh', 2, 28, 'waitlist'], ['Vo, Minh', 3, 16, 'walkin']].forEach(([g, p, mins, src]) => {
+    const t = nextTable(); const v = { source: src, guest_name: g, party_size: p, stage: 'seated', table_id: t.id, check_interval_min: 10, created_at: ago(mins + 3), seated_at: ago(mins) };
     add(v); occupy(t.id, 'waiting_to_order', v);
   });
 
-  // In-service (server assigned; one is overdue for a check)
-  [['Do, Hana', 4, 52, 10, ago(3)], ['Bui, Sam', 2, 40, 5, ahead(2)], ['Ho, Grace', 6, 33, 20, ahead(11)]].forEach(([g, p, mins, iv, next], i) => {
+  // In-service (server assigned; one is overdue for a check) — one walk-in.
+  [['Do, Hana', 4, 52, 10, ago(3), 'waitlist'], ['Bui, Sam', 2, 40, 5, ahead(2), 'waitlist'], ['Ho, Grace', 6, 33, 20, ahead(11), 'walkin']].forEach(([g, p, mins, iv, next, src], i) => {
     const t = nextTable(); const s = sv(i);
-    const v = { guest_name: g, party_size: p, stage: 'in_service', table_id: t.id, server_id: s.id, server_name: s.name,
+    const v = { source: src, guest_name: g, party_size: p, stage: 'in_service', table_id: t.id, server_id: s.id, server_name: s.name,
       check_interval_min: iv, next_check_at: next, last_checked_at: ago(iv), check_count: 2, created_at: ago(mins + 5), seated_at: ago(mins), service_started_at: ago(mins - 4) };
     add(v); occupy(t.id, 'served', v);
   });
@@ -788,10 +788,10 @@ function seedVisits(db, locIds) {
       check_interval_min: 10, check_count: 4, created_at: ago(95), seated_at: ago(90), service_started_at: ago(86), paying_at: ago(4) };
     add(v); occupy(t.id, 'waiting_to_pay', v); }
 
-  // Done today (for the server report) — tables already freed
-  [['Vu, Tom', 2, 0], ['Dang, May', 4, 1]].forEach(([g, p, si]) => {
+  // Done today (for the server report) — tables already freed; one walk-in.
+  [['Vu, Tom', 2, 0, 'waitlist'], ['Dang, May', 4, 1, 'walkin']].forEach(([g, p, si, src]) => {
     const s = sv(si);
-    add({ guest_name: g, party_size: p, stage: 'done', server_id: s.id, server_name: s.name, check_interval_min: 10, check_count: 5,
+    add({ source: src, guest_name: g, party_size: p, stage: 'done', server_id: s.id, server_name: s.name, check_interval_min: 10, check_count: 5,
       created_at: ago(150), seated_at: ago(145), service_started_at: ago(140), done_at: ago(35) });
   });
 
