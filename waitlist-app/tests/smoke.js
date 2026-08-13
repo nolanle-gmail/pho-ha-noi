@@ -161,6 +161,16 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/mytasks', { headers: H(host.token) });
     check('my tasks proxy to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
 
+    // ── Front-of-house activity feed (read by Management for the merged view) ──
+    r = await fetch(base + '/api/activity-feed');
+    check('activity feed requires auth (401)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/activity-feed', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });
+    check('activity feed via service key', r.status === 200 && Array.isArray(await r.json()), 'status=' + r.status);
+    const afeed = await j(await fetch(base + `/api/activity-feed?location_id=${loc}&range=day`, { headers: H(token) }));
+    check('owner reads activity feed (today, scoped)', Array.isArray(afeed) && afeed.every(a => a.source === 'frontdesk'), 'n=' + (afeed || []).length);
+    r = await fetch(base + '/api/activity-feed', { headers: H(host.token) });
+    check('non-owner blocked from activity feed (403)', r.status === 403, 'status=' + r.status);
+
     // ── PWA: installable Staff app (manifest + service worker + icons) ─────
     const mani = await fetch(base + '/manifest.webmanifest');
     check('PWA manifest served', mani.status === 200);

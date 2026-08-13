@@ -77,6 +77,7 @@ function migrate() {
       status INTEGER,
       ip TEXT,
       detail TEXT,
+      location_id INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -117,6 +118,8 @@ function migrate() {
     `ALTER TABLE restaurant_tables ADD COLUMN pos_y INTEGER NOT NULL DEFAULT 50`,
     `ALTER TABLE restaurant_tables ADD COLUMN shape TEXT NOT NULL DEFAULT 'round'`,
     `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
+    `ALTER TABLE activity_log ADD COLUMN location_id INTEGER`,
+    `CREATE INDEX IF NOT EXISTS idx_wactivity_loc ON activity_log(location_id, created_at)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

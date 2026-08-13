@@ -13,16 +13,24 @@ function clientIp(req) {
     || req.ip || null;
 }
 
-function record({ userId, userName, userRole, method, path, status, ip, detail }) {
+function record({ userId, userName, userRole, method, path, status, ip, detail, locationId }) {
   try {
-    db.prepare(`INSERT INTO activity_log (user_id, user_name, user_role, method, path, status, ip, detail)
-      VALUES (?,?,?,?,?,?,?,?)`).run(
+    db.prepare(`INSERT INTO activity_log (user_id, user_name, user_role, method, path, status, ip, detail, location_id)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(
       userId || null, userName || null, userRole || null,
       method || null, path || null, status || null, ip || null,
-      detail ? JSON.stringify(detail) : null);
+      detail ? JSON.stringify(detail) : null,
+      Number.isFinite(locationId) ? locationId : null);
   } catch (e) {
     console.error('activityLog failed:', e.message);
   }
+}
+// Best-effort location for an entry: explicit location in the request, else the
+// staff member's home location.
+function locationOf(req) {
+  const raw = (req.body && req.body.location_id) || (req.query && req.query.location_id) || (req.user && req.user.location_id);
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 function logLogin(req, { user, email, success }) {
@@ -32,6 +40,7 @@ function logLogin(req, { user, email, success }) {
     userRole: user ? user.role : null,
     method: 'POST', path: '/api/auth/login', status: success ? 200 : 401,
     ip: clientIp(req), detail: { event: success ? 'login' : 'login_failed', email: email || null },
+    locationId: user ? user.location_id : null,
   });
 }
 
@@ -51,6 +60,7 @@ function activityLogger(req, res, next) {
       path: p,
       status: res.statusCode,
       ip: clientIp(req),
+      locationId: locationOf(req),
     });
   });
   next();

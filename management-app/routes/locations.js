@@ -50,18 +50,37 @@ router.get('/:id/staff', requireRole(...ROLES.MANAGE), (req, res) => {
     ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(req.params.id));
 });
 
-// ── Activity trail for this location (logins, writes, denied attempts) ────────
+// ── Activity trail for this location — merges the Management audit trail with
+// the Staff-app (front-of-house) activity, filterable by day / week / month.
 // Owner / Admin / General Manager see any location; a manager only their own.
-router.get('/:id/activity', requireRole('owner', 'admin', 'general_manager', 'manager'), (req, res) => {
+const WAITLIST_URL = (process.env.WAITLIST_URL || 'http://localhost:4002').replace(/\/$/, '');
+const ACTIVITY_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+const activitySince = (range) => { const days = { day: 1, week: 7, month: 30 }[range]; return days ? new Date(Date.now() - days * 86400000).toISOString().replace('T', ' ').slice(0, 19) : null; };
+
+router.get('/:id/activity', requireRole('owner', 'admin', 'general_manager', 'manager'), async (req, res) => {
   const locId = parseInt(req.params.id, 10);
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const range = ['day', 'week', 'month', 'all'].includes(req.query.range) ? req.query.range : 'day';
+  const since = activitySince(range);
+  const limit = Math.min(1000, parseInt(req.query.limit, 10) || 500);
+
+  // This app's own audit trail for the location.
   const conds = ['location_id=?'], args = [locId];
-  if (req.query.event === 'logins') conds.push(`path='/api/auth/login'`);
-  else if (req.query.event === 'denied') conds.push('status IN (401,403)');
-  const limit = Math.min(1000, parseInt(req.query.limit, 10) || 300);
-  const rows = db.prepare(`SELECT id, user_id, user_name, user_role, method, path, status, ip, detail, location_id, created_at
-    FROM activity_log WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ${limit}`).all(...args);
-  res.json(rows.map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d }; }));
+  if (since) { conds.push('created_at >= ?'); args.push(since); }
+  const mgmt = db.prepare(`SELECT id, user_id, user_name, user_role, method, path, status, ip, detail, location_id, created_at
+    FROM activity_log WHERE ${conds.join(' AND ')} ORDER BY id DESC LIMIT ${limit}`).all(...args)
+    .map(r => { let d = null; try { d = r.detail ? JSON.parse(r.detail) : null; } catch { d = null; } return { ...r, detail: d, source: 'management' }; });
+
+  // The Staff app's front-of-house activity for the same location + range.
+  let front = [];
+  try {
+    const url = `${WAITLIST_URL}/api/activity-feed?location_id=${locId}&range=${range}&limit=${limit}`;
+    const r = await fetch(url, { headers: { 'X-Service-Key': ACTIVITY_KEY } });
+    if (r.ok) front = await r.json();
+  } catch { /* Staff app unreachable — show Management activity only */ }
+
+  const merged = [...mgmt, ...front].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, limit);
+  res.json(merged);
 });
 
 // ── Create / edit location (owner/admin) ─────────────────────────────────────

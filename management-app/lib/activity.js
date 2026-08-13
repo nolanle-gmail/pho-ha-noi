@@ -52,6 +52,7 @@ function activityLogger(req, res, next) {
     // Use originalUrl — mounting rewrites req.path/req.url inside sub-routers.
     const p = (req.originalUrl || req.url || '').split('?')[0]; // strip query (may hold data)
     if (p === '/health' || p === '/api/auth/login') return; // health noise; login logged explicitly
+    if (req.headers['x-service-key']) return; // proxied Staff-app calls are logged in that app
     const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
     const denied = res.statusCode === 401 || res.statusCode === 403;
     if (!mutating && !denied && !LOG_READS) return;

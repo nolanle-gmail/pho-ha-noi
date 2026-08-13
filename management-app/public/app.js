@@ -1166,26 +1166,35 @@ const actTime = (ts) => { if (!ts) return ''; const d = new Date(String(ts).repl
 function actLabel(r) {
   if (r.detail && r.detail.event === 'login') return 'Signed in';
   if (r.detail && r.detail.event === 'login_failed') return 'Failed sign-in' + (r.detail.email ? ` (${r.detail.email})` : '');
+  const p = r.path || '';
+  if (p.includes('/public/checkin')) return 'Customer self check-in';
   const verb = { POST: 'Created', PUT: 'Updated', PATCH: 'Updated', DELETE: 'Deleted', GET: 'Viewed' }[r.method] || r.method || '';
-  return `${verb} ${(r.path || '').replace(/^\/api\//, '')}`.trim();
+  return `${verb} ${p.replace(/^\/api\//, '')}`.trim();
 }
 function actStatusBadge(s) { if (!s) return ''; const cls = s >= 200 && s < 300 ? 'ok' : (s === 401 || s === 403 ? 'out' : 'low'); return `<span class="badge ${cls}">${s}</span>`; }
+const ACT_RANGES = [['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['all', 'All']];
 async function renderLocActivity() {
+  const range = S.locActRange || (S.locActRange = 'day');
   let rows;
-  try { rows = await api('/locations/' + S.locDetailId + '/activity?limit=500'); }
+  try { rows = await api(`/locations/${S.locDetailId}/activity?range=${range}&limit=500`); }
   catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  if (!rows.length) { $('locBody').innerHTML = '<div class="empty">No activity recorded for this location yet.</div>'; return; }
+  const rangeBtns = ACT_RANGES.map(([k, l]) => `<button class="btn sm ${range === k ? '' : 'ghost'}" data-arange="${k}">${l}</button>`).join('');
   $('locBody').innerHTML = `
-    <p class="sub" style="color:var(--muted);margin-top:0">Access trail for this location — sign-ins, changes, and denied attempts.</p>
-    <div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th class="num">Status</th><th>IP</th></tr></thead><tbody>
+    <div class="row-between" style="margin:0 0 .7rem;gap:1rem;flex-wrap:wrap">
+      <p class="sub" style="color:var(--muted);margin:0">Access trail for this location — Staff app and Management: sign-ins, changes, and denied attempts.</p>
+      <div style="display:flex;gap:.35rem">${rangeBtns}</div>
+    </div>
+    ${rows.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Where</th><th>Who</th><th>Action</th><th class="num">Status</th><th>IP</th></tr></thead><tbody>
       ${rows.map(r => `<tr>
         <td class="mono">${esc(actTime(r.created_at))}</td>
+        <td><span class="badge ${r.source === 'frontdesk' ? 'blue' : 'gray'}">${r.source === 'frontdesk' ? 'Front Desk' : 'Mgmt'}</span></td>
         <td>${r.user_name ? `<strong>${esc(r.user_name)}</strong>${r.user_role ? ` <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(roleLabel(r.user_role))}</span>` : ''}` : '<span class="badge gray">system</span>'}</td>
         <td class="mono">${esc(actLabel(r))}</td>
         <td class="num">${actStatusBadge(r.status)}</td>
         <td class="mono" style="color:var(--muted)">${esc(r.ip || '—')}</td>
       </tr>`).join('')}
-    </tbody></table></div>`;
+    </tbody></table></div>` : '<div class="empty">No activity in this range.</div>'}`;
+  $('locBody').querySelectorAll('[data-arange]').forEach(b => b.onclick = () => { S.locActRange = b.dataset.arange; renderLocActivity(); });
 }
 
 async function renderLocInfo(loc) {

@@ -581,10 +581,12 @@ const check = (name, ok, detail = '') => {
       check('cannot complete a task that is not yours (403)', r.status === 403, 'status=' + r.status);
     }
 
-    // ── Location activity trail (moved from the Staff app) ─────────────────
-    const act1 = await j(await fetch(base + `/api/locations/${loc1}/activity?limit=100`, { headers: H(token) }));
+    // ── Location activity trail (merged Management + Staff-app, filterable) ──
+    const act1 = await j(await fetch(base + `/api/locations/${loc1}/activity?range=all&limit=200`, { headers: H(token) }));
     check('owner sees location activity', Array.isArray(act1) && act1.length >= 1, 'n=' + (act1 || []).length);
     check('activity is scoped to the location', act1.every(a => a.location_id === loc1), 'leak');
+    check('activity rows carry a source', act1.every(a => a.source === 'management' || a.source === 'frontdesk'), 'no source');
+    check('activity accepts a range filter', Array.isArray(await j(await fetch(base + `/api/locations/${loc1}/activity?range=week`, { headers: H(token) }))));
     r = await fetch(base + `/api/locations/${loc1}/activity`, { headers: H(mgr.token) });
     check('manager sees own location activity', r.status === 200, 'status=' + r.status);
     r = await fetch(base + `/api/locations/${loc2}/activity`, { headers: H(mgr.token) });

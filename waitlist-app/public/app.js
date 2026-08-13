@@ -96,7 +96,7 @@ function renderNav() {
   if (isServerRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
-  if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report']);
+  if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
@@ -300,9 +300,14 @@ function tableStatusModal(t, after) {
 
 let activityFilter = 'all';
 async function renderActivity() {
-  let rows;
-  try { rows = await api('/waitlist/activity-log' + (activityFilter === 'all' ? '' : '?event=' + activityFilter)); }
+  let all;
+  try { all = await api(q('/activity-feed?range=day')); }   // today only; q() adds location_id
   catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const match = (r) => activityFilter === 'all' ? true
+    : activityFilter === 'logins' ? r.path === '/api/auth/login'
+      : activityFilter === 'checkins' ? r.path === '/api/public/checkin'
+        : (r.status === 401 || r.status === 403);
+  const rows = all.filter(match);
   const sBadge = (s) => s >= 500 ? 'left' : s >= 400 ? 'waiting' : 'seated';
   const label = (r) => {
     if (r.path === '/api/auth/login') return r.status === 200 ? 'signed in' : 'sign-in failed';
@@ -311,7 +316,7 @@ async function renderActivity() {
   };
   const tab = (k, l) => `<button class="navbtn ${activityFilter === k ? 'active' : ''}" data-af="${k}">${l}</button>`;
   $('view').innerHTML = `
-    <div class="section-head"><h2>Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
+    <div class="section-head"><h2>Activity Log <span style="font-weight:400;color:var(--muted);font-size:.9rem">— today · ${rows.length}</span></h2>
       <div style="display:flex;gap:.25rem;align-items:center">${tab('all', 'All')}${tab('logins', 'Logins')}${tab('checkins', 'Check-ins')}${tab('denied', 'Denied')}<button class="btn" id="expCsv" style="padding:.4rem .7rem;margin-left:.4rem">⬇ Export CSV</button></div></div>
     <p style="color:var(--muted);font-size:.85rem;margin:0 0 1rem">Every sign-in, change, and blocked attempt — who, what, status and IP. Read-only page views aren't logged.</p>
     <div class="hist"><table><thead><tr><th>When (local)</th><th>Who</th><th>Action</th><th>Status</th><th>IP</th></tr></thead><tbody>
@@ -330,8 +335,9 @@ async function renderActivity() {
 async function exportActivityCSV() {
   const btn = $('expCsv'); const orig = btn.textContent; btn.textContent = 'Preparing…'; btn.disabled = true;
   try {
-    const q = '/waitlist/activity-log?' + (activityFilter === 'all' ? '' : 'event=' + activityFilter + '&') + 'limit=1000';
-    const rows = await api(q);
+    const all = await api(q('/activity-feed?range=day&limit=1000'));
+    const match = (r) => activityFilter === 'all' ? true : activityFilter === 'logins' ? r.path === '/api/auth/login' : activityFilter === 'checkins' ? r.path === '/api/public/checkin' : (r.status === 401 || r.status === 403);
+    const rows = all.filter(match);
     const act = (r) => r.path === '/api/auth/login' ? (r.status === 200 ? 'signed in' : 'sign-in failed')
       : r.path === '/api/public/checkin' ? 'customer self check-in'
         : `${r.method} ${r.path.replace('/api/waitlist', '').replace('/api', '')}`;
