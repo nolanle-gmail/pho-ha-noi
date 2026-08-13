@@ -90,6 +90,7 @@ function mapVisit(v) {
     last_checked_min_ago: minsSince(v.last_checked_at), check_count: v.check_count,
     waited_min: v.stage === 'waiting' ? minsSince(v.created_at) : null,
     seated_min_ago: minsSince(v.seated_at), quoted_minutes: v.quoted_minutes || null,
+    help_flag: !!v.help_flag, bus_flag: !!v.bus_flag, tip_amount: v.tip_amount != null ? v.tip_amount : null,
     waitlist_ref: v.waitlist_ref || null,
     created_at: v.created_at, seated_at: v.seated_at || null, service_started_at: v.service_started_at || null,
     paying_at: v.paying_at || null, done_at: v.done_at || null,
@@ -126,14 +127,19 @@ router.get('/', requireView, (req, res) => {
   const servers = s.locId
     ? db.prepare(`SELECT id, name, employee_code FROM users WHERE location_id=? AND role='server' AND is_active=1 ORDER BY name`).all(s.locId)
     : [];
+  // Flag-driven lists (independent of stage): raised hands + tables to bus.
+  const fw = s.locId ? ' AND location_id=?' : ''; const fp = s.locId ? [s.locId] : [];
+  const needs_help = db.prepare(`SELECT * FROM service_visits WHERE help_flag=1${fw} ORDER BY help_at`).all(...fp).map(mapVisit);
+  const to_bus = db.prepare(`SELECT * FROM service_visits WHERE bus_flag=1${fw} ORDER BY bus_at`).all(...fp).map(mapVisit);
   res.json({
     location: loc ? { id: loc.id, name: loc.name } : null,
     can_manage: !!isManage(req), all_locations: !s.locId,
     stages: STAGES, check_intervals: CHECK_INTERVALS, servers,
-    lists: byStage,
+    lists: byStage, needs_help, to_bus,
     summary: {
       waiting: byStage.waiting.length, seated: byStage.seated.length, in_service: byStage.in_service.length,
       paying: byStage.paying.length, checks_due: byStage.in_service.filter(v => v.check_due).length,
+      help: needs_help.length, to_bus: to_bus.length,
     },
   });
 });
@@ -254,15 +260,35 @@ router.put('/:id/pay', requireView, (req, res) => {
   res.json({ success: true, visit: mapVisit(nv) });
 });
 
-// ── Done (paid) — frees the table for the next guest ─────────────────────────
+// ── Done — one tap when guests leave; frees the table. Optional tip recorded. ─
 router.put('/:id/done', requireView, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   if (v.stage === 'done' || v.stage === 'canceled') return res.status(409).json({ error: `Visit is already ${v.stage}.` });
   const tableId = v.table_id;
-  db.prepare(`UPDATE service_visits SET stage='done', done_at=?, next_check_at=NULL WHERE id=?`).run(nowISO(), v.id);
+  const raw = req.body.tip_amount;
+  const tip = raw != null && raw !== '' && Number.isFinite(Number(raw)) ? Math.max(0, Number(raw)) : null;
+  db.prepare(`UPDATE service_visits SET stage='done', done_at=?, next_check_at=NULL, tip_amount=COALESCE(?, tip_amount) WHERE id=?`).run(nowISO(), tip, v.id);
   const nv = getVisit(v.id);
   syncTable(tableId, 'done', nv);
-  logEvent(nv, 'done', v.stage, 'done', actorOf(req), null);
+  logEvent(nv, 'done', v.stage, 'done', actorOf(req), tip != null ? { tip_amount: tip } : null);
+  res.json({ success: true, visit: mapVisit(nv) });
+});
+
+// ── Server flags: raise a hand for a manager, or ping a busser to clear a table ─
+router.put('/:id/help', requireView, (req, res) => {
+  const v = loadOwned(req, res); if (!v) return;
+  const on = req.body.on === undefined ? !v.help_flag : !!req.body.on;
+  db.prepare(`UPDATE service_visits SET help_flag=?, help_at=? WHERE id=?`).run(on ? 1 : 0, on ? nowISO() : null, v.id);
+  const nv = getVisit(v.id);
+  logEvent(nv, on ? 'help_raised' : 'help_cleared', v.stage, v.stage, actorOf(req), null);
+  res.json({ success: true, visit: mapVisit(nv) });
+});
+router.put('/:id/bus', requireView, (req, res) => {
+  const v = loadOwned(req, res); if (!v) return;
+  const on = req.body.on === undefined ? !v.bus_flag : !!req.body.on;
+  db.prepare(`UPDATE service_visits SET bus_flag=?, bus_at=? WHERE id=?`).run(on ? 1 : 0, on ? nowISO() : null, v.id);
+  const nv = getVisit(v.id);
+  logEvent(nv, on ? 'bus_requested' : 'bus_cleared', v.stage, v.stage, actorOf(req), null);
   res.json({ success: true, visit: mapVisit(nv) });
 });
 
@@ -313,10 +339,23 @@ router.get('/reports/servers', requireView, (req, res) => {
       COUNT(*) tables_served,
       SUM(party_size) guests_served,
       SUM(check_count) checks_done,
+      SUM(COALESCE(tip_amount,0)) tips_total,
       AVG(CASE WHEN done_at IS NOT NULL AND service_started_at IS NOT NULL
         THEN (julianday(done_at)-julianday(service_started_at))*1440 END) avg_service_min
     FROM service_visits WHERE ${where} GROUP BY server_id, server_name ORDER BY tables_served DESC`).all(...params);
-  res.json({ servers: rows.map(r => ({ ...r, avg_service_min: r.avg_service_min != null ? Math.round(r.avg_service_min) : null })) });
+  res.json({ servers: rows.map(r => ({ ...r, tips_total: Math.round((r.tips_total || 0) * 100) / 100, avg_service_min: r.avg_service_min != null ? Math.round(r.avg_service_min) : null })) });
+});
+
+// ── One server's own tally today: covers (guests) + tips ─────────────────────
+router.get('/me/tally', requireView, (req, res) => {
+  const s = scopeLocation(req, res); if (!s) return;
+  const serverId = req.query.server_id ? parseInt(req.query.server_id, 10) : (req.user ? req.user.id : null);
+  if (!serverId) return res.status(400).json({ error: 'server_id is required.' });
+  const params = [serverId]; let where = `server_id=? AND stage IN ('in_service','paying','done')`;
+  if (s.locId) { where += ` AND location_id=?`; params.push(s.locId); }
+  const r = db.prepare(`SELECT COUNT(*) tables, SUM(party_size) covers, SUM(COALESCE(tip_amount,0)) tips,
+    SUM(CASE WHEN stage IN ('in_service','paying') THEN 1 ELSE 0 END) open_tables FROM service_visits WHERE ${where}`).get(...params);
+  res.json({ tables: r.tables || 0, covers: r.covers || 0, tips: Math.round((r.tips || 0) * 100) / 100, open_tables: r.open_tables || 0 });
 });
 
 module.exports = router;

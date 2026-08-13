@@ -547,6 +547,23 @@ const check = (name, ok, detail = '') => {
     check('visit history logs every movement', Array.isArray(det.events) && det.events.length >= 5 && det.events.some(e => e.event === 'seated') && det.events.some(e => e.event === 'done'), 'n=' + (det.events || []).length);
     const rep = await j(await fetch(base + `${V}/reports/servers?location_id=${loc1}`, { headers: H(token) }));
     check('server performance report', Array.isArray(rep.servers) && rep.servers.length >= 1 && rep.servers[0].tables_served >= 1, 'n=' + (rep.servers || []).length);
+    check('report includes tips_total', rep.servers.every(x => 'tips_total' in x));
+
+    // Server flags (call for help / ready to bus), a tip at close, and the tally
+    const fx = await j(await fetch(base + V, { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, guest_name: 'Flags Test', party_size: 2, notes: 'Nut allergy' }) }));
+    let hf = await j(await fetch(base + `${V}/${fx.id}/help`, { method: 'PUT', headers: H(token), body: JSON.stringify({ on: true }) }));
+    check('raise a call-for-help flag', hf.visit.help_flag === true, JSON.stringify(hf.visit && hf.visit.help_flag));
+    let bf = await j(await fetch(base + `${V}/${fx.id}/bus`, { method: 'PUT', headers: H(token), body: JSON.stringify({ on: true }) }));
+    check('raise a ready-to-bus flag', bf.visit.bus_flag === true, JSON.stringify(bf.visit && bf.visit.bus_flag));
+    const fl = await j(await fetch(base + `${V}?location_id=${loc1}`, { headers: H(token) }));
+    check('flags surface in needs_help + to_bus', fl.summary.help >= 1 && fl.summary.to_bus >= 1 && fl.needs_help.some(v => v.id === fx.id) && fl.to_bus.some(v => v.id === fx.id), JSON.stringify({ h: fl.summary.help, b: fl.summary.to_bus }));
+    check('note carried on the visit', fl.needs_help.find(v => v.id === fx.id).notes === 'Nut allergy');
+    let cf = await j(await fetch(base + `${V}/${fx.id}/help`, { method: 'PUT', headers: H(token), body: JSON.stringify({ on: false }) }));
+    check('clear the help flag', cf.visit.help_flag === false);
+    let df = await j(await fetch(base + `${V}/${fx.id}/done`, { method: 'PUT', headers: H(token), body: JSON.stringify({ tip_amount: 12.5 }) }));
+    check('done records an optional tip', df.visit.stage === 'done' && df.visit.tip_amount === 12.5, JSON.stringify(df.visit && df.visit.tip_amount));
+    const tally = await j(await fetch(base + `${V}/me/tally?location_id=${loc1}&server_id=${srv.id}`, { headers: H(token) }));
+    check('server tally: covers + tips + open tables', typeof tally.covers === 'number' && typeof tally.tips === 'number' && typeof tally.open_tables === 'number', JSON.stringify(tally));
 
     // RBAC
     r = await fetch(base + `${V}?location_id=${loc1}`, { headers: H(emp.token) });

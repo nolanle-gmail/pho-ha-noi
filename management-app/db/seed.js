@@ -793,6 +793,12 @@ function seedVisits(db, locIds) {
       created_at: ago(150), seated_at: ago(145), service_started_at: ago(140), done_at: ago(35) });
   });
 
+  // A raised hand, a table waiting on a busser, and a couple of recorded tips.
+  db.prepare(`UPDATE service_visits SET help_flag=1, help_at=datetime('now') WHERE location_id=? AND guest_name='Ho, Grace'`).run(loc);
+  db.prepare(`UPDATE service_visits SET bus_flag=1, bus_at=datetime('now') WHERE location_id=? AND guest_name='Bui, Sam'`).run(loc);
+  db.prepare(`UPDATE service_visits SET tip_amount=14.5 WHERE location_id=? AND guest_name='Vu, Tom'`).run(loc);
+  db.prepare(`UPDATE service_visits SET tip_amount=22 WHERE location_id=? AND guest_name='Dang, May'`).run(loc);
+
   const n = db.prepare(`SELECT COUNT(*) c FROM service_visits WHERE location_id=?`).get(loc).c;
   console.log(`Seeded ${n} guest visits across the service lists at ${db.prepare('SELECT name FROM locations WHERE id=?').get(loc).name}.`);
 }

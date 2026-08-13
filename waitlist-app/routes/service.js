@@ -44,5 +44,9 @@ router.put('/:id/pay', (req, res) => fwd(res, 'PUT', `/${id(req)}/pay`, req, req
 router.put('/:id/done', (req, res) => fwd(res, 'PUT', `/${id(req)}/done`, req, req.body));
 router.put('/:id/transfer', (req, res) => fwd(res, 'PUT', `/${id(req)}/transfer`, req, req.body));
 router.put('/:id/cancel', (req, res) => fwd(res, 'PUT', `/${id(req)}/cancel`, req, req.body));
+router.put('/:id/help', (req, res) => fwd(res, 'PUT', `/${id(req)}/help`, req, req.body));
+router.put('/:id/bus', (req, res) => fwd(res, 'PUT', `/${id(req)}/bus`, req, req.body));
+// This server's own covers + tips tally today.
+router.get('/me/tally', (req, res) => fwd(res, 'GET', `/me/tally?server_id=${encodeURIComponent(req.user.id)}`, req));
 
 module.exports = router;
