@@ -157,6 +157,7 @@ const roleChip = (r) => { const c = roleDef(r).caps; return c.includes('org') ? 
 // ── Left-menu sections (gated by capability, not a fixed role list) ──────────
 const SECTIONS = [
   ['overview', '📊', 'Overview', 'any'],
+  ['service', '🛎️', 'Service', 'manage'],
   ['locations', '📍', 'Locations', 'manage'],
   ['staff', '👥', 'Staff', 'manage'],
   ['myschedule', '🗓️', 'My Schedule', 'scheduled'],
@@ -198,6 +199,8 @@ function showSection(section) {
   $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral));
   $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
+  if (SVC.timer && section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; }
+  if (section === 'service') { renderService(); return; }
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
@@ -207,6 +210,160 @@ function showSection(section) {
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
   const fn = { overview: renderOverview, myschedule: renderMySchedule, deliveries: renderDeliveries }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
+}
+
+// ── Service: the live guest-visit board (six lists) ──────────────────────────
+// Owner/GM see every location (with an "All locations" option); a manager is
+// pinned to their own store. Auto-refreshes so the floor stays current.
+const SVC = { loc: null, timer: null, byId: {}, scroll: 0 };
+const SVC_STAGES = [
+  ['waiting', 'Waitlist', '#6d28d9'],
+  ['seated', 'Seated', '#2b5bd7'],
+  ['in_service', 'In service', '#0e7490'],
+  ['paying', 'Paying', '#b4630b'],
+  ['done', 'Done', '#6b7280'],
+];
+const svcLocName = (id) => { const l = (S.locations || []).find(x => String(x.id) === String(id)); return l ? l.name.replace(/^Pho Ha Noi\s*[—-]\s*/, '') : ''; };
+
+async function renderService() {
+  const seesAll = roleScopeOf(S.user.role) === 'all';
+  if (!seesAll) SVC.loc = String(S.user.location_id);
+  else if (SVC.loc === null) SVC.loc = 'all';
+  const board = $('svcBoard'); if (board) SVC.scroll = board.scrollLeft;   // keep scroll across refresh
+
+  const single = SVC.loc && SVC.loc !== 'all';
+  const q = '/visits?' + (single ? `location_id=${SVC.loc}&` : '') + 'include=done';
+  let data, report;
+  try { [data, report] = await Promise.all([api(q), api('/visits/reports/servers' + (single ? `?location_id=${SVC.loc}` : ''))]); }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  SVC.byId = {}; SVC_STAGES.forEach(([k]) => (data.lists[k] || []).forEach(v => SVC.byId[v.id] = v));
+
+  const sm = data.summary;
+  const due = (data.lists.in_service || []).filter(v => v.check_due);
+  const locSelect = seesAll
+    ? `<select id="svcLocSel">${['all', ...(S.locations || []).map(l => String(l.id))].map(v => `<option value="${v}" ${v === SVC.loc ? 'selected' : ''}>${v === 'all' ? 'All locations' : esc(svcLocName(v))}</option>`).join('')}</select>`
+    : `<span class="badge blue">${esc(svcLocName(SVC.loc))}</span>`;
+
+  const cols = SVC_STAGES.map(([k, label, color]) => {
+    const items = data.lists[k] || [];
+    return `<div class="svc-col" style="--sc:${color}">
+      <div class="svc-col-head"><span class="svc-dot" style="background:${color}"></span>${label}<span class="svc-n">${items.length}</span></div>
+      <div class="svc-col-body">${items.map(v => svcCard(v, k)).join('') || '<div class="svc-empty">—</div>'}</div>
+    </div>`;
+  }).join('');
+
+  $('view').innerHTML = `
+    <div class="svc-top">
+      <div class="svc-loc">${locSelect}</div>
+      <div class="svc-chips">
+        <span class="badge gray">${sm.waiting} waiting</span>
+        <span class="badge blue">${sm.seated} seated</span>
+        <span class="badge ok">${sm.in_service} in service</span>
+        <span class="badge low">${sm.paying} paying</span>
+        ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
+      </div>
+      <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
+    </div>
+    ${due.length ? `<div class="svc-due"><strong>⏰ Check now:</strong> ${due.map(v => `<button class="chip-due" data-act="check" data-vid="${v.id}" title="Log a check">${esc(v.table_label || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
+    <div class="svc-board" id="svcBoard">${cols}</div>
+    <div class="svc-report">
+      <h3>Servers today${single ? '' : ' — all locations'}</h3>
+      ${report.servers.length ? `<div class="table-wrap"><table><thead><tr><th>Server</th><th class="num">Tables</th><th class="num">Guests</th><th class="num">Checks</th><th class="num">Avg service</th></tr></thead><tbody>
+        ${report.servers.map(s => `<tr><td><strong>${esc(s.server_name || '—')}</strong></td><td class="num">${s.tables_served}</td><td class="num">${s.guests_served || 0}</td><td class="num">${s.checks_done || 0}</td><td class="num">${s.avg_service_min != null ? s.avg_service_min + 'm' : '—'}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No servers have picked up tables yet.</div>'}
+    </div>`;
+
+  const bd = $('svcBoard'); if (bd) bd.scrollLeft = SVC.scroll;
+  if (seesAll) $('svcLocSel').onchange = (e) => { SVC.loc = e.target.value; SVC.scroll = 0; renderService(); };
+  $('svcRefresh').onclick = () => renderService();
+  $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => svcAction(b.dataset.act, parseInt(b.dataset.vid, 10)));
+
+  if (SVC.timer) clearInterval(SVC.timer);
+  SVC.timer = setInterval(() => {
+    if (S.section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; return; }
+    if ($('modalHost').innerHTML) return;   // don't refresh out from under an open modal
+    renderService();
+  }, 12000);
+}
+
+function svcCard(v, stage) {
+  const loc = SVC.loc === 'all' ? `<span class="svc-loc-tag">${esc(svcLocName(v.location_id))}</span>` : '';
+  const who = `<div class="svc-guest">${esc(v.guest_name || 'Guest')} <span class="svc-party">·&nbsp;${v.party_size}👤</span>${loc}</div>`;
+  const note = v.notes ? `<div class="svc-note">${esc(v.notes)}</div>` : '';
+  const tbl = v.table_label ? `<span class="svc-tbl">T${esc(v.table_label)}</span>` : '';
+  const src = stage === 'waiting' ? `<span class="svc-src">${v.source === 'walkin' ? 'walk-in' : 'waitlist'}</span>` : '';
+  const A = (act, label, cls) => `<button class="btn xs ${cls || 'ghost'}" data-act="${act}" data-vid="${v.id}">${label}</button>`;
+  let meta = '', actions = '';
+  if (stage === 'waiting') {
+    meta = `<div class="svc-meta">${src} waited ${v.waited_min ?? 0}m${v.quoted_minutes ? ` · quoted ${v.quoted_minutes}m` : ''}</div>`;
+    actions = A('seat', 'Seat', '') + A('cancel', 'Left');
+  } else if (stage === 'seated') {
+    meta = `<div class="svc-meta">${tbl} · seated ${v.seated_min_ago ?? 0}m ago${v.server_name ? ' · ' + esc(v.server_name) : ' · <em>no server</em>'}</div>`;
+    actions = A('assign', v.server_name ? 'Reassign' : 'Assign server', '') + A('transfer', 'Move') + A('cancel', 'Left');
+  } else if (stage === 'in_service') {
+    const dueCls = v.check_due ? ' due' : '';
+    const chk = v.minutes_to_check != null ? (v.check_due ? `check overdue ${Math.abs(v.minutes_to_check)}m` : `check in ${v.minutes_to_check}m`) : '';
+    meta = `<div class="svc-meta${dueCls}">${tbl} · ${esc(v.server_name || '—')} · ${chk} <span class="svc-int">(${v.check_interval_min || 10}m)</span></div>`;
+    actions = A('check', '✓ Check', v.check_due ? 'warn' : '') + A('pay', 'To pay') + A('interval', '⏱') + A('transfer', 'Move');
+  } else if (stage === 'paying') {
+    meta = `<div class="svc-meta">${tbl} · ${esc(v.server_name || '—')}</div>`;
+    actions = A('done', '✓ Done', 'ok') + A('assign', 'Server');
+  } else {
+    meta = `<div class="svc-meta">${tbl || ''} ${v.server_name ? '· ' + esc(v.server_name) : ''} · done</div>`;
+  }
+  return `<div class="svc-card${stage === 'in_service' && v.check_due ? ' card-due' : ''}">${who}${meta}${note}${actions ? `<div class="svc-actions">${actions}</div>` : ''}</div>`;
+}
+
+async function svcAction(act, vid) {
+  const v = SVC.byId[vid]; if (!v && act !== 'check') return;
+  const put = async (path, body) => { await api(`/visits/${vid}/${path}`, { method: 'PUT', body: JSON.stringify(body || {}) }); renderService(); };
+  if (act === 'check') { await api(`/visits/${vid}/check`, { method: 'PUT', body: '{}' }); toast('Checked'); return renderService(); }
+  if (act === 'pay') return put('pay');
+  if (act === 'done') { await api(`/visits/${vid}/done`, { method: 'PUT', body: '{}' }); toast('Table freed'); return renderService(); }
+  if (act === 'cancel') return modal(`Remove ${v.guest_name || 'this party'}?`, [], async () => { await put('cancel', { reason: 'left' }); }, 'Remove');
+  if (act === 'seat') return svcSeatModal(v);
+  if (act === 'assign') return svcAssignModal(v);
+  if (act === 'transfer') return svcTransferModal(v);
+  if (act === 'interval') return svcIntervalModal(v);
+}
+
+// Available tables at a location (from the floor plan).
+async function svcFreeTables(locId) {
+  const fp = await api('/floorplan?location_id=' + locId);
+  return fp.areas.flatMap(a => a.tables).filter(t => t.status === 'available').map(t => ({ value: t.id, label: `T${t.label} (${t.seats} seats)` }));
+}
+const INTERVAL_OPTS = [{ value: 5, label: 'Check every 5 min' }, { value: 10, label: 'Check every 10 min' }, { value: 20, label: 'Check every 20 min' }];
+
+async function svcSeatModal(v) {
+  let tables; try { tables = await svcFreeTables(v.location_id); } catch (e) { return toast(e.message, true); }
+  if (!tables.length) return toast('No open tables right now.', true);
+  modal(`Seat ${v.guest_name || 'guest'} (${v.party_size})`, [
+    { key: 'table_id', label: 'Table', type: 'select', options: tables, value: tables[0].value },
+    { key: 'check_interval_min', label: 'Check window', type: 'select', options: INTERVAL_OPTS, value: 10 },
+  ], async (vals) => { await api(`/visits/${v.id}/seat`, { method: 'PUT', body: JSON.stringify(vals) }); toast('Seated'); renderService(); }, 'Seat');
+}
+async function svcAssignModal(v) {
+  let d; try { d = await api('/visits?location_id=' + v.location_id); } catch (e) { return toast(e.message, true); }
+  if (!d.servers.length) return toast('No servers on staff at this location.', true);
+  modal(`Assign server — ${v.guest_name || 'table ' + (v.table_label || '')}`, [
+    { key: 'server_id', label: 'Server', type: 'select', options: d.servers.map(s => ({ value: s.id, label: s.name })), value: v.server_id || d.servers[0].id },
+  ], async (vals) => {
+    const s = d.servers.find(x => String(x.id) === String(vals.server_id));
+    await api(`/visits/${v.id}/assign`, { method: 'PUT', body: JSON.stringify({ server_id: s.id, server_name: s.name }) });
+    toast('Server assigned'); renderService();
+  }, 'Assign');
+}
+async function svcTransferModal(v) {
+  let tables; try { tables = await svcFreeTables(v.location_id); } catch (e) { return toast(e.message, true); }
+  if (!tables.length) return toast('No open tables to move to.', true);
+  modal(`Move ${v.guest_name || 'party'} to another table`, [
+    { key: 'table_id', label: 'New table', type: 'select', options: tables, value: tables[0].value },
+  ], async (vals) => { await api(`/visits/${v.id}/transfer`, { method: 'PUT', body: JSON.stringify(vals) }); toast('Moved'); renderService(); }, 'Move');
+}
+async function svcIntervalModal(v) {
+  modal(`Check window — table ${v.table_label || ''}`, [
+    { key: 'check_interval_min', label: 'How often to check', type: 'select', options: INTERVAL_OPTS, value: v.check_interval_min || 10 },
+  ], async (vals) => { await api(`/visits/${v.id}/interval`, { method: 'PUT', body: JSON.stringify(vals) }); toast('Check window updated'); renderService(); }, 'Save');
 }
 
 const TABS = [

@@ -798,4 +798,4 @@ function seedVisits(db, locIds) {
 }
 
 if (require.main === module) { run(); console.log('Seed complete.'); }
-module.exports = { run };
+module.exports = { run, seedVisits };
