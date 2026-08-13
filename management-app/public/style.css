@@ -449,3 +449,6 @@ tr:hover .order-hover { opacity: 1; }
 .btn.xs.ok { background: #1e7e34; border-color: #1e7e34; color: #fff; }
 .svc-report { margin-top: 1.1rem; }
 .svc-report h3 { margin-bottom: .5rem; }
+.svc-cflag { margin-left: 4px; font-size: .82rem; }
+.svc-due.help { background: #fdecea; border-color: #f2b3a8; }
+.svc-due.bus { background: #eef3fb; border-color: #b9cdec; }

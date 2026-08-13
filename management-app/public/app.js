@@ -261,15 +261,19 @@ async function renderService() {
         <span class="badge ok">${sm.in_service} in service</span>
         <span class="badge low">${sm.paying} paying</span>
         ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
+        ${sm.help ? `<span class="badge out">🚩 ${sm.help} help</span>` : ''}
+        ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
       </div>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
     </div>
     ${due.length ? `<div class="svc-due"><strong>⏰ Check now:</strong> ${due.map(v => `<button class="chip-due" data-act="check" data-vid="${v.id}" title="Log a check">${esc(v.table_label || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
+    ${(data.needs_help || []).length ? `<div class="svc-due help"><strong>🚩 Needs help:</strong> ${data.needs_help.map(v => `<button class="chip-due" data-act="unhelp" data-vid="${v.id}" title="Resolve">${esc(v.table_label ? 'T' + v.table_label : v.guest_name || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
+    ${(data.to_bus || []).length ? `<div class="svc-due bus"><strong>🧹 To bus:</strong> ${data.to_bus.map(v => `<button class="chip-due" data-act="unbus" data-vid="${v.id}" title="Mark bussed">T${esc(v.table_label || '?')} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
     <div class="svc-board" id="svcBoard">${cols}</div>
     <div class="svc-report">
       <h3>Servers today${single ? '' : ' — all locations'}</h3>
-      ${report.servers.length ? `<div class="table-wrap"><table><thead><tr><th>Server</th><th class="num">Tables</th><th class="num">Guests</th><th class="num">Checks</th><th class="num">Avg service</th></tr></thead><tbody>
-        ${report.servers.map(s => `<tr><td><strong>${esc(s.server_name || '—')}</strong></td><td class="num">${s.tables_served}</td><td class="num">${s.guests_served || 0}</td><td class="num">${s.checks_done || 0}</td><td class="num">${s.avg_service_min != null ? s.avg_service_min + 'm' : '—'}</td></tr>`).join('')}
+      ${report.servers.length ? `<div class="table-wrap"><table><thead><tr><th>Server</th><th class="num">Tables</th><th class="num">Guests</th><th class="num">Checks</th><th class="num">Avg service</th><th class="num">Tips</th></tr></thead><tbody>
+        ${report.servers.map(s => `<tr><td><strong>${esc(s.server_name || '—')}</strong></td><td class="num">${s.tables_served}</td><td class="num">${s.guests_served || 0}</td><td class="num">${s.checks_done || 0}</td><td class="num">${s.avg_service_min != null ? s.avg_service_min + 'm' : '—'}</td><td class="num">$${(s.tips_total || 0).toFixed(2)}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No servers have picked up tables yet.</div>'}
     </div>`;
 
@@ -288,7 +292,8 @@ async function renderService() {
 
 function svcCard(v, stage) {
   const loc = SVC.loc === 'all' ? `<span class="svc-loc-tag">${esc(svcLocName(v.location_id))}</span>` : '';
-  const who = `<div class="svc-guest">${esc(v.guest_name || 'Guest')} <span class="svc-party">·&nbsp;${v.party_size}👤</span>${loc}</div>`;
+  const flags = `${v.help_flag ? '<span class="svc-cflag" title="Called for help">🚩</span>' : ''}${v.bus_flag ? '<span class="svc-cflag" title="Ready to bus">🧹</span>' : ''}`;
+  const who = `<div class="svc-guest">${esc(v.guest_name || 'Guest')} <span class="svc-party">·&nbsp;${v.party_size}👤</span>${flags}${loc}</div>`;
   const note = v.notes ? `<div class="svc-note">${esc(v.notes)}</div>` : '';
   const tbl = v.table_label ? `<span class="svc-tbl">T${esc(v.table_label)}</span>` : '';
   const src = stage === 'waiting' ? `<span class="svc-src">${v.source === 'walkin' ? 'walk-in' : 'waitlist'}</span>` : '';
@@ -315,8 +320,10 @@ function svcCard(v, stage) {
 }
 
 async function svcAction(act, vid) {
-  const v = SVC.byId[vid]; if (!v && act !== 'check') return;
+  const v = SVC.byId[vid]; if (!v && !['check', 'unhelp', 'unbus'].includes(act)) return;
   const put = async (path, body) => { await api(`/visits/${vid}/${path}`, { method: 'PUT', body: JSON.stringify(body || {}) }); renderService(); };
+  if (act === 'unhelp') { await api(`/visits/${vid}/help`, { method: 'PUT', body: JSON.stringify({ on: false }) }); toast('Help resolved'); return renderService(); }
+  if (act === 'unbus') { await api(`/visits/${vid}/bus`, { method: 'PUT', body: JSON.stringify({ on: false }) }); toast('Marked bussed'); return renderService(); }
   if (act === 'check') { await api(`/visits/${vid}/check`, { method: 'PUT', body: '{}' }); toast('Checked'); return renderService(); }
   if (act === 'pay') return put('pay');
   if (act === 'done') { await api(`/visits/${vid}/done`, { method: 'PUT', body: '{}' }); toast('Table freed'); return renderService(); }

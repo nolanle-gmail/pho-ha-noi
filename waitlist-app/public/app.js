@@ -24,6 +24,9 @@ async function api(path, opts = {}) {
   return data;
 }
 const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
+// Floor-of-house roles land on the Server view; everyone else on the Front Desk.
+const SERVER_ROLES = ['server', 'busser'];
+const isServerRole = (r) => SERVER_ROLES.includes(r);
 
 let toastTimer;
 function toast(msg, bad) {
@@ -53,7 +56,8 @@ function tick() { $('clock').textContent = new Date().toLocaleString('en-US', { 
 async function boot() {
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   tick(); setInterval(tick, 20000);
-  S.locations = await api('/waitlist/locations');
+  if (isServerRole(S.user.role)) S.view = 'server';   // servers land on My Tables
+  S.locations = await api('/waitlist/locations').catch(() => []);   // servers aren't HOST; non-fatal
   const picker = $('locPicker');
   const short = (id) => ((S.locations.find(l => String(l.id) === String(id)) || {}).name || '').replace('Pho Ha Noi — ', '');
   if (S.user.role === 'owner') {
@@ -74,8 +78,8 @@ async function boot() {
   }
   renderNav();
   render();
-  // Live refresh — only the board auto-refreshes (history/report keep filter state).
-  setInterval(() => { if (S.view === 'board' && !$('modalHost').innerHTML) render(); }, 15000);
+  // Live refresh — the Front Desk board and the Server view auto-refresh.
+  setInterval(() => { if ((S.view === 'board' || S.view === 'server') && !$('modalHost').innerHTML) render(); }, 15000);
 }
 
 // Sub-navigation: owner sees everything; managers get the Front Desk + Floor Plan.
@@ -83,7 +87,8 @@ function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
   let items;
-  if (role === 'owner') items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
+  if (isServerRole(role)) items = [['server', '🛎️ My Tables'], ['tables', '🍽️ Floor']];
+  else if (role === 'owner') items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
   else items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map']];
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
@@ -92,11 +97,94 @@ function renderNav() {
 
 // Dispatch to the active view.
 function render() {
+  if (S.view === 'server') return renderServer();
   if (S.view === 'history') return renderHistory();
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
   if (S.view === 'tables') return renderTables();
   return renderBoard();
+}
+
+// ── Server view: my tables, checks, claim queue, covers + tips ────────────────
+async function renderServer() {
+  const v = $('view');
+  let data, tally;
+  try { [data, tally] = await Promise.all([api('/service'), api('/service/me/tally')]); }
+  catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (data.location) { const b = $('locName'); b.textContent = '📍 ' + data.location.name.replace('Pho Ha Noi — ', ''); b.classList.remove('hidden'); }
+  const me = String(S.user.id);
+  const mine = [...(data.lists.in_service || []), ...(data.lists.paying || [])].filter(t => String(t.server_id) === me);
+  const rank = (t) => t.stage === 'paying' ? 1e9 : (t.minutes_to_check == null ? 1e8 : t.minutes_to_check);
+  mine.sort((a, b) => rank(a) - rank(b));
+  const dueMine = mine.filter(t => t.stage === 'in_service' && t.check_due);
+  const claim = data.lists.seated || [];
+  const toBus = data.to_bus || [];
+  S.svById = {}; [...mine, ...claim, ...toBus].forEach(t => S.svById[t.id] = t);
+
+  const hero = dueMine.length ? `<div class="sv-hero"><div class="sv-hero-h">⏰ Needs a check now</div>${dueMine.map(t => `
+    <div class="sv-hero-row"><span class="sv-tnum">T${esc(t.table_label || '?')}</span>
+      <span class="sv-hero-info">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤 · <b>overdue ${Math.abs(t.minutes_to_check)}m</b></span>
+      <button class="sv-btn go" data-act="check" data-vid="${t.id}">✓ Checked</button></div>`).join('')}</div>` : '';
+
+  const myCards = mine.length ? mine.map(svServerCard).join('') : '<div class="sv-empty">No tables yet — claim one below.</div>';
+  const claimCards = claim.length ? claim.map((t, i) => `<div class="sv-row${i === 0 ? ' first' : ''}">
+      <span class="sv-tnum sm">T${esc(t.table_label || '?')}</span>
+      <span class="sv-row-info">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤${t.notes ? ` <span class="sv-note-i">${esc(t.notes)}</span>` : ''}<br><span class="muted">seated ${t.seated_min_ago ?? 0}m ago</span></span>
+      <button class="sv-btn claim" data-act="claim" data-vid="${t.id}">Claim</button></div>`).join('') : '<div class="sv-empty">No open tables to claim.</div>';
+  const busSection = toBus.length ? `<div class="sv-sec-h">To bus <span class="sv-n">${toBus.length}</span></div>${toBus.map(t => `<div class="sv-row">
+      <span class="sv-tnum sm">T${esc(t.table_label || '?')}</span>
+      <span class="sv-row-info">${esc(t.guest_name || '')} <span class="muted">· ready to clear</span></span>
+      <button class="sv-btn" data-act="bussed" data-vid="${t.id}">✓ Bussed</button></div>`).join('')}` : '';
+
+  v.innerHTML = `
+    <div class="sv-head">
+      <div><div class="sv-hi">Hi, ${esc((S.user.name || '').split(' ')[0])}</div><div class="muted">${mine.length} table${mine.length !== 1 ? 's' : ''} · ${tally.open_tables} open</div></div>
+      <div class="sv-stats"><div><b>${tally.covers}</b><span>covers</span></div><div><b>$${(tally.tips || 0).toFixed(2)}</b><span>tips</span></div></div>
+    </div>
+    ${hero}
+    <div class="sv-sec-h">My tables</div>${myCards}
+    <div class="sv-sec-h">Open to claim <span class="muted" style="font-weight:400">· whole floor, oldest first</span></div>${claimCards}
+    ${busSection}`;
+  v.querySelectorAll('[data-act]').forEach(b => b.onclick = () => svAction(b.dataset.act, +b.dataset.vid));
+}
+
+function svServerCard(t) {
+  const paying = t.stage === 'paying';
+  const chk = paying ? '<span class="sv-pay">paying</span>'
+    : (t.minutes_to_check == null ? '' : (t.check_due ? `<b class="sv-due">check overdue ${Math.abs(t.minutes_to_check)}m</b>` : `check in ${t.minutes_to_check}m`));
+  const note = t.notes ? `<div class="sv-note">⚠ ${esc(t.notes)}</div>` : '';
+  const actions = paying
+    ? `<button class="sv-btn go wide" data-act="done" data-vid="${t.id}">✓ Done</button>`
+    : `<button class="sv-btn go" data-act="check" data-vid="${t.id}">✓ Check</button><button class="sv-btn" data-act="pay" data-vid="${t.id}">To pay</button><button class="sv-btn" data-act="done" data-vid="${t.id}">Done</button>`;
+  return `<div class="sv-card${t.check_due ? ' due' : ''}">
+    <div class="sv-card-top"><span class="sv-tnum">T${esc(t.table_label || '?')}</span>
+      <div class="sv-card-info"><div class="sv-g">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤</div><div class="muted">${chk}</div></div></div>
+    ${note}
+    <div class="sv-actions">${actions}</div>
+    <div class="sv-flags">
+      <button class="sv-flag${t.help_flag ? ' on' : ''}" data-act="help" data-vid="${t.id}">${t.help_flag ? '✋ Help raised' : '✋ Call for help'}</button>
+      <button class="sv-flag${t.bus_flag ? ' on' : ''}" data-act="bus" data-vid="${t.id}">${t.bus_flag ? '🧹 Bus pinged' : '🧹 Ready to bus'}</button>
+    </div></div>`;
+}
+
+async function svAction(act, vid) {
+  const t = (S.svById || {})[vid] || {};
+  const put = (path, body) => api(`/service/${vid}/${path}`, { method: 'PUT', body: JSON.stringify(body || {}) });
+  try {
+    if (act === 'done') return svDoneModal(vid);
+    if (act === 'check') { await put('check'); toast('Checked'); }
+    else if (act === 'pay') { await put('pay'); toast('Moved to paying'); }
+    else if (act === 'claim') { await put('claim'); toast('Table claimed'); }
+    else if (act === 'help') { await put('help', { on: !t.help_flag }); toast(t.help_flag ? 'Help cleared' : 'Manager notified'); }
+    else if (act === 'bus') { await put('bus', { on: !t.bus_flag }); toast(t.bus_flag ? 'Bus canceled' : 'Busser pinged'); }
+    else if (act === 'bussed') { await put('bus', { on: false }); toast('Table cleared'); }
+    renderServer();
+  } catch (e) { toast(e.message, true); }
+}
+
+function svDoneModal(vid) {
+  modal('Close table', `<label>Tip (optional)</label><input id="svTip" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" style="width:100%" />`,
+    async () => { const tip = ($('svTip').value || '').trim(); await api(`/service/${vid}/done`, { method: 'PUT', body: JSON.stringify(tip ? { tip_amount: tip } : {}) }); toast('Table done'); renderServer(); }, 'Done');
 }
 
 // ── Live table map (status is the source of truth in the Management app) ──────
