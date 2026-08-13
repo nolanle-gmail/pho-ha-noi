@@ -44,7 +44,10 @@ router.get('/stats', requireRole(...HOST), (req, res) => {
   const longest = db.prepare(`SELECT MIN(created_at) m FROM waitlist WHERE location_id=? AND status='waiting'`).get(l).m;
   const longestWait = longest ? Math.round((Date.now() - new Date(longest.replace(' ', 'T') + 'Z').getTime()) / 60000) : 0;
   const location = db.prepare(`SELECT avg_turn_minutes FROM locations WHERE id=?`).get(l);
+  // Kiosk walk-ins today (staff/Table-Map walk-ins are counted separately as visits).
+  const kioskWalkins = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND notes LIKE '%Walk-in%' AND date(created_at)=date('now')`).get(l).c;
   res.json({ waiting, seated_today: seatedToday, left_today: leftToday, longest_wait_min: longestWait,
+             kiosk_walkins_today: kioskWalkins,
              next_quote_min: waiting * (location ? location.avg_turn_minutes : 8) });
 });
 

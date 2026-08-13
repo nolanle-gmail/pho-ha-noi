@@ -131,6 +131,7 @@ router.get('/', requireView, (req, res) => {
   const fw = s.locId ? ' AND location_id=?' : ''; const fp = s.locId ? [s.locId] : [];
   const needs_help = db.prepare(`SELECT * FROM service_visits WHERE help_flag=1${fw} ORDER BY help_at`).all(...fp).map(mapVisit);
   const to_bus = db.prepare(`SELECT * FROM service_visits WHERE bus_flag=1${fw} ORDER BY bus_at`).all(...fp).map(mapVisit);
+  const walkins_today = db.prepare(`SELECT COUNT(*) c FROM service_visits WHERE source='walkin' AND date(created_at)=date('now')${fw}`).get(...fp).c;
   res.json({
     location: loc ? { id: loc.id, name: loc.name } : null,
     can_manage: !!isManage(req), all_locations: !s.locId,
@@ -139,7 +140,7 @@ router.get('/', requireView, (req, res) => {
     summary: {
       waiting: byStage.waiting.length, seated: byStage.seated.length, in_service: byStage.in_service.length,
       paying: byStage.paying.length, checks_due: byStage.in_service.filter(v => v.check_due).length,
-      help: needs_help.length, to_bus: to_bus.length,
+      help: needs_help.length, to_bus: to_bus.length, walkins_today,
     },
   });
 });

@@ -50,6 +50,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
 
     const stats = await j(await fetch(base + `/api/waitlist/stats?location_id=${loc}`, { headers: H(token) }));
     check('stats seated_today', stats.seated_today >= 1, JSON.stringify(stats));
+    check('stats include kiosk walk-ins today', typeof stats.kiosk_walkins_today === 'number', JSON.stringify(stats.kiosk_walkins_today));
 
     // Add + leave
     const p2 = await j(await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'Leaver', party_size: 2 }) }));

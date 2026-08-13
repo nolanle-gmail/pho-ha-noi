@@ -429,13 +429,16 @@ function auditSummary(a) {
 }
 
 async function renderBoard() {
-  const [queue, stats, history, audit] = await Promise.all([api(q('/waitlist/')), api(q('/waitlist/stats')), api(q('/waitlist/history')), api(q('/waitlist/audit'))]);
+  const [queue, stats, history, audit, svc] = await Promise.all([api(q('/waitlist/')), api(q('/waitlist/stats')), api(q('/waitlist/history')), api(q('/waitlist/audit')), api(q('/service')).catch(() => ({ summary: {} }))]);
+  // Walk-ins today = kiosk walk-ins + walk-ins seated directly (Front Desk / Table Map).
+  const walkins = (stats.kiosk_walkins_today || 0) + ((svc.summary && svc.summary.walkins_today) || 0);
   $('view').innerHTML = `
     <div class="stats">
       <div class="stat"><div class="label">Waiting now</div><div class="value">${stats.waiting}</div></div>
       <div class="stat"><div class="label">Longest wait</div><div class="value ${stats.longest_wait_min >= 30 ? 'warn' : ''}">${stats.longest_wait_min}m</div></div>
       <div class="stat"><div class="label">Quote next party</div><div class="value">${stats.next_quote_min}m</div></div>
       <div class="stat"><div class="label">Seated today</div><div class="value">${stats.seated_today}</div></div>
+      <div class="stat"><div class="label">Walk-ins today</div><div class="value">🚶 ${walkins}</div></div>
     </div>
     <div class="section-head"><h2>Waiting (${queue.length})</h2><div style="display:flex;gap:.5rem"><button class="btn ghost big" id="walkinBtn">🚶 Walk-in</button><button class="btn big" id="addBtn">+ Add party</button></div></div>
     <div id="queue">

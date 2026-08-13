@@ -496,6 +496,7 @@ const check = (name, ok, detail = '') => {
     check('visit lists: seeded stages present', vl.summary.waiting >= 3 && vl.summary.seated >= 2 && vl.summary.in_service >= 3 && vl.summary.paying >= 1, JSON.stringify(vl.summary));
     check('visit lists: checks due surfaced', vl.summary.checks_due >= 1 && vl.lists.in_service.some(v => v.check_due), 'due=' + vl.summary.checks_due);
     check('visit lists: servers offered for assignment', Array.isArray(vl.servers) && vl.servers.length >= 1, 'servers=' + vl.servers.length);
+    check('summary includes walk-ins today', typeof vl.summary.walkins_today === 'number' && vl.summary.walkins_today >= 0, 'w=' + vl.summary.walkins_today);
     const vAll = await j(await fetch(base + V, { headers: H(token) }));
     check('owner sees all-location visits', vAll.all_locations === true && (vAll.lists.waiting.length + vAll.lists.in_service.length) >= 3, JSON.stringify(vAll.summary));
 
