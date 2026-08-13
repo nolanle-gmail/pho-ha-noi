@@ -125,7 +125,7 @@ async function join() {
     sessionStorage.setItem('phnw_ref', r.ref);
     renderConfirm(r.ref, Object.assign({ notes }, r));
     // Hand the kiosk back to the next guest after a short confirmation.
-    K.resetTimer = setTimeout(resetKiosk, 3000);
+    K.resetTimer = setTimeout(resetKiosk, 7000);
   } catch (e) { err.textContent = e.message; $('kJoin').disabled = false; }
 }
 
@@ -143,7 +143,7 @@ async function walkIn() {
       location_id: loc, guest_name: name || 'Walk-in', party_size: K.size, phone: $('kPhone').value.trim() || null, notes }) });
     sessionStorage.setItem('phnw_ref', r.ref);
     renderWalkInConfirm(r.ref, { party_size: K.size, guest_name: name || 'Walk-in' });
-    K.resetTimer = setTimeout(resetKiosk, 3000);   // hand the kiosk to the next guest
+    K.resetTimer = setTimeout(resetKiosk, 7000);   // hand the kiosk to the next guest
   } catch (e) { err.textContent = e.message; $('kWalkin').disabled = false; $('kJoin').disabled = false; }
 }
 
