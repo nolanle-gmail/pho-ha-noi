@@ -160,6 +160,14 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('my tasks require auth (401)', r.status === 401, 'status=' + r.status);
     r = await fetch(base + '/api/mytasks', { headers: H(host.token) });
     check('my tasks proxy to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
+
+    // ── PWA: installable Staff app (manifest + service worker + icons) ─────
+    const mani = await fetch(base + '/manifest.webmanifest');
+    check('PWA manifest served', mani.status === 200);
+    const mj = await j(mani);
+    check('manifest names the Staff app + standalone', mj.name === 'Pho Ha Noi Staff' && mj.display === 'standalone' && Array.isArray(mj.icons) && mj.icons.length >= 2, JSON.stringify({ n: mj.name, d: mj.display }));
+    check('service worker served', (await fetch(base + '/sw.js')).status === 200);
+    check('PWA icons served', (await fetch(base + '/icon-512.png')).status === 200 && (await fetch(base + '/apple-touch-icon.png')).status === 200);
     // An email that isn't a local account falls through to the Management directory
     // (unreachable during this smoke → a clean 401, proving the fallback path runs).
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });

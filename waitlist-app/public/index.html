@@ -2,27 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Pho Ha Noi — Waitlist</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pho Ha Noi — Staff</title>
   <link rel="stylesheet" href="/style.css" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#b91c1c" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="PHN Staff" />
 </head>
 <body>
   <div id="login" class="login-wrap">
     <form class="login-card" id="loginForm">
       <div class="brand-logo"><img src="/brand.svg" alt="Phở Hà Nội" /></div>
-      <div class="sub">Host Check-In &amp; Waiting List</div>
+      <div class="sub">Staff App</div>
       <div class="err" id="loginErr"></div>
       <input id="email" type="email" placeholder="Email" value="host1@phohanoi.com" autocomplete="username" />
       <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
       <button class="btn block" type="submit">Sign in</button>
-      <div class="sub" style="margin-top:1rem;font-size:.76rem">Host: host1@phohanoi.com / Host123!<br>Owner: harry@phohanoi.com / Harry123!</div>
+      <div class="sub" style="margin-top:1rem;font-size:.76rem">Sign in with your Pho Ha Noi staff account.<br>Server: server@phohanoi.com / Server123! · Owner: harry@phohanoi.com / Harry123!</div>
       <div class="sub" style="margin-top:.6rem;font-size:.8rem"><a href="/checkin" style="color:var(--red);font-weight:700;text-decoration:none">🍜 Customer self check-in →</a></div>
     </form>
   </div>
 
   <div id="app" class="hidden">
     <div class="topbar">
-      <div class="logo"><img src="/brand.svg" alt="Phở Hà Nội" class="logo-img" /> <span style="opacity:.7;font-weight:500;font-size:.9rem">· Front Desk</span></div>
+      <div class="logo"><img src="/brand.svg" alt="Phở Hà Nội" class="logo-img" /> <span style="opacity:.7;font-weight:500;font-size:.9rem">· Staff</span></div>
       <div class="right">
         <span id="locName" class="loc-badge hidden"></span>
         <select id="locPicker" class="hidden"></select>
@@ -45,6 +53,7 @@
       else url = 'https://pho-ha-noi-management.fly.dev/clock';
       var a = document.getElementById('staffClock'); if (a) a.href = url;
     })();
+    if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
   </script>
   <script src="/app.js"></script>
 </body>
