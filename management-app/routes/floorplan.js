@@ -59,13 +59,26 @@ router.get('/', requireView, (req, res) => {
   const areas = db.prepare(`SELECT id, name, sort_order FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(locId);
   const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order, pos_x, pos_y, shape, status, guest_name, party_size, seated_at, est_free_at
     FROM restaurant_tables WHERE location_id=? ORDER BY sort_order, id`).all(locId);
-  const mapT = (t) => ({
-    id: t.id, area_id: t.area_id, label: t.label, seats: t.seats, is_active: t.is_active, sort_order: t.sort_order,
-    pos_x: t.pos_x, pos_y: t.pos_y, shape: t.shape,
-    status: t.status || 'available', occupied: (t.status && t.status !== 'available'),
-    guest_name: t.guest_name || null, party_size: t.party_size || null, seated_at: t.seated_at || null,
-    minutes_to_free: minutesToFree(t.est_free_at),
-  });
+  // Active guest visit per table → surface the server + check timer on the map.
+  const visitByTable = {};
+  try {
+    db.prepare(`SELECT table_id, server_name, stage, next_check_at FROM service_visits
+      WHERE location_id=? AND table_id IS NOT NULL AND stage IN ('seated','in_service','paying')`).all(locId)
+      .forEach(v => { visitByTable[v.table_id] = v; });
+  } catch { /* service_visits not present yet */ }
+  const mapT = (t) => {
+    const v = visitByTable[t.id];
+    const toCheck = v && v.stage === 'in_service' && v.next_check_at ? Math.round((new Date(v.next_check_at).getTime() - Date.now()) / 60000) : null;
+    return {
+      id: t.id, area_id: t.area_id, label: t.label, seats: t.seats, is_active: t.is_active, sort_order: t.sort_order,
+      pos_x: t.pos_x, pos_y: t.pos_y, shape: t.shape,
+      status: t.status || 'available', occupied: (t.status && t.status !== 'available'),
+      guest_name: t.guest_name || null, party_size: t.party_size || null, seated_at: t.seated_at || null,
+      minutes_to_free: minutesToFree(t.est_free_at),
+      server_name: v ? (v.server_name || null) : null, stage: v ? v.stage : null,
+      minutes_to_check: toCheck, check_due: toCheck != null && toCheck <= 0,
+    };
+  };
   const all = tables.map(mapT);
   const byArea = areas.map(a => ({ id: a.id, name: a.name, sort_order: a.sort_order, tables: all.filter(t => t.area_id === a.id) }));
   const noArea = all.filter(t => !t.area_id);

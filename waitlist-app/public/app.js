@@ -115,8 +115,11 @@ function statusTableEl(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
   const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '\u{1F464}' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
-  const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') : 'available, ' + t.seats + ' seats';
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
+  const chk = t.stage === 'in_service' && t.minutes_to_check != null ? (t.check_due ? ' \u00b7 check overdue ' + Math.abs(t.minutes_to_check) + 'm' : ' \u00b7 check in ' + t.minutes_to_check + 'm') : '';
+  const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') + (t.server_name ? ' \u00b7 ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
+  const srv = t.server_name ? `<span class="ftable-srv">${esc(t.server_name.split(' ')[0])}</span>` : '';
+  const badge = t.check_due ? '<span class="ftable-due">\u23f0</span>' : '';
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
 }
 function fpBoardHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);

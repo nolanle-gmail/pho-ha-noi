@@ -1191,9 +1191,10 @@ async function renderLocInfo(loc) {
 function fpMiniTable(t) {
   const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
   const occ = t.status !== 'available';
-  const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.minutes_to_free != null ? ' · free ~' + t.minutes_to_free + 'm' : ''}` : `Available · ${t.seats} seats`;
+  const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.check_due ? ' · check overdue' : ''}` : `Available · ${t.seats} seats`;
   const sub = occ && t.party_size && showGuests() ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span>${sub}</div>`;
+  const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span>${sub}${badge}</div>`;
 }
 function fpSnapshotHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
@@ -1833,7 +1834,11 @@ async function renderLocFloorPlan() {
     const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
     const occ = t.status !== 'available';
     const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '👤' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
-    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') : 'available, ' + t.seats + ' seats'}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span></div>`;
+    const chk = t.stage === 'in_service' && t.minutes_to_check != null ? (t.check_due ? ` · check overdue ${Math.abs(t.minutes_to_check)}m` : ` · check in ${t.minutes_to_check}m`) : '';
+    const tip = occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') + (t.server_name ? ' · ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
+    const srv = t.server_name ? `<span class="ftable-srv">${esc(t.server_name.split(' ')[0])}</span>` : '';
+    const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
   };
   const boardInner = roomSvgM(outline) + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
   const legend = edit

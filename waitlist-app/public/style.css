@@ -172,3 +172,8 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .room-vtx { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--red); cursor: grab; z-index: 5; box-shadow: 0 1px 3px #0003; touch-action: none; }
 .room-vtx.drag { cursor: grabbing; transform: translate(-50%, -50%) scale(1.15); }
 .floor-board.roomedit .ftable { opacity: .45; pointer-events: none; }
+/* Reflect the service lists on the table map: server name + check-due alert. */
+.floor-board .ftable.due { animation: tbldue 1.3s ease-in-out infinite; }
+@keyframes tbldue { 0%, 100% { box-shadow: 0 1px 3px #0002, 0 0 0 0 #e0512b66; } 50% { box-shadow: 0 1px 3px #0002, 0 0 0 7px #e0512b00; } }
+.ftable-due { position: absolute; top: -7px; right: -7px; font-size: .72rem; line-height: 1; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px #0003; z-index: 4; }
+.ftable-srv { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px; font-size: .56rem; font-weight: 800; color: #0e7490; background: #fff; border: 1px solid #d7cfc2; border-radius: 5px; padding: 0 3px; white-space: nowrap; box-shadow: 0 1px 2px #0002; z-index: 3; }

@@ -409,6 +409,11 @@ tr:hover .order-hover { opacity: 1; }
 .floor-board.roomedit .ftable { opacity: .45; pointer-events: none; }
 .floor-board.snapshot { padding-bottom: 46%; }
 .floor-board.snapshot .ftable { cursor: default; width: clamp(28px, 7%, 46px); }
+/* Floor-plan reflection of the service lists: server name + check-due alert. */
+.floor-board .ftable.due { animation: tbldue 1.3s ease-in-out infinite; }
+@keyframes tbldue { 0%, 100% { box-shadow: 0 1px 3px #0002, 0 0 0 0 #e0512b66; } 50% { box-shadow: 0 1px 3px #0002, 0 0 0 7px #e0512b00; } }
+.ftable-due { position: absolute; top: -7px; right: -7px; font-size: .72rem; line-height: 1; background: #fff; border-radius: 50%; box-shadow: 0 1px 2px #0003; z-index: 4; }
+.ftable-srv { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 2px; font-size: .56rem; font-weight: 800; color: #0e7490; background: #fff; border: 1px solid #d7cfc2; border-radius: 5px; padding: 0 3px; white-space: nowrap; box-shadow: 0 1px 2px #0002; z-index: 3; }
 
 /* ── Service board (guest-visit six lists) ────────────────────────── */
 .svc-top { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
