@@ -140,6 +140,11 @@ function renderConfirm(ref, initial) {
       body = `<div class="k-big">This check-in is closed.</div><button class="k-btn" id="kAgain">Join again</button>`;
     } else if (p.notified) {
       body = `<div class="k-big ok">🔔 Your table is ready!</div><p class="k-note">Please see the host to be seated.</p>`;
+    } else if (p.position != null && p.position <= 1 && !p.quoted_minutes) {
+      // No one ahead + no wait → a walk-in: come right in.
+      body = `<div class="k-big ok">🚶 Come on in — no wait!</div>
+        <p class="k-note">Party of ${p.party_size} · a host will seat you shortly.</p>
+        ${initial && initial.notes ? `<p class="k-req">✓ Request noted: ${esc(initial.notes)}</p>` : ''}`;
     } else {
       body = `<div class="k-you">You're on the list</div>
         <div class="k-pos"><span class="k-pos-num">#${p.position != null ? p.position : '—'}</span><span class="k-pos-lbl">in line</span></div>
