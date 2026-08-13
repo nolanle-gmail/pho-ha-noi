@@ -61,8 +61,8 @@ async function boot() {
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   tick(); setInterval(tick, 20000);
   S.view = landingView(S.user.role);   // role-appropriate landing screen
-  // The Staff Clock kiosk shortcut is only for host / front-desk personnel.
-  $('staffClock').classList.toggle('hidden', !['host', 'frontdesk'].includes(S.user.role));
+  // The Staff Clock kiosk shortcut is for host / front-desk staff, plus owner + manager.
+  $('staffClock').classList.toggle('hidden', !['host', 'frontdesk', 'owner', 'manager'].includes(S.user.role));
   S.locations = await api('/waitlist/locations').catch(() => []);   // non-HOST staff can't list; non-fatal
   const picker = $('locPicker');
   const short = (id) => ((S.locations.find(l => String(l.id) === String(id)) || {}).name || '').replace('Pho Ha Noi — ', '');
