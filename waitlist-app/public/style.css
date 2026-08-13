@@ -216,3 +216,17 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sv-row.first { border-color: #9ccf9c; background: #f2faf2; }
 .sv-row-info { flex: 1; min-width: 0; font-size: .84rem; }
 .sv-empty { color: #b7ad9c; font-size: .88rem; padding: 8px 2px; }
+
+/* ── My Tasks ─────────────────────────────────────────────────── */
+.mt-ring { display: flex; align-items: center; justify-content: center; min-width: 54px; height: 54px; border-radius: 50%; border: 3px solid #e0842b; color: #a4560a; font-weight: 800; font-size: .95rem; }
+.mt-ring.full { border-color: #178a4e; color: #178a4e; }
+.mt-card { display: flex; gap: 12px; align-items: flex-start; background: #fff; border: 1px solid #e7e1d7; border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+.mt-card.done { background: #f4f8f2; border-color: #cfe6cf; }
+.mt-check { flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px; border: 2px solid #c9c1b3; background: #fff; color: #fff; font-weight: 900; font-size: 1.1rem; cursor: pointer; }
+.mt-card.done .mt-check { background: #178a4e; border-color: #178a4e; }
+.mt-body { min-width: 0; }
+.mt-name { font-weight: 700; font-size: .98rem; }
+.mt-card.done .mt-name { text-decoration: line-through; color: #8a8172; }
+.mt-time { display: inline-block; background: #eaf0fb; color: #1c4fb0; border-radius: 6px; padding: 0 6px; font-size: .78rem; font-weight: 800; margin-right: 6px; }
+.mt-meta { font-size: .76rem; margin-top: 2px; text-transform: capitalize; }
+.mt-desc { font-size: .82rem; color: #6b6252; margin-top: 5px; }

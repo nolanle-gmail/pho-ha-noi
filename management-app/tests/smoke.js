@@ -565,6 +565,22 @@ const check = (name, ok, detail = '') => {
     const tally = await j(await fetch(base + `${V}/me/tally?location_id=${loc1}&server_id=${srv.id}`, { headers: H(token) }));
     check('server tally: covers + tips + open tables', typeof tally.covers === 'number' && typeof tally.tips === 'number' && typeof tally.open_tables === 'number', JSON.stringify(tally));
 
+    // ── My Tasks (staff day-task assignments) ──────────────────────────────
+    const sara = vl.servers.find(s => s.name === 'Sara Tran') || vl.servers[0];
+    const st = await j(await fetch(base + `/api/stafftasks?user_id=${sara.id}`, { headers: svc() }));
+    check('staff day tasks: assigned list', Array.isArray(st.tasks) && st.tasks.length >= 1 && 'done' in st.tasks[0], JSON.stringify(st.summary));
+    const myTask = st.tasks.find(t => !t.done) || st.tasks[0];
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/done`, { method: 'PUT', headers: svc(), body: JSON.stringify({ done: true, user_id: sara.id }) });
+    const doneRes = await j(r);
+    check('mark my task done', r.status === 200 && doneRes.done === true, JSON.stringify(doneRes));
+    r = await fetch(base + '/api/stafftasks');
+    check('staff tasks require auth (401)', r.status === 401, 'status=' + r.status);
+    const otherStaff = vl.servers.find(s => s.id !== sara.id);
+    if (otherStaff) {
+      r = await fetch(base + `/api/stafftasks/${myTask.id}/done`, { method: 'PUT', headers: svc(), body: JSON.stringify({ done: false, user_id: otherStaff.id }) });
+      check('cannot complete a task that is not yours (403)', r.status === 403, 'status=' + r.status);
+    }
+
     // RBAC
     r = await fetch(base + `${V}?location_id=${loc1}`, { headers: H(emp.token) });
     check('employee blocked from service lists (403)', r.status === 403, 'status=' + r.status);

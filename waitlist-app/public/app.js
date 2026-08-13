@@ -24,9 +24,13 @@ async function api(path, opts = {}) {
   return data;
 }
 const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
-// Floor-of-house roles land on the Server view; everyone else on the Front Desk.
+// Everyone gets My Tasks; roles then add their own tools. Servers/bussers land on
+// My Tables, front-desk roles on the Front Desk, everyone else on My Tasks.
 const SERVER_ROLES = ['server', 'busser'];
+const FD_ROLES = ['owner', 'manager', 'assistant_manager', 'general_manager', 'regional_manager', 'frontdesk', 'host'];
 const isServerRole = (r) => SERVER_ROLES.includes(r);
+const isFrontDeskRole = (r) => FD_ROLES.includes(r);
+const landingView = (r) => isServerRole(r) ? 'server' : (isFrontDeskRole(r) ? 'board' : 'mytasks');
 
 let toastTimer;
 function toast(msg, bad) {
@@ -56,8 +60,8 @@ function tick() { $('clock').textContent = new Date().toLocaleString('en-US', { 
 async function boot() {
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   tick(); setInterval(tick, 20000);
-  if (isServerRole(S.user.role)) S.view = 'server';   // servers land on My Tables
-  S.locations = await api('/waitlist/locations').catch(() => []);   // servers aren't HOST; non-fatal
+  S.view = landingView(S.user.role);   // role-appropriate landing screen
+  S.locations = await api('/waitlist/locations').catch(() => []);   // non-HOST staff can't list; non-fatal
   const picker = $('locPicker');
   const short = (id) => ((S.locations.find(l => String(l.id) === String(id)) || {}).name || '').replace('Pho Ha Noi — ', '');
   if (S.user.role === 'owner') {
@@ -86,10 +90,11 @@ async function boot() {
 function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
-  let items;
-  if (isServerRole(role)) items = [['server', '🛎️ My Tables'], ['tables', '🍽️ Floor']];
-  else if (role === 'owner') items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map'], ['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']];
-  else items = [['board', '🍜 Front Desk'], ['tables', '🍽️ Table Map']];
+  const items = [['mytasks', '📋 My Tasks']];   // every staff member has tasks
+  if (isServerRole(role)) items.push(['server', '🛎️ My Tables']);
+  if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
+  if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
+  if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
@@ -97,12 +102,45 @@ function renderNav() {
 
 // Dispatch to the active view.
 function render() {
+  if (S.view === 'mytasks') return renderMyTasks();
   if (S.view === 'server') return renderServer();
   if (S.view === 'history') return renderHistory();
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
   if (S.view === 'tables') return renderTables();
   return renderBoard();
+}
+
+// ── My Tasks: the staff member's day-task assignments (any role) ──────────────
+async function renderMyTasks() {
+  const v = $('view');
+  let d;
+  try { d = await api('/mytasks'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (d.tasks && d.tasks[0] && d.tasks[0].location_name) { const b = $('locName'); b.textContent = '📍 ' + d.tasks[0].location_name.replace('Pho Ha Noi — ', ''); b.classList.remove('hidden'); }
+  const { done, total } = d.summary;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const day = (() => { const dt = new Date(d.date + 'T00:00:00'); return isNaN(dt) ? d.date : dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }); })();
+  const cards = d.tasks.length ? d.tasks.map(mtCard).join('') : '<div class="sv-empty">No tasks assigned for today — enjoy your shift.</div>';
+  v.innerHTML = `
+    <div class="sv-head">
+      <div><div class="sv-hi">My Tasks</div><div class="muted">${esc(day)} · ${done}/${total} done</div></div>
+      ${total ? `<div class="mt-ring${done === total ? ' full' : ''}">${pct}%</div>` : ''}
+    </div>
+    ${cards}`;
+  v.querySelectorAll('[data-mt]').forEach(b => b.onclick = () => mtToggle(b.dataset.mt, b.dataset.done === '1'));
+}
+function mtCard(t) {
+  const time = t.task_time ? `<span class="mt-time">${esc(t.task_time)}</span>` : '';
+  const meta = [t.department, t.est_minutes ? `~${t.est_minutes}m` : '', t.complexity].filter(Boolean).join(' · ');
+  return `<div class="mt-card${t.done ? ' done' : ''}">
+    <button class="mt-check" data-mt="${t.id}" data-done="${t.done ? 1 : 0}" aria-label="${t.done ? 'Mark not done' : 'Mark done'}">${t.done ? '✓' : ''}</button>
+    <div class="mt-body"><div class="mt-name">${time}${esc(t.name)}</div>
+      ${meta ? `<div class="muted mt-meta">${esc(meta)}</div>` : ''}
+      ${t.description ? `<div class="mt-desc">${esc(t.description)}</div>` : ''}</div></div>`;
+}
+async function mtToggle(id, currentlyDone) {
+  try { await api(`/mytasks/${id}/done`, { method: 'PUT', body: JSON.stringify({ done: !currentlyDone }) }); renderMyTasks(); }
+  catch (e) { toast(e.message, true); }
 }
 
 // ── Server view: my tables, checks, claim queue, covers + tips ────────────────

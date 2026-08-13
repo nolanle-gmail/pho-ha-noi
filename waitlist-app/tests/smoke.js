@@ -156,6 +156,10 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('service board requires auth (401)', r.status === 401, 'status=' + r.status);
     r = await fetch(base + '/api/service', { headers: H(host.token) });
     check('service board proxies to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
+    r = await fetch(base + '/api/mytasks');
+    check('my tasks require auth (401)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/mytasks', { headers: H(host.token) });
+    check('my tasks proxy to Management (200/502)', r.status === 200 || r.status === 502, 'status=' + r.status);
     // An email that isn't a local account falls through to the Management directory
     // (unreachable during this smoke → a clean 401, proving the fallback path runs).
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });

@@ -175,6 +175,7 @@ function run() {
   mkUser('Sara Tran', 'server@phohanoi.com', 'Server123!', 'server', locIds[0]);
   mkUser('Bao Le', 'server2@phohanoi.com', 'Server123!', 'server', locIds[0]);
   mkUser('Mai Pham', 'server3@phohanoi.com', 'Server123!', 'server', locIds[0]);
+  mkUser('Holly Vu', 'host@phohanoi.com', 'Host123!', 'host', locIds[0]);
   mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0]);
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
@@ -439,6 +440,7 @@ function run() {
   seedLocationTasks(db, locIds, ckId);
   seedFloorPlan(db, locIds);
   seedVisits(db, locIds);
+  seedStaffTasks(db, locIds);
 
   // Login employee codes: reuse the HR profile code where present, else generate one.
   db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
@@ -803,5 +805,26 @@ function seedVisits(db, locIds) {
   console.log(`Seeded ${n} guest visits across the service lists at ${db.prepare('SELECT name FROM locations WHERE id=?').get(loc).name}.`);
 }
 
+// Demo day-task assignments for today, so each staff member's "My Tasks" (in the
+// Staff app) has something to work through. Distinct jobs round-robin across a few
+// people (the UNIQUE(location,date,job) constraint means one assignee per task).
+function seedStaffTasks(db, locIds) {
+  const loc = locIds[0];
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+  const jobs = db.prepare(`SELECT j.id FROM location_tasks lt JOIN jobs j ON j.id=lt.job_id
+    WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1 ORDER BY j.name`).all(loc).map(r => r.id);
+  const people = db.prepare(`SELECT id FROM users WHERE email IN ('server@phohanoi.com','chef@phohanoi.com','host@phohanoi.com') ORDER BY id`).all().map(r => r.id);
+  if (!jobs.length || !people.length) return;
+  const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
+  const ins = db.prepare(`INSERT OR IGNORE INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by) VALUES (?,?,?,?,?,?,?)`);
+  const times = ['09:00', '11:30', '14:00', null];
+  let n = 0;
+  jobs.slice(0, people.length * 3).forEach((jid, idx) => {
+    ins.run(loc, today, jid, people[idx % people.length], times[idx % times.length], idx === 0 ? 1 : 0, owner ? owner.id : null);
+    n++;
+  });
+  console.log(`Seeded ${n} day-task assignments across ${people.length} staff for today.`);
+}
+
 if (require.main === module) { run(); console.log('Seed complete.'); }
-module.exports = { run, seedVisits };
+module.exports = { run, seedVisits, seedStaffTasks };
