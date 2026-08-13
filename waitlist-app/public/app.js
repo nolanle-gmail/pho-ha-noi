@@ -84,8 +84,13 @@ async function boot() {
   }
   renderNav();
   render();
-  // Live refresh — the Front Desk board and the Server view auto-refresh.
-  setInterval(() => { if ((S.view === 'board' || S.view === 'server') && !$('modalHost').innerHTML) render(); }, 15000);
+  // Near-real-time refresh so changes from the other app (e.g. a guest seated at
+  // the Front Desk) show up on the Server view / Table Map within a few seconds.
+  const LIVE_VIEWS = ['board', 'server', 'tables'];
+  setInterval(() => {
+    if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
+    const y = window.scrollY; Promise.resolve(render()).then(() => window.scrollTo(0, y));
+  }, 4000);
 }
 
 // Sub-navigation: owner sees everything; managers get the Front Desk + Floor Plan.

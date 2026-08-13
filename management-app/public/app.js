@@ -263,6 +263,7 @@ async function renderService() {
         ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
         ${sm.help ? `<span class="badge out">🚩 ${sm.help} help</span>` : ''}
         ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
+        <span class="badge gray">🚶 ${sm.walkins_today || 0} walk-in${sm.walkins_today === 1 ? '' : 's'} today</span>
       </div>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
     </div>
@@ -283,11 +284,11 @@ async function renderService() {
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => svcAction(b.dataset.act, parseInt(b.dataset.vid, 10)));
 
   if (SVC.timer) clearInterval(SVC.timer);
-  SVC.timer = setInterval(() => {
+  SVC.timer = setInterval(async () => {
     if (S.section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; return; }
     if ($('modalHost').innerHTML) return;   // don't refresh out from under an open modal
-    renderService();
-  }, 12000);
+    const y = window.scrollY; await renderService(); window.scrollTo(0, y);   // keep the view steady
+  }, 4000);   // near-real-time so seatings/claims show right away
 }
 
 function svcCard(v, stage) {
