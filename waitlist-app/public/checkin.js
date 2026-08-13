@@ -16,6 +16,15 @@ const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null, re
 const SPECIAL = ['High chair', 'Booster seat', 'Bar seat', 'Booth', 'Wheelchair accessible', 'Outdoor / patio', 'Birthday / celebration'];
 
 function stopPolling() { if (K.pollTimer) { clearInterval(K.pollTimer); K.pollTimer = null; } }
+// Kiosk: after a guest joins, show their confirmation briefly, then reset the
+// form (keeping this device's location) so it's ready for the next guest.
+function resetKiosk() {
+  if (K.resetTimer) { clearTimeout(K.resetTimer); K.resetTimer = null; }
+  stopPolling();
+  sessionStorage.removeItem('phnw_ref');
+  K.size = 2; K.reqs = new Set();
+  renderForm();
+}
 
 const SAVED_LOC = 'phnw_kiosk_loc';
 async function start() {
@@ -113,6 +122,8 @@ async function join() {
       location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null, notes }) });
     sessionStorage.setItem('phnw_ref', r.ref);
     renderConfirm(r.ref, Object.assign({ notes }, r));
+    // Hand the kiosk back to the next guest after a short confirmation.
+    K.resetTimer = setTimeout(resetKiosk, 3000);
   } catch (e) { err.textContent = e.message; $('kJoin').disabled = false; }
 }
 
