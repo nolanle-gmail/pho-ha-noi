@@ -18,10 +18,23 @@ async function api(path, opts = {}) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
   if (S.token) headers.Authorization = 'Bearer ' + S.token;
   const res = await fetch('/api' + path, Object.assign({}, opts, { headers }));
+  if (res.status === 401 && S.token) { forceRelogin(); throw new Error('Session expired'); }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
+}
+
+// A 401 while we hold a token means the JWT expired or was revoked. Tear the
+// session down cleanly — a reload kills every timer and the SSE stream — and
+// return to the login screen with a note, rather than showing stale data and
+// silently retrying a dead token.
+function forceRelogin() {
+  if (S._expiring) return;   // one 401 wins even if several fire at once
+  S._expiring = true;
+  try { sessionStorage.setItem('phnw_expired', '1'); } catch { /* private mode */ }
+  localStorage.clear();
+  location.reload();
 }
 const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
 // Everyone gets My Tasks; roles then add their own tools. Servers/bussers land on
@@ -746,6 +759,7 @@ async function loadReport() {
 }
 
 (function init() {
+  try { if (sessionStorage.getItem('phnw_expired')) { sessionStorage.removeItem('phnw_expired'); const e = $('loginErr'); if (e) e.textContent = 'Your session expired — please sign in again.'; } } catch { /* private mode */ }
   const t = localStorage.getItem('phnw_token'), u = localStorage.getItem('phnw_user');
   if (t && u) { S.token = t; S.user = JSON.parse(u); boot().catch(() => { localStorage.clear(); location.reload(); }); }
 })();
