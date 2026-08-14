@@ -45,7 +45,9 @@ function forceRelogin() {
 function showSessionBanner() {
   const b = $('sessionBanner'); if (!b) return;
   b.hidden = false;
-  const x = $('sessionBannerX'); if (x) x.onclick = () => { b.hidden = true; };
+  const hide = () => { b.hidden = true; clearTimeout(t); };
+  const x = $('sessionBannerX'); if (x) x.onclick = hide;
+  const t = setTimeout(hide, 6000);   // auto-dismiss after a few seconds
 }
 const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
 
