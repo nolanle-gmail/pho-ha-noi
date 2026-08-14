@@ -200,6 +200,7 @@ function showSection(section) {
   $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (SVC.timer && section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; }
+  if (SVC.es && section !== 'service') { SVC.es.close(); SVC.es = null; SVC.esLoc = undefined; }
   if (section === 'service') { renderService(); return; }
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
@@ -215,7 +216,30 @@ function showSection(section) {
 // ── Service: the live guest-visit board (six lists) ──────────────────────────
 // Owner/GM see every location (with an "All locations" option); a manager is
 // pinned to their own store. Auto-refreshes so the floor stays current.
-const SVC = { loc: null, timer: null, byId: {}, scroll: 0 };
+const SVC = { loc: null, timer: null, byId: {}, scroll: 0, es: null, esLoc: undefined, pushT: null };
+
+// Sub-second push: subscribe to the visit stream (SSE) for the current scope.
+// Any seating/claim/advance in Management OR a walk-in from the Staff app lands
+// here within a moment. The interval poll below stays only as a slow backstop.
+function setupServiceStream() {
+  const loc = (SVC.loc && SVC.loc !== 'all') ? SVC.loc : '';
+  if (SVC.es && SVC.esLoc === loc) return;   // already streaming this scope
+  if (SVC.es) { SVC.es.close(); SVC.es = null; }
+  const token = localStorage.getItem('phn_token');
+  if (!token || typeof EventSource === 'undefined') return;
+  SVC.esLoc = loc;
+  const es = new EventSource(`/api/visits/stream?token=${encodeURIComponent(token)}${loc ? `&location_id=${encodeURIComponent(loc)}` : ''}`);
+  SVC.es = es;
+  es.onmessage = () => {
+    clearTimeout(SVC.pushT);
+    SVC.pushT = setTimeout(async () => {
+      if (S.section !== 'service') return;
+      if ($('modalHost').innerHTML) return;   // don't refresh out from under an open modal
+      const y = window.scrollY; await renderService(); window.scrollTo(0, y);
+    }, 150);   // coalesce bursts of events into one render
+  };
+  es.onerror = () => { /* EventSource auto-reconnects; the interval poll is the backstop */ };
+}
 const SVC_STAGES = [
   ['waiting', 'Waitlist', '#6d28d9'],
   ['seated', 'Seated', '#2b5bd7'],
@@ -283,12 +307,14 @@ async function renderService() {
   $('svcRefresh').onclick = () => renderService();
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => svcAction(b.dataset.act, parseInt(b.dataset.vid, 10)));
 
+  setupServiceStream();   // sub-second push for this scope
+
   if (SVC.timer) clearInterval(SVC.timer);
   SVC.timer = setInterval(async () => {
     if (S.section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; return; }
     if ($('modalHost').innerHTML) return;   // don't refresh out from under an open modal
     const y = window.scrollY; await renderService(); window.scrollTo(0, y);   // keep the view steady
-  }, 4000);   // near-real-time so seatings/claims show right away
+  }, 15000);   // slow backstop; the SSE stream carries live updates
 }
 
 function svcCard(v, stage) {

@@ -73,7 +73,7 @@ async function boot() {
     const saved = localStorage.getItem('phnw_fd_loc');
     S.loc = (saved && S.locations.some(l => String(l.id) === saved)) ? saved : String(S.locations[0].id);
     picker.value = S.loc;
-    picker.onchange = () => { S.loc = picker.value; try { localStorage.setItem('phnw_fd_loc', S.loc); } catch { /* private mode */ } render(); };
+    picker.onchange = () => { S.loc = picker.value; try { localStorage.setItem('phnw_fd_loc', S.loc); } catch { /* private mode */ } render(); setupStaffStream(); };
   } else {
     // Host / front-desk staff are pinned to their own store's waitlist.
     S.loc = String(S.user.location_id);
@@ -84,13 +84,38 @@ async function boot() {
   }
   renderNav();
   render();
-  // Near-real-time refresh so changes from the other app (e.g. a guest seated at
-  // the Front Desk) show up on the Server view / Table Map within a few seconds.
-  const LIVE_VIEWS = ['board', 'server', 'tables'];
+  setupStaffStream();   // sub-second push (SSE) for live views
+  // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
+  // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
     if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
     const y = window.scrollY; Promise.resolve(render()).then(() => window.scrollTo(0, y));
-  }, 4000);
+  }, 15000);
+}
+
+// Live views that refresh on push. Board (Front Desk), Server view, Table Map.
+const LIVE_VIEWS = ['board', 'server', 'tables'];
+let STAFF_ES = null, STAFF_ES_LOC = null, STAFF_PUSH_T = null;
+
+// One SSE connection carries both this app's waitlist events and the Management
+// app's visit events (forwarded server-side), so any change lands sub-second.
+function setupStaffStream() {
+  const loc = S.loc || '';
+  if (STAFF_ES && STAFF_ES_LOC === loc) return;   // already streaming this scope
+  if (STAFF_ES) { STAFF_ES.close(); STAFF_ES = null; }
+  const token = localStorage.getItem('phnw_token');
+  if (!token || typeof EventSource === 'undefined') return;
+  STAFF_ES_LOC = loc;
+  const es = new EventSource(`/api/stream?token=${encodeURIComponent(token)}${loc ? `&location_id=${encodeURIComponent(loc)}` : ''}`);
+  STAFF_ES = es;
+  es.onmessage = () => {
+    clearTimeout(STAFF_PUSH_T);
+    STAFF_PUSH_T = setTimeout(() => {
+      if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
+      const y = window.scrollY; Promise.resolve(render()).then(() => window.scrollTo(0, y));
+    }, 150);   // coalesce bursts of events into one render
+  };
+  es.onerror = () => { /* EventSource auto-reconnects; the interval poll is the backstop */ };
 }
 
 // Sub-navigation: owner sees everything; managers get the Front Desk + Floor Plan.

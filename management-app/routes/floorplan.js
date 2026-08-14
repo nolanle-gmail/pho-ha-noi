@@ -102,6 +102,7 @@ const actorRole = (req) => req.user ? req.user.role : ((req.body && req.body.act
 const activeVisitFor = (tableId) => db.prepare(`SELECT * FROM service_visits WHERE table_id=? AND stage IN ('seated','in_service','paying') ORDER BY id DESC LIMIT 1`).get(tableId);
 function logVisitEvent(visitId, locId, event, from, to, req) {
   try { db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role) VALUES (?,?,?,?,?,?,?)`).run(visitId, locId, event, from || null, to || null, actorName(req), actorRole(req)); } catch { /* events optional */ }
+  try { require('../lib/events').emitVisits(locId); } catch { /* bus optional */ }
 }
 function syncTableFromStage(t, stage, v) {
   if (stage === 'done' || stage === 'canceled') { db.prepare(`UPDATE restaurant_tables SET status='available', guest_name=NULL, party_size=NULL, seated_at=NULL, est_free_at=NULL WHERE id=?`).run(t.id); return; }

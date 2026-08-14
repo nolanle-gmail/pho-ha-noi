@@ -8,6 +8,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
+const { emitVisits, onVisits } = require('../lib/events');
 
 const router = express.Router();
 
@@ -29,6 +30,28 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Authentication required' });
   try { req.user = jwt.verify(token, SECRET); next(); } catch { return res.status(401).json({ error: 'Invalid or expired session' }); }
 }
+
+// ── Live push (SSE) — notifies open boards the moment a visit changes ─────────
+// Defined before the header auth: EventSource can't set headers, so auth comes
+// via the service key (trusted Staff-app proxy) or a JWT in the query string.
+router.get('/stream', (req, res) => {
+  let scopeLoc = req.query.location_id ? parseInt(req.query.location_id, 10) : null;
+  if ((req.headers['x-service-key'] || req.query.key) !== SERVICE_KEY) {
+    let user; try { user = jwt.verify(req.query.token || '', SECRET); } catch { return res.status(401).end(); }
+    if (!ROLES.MANAGE.includes(user.role)) return res.status(403).end();
+    if (!seesAllLocations(user.role)) scopeLoc = user.location_id;   // pin to own location
+  }
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write(': connected\n\n');
+  const unsub = onVisits((p) => {
+    if (scopeLoc && p.location_id != null && String(p.location_id) !== String(scopeLoc)) return;
+    res.write(`data: ${JSON.stringify({ type: 'visits', location_id: p.location_id })}\n\n`);
+  });
+  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
+  req.on('close', () => { clearInterval(hb); unsub(); });
+});
+
 router.use(auth);
 
 const isManage = (req) => req.user && ROLES.MANAGE.includes(req.user.role);
@@ -57,6 +80,7 @@ function logEvent(visit, event, fromStage, toStage, actor, detail) {
   db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_id, actor_name, actor_role, detail)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(visit.id, visit.location_id, event, fromStage || null, toStage || null,
     actor.id, actor.name, actor.role, detail ? JSON.stringify(detail) : null);
+  emitVisits(visit.location_id);   // push the change to open boards
 }
 // Keep the floor-plan table in step with the visit's stage.
 function syncTable(tableId, stage, visit) {

@@ -81,6 +81,7 @@ router.post('/checkin', checkinLimiter, (req, res) => {
     db.prepare(`INSERT INTO audit_log (user_id, location_id, action, entity, entity_id, detail) VALUES (NULL,?,?,?,?,?)`)
       .run(locId, 'party_added', 'waitlist', r.lastInsertRowid, JSON.stringify({ guest: name.slice(0, 120), party_size: size, source: 'self' }));
   } catch { /* audit is best-effort */ }
+  try { require('../lib/events').emitWaitlist(locId); } catch { /* live-push best-effort */ }
   res.json({
     success: true, ref, position: s.parties_ahead + 1, quoted_minutes: s.quoted_minutes,
     guest_name: name, party_size: size, location: loc.name,

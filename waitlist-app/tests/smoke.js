@@ -183,6 +183,18 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     // (unreachable during this smoke → a clean 401, proving the fallback path runs).
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });
     check('non-local email falls back to Management (401 when down)', r.status === 401, 'status=' + r.status);
+
+    // ── Live push (SSE): the Staff stream authenticates by query token ─────
+    r = await fetch(base + '/api/stream');
+    check('staff stream needs auth (401)', r.status === 401, 'status=' + r.status);
+    {
+      const ac = new AbortController();
+      const sr = await fetch(base + `/api/stream?token=${token}&location_id=${loc}`, { signal: ac.signal });
+      check('staff stream opens (200 + event-stream)',
+        sr.status === 200 && /text\/event-stream/.test(sr.headers.get('content-type') || ''),
+        'ct=' + sr.headers.get('content-type'));
+      ac.abort();
+    }
   } catch (e) { fail++; console.log('  FAIL  exception: ' + e.message); }
   finally { server.close(); }
   console.log(`\n${pass} passed, ${fail} failed`);
