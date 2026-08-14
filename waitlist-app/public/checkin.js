@@ -74,7 +74,6 @@ async function renderForm() {
       <input id="kReqOther" class="k-input" placeholder="Anything else? (allergy, occasion…)" />
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>
-      <button class="k-btn walkin" id="kWalkin">🚶 Walk-in — seat me now</button>
     </div>`;
   const setSize = () => { $('kSize').textContent = K.size; };
   $('kPlus').onclick = () => { K.size = Math.min(50, K.size + 1); setSize(); };
@@ -95,7 +94,6 @@ async function renderForm() {
     else { K.reqs.add(v); b.classList.add('active'); }
   });
   $('kJoin').onclick = join;
-  $('kWalkin').onclick = walkIn;
   refreshWait();
 }
 
@@ -127,34 +125,6 @@ async function join() {
     // Hand the kiosk back to the next guest after a short confirmation.
     K.resetTimer = setTimeout(resetKiosk, 7000);
   } catch (e) { err.textContent = e.message; $('kJoin').disabled = false; }
-}
-
-// Walk-in: register right away (no waiting-list quote) so the host can seat you.
-async function walkIn() {
-  const err = $('kErr'); err.textContent = '';
-  const loc = K.loc || ($('kLoc') && $('kLoc').value);
-  if (!loc) { err.textContent = 'Please choose your location.'; return; }
-  const name = $('kName').value.trim();
-  const other = ($('kReqOther') && $('kReqOther').value.trim()) || '';
-  const notes = ['Walk-in', [...K.reqs].join(', '), other].filter(Boolean).join(' · ');
-  $('kWalkin').disabled = true; $('kJoin').disabled = true;
-  try {
-    const r = await api('/checkin', { method: 'POST', body: JSON.stringify({
-      location_id: loc, guest_name: name || 'Walk-in', party_size: K.size, phone: $('kPhone').value.trim() || null, notes }) });
-    sessionStorage.setItem('phnw_ref', r.ref);
-    renderWalkInConfirm(r.ref, { party_size: K.size, guest_name: name || 'Walk-in' });
-    K.resetTimer = setTimeout(resetKiosk, 7000);   // hand the kiosk to the next guest
-  } catch (e) { err.textContent = e.message; $('kWalkin').disabled = false; $('kJoin').disabled = false; }
-}
-
-function renderWalkInConfirm(ref, p) {
-  stopPolling();
-  KV().innerHTML = `<div class="k-card" id="kConfirm">
-    <div class="k-hi">Hi, ${esc(p.guest_name || '')}!</div>
-    <div class="k-big ok">🚶 Checked in as a walk-in!</div>
-    <p class="k-note">Party of ${p.party_size} · please see the host — we'll seat you shortly.</p>
-    <div class="k-ref">Reference: <strong>${esc(ref)}</strong></div>
-  </div>`;
 }
 
 function renderConfirm(ref, initial) {
