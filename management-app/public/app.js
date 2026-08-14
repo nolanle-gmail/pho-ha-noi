@@ -323,7 +323,7 @@ async function renderService() {
         ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
         ${sm.help ? `<span class="badge out">🚩 ${sm.help} help</span>` : ''}
         ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
-        <span class="badge gray">🚶 ${sm.walkins_today || 0} walk-in${sm.walkins_today === 1 ? '' : 's'} today</span>
+        <span class="badge gray">🚶 ${sm.walkins_today || 0} staff walk-in${sm.walkins_today === 1 ? '' : 's'} today</span>
       </div>
       <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
