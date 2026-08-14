@@ -36,6 +36,14 @@ function forceRelogin() {
   localStorage.clear();
   location.reload();
 }
+
+// The "session expired" notice, shown as a dismissible top banner on the login
+// screen after a forced re-login (the inline .err stays for wrong-password).
+function showSessionBanner() {
+  const b = $('sessionBanner'); if (!b) return;
+  b.hidden = false;
+  const x = $('sessionBannerX'); if (x) x.onclick = () => { b.hidden = true; };
+}
 const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
 // Everyone gets My Tasks; roles then add their own tools. Servers/bussers land on
 // My Tables, front-desk roles on the Front Desk, everyone else on My Tasks.
@@ -71,6 +79,7 @@ $('logout').onclick = () => { localStorage.clear(); location.reload(); };
 function tick() { $('clock').textContent = new Date().toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }); }
 
 async function boot() {
+  const sb = $('sessionBanner'); if (sb) sb.hidden = true;   // clear the expiry notice once signed in
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
   tick(); setInterval(tick, 20000);
   S.view = landingView(S.user.role);   // role-appropriate landing screen
@@ -759,7 +768,7 @@ async function loadReport() {
 }
 
 (function init() {
-  try { if (sessionStorage.getItem('phnw_expired')) { sessionStorage.removeItem('phnw_expired'); const e = $('loginErr'); if (e) e.textContent = 'Your session expired — please sign in again.'; } } catch { /* private mode */ }
+  try { if (sessionStorage.getItem('phnw_expired')) { sessionStorage.removeItem('phnw_expired'); showSessionBanner(); } } catch { /* private mode */ }
   const t = localStorage.getItem('phnw_token'), u = localStorage.getItem('phnw_user');
   if (t && u) { S.token = t; S.user = JSON.parse(u); boot().catch(() => { localStorage.clear(); location.reload(); }); }
 })();

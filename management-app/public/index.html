@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <div id="sessionBanner" class="session-banner" role="status" hidden>
+    <span class="session-banner-msg">Your session expired — please sign in again.</span>
+    <button type="button" class="session-banner-x" id="sessionBannerX" aria-label="Dismiss">✕</button>
+  </div>
   <!-- Login -->
   <div id="login" class="login-wrap">
     <form class="login-card" id="loginForm">

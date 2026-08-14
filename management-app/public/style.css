@@ -428,6 +428,12 @@ tr:hover .order-hover { opacity: 1; }
 .live-badge[data-state="connecting"] { background: #f1f5f9; color: var(--muted, #64748b); }
 .live-badge[data-state="off"] { background: var(--out-bg, #fee2e2); color: var(--out, #b91c1c); }
 @keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+/* Top notice banner (e.g. an expired session). Fixed strip above everything. */
+.session-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; gap: .75rem; padding: .7rem 1rem; background: #fef3c7; color: #92400e; border-bottom: 1px solid #f2c98b; font-weight: 700; font-size: .9rem; box-shadow: 0 2px 8px #0002; animation: bannerdrop .25s ease; }
+.session-banner[hidden] { display: none; }
+.session-banner-x { background: transparent; border: none; color: inherit; cursor: pointer; font-size: .95rem; line-height: 1; padding: .15rem .35rem; border-radius: 6px; opacity: .65; }
+.session-banner-x:hover { opacity: 1; }
+@keyframes bannerdrop { from { transform: translateY(-100%); } to { transform: translateY(0); } }
 .svc-due { background: #fff4e5; border: 1px solid #f2c98b; border-radius: 10px; padding: .5rem .7rem; margin-bottom: .6rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .chip-due { border: 1px solid #e08a2b; background: #fff; color: #a4560a; border-radius: 999px; padding: .18rem .6rem; font-weight: 700; font-size: .8rem; cursor: pointer; display: inline-flex; gap: .35rem; align-items: center; }
 .chip-due:hover { background: #ffedd5; }

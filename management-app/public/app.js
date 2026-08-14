@@ -39,6 +39,14 @@ function forceRelogin() {
   localStorage.clear();
   location.reload();
 }
+
+// The "session expired" notice, shown as a dismissible top banner on the login
+// screen after a forced re-login (the inline .err stays for wrong-password).
+function showSessionBanner() {
+  const b = $('sessionBanner'); if (!b) return;
+  b.hidden = false;
+  const x = $('sessionBannerX'); if (x) x.onclick = () => { b.hidden = true; };
+}
 const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
 
 // ── Toast ────────────────────────────────────────────────────────────────
@@ -120,6 +128,7 @@ $('loginForm').onsubmit = async (e) => {
 $('logout').onclick = () => { localStorage.clear(); location.reload(); };
 
 async function boot() {
+  const sb = $('sessionBanner'); if (sb) sb.hidden = true;   // clear the expiry notice once signed in
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   // Load the access-level registry so labels, nav and scope are role-aware.
@@ -3188,7 +3197,7 @@ async function openAccount() {
 
 // ── Restore session ────────────────────────────────────────────────────────
 (function init() {
-  try { if (sessionStorage.getItem('phn_expired')) { sessionStorage.removeItem('phn_expired'); const e = $('loginErr'); if (e) e.textContent = 'Your session expired — please sign in again.'; } } catch { /* private mode */ }
+  try { if (sessionStorage.getItem('phn_expired')) { sessionStorage.removeItem('phn_expired'); showSessionBanner(); } } catch { /* private mode */ }
   const t = localStorage.getItem('phn_token'), u = localStorage.getItem('phn_user');
   if (t && u) { S.token = t; S.user = JSON.parse(u); boot().catch(() => { localStorage.clear(); location.reload(); }); }
 })();
