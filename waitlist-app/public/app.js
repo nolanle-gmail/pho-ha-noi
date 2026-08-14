@@ -509,7 +509,7 @@ async function renderBoard() {
       <div class="stat"><div class="label">Longest wait</div><div class="value ${stats.longest_wait_min >= 30 ? 'warn' : ''}">${stats.longest_wait_min}m</div></div>
       <div class="stat"><div class="label">Quote next party</div><div class="value">${stats.next_quote_min}m</div></div>
       <div class="stat"><div class="label">Seated today</div><div class="value">${stats.seated_today}</div></div>
-      <div class="stat"><div class="label">Walk-ins today</div><div class="value">🚶 ${walkins}</div></div>
+      <div class="stat"><div class="label">Staff walk-ins today</div><div class="value">🚶 ${walkins}</div></div>
     </div>
     <div class="section-head"><h2>Waiting (${queue.length})</h2><div style="display:flex;gap:.5rem"><button class="btn ghost big" id="walkinBtn">🚶 Walk-in</button><button class="btn big" id="addBtn">+ Add party</button></div></div>
     <div id="queue">
