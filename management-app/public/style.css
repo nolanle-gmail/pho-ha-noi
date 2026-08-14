@@ -419,7 +419,15 @@ tr:hover .order-hover { opacity: 1; }
 .svc-top { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .svc-loc select { padding: .35rem .5rem; border: 1px solid #d9d3c9; border-radius: 8px; font-weight: 600; background: #fff; }
 .svc-chips { display: flex; gap: .4rem; flex-wrap: wrap; }
-.svc-top .btn.sm { margin-left: auto; }
+.svc-top .live-badge { margin-left: auto; }
+.svc-top .btn.sm { margin-left: .1rem; }
+/* Live-push status pill. Empty when unset (no EventSource) so it takes no room. */
+.live-badge { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
+.live-badge:empty { display: none; }
+.live-badge[data-state="live"] { background: var(--ok-bg, #dcfce7); color: var(--ok, #15803d); animation: livepulse 2s ease-in-out infinite; }
+.live-badge[data-state="connecting"] { background: #f1f5f9; color: var(--muted, #64748b); }
+.live-badge[data-state="off"] { background: var(--out-bg, #fee2e2); color: var(--out, #b91c1c); }
+@keyframes livepulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 .svc-due { background: #fff4e5; border: 1px solid #f2c98b; border-radius: 10px; padding: .5rem .7rem; margin-bottom: .6rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .chip-due { border: 1px solid #e08a2b; background: #fff; color: #a4560a; border-radius: 999px; padding: .18rem .6rem; font-weight: 700; font-size: .8rem; cursor: pointer; display: inline-flex; gap: .35rem; align-items: center; }
 .chip-due:hover { background: #ffedd5; }

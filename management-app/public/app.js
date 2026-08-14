@@ -200,7 +200,7 @@ function showSection(section) {
   $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (SVC.timer && section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; }
-  if (SVC.es && section !== 'service') { SVC.es.close(); SVC.es = null; SVC.esLoc = undefined; }
+  if (SVC.es && section !== 'service') { SVC.es.close(); SVC.es = null; SVC.esLoc = undefined; SVC.live = ''; }
   if (section === 'service') { renderService(); return; }
   if (isInv) { renderTabs(); render(); return; }
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
@@ -216,7 +216,16 @@ function showSection(section) {
 // ── Service: the live guest-visit board (six lists) ──────────────────────────
 // Owner/GM see every location (with an "All locations" option); a manager is
 // pinned to their own store. Auto-refreshes so the floor stays current.
-const SVC = { loc: null, timer: null, byId: {}, scroll: 0, es: null, esLoc: undefined, pushT: null };
+const SVC = { loc: null, timer: null, byId: {}, scroll: 0, es: null, esLoc: undefined, pushT: null, live: '' };
+
+// Live-push status pill shown on the board. Reflects the EventSource state so
+// the floor staff can trust that seatings/claims are arriving in real time.
+const LIVE_LABEL = { live: '● Live', connecting: '● Connecting…', off: '● Reconnecting…' };
+function setSvcLive(state) {
+  SVC.live = state;
+  const el = $('svcLive');
+  if (el) { el.dataset.state = state; el.textContent = LIVE_LABEL[state] || ''; }
+}
 
 // Sub-second push: subscribe to the visit stream (SSE) for the current scope.
 // Any seating/claim/advance in Management OR a walk-in from the Staff app lands
@@ -230,7 +239,10 @@ function setupServiceStream() {
   SVC.esLoc = loc;
   const es = new EventSource(`/api/visits/stream?token=${encodeURIComponent(token)}${loc ? `&location_id=${encodeURIComponent(loc)}` : ''}`);
   SVC.es = es;
+  setSvcLive('connecting');
+  es.onopen = () => setSvcLive('live');
   es.onmessage = () => {
+    setSvcLive('live');   // a message means the pipe is healthy
     clearTimeout(SVC.pushT);
     SVC.pushT = setTimeout(async () => {
       if (S.section !== 'service') return;
@@ -238,7 +250,7 @@ function setupServiceStream() {
       const y = window.scrollY; await renderService(); window.scrollTo(0, y);
     }, 150);   // coalesce bursts of events into one render
   };
-  es.onerror = () => { /* EventSource auto-reconnects; the interval poll is the backstop */ };
+  es.onerror = () => setSvcLive('off');   // EventSource auto-reconnects; poll is the backstop
 }
 const SVC_STAGES = [
   ['waiting', 'Waitlist', '#6d28d9'],
@@ -289,6 +301,7 @@ async function renderService() {
         ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
         <span class="badge gray">🚶 ${sm.walkins_today || 0} walk-in${sm.walkins_today === 1 ? '' : 's'} today</span>
       </div>
+      <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
     </div>
     ${due.length ? `<div class="svc-due"><strong>⏰ Check now:</strong> ${due.map(v => `<button class="chip-due" data-act="check" data-vid="${v.id}" title="Log a check">${esc(v.table_label || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}

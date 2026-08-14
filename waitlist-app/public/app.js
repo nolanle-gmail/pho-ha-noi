@@ -95,7 +95,19 @@ async function boot() {
 
 // Live views that refresh on push. Board (Front Desk), Server view, Table Map.
 const LIVE_VIEWS = ['board', 'server', 'tables'];
-let STAFF_ES = null, STAFF_ES_LOC = null, STAFF_PUSH_T = null;
+let STAFF_ES = null, STAFF_ES_LOC = null, STAFF_PUSH_T = null, STAFF_LIVE = '';
+
+// Live-push status pill shown on the board so staff can trust it's real-time.
+const LIVE_LABEL = { live: '● Live', connecting: '● Connecting…', off: '● Reconnecting…' };
+function setStaffLive(state) {
+  STAFF_LIVE = state;
+  const el = $('staffLive');
+  if (!el) return;
+  el.dataset.state = state;
+  el.textContent = LIVE_LABEL[state] || '';
+  // Only surface it on the live boards; other views (tasks, activity) don't push.
+  el.classList.toggle('hidden', !state || !LIVE_VIEWS.includes(S.view));
+}
 
 // One SSE connection carries both this app's waitlist events and the Management
 // app's visit events (forwarded server-side), so any change lands sub-second.
@@ -108,14 +120,17 @@ function setupStaffStream() {
   STAFF_ES_LOC = loc;
   const es = new EventSource(`/api/stream?token=${encodeURIComponent(token)}${loc ? `&location_id=${encodeURIComponent(loc)}` : ''}`);
   STAFF_ES = es;
+  setStaffLive('connecting');
+  es.onopen = () => setStaffLive('live');
   es.onmessage = () => {
+    setStaffLive('live');   // a message means the pipe is healthy
     clearTimeout(STAFF_PUSH_T);
     STAFF_PUSH_T = setTimeout(() => {
       if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
       const y = window.scrollY; Promise.resolve(render()).then(() => window.scrollTo(0, y));
     }, 150);   // coalesce bursts of events into one render
   };
-  es.onerror = () => { /* EventSource auto-reconnects; the interval poll is the backstop */ };
+  es.onerror = () => setStaffLive('off');   // EventSource auto-reconnects; poll is the backstop
 }
 
 // Sub-navigation: owner sees everything; managers get the Front Desk + Floor Plan.
@@ -134,6 +149,7 @@ function renderNav() {
 
 // Dispatch to the active view.
 function render() {
+  setStaffLive(STAFF_LIVE);   // keep the live pill in sync with the current view
   if (S.view === 'mytasks') return renderMyTasks();
   if (S.view === 'server') return renderServer();
   if (S.view === 'history') return renderHistory();
