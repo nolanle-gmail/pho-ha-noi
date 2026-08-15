@@ -249,7 +249,7 @@ async function renderServer() {
   v.innerHTML = `
     <div class="sv-head">
       <div><div class="sv-hi">Hi, ${esc((S.user.name || '').split(' ')[0])}</div><div class="muted">${mine.length} table${mine.length !== 1 ? 's' : ''} · ${tally.open_tables} open</div></div>
-      <div class="sv-stats"><div><b>${tally.covers}</b><span>covers</span></div><div><b>$${(tally.tips || 0).toFixed(2)}</b><span>tips</span></div></div>
+      <div class="sv-stats"><div><b>${tally.covers}</b><span>covers</span></div><div><b>$${(tally.tips || 0).toFixed(2)}</b><span>tips</span></div><div><b>🚶 ${(data.summary && data.summary.walkins_today) || 0}</b><span>walk-ins</span></div></div>
     </div>
     ${hero}
     <div class="sv-sec-h">My tables</div>${myCards}
