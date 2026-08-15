@@ -500,8 +500,8 @@ function auditSummary(a) {
 
 async function renderBoard() {
   const [queue, stats, history, audit, svc] = await Promise.all([api(q('/waitlist/')), api(q('/waitlist/stats')), api(q('/waitlist/history')), api(q('/waitlist/audit')), api(q('/service')).catch(() => ({ summary: {} }))]);
-  // Walk-ins today = staff-registered walk-ins only (seated straight onto a
-  // table via the Floor / Table Map); the kiosk offers no walk-in option.
+  // Walk-ins today = staff-registered walk-ins only (Front Desk / Table Map);
+  // the kiosk offers no walk-in option.
   const walkins = (svc.summary && svc.summary.walkins_today) || 0;
   $('view').innerHTML = `
     <div class="stats">
@@ -511,7 +511,7 @@ async function renderBoard() {
       <div class="stat"><div class="label">Seated today</div><div class="value">${stats.seated_today}</div></div>
       <div class="stat"><div class="label">Staff walk-ins today</div><div class="value">🚶 ${walkins}</div></div>
     </div>
-    <div class="section-head"><h2>Waiting (${queue.length})</h2><button class="btn big" id="addBtn">+ Add party</button></div>
+    <div class="section-head"><h2>Waiting (${queue.length})</h2><div style="display:flex;gap:.5rem"><button class="btn ghost big" id="walkinBtn">🚶 Walk-in</button><button class="btn big" id="addBtn">+ Add party</button></div></div>
     <div id="queue">
       ${queue.length ? queue.map((p, i) => partyCard(p, i)).join('') : '<div class="empty">No one waiting. Tap “Add party” to check in a walk-in.</div>'}
     </div>
@@ -526,7 +526,45 @@ async function renderBoard() {
     </tbody></table></div>`;
 
   $('addBtn').onclick = openAdd;
+  $('walkinBtn').onclick = walkInModal;
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id, b.dataset.name));
+}
+
+// Walk-in: a guest the host walks in and seats right away (no waiting list) —
+// pick a free table and go. Seats directly onto the visit lifecycle, so it
+// flows into the Service lists for a server.
+async function walkInModal() {
+  let fp;
+  try { fp = await api(q('/floormap')); } catch { fp = { areas: [] }; }
+  const tablesHtml = fp.areas.flatMap(a => a.tables).map(t => {
+    if (t.status !== 'available') return statusTableEl(t); // occupied → greyed, not pickable
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+  }).join('');
+  const body = `
+    <label>Guest name (optional)</label><input id="wName" placeholder="e.g. Walk-in" />
+    <label>Party size</label>
+    <div class="stepper"><button type="button" id="wMinus">−</button><span class="n" id="wSizeN">2</span><button type="button" id="wPlus">+</button></div>
+    <p class="sub" style="margin:.6rem 0 .3rem">Tap a free (green) table to seat now.</p>
+    ${statusLegend(fp)}
+    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
+    <label style="margin-top:.5rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="wSelName">none</strong></label>
+    <input type="hidden" id="wSel" />`;
+  let size = 2;
+  modal('Seat a walk-in', body, async () => {
+    const tid = $('wSel').value;
+    if (!tid) throw new Error('Tap a free table first.');
+    const name = $('wName').value.trim() || 'Walk-in';
+    await api('/service', { method: 'POST', body: JSON.stringify({ guest_name: name, party_size: size, table_id: tid, source: 'walkin' }) });
+    toast(`${name} seated`); render();
+  }, 'Seat walk-in');
+  const host = $('modalHost');
+  const setSize = (n) => { size = Math.max(1, n); $('wSizeN').textContent = size; };
+  $('wMinus').onclick = () => setSize(size - 1);
+  $('wPlus').onclick = () => setSize(size + 1);
+  host.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => {
+    host.querySelectorAll('.ftable').forEach(x => x.classList.remove('sel'));
+    el.classList.add('sel'); $('wSel').value = el.dataset.pick; $('wSelName').textContent = el.dataset.label;
+  });
 }
 
 function partyCard(p, i) {
