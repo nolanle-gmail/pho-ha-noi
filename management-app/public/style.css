@@ -460,6 +460,7 @@ tr:hover .order-hover { opacity: 1; }
 .svc-tbl { background: #2b5bd7; color: #fff; border-radius: 5px; padding: 0 .35rem; font-weight: 700; font-size: .74rem; }
 .svc-int { color: #aaa; }
 .svc-src { text-transform: uppercase; font-size: .66rem; letter-spacing: .03em; background: #f0ece4; color: #877; border-radius: 4px; padding: 0 .3rem; font-weight: 700; }
+.svc-src.walk { background: var(--gold-soft); color: #92400e; }
 .svc-note { font-size: .76rem; color: #8a7f6d; font-style: italic; margin-top: .15rem; }
 .svc-actions { display: flex; gap: .3rem; flex-wrap: wrap; margin-top: .5rem; }
 .btn.xs { padding: .2rem .5rem; font-size: .76rem; border-radius: 7px; }

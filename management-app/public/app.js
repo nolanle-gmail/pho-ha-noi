@@ -357,14 +357,16 @@ async function renderService() {
 function svcCard(v, stage) {
   const loc = SVC.loc === 'all' ? `<span class="svc-loc-tag">${esc(svcLocName(v.location_id))}</span>` : '';
   const flags = `${v.help_flag ? '<span class="svc-cflag" title="Called for help">🚩</span>' : ''}${v.bus_flag ? '<span class="svc-cflag" title="Ready to bus">🧹</span>' : ''}`;
-  const who = `<div class="svc-guest">${esc(v.guest_name || 'Guest')} <span class="svc-party">·&nbsp;${v.party_size}👤</span>${flags}${loc}</div>`;
+  // Flag walk-ins on every stage (a Front-Desk walk-in is seated straight away,
+  // so it would otherwise be indistinguishable from a seated waitlist guest).
+  const walkTag = v.source === 'walkin' ? '<span class="svc-src walk">🚶 walk-in</span>' : '';
+  const who = `<div class="svc-guest">${esc(v.guest_name || 'Guest')} <span class="svc-party">·&nbsp;${v.party_size}👤</span>${walkTag}${flags}${loc}</div>`;
   const note = v.notes ? `<div class="svc-note">${esc(v.notes)}</div>` : '';
   const tbl = v.table_label ? `<span class="svc-tbl">T${esc(v.table_label)}</span>` : '';
-  const src = stage === 'waiting' ? `<span class="svc-src">${v.source === 'walkin' ? 'walk-in' : 'waitlist'}</span>` : '';
   const A = (act, label, cls) => `<button class="btn xs ${cls || 'ghost'}" data-act="${act}" data-vid="${v.id}">${label}</button>`;
   let meta = '', actions = '';
   if (stage === 'waiting') {
-    meta = `<div class="svc-meta">${src} waited ${v.waited_min ?? 0}m${v.quoted_minutes ? ` · quoted ${v.quoted_minutes}m` : ''}</div>`;
+    meta = `<div class="svc-meta">waited ${v.waited_min ?? 0}m${v.quoted_minutes ? ` · quoted ${v.quoted_minutes}m` : ''}</div>`;
     actions = A('seat', 'Seat', '') + A('cancel', 'Left');
   } else if (stage === 'seated') {
     meta = `<div class="svc-meta">${tbl} · seated ${v.seated_min_ago ?? 0}m ago${v.server_name ? ' · ' + esc(v.server_name) : ' · <em>no server</em>'}</div>`;
