@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', via SQLite datetime('now')).
@@ -210,6 +210,7 @@ function setActiveNav(section) {
 
 function showSection(section) {
   S.section = section;
+  S.msgThread = null;   // leave any open conversation when switching sections
   setActiveNav(section);
   $('app').classList.remove('sidebar-open');
   const meta = SECTIONS.find(s => s[0] === section);
@@ -2845,11 +2846,37 @@ async function renderRepPayments() {
 const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose']];
 function renderMsgTabs() {
   $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}</button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; renderMsgTabs(); renderMessages(); });
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; renderMsgTabs(); renderMessages(); });
 }
 function renderMessages() {
+  if (S.msgThread) return renderThread();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   ({ inbox: renderInbox, sent: renderSent, compose: renderCompose }[S.msgTab])();
+}
+
+async function renderThread() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  let t;
+  try { t = await api(`/messages/thread/${S.msgThread}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  refreshUnread(); renderMsgTabs();
+  const me = t.me;
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">${esc(t.subject || 'Conversation')}</h2><button class="btn sm ghost" id="thBack">← Back to inbox</button></div>
+    <div class="thread">${t.messages.map(m => `
+      <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
+        <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
+        <div class="thread-body">${esc(m.body)}</div>
+      </div>`).join('')}</div>
+    <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="thSend">Reply</button></div>`;
+  $('thBack').onclick = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
+  const last = t.messages[t.messages.length - 1];
+  $('thSend').onclick = async () => {
+    const body = $('thBody').value.trim();
+    if (!body) return;
+    $('thSend').disabled = true;
+    try { await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) }); renderThread(); }
+    catch (e) { toast(e.message, true); $('thSend').disabled = false; }
+  };
 }
 function msgTime(iso) {
   const d = new Date((iso || '').replace(' ', 'T') + 'Z');
@@ -2865,22 +2892,15 @@ async function renderInbox() {
   $('view').innerHTML = `
     <h2 class="page">Inbox <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.filter(m => !m.is_read).length} unread</span></h2>
     ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
-      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-mid="${m.id}">
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
         <div class="msg-head">
-          <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> ${audBadge(m.audience)}</span>
+          <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> ${audBadge(m.audience)}${m.thread_count > 1 ? ` <span class="badge gray">💬 ${m.thread_count}</span>` : ''}</span>
           <span class="msg-time">${msgTime(m.created_at)}</span>
         </div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-body">${esc(m.body)}</div>
       </div>`).join('')}</div>` : '<div class="empty">No messages yet.</div>'}`;
-  $('view').querySelectorAll('.msg-card.unread').forEach(card => card.onclick = async () => {
-    try {
-      await api(`/messages/${card.dataset.mid}/read`, { method: 'POST' });
-      card.classList.remove('unread');
-      card.querySelector('.dot')?.remove();
-      refreshUnread(); renderMsgTabs();
-    } catch { /* ignore */ }
-  });
+  $('view').querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderMessages(); });
 }
 
 async function renderSent() {

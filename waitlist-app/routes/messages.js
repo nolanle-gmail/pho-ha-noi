@@ -33,7 +33,9 @@ router.get('/recipients', (req, res) => fwd(req, res, 'GET', '/recipients'));
 router.get('/unread-count', (req, res) => fwd(req, res, 'GET', '/unread-count'));
 router.get('/inbox', (req, res) => fwd(req, res, 'GET', '/inbox'));
 router.get('/sent', (req, res) => fwd(req, res, 'GET', '/sent'));
+router.get('/thread/:id', (req, res) => fwd(req, res, 'GET', `/thread/${encodeURIComponent(req.params.id)}`));
 router.post('/:id/read', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/read`));
+router.post('/:id/reply', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/reply`, req.body));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));
 
 module.exports = router;

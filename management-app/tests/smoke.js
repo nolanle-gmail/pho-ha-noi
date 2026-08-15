@@ -821,6 +821,11 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ recipient_ids: twoIds, subject: 'Smoke group', body: 'hi team' }) });
     const gsend = await j(r);
     check('group send delivers to N recipients', r.status === 200 && gsend.recipients === 2, JSON.stringify(gsend));
+    // Threading: reply to a message, then read the full conversation back.
+    r = await fetch(base + '/api/messages/' + gsend.id + '/reply', { method: 'POST', headers: H(token), body: JSON.stringify({ body: 'follow-up' }) });
+    check('reply to a message (threaded)', r.status === 200 && (await j(r)).success === true, 'status=' + r.status);
+    const thread = await j(await fetch(base + '/api/messages/thread/' + gsend.id, { headers: H(token) }));
+    check('thread returns the full conversation', Array.isArray(thread.messages) && thread.messages.length === 2, 'n=' + (thread.messages || []).length);
     r = await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });
     check('service-key as-user inbox (200)', r.status === 200 && Array.isArray(await r.json()), 'status=' + r.status);
     r = await fetch(base + '/api/messages/inbox?as=nobody@nowhere.test', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });

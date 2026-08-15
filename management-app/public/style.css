@@ -435,6 +435,15 @@ tr:hover .order-hover { opacity: 1; }
 /* Messages link on the Overview hero. */
 .msg-hero-link { margin-top: .7rem; display: inline-flex; align-items: center; gap: .4rem; background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.4); border-radius: 999px; padding: .35rem .85rem; font-weight: 700; font-size: .85rem; cursor: pointer; }
 .msg-hero-link:hover { background: rgba(255,255,255,.3); }
+.msg-card { cursor: pointer; }
+/* Conversation thread */
+.thread { display: flex; flex-direction: column; gap: .5rem; margin: .5rem 0 1rem; }
+.thread-msg { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .6rem .9rem; max-width: 80%; }
+.thread-msg.mine { align-self: flex-end; background: var(--gold-soft); border-color: #f2d9a8; }
+.thread-meta { font-size: .76rem; color: var(--muted); font-weight: 600; margin-bottom: .25rem; display: flex; align-items: center; gap: .4rem; }
+.thread-body { white-space: pre-wrap; font-size: .95rem; }
+.reply-box { display: flex; gap: .6rem; align-items: flex-end; max-width: 720px; }
+.reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; }
 /* Top notice banner (e.g. an expired session). Fixed strip above everything. */
 .session-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; gap: .75rem; padding: .7rem 1rem; background: #fef3c7; color: #92400e; border-bottom: 1px solid #f2c98b; font-weight: 700; font-size: .9rem; box-shadow: 0 2px 8px #0002; animation: bannerdrop .25s ease; }
 .session-banner[hidden] { display: none; }

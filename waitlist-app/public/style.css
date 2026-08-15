@@ -61,6 +61,15 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .msg-subj { font-weight: 700; margin: .1rem 0; }
 .msg-text { color: var(--ink); white-space: pre-wrap; font-size: .92rem; }
 .modal select, .modal textarea { width: 100%; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; margin-bottom: .3rem; box-sizing: border-box; background: #fff; }
+.msg-card { cursor: pointer; }
+/* Conversation thread */
+.thread { display: flex; flex-direction: column; gap: .5rem; margin-bottom: 1rem; }
+.thread-msg { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .6rem .85rem; max-width: 82%; }
+.thread-msg.mine { align-self: flex-end; background: #fdf3e0; border-color: #f2d9a8; }
+.thread-meta { font-size: .74rem; color: var(--muted); font-weight: 600; margin-bottom: .2rem; display: flex; align-items: center; gap: .35rem; }
+.thread-body { white-space: pre-wrap; font-size: .95rem; }
+.reply-box { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0; background: var(--bg); padding: .5rem 0; }
+.reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; background: #fff; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }

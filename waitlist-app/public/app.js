@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0 };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -170,7 +170,7 @@ function renderNav() {
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
-  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
+  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; renderNav(); render(); });
 }
 
 // Dispatch to the active view.
@@ -199,6 +199,7 @@ async function refreshMsgUnread() {
 }
 
 async function renderMessages() {
+  if (S.msgThread) return renderThreadView();
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
   let msgs;
@@ -208,15 +209,39 @@ async function renderMessages() {
     <div class="section-head"><h2>Messages ${unread ? `<span class="muted" style="font-weight:400;font-size:.9rem">· ${unread} unread</span>` : ''}</h2>
       <button class="btn big" id="msgNew">✉️ New</button></div>
     <div class="msg-list">${msgs.length ? msgs.map(m => `
-      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-mid="${m.id}">
-        <div class="msg-top"><span class="msg-from">${m.is_read ? '' : '<span class="msg-dot"></span>'}${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span>${m.audience === 'all' ? ' <span class="msg-role bc">broadcast</span>' : ''}</span><span class="msg-when">${msgAgo(m.created_at)}</span></div>
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
+        <div class="msg-top"><span class="msg-from">${m.is_read ? '' : '<span class="msg-dot"></span>'}${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span>${m.audience === 'all' ? ' <span class="msg-role bc">broadcast</span>' : ''}${m.thread_count > 1 ? ` <span class="msg-role">💬 ${m.thread_count}</span>` : ''}</span><span class="msg-when">${msgAgo(m.created_at)}</span></div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-text">${esc(m.body)}</div>
       </div>`).join('') : '<div class="empty">No messages yet.</div>'}</div>`;
   $('msgNew').onclick = composeModal;
-  v.querySelectorAll('.msg-card.unread').forEach(card => card.onclick = async () => {
-    try { await api(`/messages/${card.dataset.mid}/read`, { method: 'POST' }); card.classList.remove('unread'); card.querySelector('.msg-dot')?.remove(); refreshMsgUnread(); } catch { /* ignore */ }
-  });
+  v.querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderThreadView(); });
+}
+
+async function renderThreadView() {
+  const v = $('view');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  let t;
+  try { t = await api(`/messages/thread/${S.msgThread}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  refreshMsgUnread();
+  const me = t.me;
+  v.innerHTML = `
+    <div class="section-head"><h2>${esc(t.subject || 'Conversation')}</h2><button class="btn ghost" id="msgBack">← Back</button></div>
+    <div class="thread">${t.messages.map(m => `
+      <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
+        <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
+        <div class="thread-body">${esc(m.body)}</div>
+      </div>`).join('')}</div>
+    <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="rSend">Reply</button></div>`;
+  $('msgBack').onclick = () => { S.msgThread = null; renderMessages(); };
+  const last = t.messages[t.messages.length - 1];
+  $('rSend').onclick = async () => {
+    const body = $('rBody').value.trim();
+    if (!body) return;
+    $('rSend').disabled = true;
+    try { await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) }); renderThreadView(); }
+    catch (e) { toast(e.message, true); $('rSend').disabled = false; }
+  };
 }
 
 async function composeModal() {

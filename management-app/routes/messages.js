@@ -39,14 +39,36 @@ router.get('/unread-count', (req, res) => {
   res.json({ count: db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0`).get(req.user.id).c });
 });
 
-// Inbox — messages addressed to me.
+// Inbox — messages addressed to me, with each message's thread + reply count.
 router.get('/inbox', (req, res) => {
   res.json(db.prepare(`
     SELECT m.id, m.subject, m.body, m.audience, m.created_at, mr.is_read,
+           COALESCE(m.thread_id, m.id) AS thread_id,
+           (SELECT COUNT(*) FROM messages t WHERE COALESCE(t.thread_id, t.id)=COALESCE(m.thread_id, m.id)) AS thread_count,
            u.name AS sender_name, u.role AS sender_role
     FROM message_recipients mr JOIN messages m ON mr.message_id=m.id JOIN users u ON m.sender_id=u.id
     WHERE mr.user_id=? ORDER BY m.created_at DESC LIMIT 200
   `).all(req.user.id));
+});
+
+// A full conversation thread I'm part of (messages I sent or received), oldest
+// first. Opening it marks my unread messages in the thread as read.
+router.get('/thread/:id', (req, res) => {
+  const tid = parseInt(req.params.id, 10);
+  if (!tid) return res.status(400).json({ error: 'Bad thread id.' });
+  const msgs = db.prepare(`
+    SELECT m.id, m.subject, m.body, m.audience, m.created_at, m.sender_id,
+           u.name AS sender_name, u.role AS sender_role
+    FROM messages m JOIN users u ON m.sender_id=u.id
+    WHERE COALESCE(m.thread_id, m.id)=?
+      AND (m.sender_id=? OR m.id IN (SELECT message_id FROM message_recipients WHERE user_id=?))
+    ORDER BY m.id ASC
+  `).all(tid, req.user.id, req.user.id);
+  if (!msgs.length) return res.status(404).json({ error: 'No such conversation.' });
+  db.prepare(`UPDATE message_recipients SET is_read=1, read_at=datetime('now')
+              WHERE user_id=? AND is_read=0 AND message_id IN (SELECT id FROM messages WHERE COALESCE(thread_id, id)=?)`)
+    .run(req.user.id, tid);
+  res.json({ thread_id: tid, subject: msgs[0].subject, messages: msgs, me: req.user.id });
 });
 
 // Sent — messages I sent, with read progress.
@@ -69,11 +91,13 @@ router.post('/:id/read', (req, res) => {
 
 // Deliver a message to a set of recipients. Returns the message id.
 // `audience` is what's stored for display ('direct' covers person + group).
-function deliver(senderId, audience, locId, subject, body, recipientIds) {
+// threadId/parentId link replies; a root message threads to its own id.
+function deliver(senderId, audience, locId, subject, body, recipientIds, threadId = null, parentId = null) {
   const recips = [...new Set(recipientIds)].filter(Boolean);
   if (!recips.length) return null;
-  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body) VALUES (?,?,?,?,?)`)
-    .run(senderId, audience, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000)).lastInsertRowid;
+  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body, thread_id, parent_id) VALUES (?,?,?,?,?,?,?)`)
+    .run(senderId, audience, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000), threadId, parentId).lastInsertRowid;
+  if (!threadId) db.prepare(`UPDATE messages SET thread_id=? WHERE id=?`).run(mid, mid);
   const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
   recips.forEach(uid => ins.run(mid, uid));
   return mid;
@@ -121,6 +145,33 @@ router.post('/', (req, res) => {
   // 'group' is a display alias for a multi-person direct message.
   const mid = deliver(req.user.id, aud === 'group' ? 'direct' : aud, locId,
     subject, body, recipients);
+  res.json({ success: true, id: mid, recipients: recipients.length });
+});
+
+// Reply within a thread. Goes to the parent's participants (for a broadcast,
+// just its sender — you answer the announcer, not the whole company).
+router.post('/:id/reply', (req, res) => {
+  const body = req.body && req.body.body;
+  if (!body || !String(body).trim()) return res.status(400).json({ error: 'Write a reply first.' });
+  const parent = db.prepare(`SELECT id, sender_id, audience, subject, thread_id FROM messages WHERE id=?`).get(parseInt(req.params.id, 10));
+  if (!parent) return res.status(404).json({ error: 'Message not found.' });
+  const amIn = parent.sender_id === req.user.id
+    || db.prepare(`SELECT 1 FROM message_recipients WHERE message_id=? AND user_id=?`).get(parent.id, req.user.id);
+  if (!amIn) return res.status(403).json({ error: 'Not part of this conversation.' });
+
+  let recipients;
+  if (parent.audience === 'all' || parent.audience === 'location') {
+    recipients = [parent.sender_id];
+  } else {
+    recipients = db.prepare(`SELECT user_id FROM message_recipients WHERE message_id=?`).all(parent.id).map(r => r.user_id);
+    recipients.push(parent.sender_id);
+  }
+  recipients = db.prepare(`SELECT id FROM users WHERE is_active=1 AND id<>? AND id IN (${recipients.map(() => '?').join(',') || 'NULL'})`)
+    .all(req.user.id, ...recipients).map(r => r.id);
+  if (!recipients.length) return res.status(400).json({ error: 'No one to reply to.' });
+
+  const subject = parent.subject ? (/^re:/i.test(parent.subject) ? parent.subject : `Re: ${parent.subject}`) : null;
+  const mid = deliver(req.user.id, 'direct', null, subject, body, recipients, parent.thread_id || parent.id, parent.id);
   res.json({ success: true, id: mid, recipients: recipients.length });
 });
 

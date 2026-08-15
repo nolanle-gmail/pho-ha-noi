@@ -634,7 +634,14 @@ function migrate() {
     `ALTER TABLE service_visits ADD COLUMN tip_amount REAL`,
     `ALTER TABLE activity_log ADD COLUMN location_id INTEGER`,
     `CREATE INDEX IF NOT EXISTS idx_activity_loc ON activity_log(location_id, created_at)`,
+    // Message threading: a reply carries its thread's root id + the message it answers.
+    `ALTER TABLE messages ADD COLUMN thread_id INTEGER`,
+    `ALTER TABLE messages ADD COLUMN parent_id INTEGER`,
+    `CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Existing messages become the root of their own thread.
+  try { db.exec(`UPDATE messages SET thread_id = id WHERE thread_id IS NULL`); } catch { /* messages table not present yet */ }
 
   // Give every user a login employee code: reuse their HR profile code if present,
   // otherwise generate a stable one from their id (E0001, E0002, …).
