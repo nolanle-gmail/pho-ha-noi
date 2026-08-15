@@ -24,11 +24,16 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .btn.big { font-size: 1.15rem; padding: 1rem 1.4rem; }
 .err { color: var(--danger); min-height: 1.1rem; font-size: .88rem; margin-bottom: .5rem; }
 
-.topbar { background: var(--red); color: #fff; display: flex; align-items: center; justify-content: space-between; padding: .9rem 1.5rem; }
+.topbar { background: var(--red); color: #fff; display: flex; align-items: center; justify-content: space-between; gap: .5rem .8rem; flex-wrap: wrap; padding: .9rem 1.5rem; }
 .topbar .logo { font-weight: 800; font-size: 1.3rem; display: flex; align-items: center; gap: .5rem; }
 .topbar .logo-img { height: 32px; width: auto; display: block; }
-.topbar .right { display: flex; align-items: center; gap: .8rem; }
+.topbar .right { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; justify-content: flex-end; }
 .topbar select { width: auto; margin: 0; padding: .5rem; border-radius: 10px; }
+/* On phones the header controls drop to their own line so nothing overflows. */
+@media (max-width: 560px) {
+  .topbar { padding: .7rem 1rem; }
+  .topbar .right { gap: .5rem; width: 100%; }
+}
 .clock { font-size: .95rem; opacity: .9; }
 /* Live-push status pill (SSE connection health). */
 .live-badge { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .6rem; border-radius: 999px; font-size: .74rem; font-weight: 700; white-space: nowrap; }
