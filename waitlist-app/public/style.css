@@ -15,7 +15,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .brand-logo { background: linear-gradient(135deg, var(--red), var(--red-dark)); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: .3rem; }
 .brand-logo img { height: 52px; width: auto; display: block; margin: 0 auto; }
 .sub { color: var(--muted); font-size: .88rem; margin: .25rem 0 1.4rem; }
-.btn { background: var(--gold); color: #422006; border: none; border-radius: 12px; padding: .8rem 1.2rem; font-weight: 800; font-size: 1rem; }
+.btn { background: var(--gold); color: #422006; border: none; border-radius: 12px; padding: .8rem 1.2rem; font-weight: 800; font-size: 1rem; white-space: nowrap; }
 .btn:hover { filter: brightness(1.05); }
 .btn.block { width: 100%; }
 .btn.ghost { background: #fff; border: 1px solid var(--line); color: var(--muted); }
@@ -50,7 +50,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .stat .value { font-size: 2rem; font-weight: 800; margin-top: .2rem; }
 .stat .value.warn { color: var(--warn); }
 
-.section-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 1rem; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .section-head h2 { margin: 0; font-size: 1.3rem; }
 
 .party { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 1rem 1.2rem; display: flex; align-items: center; gap: 1rem; margin-bottom: .9rem; flex-wrap: wrap; }
