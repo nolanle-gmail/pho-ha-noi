@@ -315,19 +315,17 @@ async function renderService() {
   $('view').innerHTML = `
     <div class="svc-top">
       <div class="svc-loc">${locSelect}</div>
-      <div class="svc-chips">
-        <span class="badge gray">${sm.waiting} waiting</span>
-        <span class="badge blue">${sm.seated} seated</span>
-        <span class="badge ok">${sm.in_service} in service</span>
-        <span class="badge low">${sm.paying} paying</span>
-        ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
-        ${sm.help ? `<span class="badge out">🚩 ${sm.help} help</span>` : ''}
-        ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
-      </div>
       <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
     </div>
     <div class="svc-kpis">
+      <div class="card"><div class="label">Waiting</div><div class="value">${sm.waiting}</div></div>
+      <div class="card"><div class="label">Seated</div><div class="value">${sm.seated}</div></div>
+      <div class="card"><div class="label">In service</div><div class="value">${sm.in_service}</div></div>
+      <div class="card"><div class="label">Paying</div><div class="value">${sm.paying}</div></div>
+      <div class="card"><div class="label">Checks due</div><div class="value${sm.checks_due ? ' bad' : ''}">${sm.checks_due || 0}</div></div>
+      ${sm.help ? `<div class="card"><div class="label">Needs help</div><div class="value bad">🚩 ${sm.help}</div></div>` : ''}
+      ${sm.to_bus ? `<div class="card"><div class="label">To bus</div><div class="value warn">🧹 ${sm.to_bus}</div></div>` : ''}
       <div class="card"><div class="label">Staff walk-ins today</div><div class="value">🚶 ${sm.walkins_today || 0}</div></div>
     </div>
     ${due.length ? `<div class="svc-due"><strong>⏰ Check now:</strong> ${due.map(v => `<button class="chip-due" data-act="check" data-vid="${v.id}" title="Log a check">${esc(v.table_label || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}

@@ -419,9 +419,10 @@ tr:hover .order-hover { opacity: 1; }
 .svc-top { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
 .svc-loc select { padding: .35rem .5rem; border: 1px solid #d9d3c9; border-radius: 8px; font-weight: 600; background: #fff; }
 .svc-chips { display: flex; gap: .4rem; flex-wrap: wrap; }
-/* Headline daily KPI card on the Service board (matches the Staff board tiles). */
-.svc-kpis { display: flex; gap: 1rem; margin: 0 0 .8rem; }
-.svc-kpis .card { min-width: 170px; }
+/* Service board summary tiles (compact KPI cards, matching the Staff board). */
+.svc-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: .7rem; margin: 0 0 .8rem; }
+.svc-kpis .card { padding: .7rem .9rem; }
+.svc-kpis .card .value { font-size: 1.5rem; margin-top: .15rem; }
 .svc-top .live-badge { margin-left: auto; }
 .svc-top .btn.sm { margin-left: .1rem; }
 /* Live-push status pill. Empty when unset (no EventSource) so it takes no room. */
