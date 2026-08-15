@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board' };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -109,6 +109,7 @@ async function boot() {
   renderNav();
   render();
   setupStaffStream();   // sub-second push (SSE) for live views
+  refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
   // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
   // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
@@ -165,15 +166,17 @@ function renderNav() {
   if (isServerRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
+  items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
-  nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}</button>`).join('');
+  nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
   nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; renderNav(); render(); });
 }
 
 // Dispatch to the active view.
 function render() {
   setStaffLive(STAFF_LIVE);   // keep the live pill in sync with the current view
+  if (S.view === 'messages') return renderMessages();
   if (S.view === 'mytasks') return renderMyTasks();
   if (S.view === 'server') return renderServer();
   if (S.view === 'history') return renderHistory();
@@ -181,6 +184,76 @@ function render() {
   if (S.view === 'activity') return renderActivity();
   if (S.view === 'tables') return renderTables();
   return renderBoard();
+}
+
+// ── Messages: team inbox + compose, proxied to the shared Management directory ─
+const MSG_LEADERSHIP = ['owner', 'admin', 'general_manager'];
+const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
+const roleWord = (r) => ({ owner: 'Owner', admin: 'Admin', general_manager: 'General Manager', regional_manager: 'Regional Manager', manager: 'Manager', assistant_manager: 'Assistant Manager', kitchen_manager: 'Kitchen Manager', frontdesk: 'Front Desk', host: 'Host', server: 'Server', busser: 'Busser', chef: 'Chef', line_cook: 'Line Cook', employee: 'Staff' }[r] || r);
+const msgAgo = (iso) => { const d = new Date((iso || '').replace(' ', 'T') + 'Z'); const m = Math.floor((Date.now() - d.getTime()) / 60000); return m < 60 ? Math.max(0, m) + 'm ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+
+// Poll the unread count and refresh the nav badge (no full re-render).
+async function refreshMsgUnread() {
+  try { S.unread = (await api('/messages/unread-count')).count || 0; } catch { /* offline */ return; }
+  if (S.user) renderNav();
+}
+
+async function renderMessages() {
+  const v = $('view');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  let msgs;
+  try { msgs = await api('/messages/inbox'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const unread = msgs.filter(m => !m.is_read).length;
+  v.innerHTML = `
+    <div class="section-head"><h2>Messages ${unread ? `<span class="muted" style="font-weight:400;font-size:.9rem">· ${unread} unread</span>` : ''}</h2>
+      <button class="btn big" id="msgNew">✉️ New</button></div>
+    <div class="msg-list">${msgs.length ? msgs.map(m => `
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-mid="${m.id}">
+        <div class="msg-top"><span class="msg-from">${m.is_read ? '' : '<span class="msg-dot"></span>'}${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span>${m.audience === 'all' ? ' <span class="msg-role bc">broadcast</span>' : ''}</span><span class="msg-when">${msgAgo(m.created_at)}</span></div>
+        <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
+        <div class="msg-text">${esc(m.body)}</div>
+      </div>`).join('') : '<div class="empty">No messages yet.</div>'}</div>`;
+  $('msgNew').onclick = composeModal;
+  v.querySelectorAll('.msg-card.unread').forEach(card => card.onclick = async () => {
+    try { await api(`/messages/${card.dataset.mid}/read`, { method: 'POST' }); card.classList.remove('unread'); card.querySelector('.msg-dot')?.remove(); refreshMsgUnread(); } catch { /* ignore */ }
+  });
+}
+
+async function composeModal() {
+  let recips;
+  try { recips = await api('/messages/recipients'); } catch (e) { toast(e.message, true); return; }
+  const role = S.user.role;
+  const myLoc = String(S.loc || S.user.location_id || '');
+  const inLoc = (u) => String(u.location_id || '') === myLoc;
+  const isMgr = MSG_MANAGERS.includes(role);
+  const isLead = MSG_LEADERSHIP.includes(role);
+  // Role-appropriate quick groups (each: [label, [ids]]).
+  const groups = [];
+  if (isLead) groups.push(['Everyone', recips.map(u => u.id)]);
+  if (isMgr || isLead) groups.push(['My staff (this location)', recips.filter(u => inLoc(u) && !MSG_MANAGERS.includes(u.role) && !MSG_LEADERSHIP.includes(u.role)).map(u => u.id)]);
+  groups.push(['Owner / Admin', recips.filter(u => u.role === 'owner' || u.role === 'admin').map(u => u.id)]);
+  if (!isLead) groups.push(['My manager', recips.filter(u => MSG_MANAGERS.includes(u.role) && inLoc(u)).map(u => u.id)]);
+  groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
+  const shown = groups.filter(g => g[1].length);
+  const groupOpts = shown.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[1].length})</option>`).join('');
+  const personOpts = recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleWord(u.role))}${u.location ? ' · ' + esc(u.location.replace('Pho Ha Noi — ', '')) : ''}</option>`).join('');
+  modal('New message', `
+    <label>Send to</label>
+    <select id="mTo">${groupOpts}<option value="person">A specific person…</option></select>
+    <div id="mPersonWrap" class="hidden"><label>Person</label><select id="mPerson">${personOpts}</select></div>
+    <label>Subject</label><input id="mSubj" placeholder="Subject (optional)" />
+    <label>Message</label><textarea id="mBody" rows="4" placeholder="Write your message…"></textarea>
+  `, async () => {
+    const to = $('mTo').value, subject = $('mSubj').value, bodyTxt = $('mBody').value;
+    if (!bodyTxt.trim()) throw new Error('Write a message first.');
+    let ids;
+    if (to === 'person') ids = [parseInt($('mPerson').value, 10)];
+    else ids = shown[parseInt(to.split(':')[1], 10)][1];
+    if (!ids.length) throw new Error('No recipients in that group.');
+    const r = await api('/messages', { method: 'POST', body: JSON.stringify({ recipient_ids: ids, subject, body: bodyTxt }) });
+    toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
+  }, 'Send');
+  $('mTo').onchange = () => $('mPersonWrap').classList.toggle('hidden', $('mTo').value !== 'person');
 }
 
 // ── My Tasks: the staff member's day-task assignments (any role) ──────────────

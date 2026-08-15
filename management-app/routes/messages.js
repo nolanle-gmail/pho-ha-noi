@@ -1,18 +1,34 @@
-// Team messaging — direct messages plus broadcasts (all staff / a location).
-// Everyone can send direct messages; only owner/admin/manager can broadcast.
+// Team messaging — direct messages, custom groups, and broadcasts (all / a
+// location). Everyone can send to specific people; only owner/admin/manager can
+// broadcast. The Staff app reaches this over the service key, acting on behalf
+// of a staff member resolved by email (?as=), so both apps share one inbox.
 const express = require('express');
 const db = require('../db/database');
 const { verifyToken } = require('../lib/auth');
 
 const router = express.Router();
-router.use(verifyToken);
+const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+
+// Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>
+// (or X-As-User) naming the acting staff member from the shared directory.
+router.use((req, res, next) => {
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (key && key === SERVICE_KEY) {
+    const email = String(req.query.as || req.headers['x-as-user'] || '').toLowerCase().trim();
+    const u = email && db.prepare(`SELECT id, name, role, location_id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    if (!u) return res.status(401).json({ error: 'Unknown messaging user.' });
+    req.user = { id: u.id, name: u.name, role: u.role, location_id: u.location_id };
+    return next();
+  }
+  return verifyToken(req, res, next);
+});
 
 const canBroadcast = (role) => ['owner', 'admin', 'manager'].includes(role);
 
-// People I can message (everyone active except me).
+// People I can message (everyone active except me), with location for grouping.
 router.get('/recipients', (req, res) => {
   res.json(db.prepare(`
-    SELECT u.id, u.name, u.role, l.name AS location
+    SELECT u.id, u.name, u.role, u.location_id, l.name AS location
     FROM users u LEFT JOIN locations l ON u.location_id=l.id
     WHERE u.is_active=1 AND u.id<>? ORDER BY u.name
   `).all(req.user.id));
@@ -51,17 +67,45 @@ router.post('/:id/read', (req, res) => {
   res.json({ success: true });
 });
 
+// Deliver a message to a set of recipients. Returns the message id.
+// `audience` is what's stored for display ('direct' covers person + group).
+function deliver(senderId, audience, locId, subject, body, recipientIds) {
+  const recips = [...new Set(recipientIds)].filter(Boolean);
+  if (!recips.length) return null;
+  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body) VALUES (?,?,?,?,?)`)
+    .run(senderId, audience, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000)).lastInsertRowid;
+  const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
+  recips.forEach(uid => ins.run(mid, uid));
+  return mid;
+}
+
+// Fire a system notification to one user (e.g. a task assignment). Best-effort.
+function notify(senderId, userId, subject, body) {
+  try {
+    if (!userId || !senderId || String(userId) === String(senderId)) return;
+    if (!db.prepare(`SELECT 1 FROM users WHERE id=? AND is_active=1`).get(userId)) return;
+    deliver(senderId, 'direct', null, subject, body, [userId]);
+  } catch (e) { console.error('notify failed:', e.message); }
+}
+
 // Send a message.
 router.post('/', (req, res) => {
-  const { audience, recipient_id, location_id, subject, body } = req.body || {};
+  const { audience, recipient_id, recipient_ids, location_id, subject, body } = req.body || {};
   if (!body || !String(body).trim()) return res.status(400).json({ error: 'Message body is required.' });
-  const aud = ['direct', 'all', 'location'].includes(audience) ? audience : 'direct';
+
+  // An explicit id list is a custom group send (stored as 'direct').
+  const ids = Array.isArray(recipient_ids) ? recipient_ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
+  let aud = ids.length ? 'group' : (['direct', 'all', 'location'].includes(audience) ? audience : 'direct');
   if ((aud === 'all' || aud === 'location') && !canBroadcast(req.user.role)) {
     return res.status(403).json({ error: 'Only managers and above can broadcast messages.' });
   }
 
   let recipients = [], locId = null;
-  if (aud === 'direct') {
+  if (aud === 'group') {
+    recipients = db.prepare(`SELECT id FROM users WHERE is_active=1 AND id<>? AND id IN (${ids.map(() => '?').join(',')})`)
+      .all(req.user.id, ...ids).map(r => r.id);
+    if (!recipients.length) return res.status(400).json({ error: 'Pick at least one valid recipient.' });
+  } else if (aud === 'direct') {
     const u = db.prepare(`SELECT id FROM users WHERE id=? AND is_active=1`).get(parseInt(recipient_id));
     if (!u) return res.status(400).json({ error: 'Pick a valid recipient.' });
     recipients = [u.id];
@@ -74,11 +118,11 @@ router.post('/', (req, res) => {
   }
   if (!recipients.length) return res.status(400).json({ error: 'No recipients for this message.' });
 
-  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body) VALUES (?,?,?,?,?)`)
-    .run(req.user.id, aud, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000)).lastInsertRowid;
-  const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
-  recipients.forEach(uid => ins.run(mid, uid));
+  // 'group' is a display alias for a multi-person direct message.
+  const mid = deliver(req.user.id, aud === 'group' ? 'direct' : aud, locId,
+    subject, body, recipients);
   res.json({ success: true, id: mid, recipients: recipients.length });
 });
 
 module.exports = router;
+module.exports.notify = notify;

@@ -47,6 +47,20 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .session-banner-x { background: transparent; border: none; color: inherit; cursor: pointer; font-size: .95rem; line-height: 1; padding: .15rem .35rem; border-radius: 6px; opacity: .65; }
 .session-banner-x:hover { opacity: 1; }
 @keyframes bannerdrop { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+/* Messages */
+.nav-badge { display: inline-flex; min-width: 18px; height: 18px; padding: 0 5px; align-items: center; justify-content: center; background: var(--red); color: #fff; border-radius: 999px; font-size: .7rem; font-weight: 800; margin-left: .3rem; vertical-align: middle; }
+.msg-list { display: flex; flex-direction: column; gap: .6rem; }
+.msg-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1rem; }
+.msg-card.unread { border-left: 4px solid var(--red); cursor: pointer; }
+.msg-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .25rem; }
+.msg-from { font-weight: 700; display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.msg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); display: inline-block; }
+.msg-role { font-size: .66rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 700; background: #f1ece3; color: #8a7f6d; border-radius: 5px; padding: 0 .35rem; }
+.msg-role.bc { background: var(--warn-bg); color: #92400e; }
+.msg-when { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+.msg-subj { font-weight: 700; margin: .1rem 0; }
+.msg-text { color: var(--ink); white-space: pre-wrap; font-size: .92rem; }
+.modal select, .modal textarea { width: 100%; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; margin-bottom: .3rem; box-sizing: border-box; background: #fff; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }

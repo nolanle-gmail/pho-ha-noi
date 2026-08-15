@@ -5,6 +5,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { notify } = require('./messages');
 const { localDate, DEFAULT_TZ } = require('../lib/tz');
 const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 
@@ -143,7 +144,7 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : null;
   if (!locId || !jobId || !date) return res.status(400).json({ error: 'location_id, job_id and date are required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const job = db.prepare(`SELECT id, kind, est_minutes FROM jobs WHERE id=? AND is_active=1`).get(jobId);
+  const job = db.prepare(`SELECT id, name, kind, est_minutes FROM jobs WHERE id=? AND is_active=1`).get(jobId);
   if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
   if (!db.prepare(`SELECT 1 FROM location_tasks WHERE location_id=? AND job_id=?`).get(locId, jobId)) {
     return res.status(400).json({ error: "That task isn't on this location's list." });
@@ -206,6 +207,11 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
       .run(locId, date, jobId, nu, nt, done || 0, req.user.id);
   }
   auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, time: hasTime ? time : undefined, done });
+  // Notify the assignee when a task is newly assigned or handed to someone else.
+  if (nu && (!existing || existing.user_id !== nu)) {
+    notify(req.user.id, nu, 'New task assigned',
+      `You've been assigned "${job.name}"${nt ? ` at ${nt}` : ''} on ${date}.`);
+  }
   res.json({ success: true });
 });
 

@@ -26,7 +26,7 @@ router.post('/login', async (req, res) => {
     const r = await fetch(`${MGMT_URL}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: em, password }) });
     if (r.ok) {
       const d = await r.json();
-      const mu = { id: d.user.id, name: d.user.name, role: d.user.role, location_id: d.user.location_id, src: 'mgmt' };
+      const mu = { id: d.user.id, name: d.user.name, email: em, role: d.user.role, location_id: d.user.location_id, src: 'mgmt' };
       logLogin(req, { user: mu, email: em, success: true });
       return res.json({ token: signToken(mu), user: mu });
     }

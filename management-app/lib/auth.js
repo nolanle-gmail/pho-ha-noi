@@ -40,6 +40,7 @@ const ROLE_DEFS = {
   // Front / back of house positions — own schedule, tasks & messages only
   server:            { label: 'Server',            scope: 'self',     rank: 30,  caps: [] },
   host:              { label: 'Host / Front Desk', scope: 'self',     rank: 30,  caps: [] },
+  frontdesk:         { label: 'Front Desk',        scope: 'self',     rank: 30,  caps: [] },
   cashier:           { label: 'Cashier',           scope: 'self',     rank: 29,  caps: [] },
   bartender:         { label: 'Bartender',         scope: 'self',     rank: 29,  caps: [] },
   barista:           { label: 'Barista',           scope: 'self',     rank: 28,  caps: [] },

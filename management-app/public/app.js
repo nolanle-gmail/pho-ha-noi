@@ -857,6 +857,11 @@ function openLocationDetail(locId, tab) {
   renderLocationsSection();
 }
 
+// A Messages link + unread badge for the Overview hero (every role lands here).
+function msgHeroLink() {
+  return `<button class="msg-hero-link" data-goto="messages">✉️ Messages${S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`;
+}
+
 async function renderOverview() {
   const scope = roleScopeOf(S.user.role);
   if (scope === 'self') return renderSelfOverview();
@@ -873,6 +878,7 @@ async function renderOverview() {
     <div class="overview-hero">
       <h2>Welcome, ${esc(S.user.name.split(' ')[0])}</h2>
       <p>Enterprise Restaurant Management System · <span class="role-chip">${esc(roleLabel(S.user.role))}</span></p>
+      ${msgHeroLink()}
     </div>
     <div class="kpis">
       <div class="card"><div class="label">Locations</div><div class="value">${S.locations.length}</div></div>
@@ -952,6 +958,7 @@ async function renderManagerDashboard() {
     <div class="overview-hero">
       <h2>${greet}, ${esc(S.user.name.split(' ')[0])}</h2>
       <p>${esc(locName)} · <span class="role-chip">${esc(roleLabel(S.user.role))}</span> · ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</p>
+      ${msgHeroLink()}
     </div>
     <div class="kpis">
       ${stat('Staff', rs.total, '', 'staff')}
@@ -1117,7 +1124,7 @@ function renderSelfOverview() {
   const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const cards = [
     ['myschedule', '🗓️', 'My Schedule', 'See your shifts and assigned tasks for the week.'],
-    ['messages', '💬', 'Messages', 'Read announcements and message your team.'],
+    ['messages', '💬', `Messages${S.unread ? ` (${S.unread})` : ''}`, 'Read announcements and message your team.'],
   ];
   $('view').innerHTML = `
     <div class="overview-hero">
@@ -2892,19 +2899,35 @@ async function renderSent() {
       </div>`).join('')}</div>` : '<div class="empty">You haven’t sent any messages.</div>'}`;
 }
 
+const MSG_LEADERSHIP = ['owner', 'admin', 'general_manager'];
+const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
+
 async function renderCompose() {
-  const canBroadcast = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const role = S.user.role;
+  const canBroadcast = ['owner', 'admin', 'manager'].includes(role);
   const recips = await api('/messages/recipients');
+  const myLoc = String(S.user.location_id || '');
+  const inLoc = (u) => String(u.location_id || '') === myLoc;
+  const isLead = MSG_LEADERSHIP.includes(role), isMgr = MSG_MANAGERS.includes(role);
+  // Role-appropriate quick groups: each [label, [ids]].
+  const groups = [];
+  if (isLead) groups.push(['Everyone', recips.map(u => u.id)]);
+  if (isMgr && !isLead) groups.push(['My staff (my location)', recips.filter(u => inLoc(u) && !MSG_MANAGERS.includes(u.role) && !MSG_LEADERSHIP.includes(u.role)).map(u => u.id)]);
+  groups.push(['Owner / Admin', recips.filter(u => u.role === 'owner' || u.role === 'admin').map(u => u.id)]);
+  if (!isLead) groups.push(['My manager', recips.filter(u => MSG_MANAGERS.includes(u.role) && (inLoc(u) || u.role === 'general_manager')).map(u => u.id)]);
+  groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
+  const shown = groups.filter(g => g[1].length);
   $('view').innerHTML = `
     <h2 class="page">New message</h2>
     <div class="section" style="max-width:640px">
       <div class="err" id="cErr"></div>
       <label class="fld-label">To</label>
       <select id="cAud" class="fld">
-        <option value="direct">A person</option>
-        ${canBroadcast ? '<option value="all">All staff (broadcast)</option><option value="location">A whole location</option>' : ''}
+        ${shown.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[1].length})</option>`).join('')}
+        <option value="direct">A specific person…</option>
+        ${canBroadcast ? '<option value="all">📣 All staff (broadcast)</option><option value="location">A whole location…</option>' : ''}
       </select>
-      <div id="cDirect"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
+      <div id="cDirect" class="hidden"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
       <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
@@ -2914,9 +2937,12 @@ async function renderCompose() {
   aud.onchange = () => { $('cDirect').classList.toggle('hidden', aud.value !== 'direct'); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); };
   $('cSend').onclick = async () => {
     $('cErr').textContent = '';
-    const payload = { audience: aud.value, subject: $('cSubj').value, body: $('cBody').value };
-    if (aud.value === 'direct') payload.recipient_id = $('cRecip').value;
-    if (aud.value === 'location') payload.location_id = $('cLocSel').value;
+    const val = aud.value;
+    const payload = { subject: $('cSubj').value, body: $('cBody').value };
+    if (val.startsWith('g:')) payload.recipient_ids = shown[parseInt(val.slice(2), 10)][1];
+    else if (val === 'direct') { payload.audience = 'direct'; payload.recipient_id = $('cRecip').value; }
+    else if (val === 'location') { payload.audience = 'location'; payload.location_id = $('cLocSel').value; }
+    else payload.audience = 'all';
     try {
       const r = await api('/messages', { method: 'POST', body: JSON.stringify(payload) });
       toast(`Message sent to ${r.recipients} recipient${r.recipients > 1 ? 's' : ''}`);

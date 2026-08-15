@@ -814,6 +814,20 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/central/summary', { headers: H(emp.token) });
     check('employee blocked from central kitchen (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Messaging: directory unification, group send, service-key as-user ──
+    const mrecips = await j(await fetch(base + '/api/messages/recipients', { headers: H(token) }));
+    check('directory unified: 10 front-desk hosts', mrecips.filter(u => u.role === 'frontdesk').length === 10, 'fd=' + mrecips.filter(u => u.role === 'frontdesk').length);
+    const twoIds = mrecips.slice(0, 2).map(u => u.id);
+    r = await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ recipient_ids: twoIds, subject: 'Smoke group', body: 'hi team' }) });
+    const gsend = await j(r);
+    check('group send delivers to N recipients', r.status === 200 && gsend.recipients === 2, JSON.stringify(gsend));
+    r = await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });
+    check('service-key as-user inbox (200)', r.status === 200 && Array.isArray(await r.json()), 'status=' + r.status);
+    r = await fetch(base + '/api/messages/inbox?as=nobody@nowhere.test', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });
+    check('service-key unknown user rejected (401)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/messages/inbox');
+    check('messages needs auth (401)', r.status === 401, 'status=' + r.status);
+
     // Live push (SSE): the visit stream authenticates by query token and streams events.
     r = await fetch(base + '/api/visits/stream');
     check('visit stream needs auth (401)', r.status === 401, 'status=' + r.status);

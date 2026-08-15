@@ -184,6 +184,10 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });
     check('non-local email falls back to Management (401 when down)', r.status === 401, 'status=' + r.status);
 
+    // ── Messaging proxy: mounted + auth-gated (forwards to Management) ─────
+    r = await fetch(base + '/api/messages/inbox');
+    check('messages proxy needs auth (401)', r.status === 401, 'status=' + r.status);
+
     // ── Live push (SSE): the Staff stream authenticates by query token ─────
     r = await fetch(base + '/api/stream');
     check('staff stream needs auth (401)', r.status === 401, 'status=' + r.status);
