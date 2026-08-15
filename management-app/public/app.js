@@ -323,10 +323,12 @@ async function renderService() {
         ${sm.checks_due ? `<span class="badge out">${sm.checks_due} check${sm.checks_due > 1 ? 's' : ''} due</span>` : '<span class="badge ok">checks ok</span>'}
         ${sm.help ? `<span class="badge out">🚩 ${sm.help} help</span>` : ''}
         ${sm.to_bus ? `<span class="badge low">🧹 ${sm.to_bus} to bus</span>` : ''}
-        <span class="badge gray">🚶 ${sm.walkins_today || 0} staff walk-in${sm.walkins_today === 1 ? '' : 's'} today</span>
       </div>
       <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
       <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
+    </div>
+    <div class="svc-kpis">
+      <div class="card"><div class="label">Staff walk-ins today</div><div class="value">🚶 ${sm.walkins_today || 0}</div></div>
     </div>
     ${due.length ? `<div class="svc-due"><strong>⏰ Check now:</strong> ${due.map(v => `<button class="chip-due" data-act="check" data-vid="${v.id}" title="Log a check">${esc(v.table_label || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
     ${(data.needs_help || []).length ? `<div class="svc-due help"><strong>🚩 Needs help:</strong> ${data.needs_help.map(v => `<button class="chip-due" data-act="unhelp" data-vid="${v.id}" title="Resolve">${esc(v.table_label ? 'T' + v.table_label : v.guest_name || '?')}${v.server_name ? ' · ' + esc(v.server_name) : ''} <span class="chip-due-x">✓</span></button>`).join('')}</div>` : ''}
