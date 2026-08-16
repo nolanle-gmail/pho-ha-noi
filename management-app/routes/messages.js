@@ -3,11 +3,40 @@
 // broadcast. The Staff app reaches this over the service key, acting on behalf
 // of a staff member resolved by email (?as=), so both apps share one inbox.
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const db = require('../db/database');
-const { verifyToken } = require('../lib/auth');
+const { verifyToken, SECRET } = require('../lib/auth');
+const { emitMessages, onMessages } = require('../lib/events');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+
+// Resolve the acting user from a service key (+ ?as=email) or a query JWT.
+// EventSource can't send headers, so the live stream authenticates this way.
+function streamUser(req) {
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (key && key === SERVICE_KEY) {
+    const email = String(req.query.as || '').toLowerCase().trim();
+    const u = email && db.prepare(`SELECT id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    return u ? { id: u.id } : null;
+  }
+  try { return jwt.verify(req.query.token || '', SECRET); } catch { return null; }
+}
+
+// Live push: fires whenever a message is delivered to me (badge + inbox refresh).
+// Defined before the auth middleware since it authenticates via query/service key.
+router.get('/stream', (req, res) => {
+  const user = streamUser(req);
+  if (!user) return res.status(401).end();
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  if (res.flushHeaders) res.flushHeaders();
+  res.write(': connected\n\n');
+  const unsub = onMessages((p) => {
+    if (p.user_ids.includes(Number(user.id))) { try { res.write('data: {"type":"message"}\n\n'); } catch { /* closed */ } }
+  });
+  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
+  req.on('close', () => { clearInterval(hb); unsub(); });
+});
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>
 // (or X-As-User) naming the acting staff member from the shared directory.
@@ -100,6 +129,7 @@ function deliver(senderId, audience, locId, subject, body, recipientIds, threadI
   if (!threadId) db.prepare(`UPDATE messages SET thread_id=? WHERE id=?`).run(mid, mid);
   const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
   recips.forEach(uid => ins.run(mid, uid));
+  try { emitMessages(recips); } catch { /* live push is best-effort */ }
   return mid;
 }
 

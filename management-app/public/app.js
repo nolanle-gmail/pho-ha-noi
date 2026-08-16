@@ -158,6 +158,7 @@ async function boot() {
   const start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
   showSection(start);
   refreshUnread();
+  setupMessageStream();   // live badge/inbox the moment a message arrives
 }
 
 // ── Access-level registry (loaded from the API at boot; mirrors lib/auth.js) ──
@@ -203,6 +204,21 @@ function renderSidebar() {
 async function refreshUnread() {
   try { S.unread = (await api('/messages/unread-count')).count; } catch { S.unread = 0; }
   renderSidebar();
+}
+
+// App-wide live push for messages: the badge (and an open inbox) update the
+// moment someone sends to me, instead of waiting for the next poll.
+let MSG_ES = null;
+function setupMessageStream() {
+  if (MSG_ES || typeof EventSource === 'undefined') return;
+  const token = localStorage.getItem('phn_token');
+  if (!token) return;
+  MSG_ES = new EventSource(`/api/messages/stream?token=${encodeURIComponent(token)}`);
+  MSG_ES.onmessage = () => {
+    refreshUnread();
+    if (S.section === 'messages' && !S.msgThread && S.msgTab === 'inbox') renderMessages();
+  };
+  MSG_ES.onerror = () => { /* EventSource auto-reconnects */ };
 }
 function setActiveNav(section) {
   $('sidebarNav').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.section === section));

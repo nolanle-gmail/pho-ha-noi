@@ -832,6 +832,16 @@ const check = (name, ok, detail = '') => {
     check('service-key unknown user rejected (401)', r.status === 401, 'status=' + r.status);
     r = await fetch(base + '/api/messages/inbox');
     check('messages needs auth (401)', r.status === 401, 'status=' + r.status);
+    // Live message push (SSE): unauthenticated 401, authenticated event-stream.
+    r = await fetch(base + '/api/messages/stream');
+    check('message stream needs auth (401)', r.status === 401, 'status=' + r.status);
+    {
+      const ac = new AbortController();
+      const sr = await fetch(base + '/api/messages/stream?token=' + token, { signal: ac.signal });
+      check('message stream opens (200 + event-stream)',
+        sr.status === 200 && /text\/event-stream/.test(sr.headers.get('content-type') || ''), 'ct=' + sr.headers.get('content-type'));
+      ac.abort();
+    }
 
     // Live push (SSE): the visit stream authenticates by query token and streams events.
     r = await fetch(base + '/api/visits/stream');

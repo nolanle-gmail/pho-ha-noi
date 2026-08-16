@@ -147,8 +147,14 @@ function setupStaffStream() {
   STAFF_ES = es;
   setStaffLive('connecting');
   es.onopen = () => setStaffLive('live');
-  es.onmessage = () => {
-    setStaffLive('live');   // a message means the pipe is healthy
+  es.onmessage = (e) => {
+    setStaffLive('live');   // any event means the pipe is healthy
+    let type = ''; try { type = JSON.parse(e.data).type; } catch { /* comment/heartbeat */ }
+    if (type === 'message') {   // a message arrived for me → update badge + open inbox
+      refreshMsgUnread();
+      if (S.view === 'messages' && !S.msgThread && !$('modalHost').innerHTML) renderMessages();
+      return;
+    }
     clearTimeout(STAFF_PUSH_T);
     STAFF_PUSH_T = setTimeout(() => {
       if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;

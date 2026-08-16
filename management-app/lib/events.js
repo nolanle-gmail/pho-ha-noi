@@ -13,4 +13,7 @@ module.exports = {
     bus.emit('visits', { location_id: Number.isFinite(id) ? id : null });
   },
   onVisits: (handler) => { bus.on('visits', handler); return () => bus.off('visits', handler); },
+  // A new message delivered to these recipient user ids — for live inbox/badge.
+  emitMessages: (userIds) => { bus.emit('messages', { user_ids: (userIds || []).map(Number).filter(Boolean) }); },
+  onMessages: (handler) => { bus.on('messages', handler); return () => bus.off('messages', handler); },
 };

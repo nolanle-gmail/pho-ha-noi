@@ -26,18 +26,24 @@ router.get('/', async (req, res) => {
     try { res.write(`data: ${JSON.stringify({ type: 'waitlist', location_id: p.location_id })}\n\n`); } catch { /* closed */ }
   });
 
-  // 2) Forward the Management visit stream (service-key authenticated, server-to-server).
-  const controller = new AbortController();
-  let node = null;
-  (async () => {
-    try {
-      const up = await fetch(`${MGMT_URL}/api/visits/stream?location_id=${encodeURIComponent(loc || '')}`, { headers: { 'X-Service-Key': KEY }, signal: controller.signal });
-      if (up.ok && up.body) { node = Readable.fromWeb(up.body); node.on('data', (c) => { try { res.write(c); } catch { /* closed */ } }); node.on('error', () => { }); }
-    } catch { /* Management stream unavailable — local waitlist events still flow */ }
-  })();
+  // Forward a Management SSE stream (service-key, server-to-server) into ours.
+  const nodes = [];
+  const forward = (path) => {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const up = await fetch(`${MGMT_URL}${path}`, { headers: { 'X-Service-Key': KEY }, signal: controller.signal });
+        if (up.ok && up.body) { const n = Readable.fromWeb(up.body); nodes.push(n); n.on('data', (c) => { try { res.write(c); } catch { /* closed */ } }); n.on('error', () => { }); }
+      } catch { /* Management stream unavailable — local events still flow */ }
+    })();
+    return controller;
+  };
+  // 2) Management visit events (for the boards) + 3) my message events (badge/inbox).
+  const cVisits = forward(`/api/visits/stream?location_id=${encodeURIComponent(loc || '')}`);
+  const cMsgs = user.email ? forward(`/api/messages/stream?as=${encodeURIComponent(String(user.email).toLowerCase())}`) : null;
 
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
-  req.on('close', () => { clearInterval(hb); unsub(); controller.abort(); if (node) node.destroy(); });
+  req.on('close', () => { clearInterval(hb); unsub(); cVisits.abort(); if (cMsgs) cMsgs.abort(); nodes.forEach(n => n.destroy()); });
 });
 
 module.exports = router;
