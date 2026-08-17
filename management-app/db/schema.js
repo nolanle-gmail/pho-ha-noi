@@ -488,6 +488,35 @@ function migrate() {
       created_at    TEXT DEFAULT (datetime('now'))
     );
 
+    -- Manager rounding of a day's worked minutes (e.g. 7.5h → 8h, or +30m → 1h OT).
+    -- The adjusted total replaces clocked minutes when computing regular/OT/pay.
+    CREATE TABLE IF NOT EXISTS time_adjustments (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id      INTEGER NOT NULL REFERENCES locations(id),
+      user_id          INTEGER NOT NULL REFERENCES users(id),
+      work_date        TEXT NOT NULL,
+      adjusted_minutes INTEGER NOT NULL,
+      note             TEXT,
+      adjusted_by      INTEGER REFERENCES users(id),
+      adjusted_at      TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, user_id, work_date)
+    );
+
+    -- A manager's sign-off on a person's total hours for a period (day/week/month).
+    CREATE TABLE IF NOT EXISTS timesheet_approvals (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id   INTEGER NOT NULL REFERENCES locations(id),
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      period_kind   TEXT NOT NULL,                   -- 'daily' | 'weekly' | 'monthly'
+      period_start  TEXT NOT NULL,
+      period_end    TEXT NOT NULL,
+      total_minutes INTEGER NOT NULL DEFAULT 0,      -- approved total (with adjustments)
+      note          TEXT,
+      approved_by   INTEGER REFERENCES users(id),
+      approved_at   TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, user_id, period_kind, period_start)
+    );
+
     -- Floor plan: areas + numbered tables per location, with a live seating status.
     -- The Management "Floor Plan" tab is the editor + status; the Waitlist Front Desk
     -- reads/seats through this (via a service key) so both apps share one source.
@@ -640,6 +669,12 @@ function migrate() {
     `CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id)`,
     // Per-recipient archive: a reader can file a conversation away from their inbox.
     `ALTER TABLE message_recipients ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
+    // Timesheet: late arrival (minutes past scheduled start) + OT escalation to leadership.
+    `ALTER TABLE time_entries ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE ot_approvals ADD COLUMN escalated INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE ot_approvals ADD COLUMN escalated_by INTEGER`,
+    `ALTER TABLE ot_approvals ADD COLUMN escalated_at TEXT`,
+    `ALTER TABLE ot_approvals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Existing messages become the root of their own thread.

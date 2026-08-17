@@ -814,6 +814,38 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/central/summary', { headers: H(emp.token) });
     check('employee blocked from central kitchen (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
+    const tdb = require('../db/database');
+    const tsLoc = mgr.user.location_id;
+    const tsUser = (await j(await fetch(base + '/api/staff', { headers: H(mgr.token) })))[0];
+    const TD = '2026-08-10';
+    tdb.prepare(`DELETE FROM time_entries WHERE user_id=? AND work_date=?`).run(tsUser.id, TD);
+    tdb.prepare(`DELETE FROM ot_approvals WHERE user_id=? AND work_date=?`).run(tsUser.id, TD);
+    tdb.prepare(`DELETE FROM time_adjustments WHERE user_id=? AND work_date=?`).run(tsUser.id, TD);
+    tdb.prepare(`DELETE FROM timesheet_approvals WHERE user_id=? AND period_start=?`).run(tsUser.id, TD);
+    const ci = new Date(TD + 'T15:00:00Z'), co = new Date(ci.getTime() + 600 * 60000);
+    tdb.prepare(`INSERT INTO time_entries (user_id,location_id,work_date,clock_in,clock_out,scheduled_minutes,worked_minutes,late_minutes,short_confirmed,opened_by) VALUES (?,?,?,?,?,?,?,?,0,?)`)
+      .run(tsUser.id, tsLoc, TD, ci.toISOString(), co.toISOString(), 480, 600, 20, tsUser.id);
+    const tsGet = async (tok) => j(await fetch(base + `/api/timeclock/payroll?location_id=${tsLoc}&kind=daily&start=${TD}&end=${TD}`, { headers: H(tok) }));
+    let ts = await tsGet(mgr.token), row = ts.staff.find(s => s.user_id === tsUser.id);
+    check('timesheet flags OT + late', row && row.ot_pending_hours === 2 && row.late_minutes === 20, JSON.stringify(row && { ot: row.ot_pending_hours, late: row.late_minutes }));
+    r = await fetch(base + '/api/timeclock/ot-escalate', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: tsLoc, user_id: tsUser.id, work_date: TD, note: 'coverage' }) });
+    check('manager escalates OT', r.status === 200, 'status=' + r.status);
+    const reqs = await j(await fetch(base + '/api/timeclock/ot-requests', { headers: H(token) }));
+    check('leadership sees escalated OT request', reqs.requests.some(x => x.user_id === tsUser.id && x.work_date === TD));
+    r = await fetch(base + '/api/timeclock/ot-requests', { headers: H(mgr.token) });
+    check('manager cannot see leadership OT queue (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(token), body: JSON.stringify({ location_id: tsLoc, user_id: tsUser.id, work_date: TD, approved: true, note: 'ok' }) });
+    check('leadership approves escalated OT', r.status === 200, 'status=' + r.status);
+    check('escalated queue clears after approval', !(await j(await fetch(base + '/api/timeclock/ot-requests', { headers: H(token) }))).requests.some(x => x.user_id === tsUser.id && x.work_date === TD));
+    r = await fetch(base + '/api/timeclock/adjust', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: tsLoc, user_id: tsUser.id, work_date: TD, adjusted_minutes: 480, note: 'rounded' }) });
+    check('manager rounds a day', r.status === 200, 'status=' + r.status);
+    ts = await tsGet(mgr.token); row = ts.staff.find(s => s.user_id === tsUser.id);
+    check('rounding sets the effective total', row && row.total_hours === 8, 'total=' + (row && row.total_hours));
+    r = await fetch(base + '/api/timeclock/approve-total', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: tsLoc, user_id: tsUser.id, period_kind: 'daily', period_start: TD, period_end: TD, note: 'signed off' }) });
+    check('approve the daily total', r.status === 200, 'status=' + r.status);
+    check('period shows approved', (await tsGet(mgr.token)).staff.find(s => s.user_id === tsUser.id).approved === 1);
+
     // ── Messaging: directory unification, group send, service-key as-user ──
     const mrecips = await j(await fetch(base + '/api/messages/recipients', { headers: H(token) }));
     check('directory unified: 10 front-desk hosts', mrecips.filter(u => u.role === 'frontdesk').length === 10, 'fd=' + mrecips.filter(u => u.role === 'frontdesk').length);
