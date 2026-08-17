@@ -30,6 +30,7 @@ app.use('/api/floorplan', require('./routes/floorplan'));
 app.use('/api/visits', require('./routes/visits'));
 app.use('/api/stafftasks', require('./routes/stafftasks'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/timeclock', require('./routes/timeclock'));
 app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/menu', require('./routes/menu'));
@@ -37,7 +38,6 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/central', require('./routes/central'));
 app.use('/api/schedule', require('./routes/schedule'));
-app.use('/api/timeclock', require('./routes/timeclock'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

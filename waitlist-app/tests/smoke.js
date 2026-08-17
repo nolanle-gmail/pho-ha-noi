@@ -188,6 +188,10 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/messages/inbox');
     check('messages proxy needs auth (401)', r.status === 401, 'status=' + r.status);
 
+    // ── My Hours proxy: mounted + auth-gated ──────────────────────────────
+    r = await fetch(base + '/api/timeclock/my-hours');
+    check('my-hours proxy needs auth (401)', r.status === 401, 'status=' + r.status);
+
     // ── Live push (SSE): the Staff stream authenticates by query token ─────
     r = await fetch(base + '/api/stream');
     check('staff stream needs auth (401)', r.status === 401, 'status=' + r.status);

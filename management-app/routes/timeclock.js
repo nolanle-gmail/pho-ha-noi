@@ -7,14 +7,35 @@
 // punch at a location they're assigned to — so they must physically be at the
 // restaurant whose station a manager opened.
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
 
 const router = express.Router();
+const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+
+// My own hours — any staff member (JWT), or the Staff app on their behalf
+// (service key + ?as=email). Defined before the manager auth wall below.
+router.get('/my-hours', (req, res) => {
+  let u;
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (key && key === SERVICE_KEY) {
+    const email = String(req.query.as || '').toLowerCase().trim();
+    u = email && db.prepare(`SELECT id, name FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
+  } else {
+    try { u = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); } catch { return res.status(401).json({ error: 'Authentication required' }); }
+  }
+  const kind = ['daily', 'weekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
+  const tz = DEFAULT_TZ, today = localDate(tz);
+  const range = periodRange(kind, validDate(req.query.anchor) || today);
+  res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
+});
+
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
@@ -173,6 +194,50 @@ const effectiveDayMin = (locId, userId, date) => {
   return adj ? adj.adjusted_minutes : dayWorkedMin(locId, userId, date);
 };
 const userName = (id) => (db.prepare(`SELECT name FROM users WHERE id=?`).get(id) || {}).name || 'staff';
+
+// Server-side period window for a kind + anchor date.
+function periodRange(kind, anchor) {
+  const p2 = (n) => String(n).padStart(2, '0');
+  if (kind === 'daily') return { start: anchor, end: anchor };
+  if (kind === 'monthly') { const d = new Date(anchor + 'T00:00:00'); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0); return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}` }; }
+  const start = mondayOf(anchor); return { start, end: addDaysIso(start, 6) };
+}
+
+// One person's own hours for a period, across whatever location(s) they worked.
+function myHoursData(userId, start, end, kind) {
+  const byDate = {};
+  for (const r of db.prepare(`SELECT work_date, worked_minutes, late_minutes FROM time_entries WHERE user_id=? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL`).all(userId, start, end)) {
+    const d = byDate[r.work_date] || (byDate[r.work_date] = { worked: 0, late: 0 });
+    d.worked += r.worked_minutes || 0; d.late = Math.max(d.late, r.late_minutes || 0);
+  }
+  const schedByDate = {};
+  for (const s of db.prepare(`SELECT shift_date, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ?`).all(userId, start, end)) {
+    schedByDate[s.shift_date] = (schedByDate[s.shift_date] || 0) + spanMin(s.start_time, s.end_time);
+  }
+  const adjByDate = {};
+  for (const a of db.prepare(`SELECT work_date, adjusted_minutes FROM time_adjustments WHERE user_id=? AND work_date BETWEEN ? AND ?`).all(userId, start, end)) adjByDate[a.work_date] = a.adjusted_minutes;
+  const otByDate = {};
+  for (const a of db.prepare(`SELECT work_date, approved, rejected, escalated, ot_minutes, dt_minutes FROM ot_approvals WHERE user_id=? AND work_date BETWEEN ? AND ?`).all(userId, start, end)) otByDate[a.work_date] = a;
+  const tsAppr = db.prepare(`SELECT * FROM timesheet_approvals WHERE user_id=? AND period_kind=? AND period_start=?`).get(userId, kind, start);
+  const h = (m) => round2(m / 60);
+  let totalMin = 0, reg = 0, otAppr = 0, dtAppr = 0, otPend = 0, dtPend = 0, lateMin = 0, lateDays = 0, shortDays = 0;
+  const days = Object.entries(byDate).sort().map(([date, d]) => {
+    const adj = adjByDate[date]; const eff = adj != null ? adj : d.worked;
+    totalMin += eff; const sp = daySplit(eff); reg += sp.reg;
+    const a = otByDate[date]; const ok = a && a.approved;
+    if (sp.ot > 0 || sp.dt > 0) { if (ok) { otAppr += a.ot_minutes; dtAppr += a.dt_minutes; } else { otPend += sp.ot; dtPend += sp.dt; } }
+    const sched = schedByDate[date] || 0; const shortM = sched > eff ? sched - eff : 0;
+    if (d.late > 0) { lateMin += d.late; lateDays++; } if (shortM > 0) shortDays++;
+    const otStatus = sp.ot <= 0 && sp.dt <= 0 ? 'none' : (a && a.approved ? 'approved' : (a && a.rejected ? 'rejected' : (a && a.escalated ? 'escalated' : 'pending')));
+    return { date, scheduled_min: sched, worked_min: d.worked, effective_min: eff, adjusted: adj != null, late_min: d.late, short_min: shortM, ot_min: sp.ot, dt_min: sp.dt, ot_status: otStatus };
+  });
+  return {
+    kind, start, end, days,
+    totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), late_days: lateDays, late_minutes: lateMin, short_days: shortDays },
+    approved: tsAppr ? 1 : 0, approved_by: tsAppr ? (userName(tsAppr.approved_by) || null) : null,
+    rules: { ot_after_h: OT_AFTER_MIN / 60, ot_mult: OT_MULT, late_grace_min: LATE_GRACE_MIN },
+  };
+}
 
 router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
@@ -418,6 +483,49 @@ router.get('/ot-requests', requireRole('owner', 'admin', 'general_manager'), (re
     FROM ot_approvals oa JOIN users u ON u.id=oa.user_id LEFT JOIN users ue ON ue.id=oa.escalated_by LEFT JOIN locations l ON l.id=oa.location_id
     WHERE oa.escalated=1 AND oa.approved=0 AND oa.rejected=0 ORDER BY oa.escalated_at DESC`).all();
   res.json({ requests: rows });
+});
+
+// Performance / attendance history for a location over a range (default 90 days):
+// per-staff tallies of late, short, and overtime for reviews. Owner/admin any loc.
+router.get('/performance', requireRole(...ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const tz = loc.timezone || DEFAULT_TZ;
+  const end = validDate(req.query.end) || localDate(tz);
+  const start = validDate(req.query.start) || addDaysIso(end, -89);
+  const adj = {}; for (const a of db.prepare(`SELECT user_id, work_date, adjusted_minutes FROM time_adjustments WHERE location_id=? AND work_date BETWEEN ? AND ?`).all(locId, start, end)) adj[a.user_id + '|' + a.work_date] = a.adjusted_minutes;
+  const schedByDay = {}; for (const s of db.prepare(`SELECT user_id, shift_date, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ?`).all(locId, start, end)) schedByDay[s.user_id + '|' + s.shift_date] = (schedByDay[s.user_id + '|' + s.shift_date] || 0) + spanMin(s.start_time, s.end_time);
+  const otBy = {}; for (const a of db.prepare(`SELECT user_id, work_date, approved, ot_minutes, dt_minutes FROM ot_approvals WHERE location_id=? AND work_date BETWEEN ? AND ?`).all(locId, start, end)) otBy[a.user_id + '|' + a.work_date] = a;
+  // Collapse multiple punches per user+day.
+  const perUserDate = {};
+  for (const r of db.prepare(`SELECT te.user_id, u.name, u.employee_code, u.role, te.work_date, te.worked_minutes, te.late_minutes
+      FROM time_entries te JOIN users u ON u.id=te.user_id
+      WHERE te.location_id=? AND te.work_date BETWEEN ? AND ? AND te.clock_out IS NOT NULL`).all(locId, start, end)) {
+    const k = r.user_id + '|' + r.work_date;
+    const pu = perUserDate[k] || (perUserDate[k] = { worked: 0, late: 0, user_id: r.user_id, name: r.name, code: r.employee_code, role: r.role, date: r.work_date });
+    pu.worked += r.worked_minutes || 0; pu.late = Math.max(pu.late, r.late_minutes || 0);
+  }
+  const h = (m) => round2(m / 60);
+  const byUser = {};
+  for (const pu of Object.values(perUserDate)) {
+    const u = byUser[pu.user_id] || (byUser[pu.user_id] = { user_id: pu.user_id, name: pu.name, employee_code: pu.code, role: pu.role, days: 0, late_days: 0, late_minutes: 0, short_days: 0, ot_min: 0, ot_appr_min: 0, total_min: 0 });
+    const eff = adj[pu.user_id + '|' + pu.date] != null ? adj[pu.user_id + '|' + pu.date] : pu.worked;
+    u.days++; u.total_min += eff;
+    if (pu.late > 0) { u.late_days++; u.late_minutes += pu.late; }
+    if ((schedByDay[pu.user_id + '|' + pu.date] || 0) > eff) u.short_days++;
+    const sp = daySplit(eff); u.ot_min += sp.ot + sp.dt;
+    const a = otBy[pu.user_id + '|' + pu.date]; if (a && a.approved) u.ot_appr_min += (a.ot_minutes || 0) + (a.dt_minutes || 0);
+  }
+  const staff = Object.values(byUser).map(u => ({
+    user_id: u.user_id, name: u.name, employee_code: u.employee_code, role: u.role,
+    days: u.days, total_hours: h(u.total_min), late_days: u.late_days, late_minutes: u.late_minutes,
+    short_days: u.short_days, ot_hours: h(u.ot_min), ot_approved_hours: h(u.ot_appr_min),
+    on_time_rate: u.days ? round2((u.days - u.late_days) / u.days * 100) : null,
+  })).sort((a, b) => b.late_days - a.late_days || a.name.localeCompare(b.name));
+  res.json({ location: loc, start, end, staff });
 });
 
 // ── Short-shift alerts for a location ─────────────────────────────────────────

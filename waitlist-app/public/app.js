@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'weekly', hoursAnchor: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -173,6 +173,7 @@ function renderNav() {
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
   items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
+  items.push(['myhours', '⏱ My Hours']);   // each staff member's own timesheet
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
@@ -183,6 +184,7 @@ function renderNav() {
 function render() {
   setStaffLive(STAFF_LIVE);   // keep the live pill in sync with the current view
   if (S.view === 'messages') return renderMessages();
+  if (S.view === 'myhours') return renderMyHours();
   if (S.view === 'mytasks') return renderMyTasks();
   if (S.view === 'server') return renderServer();
   if (S.view === 'history') return renderHistory();
@@ -306,6 +308,54 @@ async function composeModal() {
     toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
   }, 'Send');
   $('mTo').onchange = () => $('mPersonWrap').classList.toggle('hidden', $('mTo').value !== 'person');
+}
+
+// ── My Hours: the staff member's own timesheet (proxied to Management) ─────────
+const fmtHrs = (min) => { min = Math.max(0, Math.round(min)); const hh = Math.floor(min / 60), mm = min % 60; return mm ? `${hh}h ${mm}m` : `${hh}h`; };
+function hoursRangeLabel(kind, anchor) {
+  const d = new Date(anchor + 'T00:00:00');
+  if (kind === 'daily') return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (kind === 'monthly') return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const f = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${f(mon)} – ${f(sun)}`;
+}
+function hoursNav(dir) {
+  const d = new Date(S.hoursAnchor + 'T00:00:00');
+  if (S.hoursKind === 'daily') d.setDate(d.getDate() + dir);
+  else if (S.hoursKind === 'monthly') d.setMonth(d.getMonth() + dir);
+  else d.setDate(d.getDate() + dir * 7);
+  S.hoursAnchor = d.toISOString().slice(0, 10); renderMyHours();
+}
+async function renderMyHours() {
+  if (!S.hoursAnchor) S.hoursAnchor = new Date().toISOString().slice(0, 10);
+  const v = $('view'); v.innerHTML = '<div class="empty">Loading…</div>';
+  let d;
+  try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const t = d.totals;
+  const pill = (k, l) => `<button class="navbtn ${S.hoursKind === k ? 'active' : ''}" data-hk="${k}">${l}</button>`;
+  const dayRows = (d.days || []).map(x => {
+    const flags = [
+      x.late_min > 0 ? `<span class="badge" style="background:var(--warn-bg);color:#92400e">⏰ ${fmtHrs(x.late_min)} late</span>` : '',
+      x.ot_min > 0 ? `<span class="badge" style="background:#dbeafe;color:#1d4ed8">＋${fmtHrs(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : x.ot_status === 'pending' ? ' ⏳' : x.ot_status === 'escalated' ? ' ⏳' : ''}</span>` : '',
+      x.short_min > 0 ? `<span class="badge left">${fmtHrs(x.short_min)} short</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `<tr><td>${new Date(x.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</td><td>${x.scheduled_min ? fmtHrs(x.scheduled_min) : '—'}</td><td><strong>${fmtHrs(x.effective_min)}</strong>${x.adjusted ? ' <span class="muted" style="font-size:.8rem" title="rounded by manager">(adj)</span>' : ''}</td><td>${flags || '—'}</td></tr>`;
+  }).join('');
+  v.innerHTML = `
+    <div class="section-head"><h2>My Hours</h2>
+      <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-hnav="-1">‹</button><span style="font-weight:700">${esc(hoursRangeLabel(S.hoursKind, S.hoursAnchor))}</span><button class="btn ghost" data-hnav="1">›</button></div></div>
+    <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('monthly', 'Month')}</div>
+    <div class="stats">
+      <div class="stat"><div class="label">Scheduled</div><div class="value">${t.scheduled_hours}h</div></div>
+      <div class="stat"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
+      <div class="stat"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="muted" style="font-size:.8rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
+      <div class="stat"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
+    </div>
+    ${d.approved ? `<p class="sub" style="color:var(--ok)">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
+    <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th></tr></thead><tbody>${dayRows || '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
+  v.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHours(); });
+  v.querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNav(+b.dataset.hnav));
 }
 
 // ── My Tasks: the staff member's day-task assignments (any role) ──────────────

@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'weekly', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', via SQLite datetime('now')).
@@ -250,7 +250,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, deliveries: renderDeliveries }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -1141,6 +1141,7 @@ function renderSelfOverview() {
   const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const cards = [
     ['myschedule', '🗓️', 'My Schedule', 'See your shifts and assigned tasks for the week.'],
+    ['myhours', '⏱️', 'My Hours', 'Your clocked hours, overtime and any late starts.'],
     ['messages', '💬', `Messages${S.unread ? ` (${S.unread})` : ''}`, 'Read announcements and message your team.'],
   ];
   $('view').innerHTML = `
@@ -1230,7 +1231,7 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
 const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'general_manager', 'manager'];
 const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) => k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role));
@@ -1248,7 +1249,7 @@ async function renderLocDetail() {
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
   if (S.locTab === 'activity' && !LOC_ACTIVITY_ROLES.includes(S.user.role)) S.locTab = 'details';
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
+  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, performance: () => renderLocPerformance(loc), floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
 }
 
 // ── Location activity trail (Owner/Admin/GM/Manager; manager = own location) ──
@@ -1991,6 +1992,75 @@ function quickMessageModal(userId, name) {
     const r = await api('/messages', { method: 'POST', body: JSON.stringify({ recipient_ids: [userId], subject: vals.subject, body: vals.body }) });
     toast(`Message sent to ${r.recipients} recipient`);
   }, 'Send');
+}
+
+// ── My Hours (self-view): the signed-in person's own timesheet ────────────────
+function hoursNavMgmt(dir) {
+  const d = new Date(S.hoursAnchor + 'T00:00:00');
+  if (S.hoursKind === 'daily') d.setDate(d.getDate() + dir);
+  else if (S.hoursKind === 'monthly') d.setMonth(d.getMonth() + dir);
+  else d.setDate(d.getDate() + dir * 7);
+  S.hoursAnchor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  renderMyHoursMgmt();
+}
+async function renderMyHoursMgmt() {
+  if (!S.hoursAnchor) S.hoursAnchor = fmtLocalIso(new Date());
+  let d;
+  try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const t = d.totals;
+  const pill = (k, l) => `<button class="btn sm ${S.hoursKind === k ? '' : 'ghost'}" data-hk="${k}">${l}</button>`;
+  const rows = (d.days || []).map(x => {
+    const flags = [
+      x.late_min > 0 ? `<span class="badge low">⏰ ${fmtDur(x.late_min)} late</span>` : '',
+      x.ot_min > 0 ? `<span class="badge blue">+${fmtDur(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : (x.ot_status === 'pending' || x.ot_status === 'escalated') ? ' ⏳' : ''}</span>` : '',
+      x.short_min > 0 ? `<span class="badge out">${fmtDur(x.short_min)} short</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `<tr><td>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td></tr>`;
+  }).join('');
+  $('view').innerHTML = `
+    <div class="overview-hero"><h2>My Hours</h2><p>Your clocked hours, overtime and any late starts.</p></div>
+    <div class="row-between" style="margin:.2rem 0 .6rem;flex-wrap:wrap;gap:.5rem">
+      <div style="display:flex;gap:.35rem">${pill('daily', 'Daily')}${pill('weekly', 'Weekly')}${pill('monthly', 'Monthly')}</div>
+      <div class="week-nav"><button class="btn sm ghost" data-hnav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${esc(payRange(S.hoursKind, S.hoursAnchor).label)}</span><button class="btn sm ghost" data-hnav="1">Next ›</button></div>
+    </div>
+    <div class="kpis">
+      <div class="card"><div class="label">Scheduled</div><div class="value">${t.scheduled_hours}h</div></div>
+      <div class="card"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
+      <div class="card"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
+      <div class="card"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
+    </div>
+    ${d.approved ? `<p class="sub" style="color:var(--ok,#16a34a);font-weight:600">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
+    <div class="section" style="margin-top:.8rem"><div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Scheduled</th><th class="num">Worked</th><th>Notes</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">No clocked hours this period.</td></tr>'}</tbody></table></div></div>`;
+  $('view').querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHoursMgmt(); });
+  $('view').querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNavMgmt(+b.dataset.hnav));
+}
+
+// ── Performance / attendance history for a location (manager review) ──────────
+async function renderLocPerformance(loc) {
+  const days = S.perfDays || 90;
+  const end = fmtLocalIso(new Date());
+  const start = (() => { const d = new Date(); d.setDate(d.getDate() - (days - 1)); return fmtLocalIso(d); })();
+  let data;
+  try { data = await api(`/timeclock/performance?location_id=${S.locDetailId}&start=${start}&end=${end}`); } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const pill = (n, l) => `<button class="btn sm ${days === n ? '' : 'ghost'}" data-perf="${n}">${l}</button>`;
+  const rows = data.staff.map(s => `<tr>
+    <td><strong>${esc(s.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.72rem">${esc(s.employee_code || '')}</span></td>
+    <td class="num">${s.days}</td><td class="num">${s.total_hours}</td>
+    <td class="num">${s.late_days ? `<span class="badge low">${s.late_days}</span> <span class="mono" style="color:var(--muted);font-size:.72rem">${fmtDur(s.late_minutes)}</span>` : '0'}</td>
+    <td class="num">${s.short_days ? `<span class="badge out">${s.short_days}</span>` : '0'}</td>
+    <td class="num">${s.ot_hours || 0}${s.ot_approved_hours ? ` <span class="mono" style="color:var(--muted);font-size:.72rem">(${s.ot_approved_hours} appr)</span>` : ''}</td>
+    <td class="num">${s.on_time_rate != null ? `<strong style="color:${s.on_time_rate >= 95 ? 'var(--ok,#16a34a)' : s.on_time_rate >= 80 ? '#b4630b' : 'var(--red)'}">${s.on_time_rate}%</strong>` : '—'}</td>
+    <td><button class="btn sm ghost" data-msg="${s.user_id}" data-msgname="${esc(s.name)}">✉</button></td>
+  </tr>`).join('');
+  $('locBody').innerHTML = `
+    <div class="row-between"><h3 style="margin:0">Attendance & performance</h3>
+      <div style="display:flex;gap:.35rem">${pill(30, '30 days')}${pill(90, '90 days')}${pill(365, '1 year')}</div></div>
+    <p class="sub" style="color:var(--muted);margin:.3rem 0 .7rem;font-size:.8rem">${fmtDay(data.start)} – ${fmtDay(data.end)}. Late/short/overtime tallies from the time clock — saved for reviews. Message a staff member with ✉.</p>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Days</th><th class="num">Hours</th><th class="num">Late</th><th class="num">Short</th><th class="num">OT hrs</th><th class="num">On-time</th><th></th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="8" class="empty">No clocked history in this range.</td></tr>'}
+    </tbody></table></div>`;
+  $('locBody').querySelectorAll('[data-perf]').forEach(b => b.onclick = () => { S.perfDays = +b.dataset.perf; renderLocPerformance(loc); });
+  $('locBody').querySelectorAll('[data-msg]').forEach(b => b.onclick = () => quickMessageModal(+b.dataset.msg, b.dataset.msgname));
 }
 
 function exportPayrollCSV(pr) {

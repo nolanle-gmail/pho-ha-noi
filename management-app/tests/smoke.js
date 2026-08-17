@@ -845,6 +845,16 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/timeclock/approve-total', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: tsLoc, user_id: tsUser.id, period_kind: 'daily', period_start: TD, period_end: TD, note: 'signed off' }) });
     check('approve the daily total', r.status === 200, 'status=' + r.status);
     check('period shows approved', (await tsGet(mgr.token)).staff.find(s => s.user_id === tsUser.id).approved === 1);
+    // Staff self-view (my-hours) + manager performance history.
+    const tsEmail = tdb.prepare(`SELECT email FROM users WHERE id=?`).get(tsUser.id).email;
+    const mh = await j(await fetch(base + `/api/timeclock/my-hours?as=${encodeURIComponent(tsEmail)}&kind=daily&anchor=${TD}`, { headers: { 'X-Service-Key': 'dev-floorplan-key' } }));
+    check('my-hours self-view returns the day (rounded 8h)', mh.days && mh.days.length === 1 && mh.days[0].effective_min === 480, JSON.stringify(mh.days && mh.days[0]));
+    r = await fetch(base + '/api/timeclock/my-hours');
+    check('my-hours needs auth (401)', r.status === 401, 'status=' + r.status);
+    const perf = await j(await fetch(base + `/api/timeclock/performance?location_id=${tsLoc}&start=${TD}&end=${TD}`, { headers: H(mgr.token) }));
+    check('performance history tallies the day', perf.staff.some(s => s.user_id === tsUser.id && s.days === 1));
+    r = await fetch(base + '/api/timeclock/performance?location_id=' + tsLoc, { headers: H(emp.token) });
+    check('performance history blocked from staff (403)', r.status === 403, 'status=' + r.status);
 
     // ── Messaging: directory unification, group send, service-key as-user ──
     const mrecips = await j(await fetch(base + '/api/messages/recipients', { headers: H(token) }));
