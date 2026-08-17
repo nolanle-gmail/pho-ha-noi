@@ -2922,7 +2922,7 @@ async function renderInbox() {
     <div class="row-between"><h2 class="page">${arch ? 'Archived' : 'Inbox'} ${!arch ? `<span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.reduce((s, m) => s + (m.unread || 0), 0)} unread</span>` : ''}</h2>
       <button class="btn sm ghost" id="inbToggle">${arch ? '← Back to inbox' : '🗄️ Archived'}</button></div>
     ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
-      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}" data-unread="${m.unread || 0}">
         <div class="msg-head">
           <span class="msg-from">${m.is_read ? '' : '<span class="dot"></span>'}${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> ${audBadge(m.audience)}${m.thread_count > 1 ? ` <span class="badge gray">💬 ${m.thread_count}</span>` : ''}</span>
           <span class="msg-time">${msgTime(m.created_at)}</span>
@@ -2931,7 +2931,11 @@ async function renderInbox() {
         <div class="msg-body">${esc(m.body)}</div>
       </div>`).join('')}</div>` : `<div class="empty">${arch ? 'No archived conversations.' : 'No messages yet.'}</div>`}`;
   $('inbToggle').onclick = () => { S.msgArchived = !S.msgArchived; renderMessages(); };
-  $('view').querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderMessages(); });
+  $('view').querySelectorAll('.msg-card').forEach(card => card.onclick = () => {
+    const u = parseInt(card.dataset.unread || '0', 10);   // opening reads the whole thread — reflect it at once
+    if (u > 0) { S.unread = Math.max(0, S.unread - u); card.classList.remove('unread'); card.querySelector('.dot')?.remove(); renderSidebar(); }
+    S.msgThread = card.dataset.tid; renderMessages();
+  });
 }
 
 async function renderSent() {

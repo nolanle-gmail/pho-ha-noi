@@ -219,14 +219,18 @@ async function renderMessages() {
         ${arch ? '' : '<button class="btn big" id="msgNew">✉️ New</button>'}
       </div></div>
     <div class="msg-list">${msgs.length ? msgs.map(m => `
-      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
+      <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}" data-unread="${m.unread || 0}">
         <div class="msg-top"><span class="msg-from">${m.is_read ? '' : '<span class="msg-dot"></span>'}${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span>${m.audience === 'all' ? ' <span class="msg-role bc">broadcast</span>' : ''}${m.thread_count > 1 ? ` <span class="msg-role">💬 ${m.thread_count}</span>` : ''}</span><span class="msg-when">${msgAgo(m.created_at)}</span></div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-text">${esc(m.body)}</div>
       </div>`).join('') : `<div class="empty">${arch ? 'No archived conversations.' : 'No messages yet.'}</div>`}</div>`;
   $('msgToggle').onclick = () => { S.msgArchived = !S.msgArchived; renderMessages(); };
   if ($('msgNew')) $('msgNew').onclick = composeModal;
-  v.querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderThreadView(); });
+  v.querySelectorAll('.msg-card').forEach(card => card.onclick = () => {
+    const u = parseInt(card.dataset.unread || '0', 10);   // opening reads the whole thread — reflect it at once
+    if (u > 0) { S.unread = Math.max(0, S.unread - u); card.classList.remove('unread'); card.querySelector('.msg-dot')?.remove(); renderNav(); }
+    S.msgThread = card.dataset.tid; renderThreadView();
+  });
 }
 
 async function renderThreadView() {
