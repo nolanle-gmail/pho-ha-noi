@@ -104,8 +104,10 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .badge.waiting { background: var(--gold-soft); color: #92400e; }
 
 /* Owner sub-navigation */
-.subnav { display: flex; gap: .25rem; background: #fff; border-bottom: 1px solid var(--line); padding: .4rem 1.5rem; }
-.subnav .navbtn { background: transparent; border: none; padding: .55rem .95rem; font-weight: 700; font-size: .92rem; color: var(--muted); border-radius: 9px; }
+.subnav { display: flex; gap: .25rem; background: #fff; border-bottom: 1px solid var(--line); padding: .4rem 1.5rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.subnav::-webkit-scrollbar { display: none; }
+.subnav .navbtn { background: transparent; border: none; padding: .55rem .95rem; font-weight: 700; font-size: .92rem; color: var(--muted); border-radius: 9px; white-space: nowrap; flex: 0 0 auto; }
+@media (max-width: 560px) { .subnav { padding: .4rem .7rem; } }
 .subnav .navbtn:hover { background: #faf7f2; }
 .subnav .navbtn.active { background: var(--gold-soft); color: #92400e; }
 
