@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', via SQLite datetime('now')).
@@ -226,7 +226,7 @@ function setActiveNav(section) {
 
 function showSection(section) {
   S.section = section;
-  S.msgThread = null;   // leave any open conversation when switching sections
+  S.msgThread = null; S.msgArchived = false;   // leave any open conversation when switching sections
   setActiveNav(section);
   $('app').classList.remove('sidebar-open');
   const meta = SECTIONS.find(s => s[0] === section);
@@ -2862,7 +2862,7 @@ async function renderRepPayments() {
 const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose']];
 function renderMsgTabs() {
   $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}</button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; renderMsgTabs(); renderMessages(); });
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; renderMsgTabs(); renderMessages(); });
 }
 function renderMessages() {
   if (S.msgThread) return renderThread();
@@ -2876,15 +2876,27 @@ async function renderThread() {
   try { t = await api(`/messages/thread/${S.msgThread}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   refreshUnread(); renderMsgTabs();
   const me = t.me;
+  const tid = S.msgThread;
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">${esc(t.subject || 'Conversation')}</h2><button class="btn sm ghost" id="thBack">← Back to inbox</button></div>
+    <div class="row-between"><h2 class="page">${esc(t.subject || 'Conversation')}</h2>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        ${S.msgArchived
+          ? '<button class="btn sm ghost" id="thUnarch">📥 Unarchive</button>'
+          : '<button class="btn sm ghost" id="thUnread">◍ Mark unread</button><button class="btn sm ghost" id="thArch">🗄️ Archive</button>'}
+        <button class="btn sm ghost" id="thBack">← Back to inbox</button>
+      </div></div>
     <div class="thread">${t.messages.map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
         <div class="thread-body">${esc(m.body)}</div>
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="thSend">Reply</button></div>`;
-  $('thBack').onclick = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
+  const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
+  $('thBack').onclick = backToList;
+  const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshUnread(); backToList(); } catch (e) { toast(e.message, true); } };
+  if ($('thUnread')) $('thUnread').onclick = () => threadAction('unread', 'Marked unread');
+  if ($('thArch')) $('thArch').onclick = () => threadAction('archive', 'Archived');
+  if ($('thUnarch')) $('thUnarch').onclick = () => threadAction('unarchive', 'Moved to inbox');
   const last = t.messages[t.messages.length - 1];
   $('thSend').onclick = async () => {
     const body = $('thBody').value.trim();
@@ -2904,9 +2916,11 @@ function msgTime(iso) {
 const audBadge = (a) => a === 'all' ? '<span class="badge gray">broadcast</span>' : (a === 'location' ? '<span class="badge gray">location</span>' : '');
 
 async function renderInbox() {
-  const msgs = await api('/messages/inbox');
+  const arch = S.msgArchived;
+  const msgs = await api('/messages/inbox' + (arch ? '?archived=1' : ''));
   $('view').innerHTML = `
-    <h2 class="page">Inbox <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.filter(m => !m.is_read).length} unread</span></h2>
+    <div class="row-between"><h2 class="page">${arch ? 'Archived' : 'Inbox'} ${!arch ? `<span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.filter(m => !m.is_read).length} unread</span>` : ''}</h2>
+      <button class="btn sm ghost" id="inbToggle">${arch ? '← Back to inbox' : '🗄️ Archived'}</button></div>
     ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
       <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
         <div class="msg-head">
@@ -2915,7 +2929,8 @@ async function renderInbox() {
         </div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-body">${esc(m.body)}</div>
-      </div>`).join('')}</div>` : '<div class="empty">No messages yet.</div>'}`;
+      </div>`).join('')}</div>` : `<div class="empty">${arch ? 'No archived conversations.' : 'No messages yet.'}</div>`}`;
+  $('inbToggle').onclick = () => { S.msgArchived = !S.msgArchived; renderMessages(); };
   $('view').querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderMessages(); });
 }
 

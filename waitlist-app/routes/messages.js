@@ -31,9 +31,12 @@ async function fwd(req, res, method, path, body) {
 
 router.get('/recipients', (req, res) => fwd(req, res, 'GET', '/recipients'));
 router.get('/unread-count', (req, res) => fwd(req, res, 'GET', '/unread-count'));
-router.get('/inbox', (req, res) => fwd(req, res, 'GET', '/inbox'));
+router.get('/inbox', (req, res) => fwd(req, res, 'GET', '/inbox' + (req.query.archived === '1' ? '?archived=1' : '')));
 router.get('/sent', (req, res) => fwd(req, res, 'GET', '/sent'));
 router.get('/thread/:id', (req, res) => fwd(req, res, 'GET', `/thread/${encodeURIComponent(req.params.id)}`));
+router.post('/thread/:id/unread', (req, res) => fwd(req, res, 'POST', `/thread/${encodeURIComponent(req.params.id)}/unread`));
+router.post('/thread/:id/archive', (req, res) => fwd(req, res, 'POST', `/thread/${encodeURIComponent(req.params.id)}/archive`));
+router.post('/thread/:id/unarchive', (req, res) => fwd(req, res, 'POST', `/thread/${encodeURIComponent(req.params.id)}/unarchive`));
 router.post('/:id/read', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/read`));
 router.post('/:id/reply', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/reply`, req.body));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));

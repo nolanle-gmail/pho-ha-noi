@@ -826,6 +826,20 @@ const check = (name, ok, detail = '') => {
     check('reply to a message (threaded)', r.status === 200 && (await j(r)).success === true, 'status=' + r.status);
     const thread = await j(await fetch(base + '/api/messages/thread/' + gsend.id, { headers: H(token) }));
     check('thread returns the full conversation', Array.isArray(thread.messages) && thread.messages.length === 2, 'n=' + (thread.messages || []).length);
+    // Archive + mark-unread (recipient state — test as the actual recipient host1).
+    const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
+    const host1 = mrecips.find(u => u.name === 'Front Desk 1');
+    const arootId = (await j(await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ recipient_ids: [host1.id], subject: 'Arch smoke', body: 'x' }) }))).id;
+    r = await fetch(base + '/api/messages/thread/' + arootId + '/archive?as=host1@phohanoi.com', { method: 'POST', headers: SK });
+    check('archive a conversation', r.status === 200, 'status=' + r.status);
+    let hInbox = await j(await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: SK }));
+    check('archived thread leaves the active inbox', !hInbox.some(m => m.thread_id === arootId));
+    hInbox = await j(await fetch(base + '/api/messages/inbox?archived=1&as=host1@phohanoi.com', { headers: SK }));
+    check('archived thread shows in the archive', hInbox.some(m => m.thread_id === arootId));
+    r = await fetch(base + '/api/messages/thread/' + arootId + '/unarchive?as=host1@phohanoi.com', { method: 'POST', headers: SK });
+    check('unarchive a conversation', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + '/api/messages/thread/' + arootId + '/unread?as=host1@phohanoi.com', { method: 'POST', headers: SK });
+    check('mark a conversation unread', r.status === 200, 'status=' + r.status);
     r = await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });
     check('service-key as-user inbox (200)', r.status === 200 && Array.isArray(await r.json()), 'status=' + r.status);
     r = await fetch(base + '/api/messages/inbox?as=nobody@nowhere.test', { headers: { 'X-Service-Key': 'dev-floorplan-key' } });

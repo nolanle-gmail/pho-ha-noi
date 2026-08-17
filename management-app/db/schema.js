@@ -638,6 +638,8 @@ function migrate() {
     `ALTER TABLE messages ADD COLUMN thread_id INTEGER`,
     `ALTER TABLE messages ADD COLUMN parent_id INTEGER`,
     `CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id)`,
+    // Per-recipient archive: a reader can file a conversation away from their inbox.
+    `ALTER TABLE message_recipients ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Existing messages become the root of their own thread.

@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -176,7 +176,7 @@ function renderNav() {
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
   nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
-  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; renderNav(); render(); });
+  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; S.msgArchived = false; renderNav(); render(); });
 }
 
 // Dispatch to the active view.
@@ -208,19 +208,24 @@ async function renderMessages() {
   if (S.msgThread) return renderThreadView();
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
+  const arch = S.msgArchived;
   let msgs;
-  try { msgs = await api('/messages/inbox'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  try { msgs = await api('/messages/inbox' + (arch ? '?archived=1' : '')); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const unread = msgs.filter(m => !m.is_read).length;
   v.innerHTML = `
-    <div class="section-head"><h2>Messages ${unread ? `<span class="muted" style="font-weight:400;font-size:.9rem">· ${unread} unread</span>` : ''}</h2>
-      <button class="btn big" id="msgNew">✉️ New</button></div>
+    <div class="section-head"><h2>${arch ? 'Archived' : 'Messages'} ${!arch && unread ? `<span class="muted" style="font-weight:400;font-size:.9rem">· ${unread} unread</span>` : ''}</h2>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn ghost" id="msgToggle">${arch ? '← Inbox' : '🗄️ Archived'}</button>
+        ${arch ? '' : '<button class="btn big" id="msgNew">✉️ New</button>'}
+      </div></div>
     <div class="msg-list">${msgs.length ? msgs.map(m => `
       <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">
         <div class="msg-top"><span class="msg-from">${m.is_read ? '' : '<span class="msg-dot"></span>'}${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span>${m.audience === 'all' ? ' <span class="msg-role bc">broadcast</span>' : ''}${m.thread_count > 1 ? ` <span class="msg-role">💬 ${m.thread_count}</span>` : ''}</span><span class="msg-when">${msgAgo(m.created_at)}</span></div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-text">${esc(m.body)}</div>
-      </div>`).join('') : '<div class="empty">No messages yet.</div>'}</div>`;
-  $('msgNew').onclick = composeModal;
+      </div>`).join('') : `<div class="empty">${arch ? 'No archived conversations.' : 'No messages yet.'}</div>`}</div>`;
+  $('msgToggle').onclick = () => { S.msgArchived = !S.msgArchived; renderMessages(); };
+  if ($('msgNew')) $('msgNew').onclick = composeModal;
   v.querySelectorAll('.msg-card').forEach(card => card.onclick = () => { S.msgThread = card.dataset.tid; renderThreadView(); });
 }
 
@@ -231,15 +236,27 @@ async function renderThreadView() {
   try { t = await api(`/messages/thread/${S.msgThread}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   refreshMsgUnread();
   const me = t.me;
+  const tid = S.msgThread;
   v.innerHTML = `
-    <div class="section-head"><h2>${esc(t.subject || 'Conversation')}</h2><button class="btn ghost" id="msgBack">← Back</button></div>
+    <div class="section-head"><h2>${esc(t.subject || 'Conversation')}</h2>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        ${S.msgArchived
+          ? '<button class="btn ghost" id="msgUnarch">📥 Unarchive</button>'
+          : '<button class="btn ghost" id="msgUnread">◍ Mark unread</button><button class="btn ghost" id="msgArch">🗄️ Archive</button>'}
+        <button class="btn ghost" id="msgBack">← Back</button>
+      </div></div>
     <div class="thread">${t.messages.map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
         <div class="thread-body">${esc(m.body)}</div>
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="rSend">Reply</button></div>`;
-  $('msgBack').onclick = () => { S.msgThread = null; renderMessages(); };
+  const backToList = () => { S.msgThread = null; renderMessages(); };
+  $('msgBack').onclick = backToList;
+  const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshMsgUnread(); backToList(); } catch (e) { toast(e.message, true); } };
+  if ($('msgUnread')) $('msgUnread').onclick = () => threadAction('unread', 'Marked unread');
+  if ($('msgArch')) $('msgArch').onclick = () => threadAction('archive', 'Archived');
+  if ($('msgUnarch')) $('msgUnarch').onclick = () => threadAction('unarchive', 'Moved to inbox');
   const last = t.messages[t.messages.length - 1];
   $('rSend').onclick = async () => {
     const body = $('rBody').value.trim();

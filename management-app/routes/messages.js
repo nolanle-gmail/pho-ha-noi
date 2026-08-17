@@ -63,21 +63,23 @@ router.get('/recipients', (req, res) => {
   `).all(req.user.id));
 });
 
-// Unread count (drives the sidebar badge).
+// Unread count (drives the badge) — archived conversations don't count.
 router.get('/unread-count', (req, res) => {
-  res.json({ count: db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0`).get(req.user.id).c });
+  res.json({ count: db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0 AND archived=0`).get(req.user.id).c });
 });
 
-// Inbox — messages addressed to me, with each message's thread + reply count.
+// Inbox — messages addressed to me, active by default (?archived=1 for the
+// archive), with each message's thread + reply count.
 router.get('/inbox', (req, res) => {
+  const arch = req.query.archived === '1' ? 1 : 0;
   res.json(db.prepare(`
-    SELECT m.id, m.subject, m.body, m.audience, m.created_at, mr.is_read,
+    SELECT m.id, m.subject, m.body, m.audience, m.created_at, mr.is_read, mr.archived,
            COALESCE(m.thread_id, m.id) AS thread_id,
            (SELECT COUNT(*) FROM messages t WHERE COALESCE(t.thread_id, t.id)=COALESCE(m.thread_id, m.id)) AS thread_count,
            u.name AS sender_name, u.role AS sender_role
     FROM message_recipients mr JOIN messages m ON mr.message_id=m.id JOIN users u ON m.sender_id=u.id
-    WHERE mr.user_id=? ORDER BY m.created_at DESC LIMIT 200
-  `).all(req.user.id));
+    WHERE mr.user_id=? AND mr.archived=? ORDER BY m.created_at DESC LIMIT 200
+  `).all(req.user.id, arch));
 });
 
 // A full conversation thread I'm part of (messages I sent or received), oldest
@@ -99,6 +101,27 @@ router.get('/thread/:id', (req, res) => {
     .run(req.user.id, tid);
   res.json({ thread_id: tid, subject: msgs[0].subject, messages: msgs, me: req.user.id });
 });
+
+// Mark a conversation unread again (its latest message I received).
+router.post('/thread/:id/unread', (req, res) => {
+  const tid = parseInt(req.params.id, 10);
+  const row = db.prepare(`SELECT mr.id FROM message_recipients mr JOIN messages m ON mr.message_id=m.id
+    WHERE mr.user_id=? AND COALESCE(m.thread_id, m.id)=? ORDER BY m.id DESC LIMIT 1`).get(req.user.id, tid);
+  if (!row) return res.status(404).json({ error: 'Not your conversation.' });
+  db.prepare(`UPDATE message_recipients SET is_read=0, read_at=NULL WHERE id=?`).run(row.id);
+  res.json({ success: true });
+});
+
+// Archive / unarchive a whole conversation for me (a new reply un-buries it).
+function setArchived(req, res, val) {
+  const tid = parseInt(req.params.id, 10);
+  const r = db.prepare(`UPDATE message_recipients SET archived=?
+    WHERE user_id=? AND message_id IN (SELECT id FROM messages WHERE COALESCE(thread_id, id)=?)`).run(val, req.user.id, tid);
+  if (!r.changes) return res.status(404).json({ error: 'Not your conversation.' });
+  res.json({ success: true });
+}
+router.post('/thread/:id/archive', (req, res) => setArchived(req, res, 1));
+router.post('/thread/:id/unarchive', (req, res) => setArchived(req, res, 0));
 
 // Sent — messages I sent, with read progress.
 router.get('/sent', (req, res) => {
