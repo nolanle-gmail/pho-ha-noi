@@ -687,9 +687,9 @@ const check = (name, ok, detail = '') => {
     check('recipient received message', empInbox.some(m => m.body === 'Welcome aboard!' && !m.is_read));
     const empUnread = await j(await fetch(base + '/api/messages/unread-count', { headers: H(emp.token) }));
     check('recipient unread count', empUnread.count >= 1);
-    const theMsg = empInbox.find(m => m.body === 'Welcome aboard!');
-    r = await fetch(base + `/api/messages/${theMsg.id}/read`, { method: 'POST', headers: H(emp.token) });
-    check('mark message read', r.status === 200);
+    const theRow = empInbox.find(m => m.body === 'Welcome aboard!');
+    r = await fetch(base + `/api/messages/thread/${theRow.thread_id}`, { headers: H(emp.token) });
+    check('opening a thread marks it read', r.status === 200);
     const empUnread2 = await j(await fetch(base + '/api/messages/unread-count', { headers: H(emp.token) }));
     check('unread decremented after read', empUnread2.count === empUnread.count - 1, `${empUnread.count} -> ${empUnread2.count}`);
 
@@ -830,6 +830,10 @@ const check = (name, ok, detail = '') => {
     const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
     const host1 = mrecips.find(u => u.name === 'Front Desk 1');
     const arootId = (await j(await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ recipient_ids: [host1.id], subject: 'Arch smoke', body: 'x' }) }))).id;
+    // Collapsed inbox: a second message in the thread must not add a second row.
+    await fetch(base + '/api/messages/' + arootId + '/reply', { method: 'POST', headers: H(token), body: JSON.stringify({ body: 'second' }) });
+    const arow = (await j(await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: SK }))).filter(m => m.thread_id === arootId);
+    check('inbox collapses a thread to one row', arow.length === 1 && arow[0].thread_count >= 2, 'rows=' + arow.length + ' count=' + (arow[0] && arow[0].thread_count));
     r = await fetch(base + '/api/messages/thread/' + arootId + '/archive?as=host1@phohanoi.com', { method: 'POST', headers: SK });
     check('archive a conversation', r.status === 200, 'status=' + r.status);
     let hInbox = await j(await fetch(base + '/api/messages/inbox?as=host1@phohanoi.com', { headers: SK }));

@@ -2919,7 +2919,7 @@ async function renderInbox() {
   const arch = S.msgArchived;
   const msgs = await api('/messages/inbox' + (arch ? '?archived=1' : ''));
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">${arch ? 'Archived' : 'Inbox'} ${!arch ? `<span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.filter(m => !m.is_read).length} unread</span>` : ''}</h2>
+    <div class="row-between"><h2 class="page">${arch ? 'Archived' : 'Inbox'} ${!arch ? `<span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.reduce((s, m) => s + (m.unread || 0), 0)} unread</span>` : ''}</h2>
       <button class="btn sm ghost" id="inbToggle">${arch ? '← Back to inbox' : '🗄️ Archived'}</button></div>
     ${msgs.length ? `<div class="msg-list">${msgs.map(m => `
       <div class="msg-card ${m.is_read ? '' : 'unread'}" data-tid="${m.thread_id}">

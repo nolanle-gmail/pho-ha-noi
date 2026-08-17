@@ -211,7 +211,7 @@ async function renderMessages() {
   const arch = S.msgArchived;
   let msgs;
   try { msgs = await api('/messages/inbox' + (arch ? '?archived=1' : '')); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  const unread = msgs.filter(m => !m.is_read).length;
+  const unread = msgs.reduce((s, m) => s + (m.unread || 0), 0);
   v.innerHTML = `
     <div class="section-head"><h2>${arch ? 'Archived' : 'Messages'} ${!arch && unread ? `<span class="muted" style="font-weight:400;font-size:.9rem">· ${unread} unread</span>` : ''}</h2>
       <div style="display:flex;gap:.5rem">

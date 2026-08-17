@@ -68,17 +68,35 @@ router.get('/unread-count', (req, res) => {
   res.json({ count: db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0 AND archived=0`).get(req.user.id).c });
 });
 
-// Inbox — messages addressed to me, active by default (?archived=1 for the
-// archive), with each message's thread + reply count.
+// Inbox — one row per conversation (collapsed), showing the latest message I
+// received in it. Active by default; ?archived=1 lists conversations I've filed
+// away (all my copies archived). A thread's unread count + total size ride along.
 router.get('/inbox', (req, res) => {
   const arch = req.query.archived === '1' ? 1 : 0;
   res.json(db.prepare(`
-    SELECT m.id, m.subject, m.body, m.audience, m.created_at, mr.is_read, mr.archived,
-           COALESCE(m.thread_id, m.id) AS thread_id,
-           (SELECT COUNT(*) FROM messages t WHERE COALESCE(t.thread_id, t.id)=COALESCE(m.thread_id, m.id)) AS thread_count,
+    WITH mine AS (
+      SELECT m.id AS msg_id, COALESCE(m.thread_id, m.id) AS tid, mr.is_read, mr.archived
+      FROM message_recipients mr JOIN messages m ON mr.message_id=m.id
+      WHERE mr.user_id=?
+    ),
+    agg AS (
+      SELECT tid,
+             SUM(CASE WHEN is_read=0 AND archived=0 THEN 1 ELSE 0 END) AS unread,
+             SUM(CASE WHEN archived=0 THEN 1 ELSE 0 END) AS active_rows,
+             MAX(msg_id) AS last_recv_id
+      FROM mine GROUP BY tid
+    )
+    SELECT a.tid AS thread_id, a.unread,
+           CASE WHEN a.unread > 0 THEN 0 ELSE 1 END AS is_read,
+           CASE WHEN a.active_rows = 0 THEN 1 ELSE 0 END AS archived,
+           m.subject, m.body, m.audience, m.created_at,
+           (SELECT COUNT(*) FROM messages t WHERE COALESCE(t.thread_id, t.id)=a.tid) AS thread_count,
            u.name AS sender_name, u.role AS sender_role
-    FROM message_recipients mr JOIN messages m ON mr.message_id=m.id JOIN users u ON m.sender_id=u.id
-    WHERE mr.user_id=? AND mr.archived=? ORDER BY m.created_at DESC LIMIT 200
+    FROM agg a
+    JOIN messages m ON m.id=a.last_recv_id
+    JOIN users u ON m.sender_id=u.id
+    WHERE CASE WHEN ?=1 THEN a.active_rows=0 ELSE a.active_rows>0 END
+    ORDER BY m.created_at DESC LIMIT 200
   `).all(req.user.id, arch));
 });
 
