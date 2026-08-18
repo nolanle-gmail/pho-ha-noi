@@ -176,8 +176,24 @@ function renderNav() {
   items.push(['myhours', '⏱ My Hours']);   // each staff member's own timesheet
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
   nav.classList.remove('hidden');
-  nav.innerHTML = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
-  nav.querySelectorAll('button').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; S.msgArchived = false; renderNav(); render(); });
+  const cur = items.find(([k]) => k === S.view) || items[0];
+  const open = nav.classList.contains('open');
+  const btns = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
+  // Desktop/tablet keep the horizontal strip; mobile (CSS ≤560px) collapses these into a
+  // hamburger that drops the same items down as a left-anchored menu.
+  nav.innerHTML = `<button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="${open}"><span class="nav-burger">${open ? '✕' : '☰'}</span><span class="nav-cur">${cur[1]}</span>${S.unread && S.view !== 'messages' ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button><div class="nav-items" id="navItems">${btns}</div>`;
+  const toggle = $('navToggle'), burger = nav.querySelector('.nav-burger');
+  toggle.onclick = (e) => { e.stopPropagation(); const o = nav.classList.toggle('open'); toggle.setAttribute('aria-expanded', o); burger.textContent = o ? '✕' : '☰'; };
+  nav.querySelectorAll('.navbtn').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; S.msgArchived = false; nav.classList.remove('open'); renderNav(); render(); });
+  if (!window._navOutsideBound) {   // tap anywhere outside closes the mobile dropdown
+    window._navOutsideBound = true;
+    document.addEventListener('click', (e) => {
+      if (nav.classList.contains('open') && !nav.contains(e.target)) {
+        nav.classList.remove('open');
+        const t = $('navToggle'); if (t) { t.setAttribute('aria-expanded', 'false'); const bb = nav.querySelector('.nav-burger'); if (bb) bb.textContent = '☰'; }
+      }
+    });
+  }
 }
 
 // Dispatch to the active view.

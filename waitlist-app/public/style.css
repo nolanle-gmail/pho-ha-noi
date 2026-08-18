@@ -103,13 +103,31 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .badge.left { background: #f1f5f9; color: var(--muted); }
 .badge.waiting { background: var(--gold-soft); color: #92400e; }
 
-/* Owner sub-navigation */
+/* Sub-navigation (also reused for the My Hours / activity pill rows) */
 .subnav { display: flex; gap: .25rem; background: #fff; border-bottom: 1px solid var(--line); padding: .4rem 1.5rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .subnav::-webkit-scrollbar { display: none; }
 .subnav .navbtn { background: transparent; border: none; padding: .55rem .95rem; font-weight: 700; font-size: .92rem; color: var(--muted); border-radius: 9px; white-space: nowrap; flex: 0 0 auto; }
 @media (max-width: 560px) { .subnav { padding: .4rem .7rem; } }
 .subnav .navbtn:hover { background: #faf7f2; }
 .subnav .navbtn.active { background: var(--gold-soft); color: #92400e; }
+
+/* Main staff nav: horizontal strip on desktop/tablet; hamburger dropdown on mobile.
+   Scoped to #subnav so the .subnav pill rows above are unaffected. */
+#subnav { display: block; padding: 0; overflow: visible; }
+#subnav .nav-toggle { display: none; }   /* hamburger hidden above the mobile breakpoint */
+#subnav .nav-items { display: flex; gap: .25rem; padding: .4rem 1.5rem; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+#subnav .nav-items::-webkit-scrollbar { display: none; }
+
+@media (max-width: 560px) {
+  #subnav .nav-toggle { display: flex; align-items: center; gap: .55rem; width: 100%; background: #fff; border: none; padding: .65rem 1rem; font: inherit; font-weight: 800; font-size: .95rem; color: var(--ink); text-align: left; cursor: pointer; }
+  #subnav .nav-burger { width: 1.2rem; font-size: 1.2rem; line-height: 1; color: var(--red); text-align: center; }
+  #subnav .nav-cur { flex: 1; }
+  #subnav .nav-items { display: none; flex-direction: column; gap: 0; padding: 0; overflow: visible; border-top: 1px solid var(--line); }
+  #subnav.open .nav-items { display: flex; }
+  #subnav .nav-items .navbtn { width: 100%; text-align: left; border-radius: 0; padding: .85rem 1.1rem; border-bottom: 1px solid #f4efe7; font-size: .95rem; }
+  #subnav .nav-items .navbtn:last-child { border-bottom: none; }
+  #subnav .nav-items .navbtn.active { border-left: 3px solid #b45309; padding-left: calc(1.1rem - 3px); }
+}
 
 /* Filter bar (history / report) */
 .filters { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 1.25rem; }
