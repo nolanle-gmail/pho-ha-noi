@@ -13,6 +13,12 @@ PhoHaNoi/
 └── waitlist-app/    Host check-in / waiting list (port 4002)
 ```
 
+> 📘 **[Platform Handbook](docs/HANDBOOK.md)** — the whole system in one place:
+> architecture, the full back-end database design (ER diagrams + a 48-table
+> catalog), workflows, the access-level model, and a role-by-role **user guide
+> with a per-store test plan and demo logins**. Start here to test with staff.
+> Module-level reference for the management app lives in [docs/FEATURES.md](docs/FEATURES.md).
+
 ## 🚀 Try it live
 
 Both apps are deployed on Fly.io — sign in with the demo accounts and explore.
