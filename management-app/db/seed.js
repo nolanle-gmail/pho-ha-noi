@@ -445,6 +445,13 @@ function run() {
   seedVisits(db, locIds);
   seedStaffTasks(db, locIds);
 
+  // Front-desk hosts (host1..10) live primarily in the Staff app but must also
+  // exist in this directory — same 'Host123!' password — so they can be messaged
+  // and can sign in to the Management console. ensureDirectory also runs on boot,
+  // but calling it here keeps a reseed self-complete (no reboot needed) and the
+  // password identical across both apps.
+  require('./ensure-directory').ensureDirectory();
+
   // Login employee codes: reuse the HR profile code where present, else generate one.
   db.exec(`UPDATE users SET employee_code = (SELECT sp.employee_code FROM staff_profiles sp WHERE sp.user_id = users.id)
            WHERE (employee_code IS NULL OR employee_code = '')
