@@ -961,8 +961,12 @@ place in line until "your table is ready."
 
 ### Demo logins
 
-All on the Management console unless noted. Front-desk hosts and Staff-app users
-sign in on the waitlist app.
+> **One login, both apps.** Sign-in is unified to the Management directory, so **the
+> same email + password works on both the Management console and the Staff / Front
+> Desk app** — every account below is verified working on both. Signing in works
+> everywhere; each role then sees the UI appropriate to it (e.g. an Analyst or Driver
+> can open the Staff app but only sees the self-service views — My Tasks, Messages,
+> My Hours). Front-desk staff use the Staff app; back-office roles use the console.
 
 | Role | Email | Password |
 |---|---|---|
@@ -978,9 +982,9 @@ sign in on the waitlist app.
 | Host — role `host` (waitlist) | `host@phohanoi.com` | `Host123!` |
 | Front Desk — role `frontdesk` (waitlist) | `host1@phohanoi.com` | `Host123!` |
 
-> **Note:** production passwords for some demo managers may differ from local seeds
-> — hosts use `Host123!`. If a login fails on production, try the owner account,
-> which is confirmed on both.
+> **Note:** all logins above are verified working on production, on **both** apps. If
+> a login ever fails, the owner account (`harry@phohanoi.com` / `Harry123!`) is the
+> safe fallback.
 
 ### A 10-minute smoke test for a store
 
