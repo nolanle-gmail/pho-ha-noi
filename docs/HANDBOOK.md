@@ -699,9 +699,9 @@ hamburger drawer on phones. Views depend on role:
 | View | Purpose | Shown to |
 |---|---|---|
 | 📋 My Tasks | Assigned day-tasks — Start, Done, and an optional proof photo | Everyone |
-| 🛎️ My Tables | The server's claimed tables & timed checks | Server, Busser |
-| 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk |
-| 🍽️ Floor | The live table map | Server, Busser, Front Desk |
+| 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
+| 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
+| 🍽️ Floor | The live table map (view + seat / update) | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / month, OT & late | Everyone |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
