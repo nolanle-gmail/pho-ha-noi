@@ -12,6 +12,10 @@ router.use(verifyToken);
 // driver, analyst, accountant) are not floor staff and stay out.
 const FLOOR = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager',
   'frontdesk', 'host', 'server', 'busser', 'cashier', 'bartender', 'barista', 'chef', 'line_cook', 'prep_cook', 'dishwasher', 'employee'];
+// Back-of-house kitchen roles may VIEW the floor but not seat guests or change
+// table status — those writes stay with front-of-house + management.
+const KITCHEN = ['chef', 'line_cook', 'prep_cook', 'dishwasher'];
+const FLOOR_EDIT = FLOOR.filter((r) => !KITCHEN.includes(r));
 const MGMT_URL = (process.env.MGMT_URL || 'http://localhost:4001').replace(/\/$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
@@ -35,11 +39,11 @@ router.get('/', requireRole(...FLOOR), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'GET', '', l);
 });
-router.put('/tables/:id/seat', requireRole(...FLOOR), (req, res) => {
+router.put('/tables/:id/seat', requireRole(...FLOOR_EDIT), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'PUT', `/tables/${encodeURIComponent(req.params.id)}/seat`, l, req.body);
 });
-router.put('/tables/:id/status', requireRole(...FLOOR), (req, res) => {
+router.put('/tables/:id/status', requireRole(...FLOOR_EDIT), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'PUT', `/tables/${encodeURIComponent(req.params.id)}/status`, l, req.body);
 });

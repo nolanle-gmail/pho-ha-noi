@@ -216,6 +216,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .ftable-l { font-size: .82rem; font-weight: 800; }
 .ftable-s { font-size: .58rem; font-weight: 600; opacity: .7; margin-top: 1px; }
 .floor-board.editable .ftable { cursor: grab; }
+.floor-board.readonly .ftable { cursor: default; }   /* kitchen view-only floor */
 .ftable.drag { cursor: grabbing; box-shadow: 0 8px 18px #0003; z-index: 6; }
 .floor-board.picker [data-pick] { cursor: pointer; }
 .floor-board.picker [data-pick]:hover { box-shadow: 0 0 0 3px #2b5bd733, 0 2px 6px #0003; transform: translate(-50%, -50%) scale(1.08); }

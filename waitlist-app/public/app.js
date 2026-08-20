@@ -57,6 +57,9 @@ const SELF_SERVICE_ROLES = ['server', 'busser', 'host', 'frontdesk', 'cashier', 
 const isServerRole = (r) => SERVER_ROLES.includes(r);
 const isFrontDeskRole = (r) => FD_ROLES.includes(r);
 const isSelfServiceRole = (r) => SELF_SERVICE_ROLES.includes(r);
+// Back-of-house kitchen roles can see the floor but not seat / change tables.
+const KITCHEN_ROLES = ['chef', 'line_cook', 'prep_cook', 'dishwasher'];
+const canEditFloor = (r) => !KITCHEN_ROLES.includes(r);
 const landingView = (r) => isServerRole(r) ? 'server' : (isFrontDeskRole(r) ? 'board' : 'mytasks');
 
 let toastTimer;
@@ -586,14 +589,15 @@ async function renderTables() {
   let fp;
   try { fp = await api(q('/floormap')); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const sm = fp.summary || { available: 0, occupied: 0, tables: 0 };
+  const canEdit = canEditFloor(S.user.role);   // kitchen roles get a read-only floor
   $('view').innerHTML = `
     <div class="section-head"><h2>Table Map</h2>
       <div style="display:flex;gap:.4rem;align-items:center"><span class="badge seated">${sm.available} available</span> <span class="badge ${sm.occupied ? 'waiting' : 'left'}">${sm.occupied} occupied</span><button class="btn sm ghost" id="tmGuests">${showGuests() ? '👤 Guests shown' : '👤 Guests hidden'}</button></div></div>
     ${statusLegend(fp)}
-    <p class="sub" style="margin:.1rem 0 .6rem">Tap an available table to seat a guest; tap an occupied table to change its status.</p>
-    <div class="floor-board" id="fpBoard">${fpBoardHtml(fp)}</div>`;
+    <p class="sub" style="margin:.1rem 0 .6rem">${canEdit ? 'Tap an available table to seat a guest; tap an occupied table to change its status.' : 'Live table status — view only.'}</p>
+    <div class="floor-board${canEdit ? '' : ' readonly'}" id="fpBoard">${fpBoardHtml(fp)}</div>`;
   $('tmGuests').onclick = () => { toggleGuests(); renderTables(); };
-  $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
+  if (canEdit) $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
     const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(el.dataset.tbl));
     if (t.status === 'available') seatAtTable(t.id, t.label, t.seats, () => renderTables());
     else tableStatusModal(t, () => renderTables());
