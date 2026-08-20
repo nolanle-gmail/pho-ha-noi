@@ -972,7 +972,8 @@ sign in on the waitlist app.
 | Driver (delivery) | `driver@phohanoi.com` | `Driver123!` |
 | Server (self) | `server@phohanoi.com` | `Server123!` |
 | Chef (self) | `chef@phohanoi.com` | `Chef123456!` |
-| Host / Front Desk (waitlist) | `host1@phohanoi.com` | `Host123!` |
+| Host — role `host` (waitlist) | `host@phohanoi.com` | `Host123!` |
+| Front Desk — role `frontdesk` (waitlist) | `host1@phohanoi.com` | `Host123!` |
 
 > **Note:** production passwords for some demo managers may differ from local seeds
 > — hosts use `Host123!`. If a login fails on production, try the owner account,
