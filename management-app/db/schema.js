@@ -430,6 +430,17 @@ function migrate() {
       UNIQUE (location_id, task_date, job_id)
     );
 
+    -- Proof photo for a completed day task (optional). Stored as bytes in the DB
+    -- so it persists on the mounted volume with no extra file storage. One per task.
+    CREATE TABLE IF NOT EXISTS task_photos (
+      task_id     INTEGER PRIMARY KEY REFERENCES task_assignments(id) ON DELETE CASCADE,
+      mime        TEXT NOT NULL,
+      bytes       BLOB NOT NULL,
+      byte_size   INTEGER NOT NULL DEFAULT 0,
+      uploaded_by INTEGER REFERENCES users(id),
+      uploaded_at TEXT DEFAULT (datetime('now'))
+    );
+
     -- Which specific tasks apply to which location. A row = the task is on that
     -- location's day-task list. Most restaurants share a set; each can add/remove,
     -- and the Central Kitchen has its own.
@@ -654,6 +665,10 @@ function migrate() {
     `ALTER TABLE staff_profiles ADD COLUMN status TEXT DEFAULT 'active'`,
     `ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'standard'`,
     `ALTER TABLE task_assignments ADD COLUMN task_time TEXT`,
+    // Day-task progress: staff taps Start (started_at) then Done (done_at); a proof
+    // photo can be attached before Done (stored in task_photos).
+    `ALTER TABLE task_assignments ADD COLUMN started_at TEXT`,
+    `ALTER TABLE task_assignments ADD COLUMN done_at TEXT`,
     `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
     `ALTER TABLE users ADD COLUMN employee_code TEXT`,
     `ALTER TABLE service_visits ADD COLUMN help_flag INTEGER NOT NULL DEFAULT 0`,

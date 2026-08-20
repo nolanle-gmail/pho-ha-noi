@@ -383,6 +383,7 @@ async function renderMyTasks() {
   const { done, total } = d.summary;
   const pct = total ? Math.round(done / total * 100) : 0;
   const day = (() => { const dt = new Date(d.date + 'T00:00:00'); return isNaN(dt) ? d.date : dt.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }); })();
+  while (_mtPhotoUrls.length) URL.revokeObjectURL(_mtPhotoUrls.pop());   // free the last render's blob URLs
   const cards = d.tasks.length ? d.tasks.map(mtCard).join('') : '<div class="sv-empty">No tasks assigned for today — enjoy your shift.</div>';
   v.innerHTML = `
     <div class="sv-head">
@@ -390,20 +391,77 @@ async function renderMyTasks() {
       ${total ? `<div class="mt-ring${done === total ? ' full' : ''}">${pct}%</div>` : ''}
     </div>
     ${cards}`;
-  v.querySelectorAll('[data-mt]').forEach(b => b.onclick = () => mtToggle(b.dataset.mt, b.dataset.done === '1'));
+  v.querySelectorAll('[data-start]').forEach(b => b.onclick = () => mtStart(b.dataset.start));
+  v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => mtDone(b.dataset.done, true));
+  v.querySelectorAll('[data-undo]').forEach(b => b.onclick = () => mtDone(b.dataset.undo, false));
+  v.querySelectorAll('[data-up]').forEach(i => i.onchange = () => { if (i.files && i.files[0]) mtUpload(i.dataset.up, i.files[0]); });
+  v.querySelectorAll('[data-photo]').forEach(img => { loadTaskPhoto(img.dataset.photo, img); img.onclick = () => mtLightbox(img.src); });
 }
+
+// A day task moves to-do → (Start) in progress → (Done) done. A proof photo can be
+// attached any time before Done and is shown as a thumbnail once stored.
 function mtCard(t) {
   const time = t.task_time ? `<span class="mt-time">${esc(t.task_time)}</span>` : '';
   const meta = [t.department, t.est_minutes ? `~${t.est_minutes}m` : '', t.complexity].filter(Boolean).join(' · ');
-  return `<div class="mt-card${t.done ? ' done' : ''}">
-    <button class="mt-check" data-mt="${t.id}" data-done="${t.done ? 1 : 0}" aria-label="${t.done ? 'Mark not done' : 'Mark done'}">${t.done ? '✓' : ''}</button>
-    <div class="mt-body"><div class="mt-name">${time}${esc(t.name)}</div>
+  const inProgress = !t.done && t.started_at;
+  const photo = t.has_photo ? `<img class="mt-photo" data-photo="${t.id}" alt="Proof photo" title="View proof">` : '';
+  let status = '';
+  if (t.done) status = `<span class="mt-stamp ok">✓ Done ${esc(fmtT(t.done_at))}</span>`;
+  else if (inProgress) status = `<span class="mt-stamp">▶ Started ${esc(fmtT(t.started_at))}</span>`;
+  let actions;
+  if (t.done) {
+    actions = `<button class="mt-btn ghost" data-undo="${t.id}">Undo</button>`;
+  } else if (inProgress) {
+    actions = `<label class="mt-btn photo">${t.has_photo ? '📷 Replace photo' : '📷 Add proof photo'}<input type="file" accept="image/*" capture="environment" data-up="${t.id}" hidden></label>
+      <button class="mt-btn done" data-done="${t.id}">✓ Done</button>`;
+  } else {
+    actions = `<button class="mt-btn start" data-start="${t.id}">▶ Start</button>`;
+  }
+  return `<div class="mt-card${t.done ? ' done' : inProgress ? ' active' : ''}">
+    <div class="mt-body">
+      <div class="mt-name">${time}${esc(t.name)}</div>
       ${meta ? `<div class="muted mt-meta">${esc(meta)}</div>` : ''}
-      ${t.description ? `<div class="mt-desc">${esc(t.description)}</div>` : ''}</div></div>`;
+      ${t.description ? `<div class="mt-desc">${esc(t.description)}</div>` : ''}
+      ${status ? `<div class="mt-status">${status}</div>` : ''}
+      <div class="mt-actions">${actions}</div>
+    </div>
+    ${photo ? `<div class="mt-side">${photo}</div>` : ''}
+  </div>`;
 }
-async function mtToggle(id, currentlyDone) {
-  try { await api(`/mytasks/${id}/done`, { method: 'PUT', body: JSON.stringify({ done: !currentlyDone }) }); renderMyTasks(); }
-  catch (e) { toast(e.message, true); }
+function fmtT(iso) { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+async function mtStart(id) { try { await api(`/mytasks/${id}/start`, { method: 'PUT', body: '{}' }); renderMyTasks(); } catch (e) { toast(e.message, true); } }
+async function mtDone(id, done) { try { await api(`/mytasks/${id}/done`, { method: 'PUT', body: JSON.stringify({ done }) }); renderMyTasks(); } catch (e) { toast(e.message, true); } }
+
+// Upload a proof photo: send the raw image bytes (Content-Type = the file's type)
+// so the server stores them as-is. Not through api() because that forces JSON.
+async function mtUpload(id, file) {
+  if (!file || !/^image\//.test(file.type)) { toast('Please choose an image.', true); return; }
+  toast('Uploading photo…');
+  try {
+    const res = await fetch(`/api/mytasks/${id}/photo`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type, Authorization: 'Bearer ' + S.token },
+      body: file,
+    });
+    if (res.status === 401 && S.token) { forceRelogin(); return; }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(d.error || 'Upload failed');
+    toast('Proof photo added'); renderMyTasks();
+  } catch (e) { toast(e.message, true); }
+}
+const _mtPhotoUrls = [];
+async function loadTaskPhoto(id, img) {
+  try {
+    const res = await fetch(`/api/mytasks/${id}/photo`, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) return;
+    const url = URL.createObjectURL(await res.blob()); _mtPhotoUrls.push(url); img.src = url;
+  } catch { /* thumbnail just won't load */ }
+}
+function mtLightbox(src) {
+  if (!src) return;
+  const o = document.createElement('div'); o.className = 'mt-lightbox';
+  const img = document.createElement('img'); img.src = src; img.alt = 'Proof photo';
+  o.appendChild(img); o.onclick = () => o.remove(); document.body.appendChild(o);
 }
 
 // ── Server view: my tables, checks, claim queue, covers + tips ────────────────

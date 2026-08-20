@@ -126,13 +126,15 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   }));
   const tasks = db.prepare(`
     SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
-           ta.user_id, ta.task_time, ta.done, u.name AS assignee_name
+           ta.id AS assignment_id, ta.user_id, ta.task_time, ta.done, ta.started_at, ta.done_at,
+           (tp.task_id IS NOT NULL) AS has_photo, u.name AS assignee_name
     FROM location_tasks lt
     JOIN jobs j ON j.id = lt.job_id
     LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=lt.location_id AND ta.task_date=?
+    LEFT JOIN task_photos tp ON tp.task_id=ta.id
     LEFT JOIN users u ON u.id=ta.user_id
     WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
-    ORDER BY j.department, j.name`).all(date, locId);
+    ORDER BY j.department, j.name`).all(date, locId).map(t => ({ ...t, has_photo: !!t.has_photo }));
   const assigned = tasks.filter(t => t.user_id).length;
   res.json({ location: loc, date, today, timezone: tz, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
 });

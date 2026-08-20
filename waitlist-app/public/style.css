@@ -290,3 +290,22 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .mt-time { display: inline-block; background: #eaf0fb; color: #1c4fb0; border-radius: 6px; padding: 0 6px; font-size: .78rem; font-weight: 800; margin-right: 6px; }
 .mt-meta { font-size: .76rem; margin-top: 2px; text-transform: capitalize; }
 .mt-desc { font-size: .82rem; color: #6b6252; margin-top: 5px; }
+.mt-body { flex: 1; }
+.mt-card.active { border-color: #e3b467; background: #fffdf6; }
+/* status stamps */
+.mt-status { margin-top: 7px; }
+.mt-stamp { display: inline-flex; align-items: center; gap: 4px; font-size: .76rem; font-weight: 700; color: #8a5a12; background: #fbeeda; border-radius: 999px; padding: 2px 9px; }
+.mt-stamp.ok { color: #178a4e; background: #e4f3e8; }
+/* action buttons */
+.mt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mt-btn { display: inline-flex; align-items: center; gap: 5px; border: 1px solid transparent; border-radius: 10px; padding: .5rem .85rem; font-weight: 700; font-size: .86rem; cursor: pointer; }
+.mt-btn.start { background: #1c4fb0; color: #fff; }
+.mt-btn.done { background: #178a4e; color: #fff; }
+.mt-btn.photo { background: #fff; color: #8a5a12; border: 1px dashed #d8ab5e; }
+.mt-btn.ghost { background: #fff; color: #8a8172; border: 1px solid #ddd5c8; }
+.mt-btn:hover { filter: brightness(.97); }
+/* proof thumbnail + lightbox */
+.mt-side { flex-shrink: 0; }
+.mt-photo { width: 62px; height: 62px; object-fit: cover; border-radius: 10px; border: 1px solid #e7e1d7; cursor: zoom-in; background: #f4efe7; }
+.mt-lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 14, 8, .82); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
+.mt-lightbox img { max-width: 92vw; max-height: 85vh; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
