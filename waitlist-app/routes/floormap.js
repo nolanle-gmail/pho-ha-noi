@@ -7,7 +7,11 @@ const { verifyToken, requireRole } = require('../lib/auth');
 
 const router = express.Router();
 router.use(verifyToken);
-const HOST = ['owner', 'manager', 'frontdesk'];
+// Any front-of-house or management role can view the live floor and help seat /
+// update tables at their location. Pure back-office roles (inventory support,
+// driver, analyst, accountant) are not floor staff and stay out.
+const FLOOR = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager',
+  'frontdesk', 'host', 'server', 'busser', 'cashier', 'bartender', 'barista', 'chef', 'line_cook', 'prep_cook', 'dishwasher', 'employee'];
 const MGMT_URL = (process.env.MGMT_URL || 'http://localhost:4001').replace(/\/$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
@@ -27,15 +31,15 @@ async function fwd(res, method, path, locId, body) {
   } catch { res.status(502).json({ error: 'Floor plan service is unavailable.' }); }
 }
 
-router.get('/', requireRole(...HOST), (req, res) => {
+router.get('/', requireRole(...FLOOR), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'GET', '', l);
 });
-router.put('/tables/:id/seat', requireRole(...HOST), (req, res) => {
+router.put('/tables/:id/seat', requireRole(...FLOOR), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'PUT', `/tables/${encodeURIComponent(req.params.id)}/seat`, l, req.body);
 });
-router.put('/tables/:id/status', requireRole(...HOST), (req, res) => {
+router.put('/tables/:id/status', requireRole(...FLOOR), (req, res) => {
   const l = locOf(req); if (!l) return res.status(400).json({ error: 'A location is required.' });
   fwd(res, 'PUT', `/tables/${encodeURIComponent(req.params.id)}/status`, l, req.body);
 });

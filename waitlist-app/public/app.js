@@ -51,8 +51,12 @@ const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S
 // My Tables, front-desk roles on the Front Desk, everyone else on My Tasks.
 const SERVER_ROLES = ['server', 'busser'];
 const FD_ROLES = ['owner', 'manager', 'assistant_manager', 'general_manager', 'regional_manager', 'frontdesk', 'host'];
+// Self-service / position roles (front & back of house). Every one of these gets
+// their own tables view + the live floor; managers/owner keep the Front Desk board.
+const SELF_SERVICE_ROLES = ['server', 'busser', 'host', 'frontdesk', 'cashier', 'bartender', 'barista', 'chef', 'line_cook', 'prep_cook', 'dishwasher', 'employee'];
 const isServerRole = (r) => SERVER_ROLES.includes(r);
 const isFrontDeskRole = (r) => FD_ROLES.includes(r);
+const isSelfServiceRole = (r) => SELF_SERVICE_ROLES.includes(r);
 const landingView = (r) => isServerRole(r) ? 'server' : (isFrontDeskRole(r) ? 'board' : 'mytasks');
 
 let toastTimer;
@@ -169,9 +173,9 @@ function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
   const items = [['mytasks', '📋 My Tasks']];   // every staff member has tasks
-  if (isServerRole(role)) items.push(['server', '🛎️ My Tables']);
+  if (isSelfServiceRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
-  if (isServerRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
+  if (isSelfServiceRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
   items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
   items.push(['myhours', '⏱ My Hours']);   // each staff member's own timesheet
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
