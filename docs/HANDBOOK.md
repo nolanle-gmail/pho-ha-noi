@@ -97,8 +97,11 @@ flowchart TB
 *Two services, two databases. Dotted lines are trusted server-to-server calls
 carrying a service key.*
 
-- **Shared sign-in** — the Front Desk / Staff app checks its own accounts first,
-  then falls back to Management sign-in, so one staff login works across apps.
+- **Single-source sign-in** — the Front Desk / Staff app authenticates against the
+  Management directory (the system of record), so one password per person works
+  across both apps and can't drift. Local Front-Desk accounts are an **offline
+  break-glass** only: if Management is unreachable, a host can still sign in and keep
+  the local waiting list running.
 - **Service key + `as=`** — cross-app calls send `X-Service-Key` and act "as" the
   signed-in staff email, so Management applies that person's permissions.
 - **Server-sent events** — one SSE stream pushes waitlist, visit and message
