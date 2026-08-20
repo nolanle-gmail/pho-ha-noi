@@ -1,5 +1,7 @@
 # Phở Hà Nội — Platform Handbook
 
+_Last updated: August 19, 2026_
+
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
 to staff at any location for testing.
