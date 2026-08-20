@@ -269,3 +269,16 @@ Each app has an end-to-end smoke test hitting its real API:
 ```bash
 npm run smoke      # management: 153 checks · waitlist: 46 checks
 ```
+
+## Docs
+
+[docs/HANDBOOK.md](docs/HANDBOOK.md) carries a `_Last updated: …_` stamp that
+**refreshes itself** on commit. Enable the git hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+After that, any commit touching the handbook re-stamps today's date (via
+`scripts/stamp-handbook.mjs`). Run the script by hand to stamp the artifact HTML
+before republishing: `node scripts/stamp-handbook.mjs <handbook.html>`.

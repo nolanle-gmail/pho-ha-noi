@@ -1,0 +1,9 @@
+#!/bin/sh
+# Auto-stamp the handbook's "last updated" date whenever docs/HANDBOOK.md is
+# part of a commit. Enable once per clone with:
+#   git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -q '^docs/HANDBOOK\.md$'; then
+  node scripts/stamp-handbook.mjs docs/HANDBOOK.md || exit 0
+  git add docs/HANDBOOK.md
+fi
+exit 0
