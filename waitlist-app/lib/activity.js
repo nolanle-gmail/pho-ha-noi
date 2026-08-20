@@ -35,7 +35,10 @@ function locationOf(req) {
 
 function logLogin(req, { user, email, success }) {
   record({
-    userId: user ? user.id : null,
+    // Only local user ids reference this app's users table; Management-sourced
+    // ids belong to the Management directory, so store null and rely on the
+    // denormalized name/role below.
+    userId: user && user.src !== 'mgmt' ? user.id : null,
     userName: user ? user.name : (email || null),
     userRole: user ? user.role : null,
     method: 'POST', path: '/api/auth/login', status: success ? 200 : 401,
@@ -53,7 +56,7 @@ function activityLogger(req, res, next) {
     const denied = res.statusCode === 401 || res.statusCode === 403;
     if (!mutating && !denied && !LOG_READS) return;
     record({
-      userId: req.user ? req.user.id : null,
+      userId: req.user && req.user.src !== 'mgmt' ? req.user.id : null,
       userName: req.user ? req.user.name : null,
       userRole: req.user ? req.user.role : null,
       method: req.method,

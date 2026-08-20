@@ -120,6 +120,11 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
     `ALTER TABLE activity_log ADD COLUMN location_id INTEGER`,
     `CREATE INDEX IF NOT EXISTS idx_wactivity_loc ON activity_log(location_id, created_at)`,
+    // Staff auth is unified to the Management directory, so an actor's id may be a
+    // Management id (not in this app's users table). Denormalize the actor's name
+    // and role onto audit_log so the "who did what" log still shows who acted.
+    `ALTER TABLE audit_log ADD COLUMN user_name TEXT`,
+    `ALTER TABLE audit_log ADD COLUMN user_role TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

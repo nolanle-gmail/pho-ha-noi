@@ -113,7 +113,8 @@ router.put('/:id/leave', requireRole(...HOST), (req, res) => {
 router.get('/audit', requireRole(...HOST), (req, res) => {
   const l = requireLoc(req, res, true); if (!l) return;
   const rows = db.prepare(`
-    SELECT a.id, a.action, a.entity_id, a.detail, a.created_at, u.name AS user_name, u.role AS user_role
+    SELECT a.id, a.action, a.entity_id, a.detail, a.created_at,
+           COALESCE(a.user_name, u.name) AS user_name, COALESCE(a.user_role, u.role) AS user_role
     FROM audit_log a LEFT JOIN users u ON a.user_id=u.id
     WHERE a.location_id=? ORDER BY a.created_at DESC, a.id DESC LIMIT 200
   `).all(l);
