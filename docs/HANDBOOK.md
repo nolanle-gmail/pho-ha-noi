@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 19, 2026_
+_Last updated: August 20, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -223,7 +223,9 @@ erDiagram
 A weekly `shifts` row places a person at a store on a day; each shift can carry
 several jobs from the shared `jobs` catalog and paid `shift_breaks`. Separately,
 `task_assignments` pins a specific day-task to a working person. Breaks are 10 min &
-paid; the grid enforces 8h/day and 40h/week soft limits.
+paid; the grid enforces 8h/day and 40h/week soft limits. When a staff member works a
+day task they tap **Start** (`started_at`) then **Done** (`done_at`), and may attach
+one **proof photo**, stored as bytes in `task_photos`.
 
 ```mermaid
 erDiagram
@@ -237,6 +239,7 @@ erDiagram
   jobs ||--o{ task_assignments : "of"
   users ||--o{ task_assignments : "done by"
   locations ||--o{ task_assignments : "at"
+  task_assignments ||--o| task_photos : "proof photo"
   jobs {
     int id PK
     text code UK
@@ -267,6 +270,14 @@ erDiagram
     int user_id FK
     text task_date
     int done
+    text started_at
+    text done_at
+  }
+  task_photos {
+    int task_id PK,FK
+    text mime
+    blob bytes
+    int uploaded_by FK
   }
   location_tasks {
     int id PK
@@ -583,7 +594,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 40 tables
+### Management database — 41 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -600,7 +611,8 @@ erDiagram
 | `shift_jobs` | Schedule | Jobs attached to a shift |
 | `shift_breaks` | Schedule | Paid 10-min breaks within a shift |
 | `jobs` | Schedule | Shared job/task catalog by department |
-| `task_assignments` | Schedule | A specific day-task pinned to a working person |
+| `task_assignments` | Schedule | A specific day-task pinned to a working person, with Start/Done timestamps |
+| `task_photos` | Schedule | Optional proof photo for a day task (image bytes in the DB) |
 | `location_tasks` | Schedule | Which specific tasks apply at which store |
 | `time_entries` | Time | One work day: clock-in/out, worked & late minutes |
 | `ot_approvals` | Time | Manager approval of overtime; can escalate |
@@ -686,7 +698,7 @@ hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
-| 📋 My Tasks | The person's assigned day-tasks | Everyone |
+| 📋 My Tasks | Assigned day-tasks — Start, Done, and an optional proof photo | Everyone |
 | 🛎️ My Tables | The server's claimed tables & timed checks | Server, Busser |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk |
 | 🍽️ Floor | The live table map | Server, Busser, Front Desk |
@@ -802,6 +814,31 @@ real time.
 | Owner / Admin / GM | Anyone — everyone, a group, or an individual |
 | Manager | Owner/admin, their staff, and manager peers |
 | Staff (self-service) | Their manager, owner/admin, and peers |
+
+### 6.6 Daily tasks: start, done, proof photo
+
+Managers assign specific day tasks on the Management **Day Tasks** board. Each
+working staff member sees their own tasks in the Staff app's **My Tasks**:
+
+```mermaid
+flowchart LR
+  TODO[To-do] -->|tap Start| PROG[In progress · started_at]
+  PROG -->|optional| PHOTO[Attach proof photo]
+  PHOTO --> PROG
+  PROG -->|tap Done| DONE[Done · done_at]
+  DONE -->|Undo| PROG
+```
+
+1. **Start** — the staff member taps Start; `started_at` is stamped and the card
+   shows as in progress.
+2. **Proof photo (optional)** — before finishing, they may attach one photo (camera
+   or library). It's sent as raw image bytes and stored in `task_photos` on the
+   Management DB volume, then shown as a thumbnail (tap to zoom).
+3. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
+   Start/Done times and can view the proof photo.
+
+The photo is optional — a task can be completed without one. Managers and the task's
+owner can view a stored photo; it persists with the database.
 
 ---
 
