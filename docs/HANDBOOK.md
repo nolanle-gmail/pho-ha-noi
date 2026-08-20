@@ -701,7 +701,7 @@ hamburger drawer on phones. Views depend on role:
 | 📋 My Tasks | Assigned day-tasks — Start, Done, and an optional proof photo | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
-| 🍽️ Floor | The live table map (view + seat / update) | All front & back-of-house roles + managers |
+| 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / month, OT & late | Everyone |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
