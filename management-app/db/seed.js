@@ -113,14 +113,17 @@ const iso = (d) => new Date(d).toISOString().slice(0, 10);
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 
 function run() {
-  // Clear domain tables (children before parents for FK safety).
-  for (const t of ['ck_recipe_ingredients', 'store_requests', 'ck_production_runs', 'ck_tasks', 'ck_shifts', 'ck_products',
-                   'message_recipients', 'messages', 'recipe_ingredients', 'menu_items', 'menu_categories',
-                   'daily_sales', 'timesheets', 'equipment', 'location_hours',
-                   'inventory_transactions', 'inventory_lots', 'waste_log', 'cycle_counts',
-                   'supply_orders', 'transfer_requests', 'inventory', 'vendors', 'audit_log', 'users', 'locations']) {
-    db.exec(`DELETE FROM ${t}`);
+  // Full reset so a reseed is idempotent even on an already-populated database.
+  // Every table is cleared (not just a subset), so re-running never trips a UNIQUE
+  // or FOREIGN KEY constraint. Foreign keys — normally enforced on the connection —
+  // are toggled off for the wipe so delete order doesn't matter and no orphan rows
+  // survive; the ID counters are reset so seeded IDs are reproducible across runs.
+  db.exec('PRAGMA foreign_keys = OFF');
+  for (const { name } of db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all()) {
+    db.exec(`DELETE FROM "${name}"`);
   }
+  try { db.exec(`DELETE FROM sqlite_sequence`); } catch { /* no AUTOINCREMENT tables yet */ }
+  db.exec('PRAGMA foreign_keys = ON');
 
   const insLoc = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active) VALUES (?,?,?,?,?,?,?,?,?,?, 'active',1)`);
   const insHours = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);

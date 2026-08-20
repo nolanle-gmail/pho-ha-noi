@@ -27,7 +27,16 @@ const PARTIES = [
 ];
 
 function run() {
-  for (const t of ['audit_log', 'notify_log', 'waitlist', 'restaurant_tables', 'floor_areas', 'users', 'locations']) db.exec(`DELETE FROM ${t}`);
+  // Full reset so a reseed is idempotent even on an already-populated database.
+  // Clear every table with foreign keys toggled off (they're normally enforced on
+  // the connection) so delete order doesn't matter and no orphan rows survive, then
+  // reset the ID counters so seeded IDs are reproducible.
+  db.exec('PRAGMA foreign_keys = OFF');
+  for (const { name } of db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all()) {
+    db.exec(`DELETE FROM "${name}"`);
+  }
+  try { db.exec(`DELETE FROM sqlite_sequence`); } catch { /* no AUTOINCREMENT tables yet */ }
+  db.exec('PRAGMA foreign_keys = ON');
 
   const locIds = LOCATIONS.map(([name, addr, turn]) =>
     db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,?)`).run(name, addr, turn).lastInsertRowid);
