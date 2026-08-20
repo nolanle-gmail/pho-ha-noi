@@ -5,7 +5,10 @@ const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 router.use(verifyToken);
-const HOST = ['owner', 'manager', 'frontdesk'];
+// Roles that run a store's front desk: hosts, front-desk staff, and the
+// location's managers. ('host' and 'frontdesk' are distinct position roles — both
+// work the desk.) Owner may switch stores; the rest are pinned to their location.
+const HOST = ['owner', 'manager', 'assistant_manager', 'kitchen_manager', 'frontdesk', 'host'];
 
 // Resolve which location a request targets (owner may choose; others are pinned).
 function loc(req, fromQuery) {
