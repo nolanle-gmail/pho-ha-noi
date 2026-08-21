@@ -677,6 +677,20 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Messages** | Inbox, sent, compose (direct or broadcast) | All |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
+> **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
+> their **full HR profile** — Account (name), Personal, Contact, Mailing address,
+> Emergency contact, Employment, Payroll, "Also works at," and Skills/Notes — plus
+> reset password and activate/deactivate. **Who can edit whom:**
+> - **Owner / Admin** — anyone, every field, including **access level** and **home
+>   location**; only they can **Add staff**.
+> - **Managers** — their own store's staff (all-location managers: any store), but not
+>   owner/admin accounts. They edit the full profile, status, and password, while
+>   **access level, home location, and email stay read-only** and there's **no Add
+>   staff** button.
+>
+> Email is the sign-in and is read-only for everyone; change access level or location
+> to move someone between roles or stores (owner/admin).
+
 ### Front Desk / Waitlist app (port 4002)
 
 The authenticated host station, scoped to the signed-in host's store (owners get a
