@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 20, 2026_
+_Last updated: August 21, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -257,6 +257,9 @@ erDiagram
     text shift_date
     text start_time
     text end_time
+    text kind "work / sick / vacation / leave"
+    int all_day
+    real leave_hours
   }
   shift_jobs {
     int shift_id PK,FK
@@ -799,6 +802,13 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
+- **Leave** — the **+** entry has a **Type**: Work shift, or **Sick / Vacation /
+  On-leave**. Leave takes a duration — **all day** (8 h), a **number of hours**, or a
+  **from–to** span — and shows as a coloured chip (🤒 / 🏖️ / 🗓️). Leave never counts
+  toward worked hours or the 8h/40h limits; instead the **timesheet totals it as sick,
+  vacation, or leave hours**, shown on the person's **My Hours** (Sick / Vacation /
+  On-leave tiles). A person's HR **status** can also be set to `on_leave` on their
+  profile.
 
 ### 6.4 Inventory replenishment & the central kitchen
 
