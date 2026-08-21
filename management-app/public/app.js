@@ -1960,11 +1960,14 @@ function payrollSection(pr) {
   const otc = (h, pend) => `${h ? `<strong style="color:#b4630b">${h}</strong>` : '0'}${pend ? ` <span class="badge out" title="pending approval">+${pend}?</span>` : ''}`;
   const lateCell = (s) => s.late_days ? `<span class="badge low" title="${fmtDur(s.late_minutes)} late total">${s.late_days}d</span>` : '—';
   const shortCell = (s) => s.short_days ? `<span class="badge out">${s.short_days}d</span>` : '—';
+  const leaveCell = (s) => { const tot = Math.round(((s.sick_hours || 0) + (s.vacation_hours || 0) + (s.leave_hours || 0)) * 10) / 10; return tot ? `<span class="badge blue" title="Sick ${s.sick_hours || 0}h · Vacation ${s.vacation_hours || 0}h · On-leave ${s.leave_hours || 0}h">${tot}h</span>` : '—'; };
+  const leaveTotal = Math.round((((t.sick_hours || 0) + (t.vacation_hours || 0) + (t.leave_hours || 0))) * 10) / 10;
   const rows = pr.staff.map(s => `<tr>
     <td><strong>${esc(s.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.72rem">${esc(s.employee_code || '')}</span></td>
     <td class="num">${s.scheduled_hours}</td><td class="num">${s.total_hours}</td>
     <td>${lateCell(s)}</td><td>${shortCell(s)}</td>
     <td class="num">${otc(s.ot_hours, s.ot_pending_hours)}</td>
+    <td class="num">${leaveCell(s)}</td>
     <td class="num">${s.gross_pay != null ? money(s.gross_pay) : '—'}</td>
     <td style="white-space:nowrap">${s.approved
       ? `<span class="badge ok" title="approved by ${esc(s.approved_by || '')}">✓</span> <button class="btn sm ghost" data-undototal="${s.user_id}">Undo</button>`
@@ -2007,9 +2010,9 @@ function payrollSection(pr) {
       <div class="week-nav"><button class="btn sm ghost" data-paynav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${payRange(period, S.payAnchor).label}</span><button class="btn sm ghost" data-paynav="1">Next ›</button></div>
     </div>
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem;font-size:.8rem">Scheduled vs clocked. <span class="badge low">late</span> &gt;${R.late_grace_min}m past start · <span class="badge out">short</span> under scheduled · <span class="badge blue">OT</span> ${R.ot_mult}× after ${R.ot_after_h}h/day (counts on pay once approved). “Round” a day up; “✓ Approve” signs off the ${period} total.</p>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Sched</th><th class="num">Worked</th><th>Late</th><th>Short</th><th class="num">OT</th><th class="num">Gross</th><th>Approve total</th></tr></thead><tbody>
-      ${rows || '<tr><td colspan="8" class="empty">No completed shifts clocked in this period.</td></tr>'}
-      ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">${t.scheduled_hours}</td><td class="num">${t.total_hours}</td><td colspan="2">${t.late_minutes ? fmtDur(t.late_minutes) + ' late' : ''}</td><td class="num">${t.ot_hours}${t.ot_pending_hours ? ` <span class="badge out">+${t.ot_pending_hours}?</span>` : ''}</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td><td></td></tr>` : ''}
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Sched</th><th class="num">Worked</th><th>Late</th><th>Short</th><th class="num">OT</th><th class="num" title="Sick + Vacation + On-leave hours">Leave</th><th class="num">Gross</th><th>Approve total</th></tr></thead><tbody>
+      ${rows || '<tr><td colspan="9" class="empty">No completed shifts clocked in this period.</td></tr>'}
+      ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">${t.scheduled_hours}</td><td class="num">${t.total_hours}</td><td colspan="2">${t.late_minutes ? fmtDur(t.late_minutes) + ' late' : ''}</td><td class="num">${t.ot_hours}${t.ot_pending_hours ? ` <span class="badge out">+${t.ot_pending_hours}?</span>` : ''}</td><td class="num">${leaveTotal ? leaveTotal + 'h' : '—'}</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td><td></td></tr>` : ''}
     </tbody></table></div>
     ${flagged.length ? `<div style="margin-top:1.1rem">
       <h4 style="margin:0 0 .4rem">Days to review <span class="badge out">${flagged.length}</span></h4>
@@ -2124,17 +2127,19 @@ async function renderLocPerformance(loc) {
 function exportPayrollCSV(pr) {
   const R = pr.rules;
   const headers = ['Employee', 'Code', 'Role', 'Days', 'Scheduled hours', 'Clocked hours', 'Regular hours',
-    `Approved OT hours (${R.ot_mult}x)`, `Approved double-time hours (${R.dt_mult}x)`, 'Pending OT hours (unapproved, not paid)', 'Hourly rate', 'Gross pay'];
+    `Approved OT hours (${R.ot_mult}x)`, `Approved double-time hours (${R.dt_mult}x)`, 'Pending OT hours (unapproved, not paid)',
+    'Sick hours', 'Vacation hours', 'On-leave hours', 'Hourly rate', 'Gross pay'];
   const lines = [
     [`Payroll ${pr.start} to ${pr.end}`, pr.location.name || ''].map(csvCell).join(','),
     headers.join(','),
   ];
   for (const s of pr.staff) lines.push([
     s.name, s.employee_code || '', roleLabel(s.role), s.days_count, s.scheduled_hours, s.total_hours, s.regular_hours,
-    s.ot_hours, s.dt_hours, (s.ot_pending_hours || 0) + (s.dt_pending_hours || 0), s.rate != null ? s.rate : '', s.gross_pay != null ? s.gross_pay : '',
+    s.ot_hours, s.dt_hours, (s.ot_pending_hours || 0) + (s.dt_pending_hours || 0),
+    s.sick_hours || 0, s.vacation_hours || 0, s.leave_hours || 0, s.rate != null ? s.rate : '', s.gross_pay != null ? s.gross_pay : '',
   ].map(csvCell).join(','));
   const t = pr.totals;
-  lines.push(['TOTAL', '', '', '', t.scheduled_hours, t.total_hours, t.regular_hours, t.ot_hours, t.dt_hours, round2((t.ot_pending_hours || 0) + (t.dt_pending_hours || 0)), '', t.gross_pay != null ? t.gross_pay : ''].map(csvCell).join(','));
+  lines.push(['TOTAL', '', '', '', t.scheduled_hours, t.total_hours, t.regular_hours, t.ot_hours, t.dt_hours, round2((t.ot_pending_hours || 0) + (t.dt_pending_hours || 0)), t.sick_hours || 0, t.vacation_hours || 0, t.leave_hours || 0, '', t.gross_pay != null ? t.gross_pay : ''].map(csvCell).join(','));
   const csv = '﻿' + lines.join('\r\n');
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a');

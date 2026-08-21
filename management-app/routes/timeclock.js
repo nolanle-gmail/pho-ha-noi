@@ -276,6 +276,17 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
     schedByUser[s.user_id] = (schedByUser[s.user_id] || 0) + m;
     schedByDay[s.user_id + '|' + s.shift_date] = (schedByDay[s.user_id + '|' + s.shift_date] || 0) + m;
   }
+  // Scheduled leave (sick / vacation / on-leave) hours per person, by kind. Someone
+  // on leave with no clocked time still belongs on the payroll.
+  const leaveByUser = {};
+  for (const s of db.prepare(`SELECT s.user_id, u.name, u.employee_code, u.role, u.hourly_rate, s.kind, s.all_day, s.leave_hours, s.start_time, s.end_time
+      FROM shifts s JOIN users u ON u.id=s.user_id
+      WHERE s.location_id=? AND s.shift_date BETWEEN ? AND ? AND s.kind<>'work'`).all(locId, start, end)) {
+    const l = leaveByUser[s.user_id] || (leaveByUser[s.user_id] = { sick: 0, vacation: 0, leave: 0 });
+    const hrs = s.leave_hours != null ? s.leave_hours : (s.all_day ? FULL_DAY_HOURS : spanMin(s.start_time, s.end_time) / 60);
+    if (l[s.kind] != null) l[s.kind] += hrs;
+    if (!byUser[s.user_id]) byUser[s.user_id] = { user_id: s.user_id, name: s.name, employee_code: s.employee_code, role: s.role, rate: s.hourly_rate || 0, days: {}, late: {} };
+  }
   // Manager rounding adjustments per person+day (override the clocked total).
   const adjBy = {};
   for (const a of db.prepare(`SELECT user_id, work_date, adjusted_minutes FROM time_adjustments WHERE location_id=? AND work_date BETWEEN ? AND ?`).all(locId, start, end)) {
@@ -337,6 +348,9 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
       total_hours: h(total), regular_hours: h(reg),
       ot_hours: h(otAppr), dt_hours: h(dtAppr), ot_pending_hours: h(otPend), dt_pending_hours: h(dtPend),
       late_days: lateDays, late_minutes: lateMin, short_days: shortDays,
+      sick_hours: round2((leaveByUser[u.user_id] || {}).sick || 0),
+      vacation_hours: round2((leaveByUser[u.user_id] || {}).vacation || 0),
+      leave_hours: round2((leaveByUser[u.user_id] || {}).leave || 0),
       approved: ts ? 1 : 0, approved_by: ts ? ts.approver : null, approved_total_hours: ts ? h(ts.total_minutes) : null,
       rate: rate || null, gross_pay: gross, days,
     };
@@ -352,6 +366,7 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
     totals: {
       staff: staff.length, scheduled_hours: sum('scheduled_hours'), total_hours: sum('total_hours'), regular_hours: sum('regular_hours'),
       ot_hours: sum('ot_hours'), dt_hours: sum('dt_hours'), ot_pending_hours: sum('ot_pending_hours'), dt_pending_hours: sum('dt_pending_hours'),
+      sick_hours: sum('sick_hours'), vacation_hours: sum('vacation_hours'), leave_hours: sum('leave_hours'),
       late_minutes: sum('late_minutes'), gross_pay: sum('gross_pay'),
     },
   });
