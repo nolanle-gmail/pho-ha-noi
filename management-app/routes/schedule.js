@@ -110,7 +110,7 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   // task time inside their hours but not during a break.
   const shiftRows = db.prepare(`SELECT u.id, u.name, u.role, s.id AS shift_id, s.start_time, s.end_time
     FROM shifts s JOIN users u ON u.id=s.user_id
-    WHERE s.location_id=? AND s.shift_date=? ORDER BY u.name, s.start_time`).all(locId, date);
+    WHERE s.location_id=? AND s.shift_date=? AND s.kind='work' ORDER BY u.name, s.start_time`).all(locId, date);
   const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   const workingBy = {};
   for (const r of shiftRows) {
@@ -155,7 +155,7 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const userId = hasUser ? (req.body.user_id ? parseInt(req.body.user_id, 10) : null) : undefined;
   const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
   const shiftsFor = (uid) => {
-    const rows = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`).all(uid, locId, date);
+    const rows = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(uid, locId, date);
     rows.forEach(s => { s.breaks = breaksForShift.all(s.id); });
     return rows;
   };
@@ -324,6 +324,22 @@ router.get('/my-week', (req, res) => {
   res.json({ week_start: ws, days, shifts: byUser[req.user.id] || [] });
 });
 
+// A leave entry (sick / vacation / on-leave) carries its own hours: a full day,
+// a number of hours, or a from–to span. Returns {kind, allDay, leaveHours[, error]}.
+const LEAVE_KINDS = ['sick', 'vacation', 'leave'];
+const SHIFT_KINDS = ['work', ...LEAVE_KINDS];
+const FULL_DAY_HOURS = 8;
+function leaveSpec(body) {
+  const kind = SHIFT_KINDS.includes(body.kind) ? body.kind : 'work';
+  if (kind === 'work') return { kind, allDay: 0, leaveHours: null };
+  const allDay = body.all_day ? 1 : 0;
+  let leaveHours = null;
+  if (allDay) leaveHours = FULL_DAY_HOURS;
+  else if (body.start_time && body.end_time) leaveHours = Math.round(spanHours(body.start_time, body.end_time) * 100) / 100;
+  else { const n = parseFloat(body.leave_hours); if (Number.isFinite(n) && n > 0) leaveHours = Math.round(n * 100) / 100; }
+  return { kind, allDay, leaveHours, error: leaveHours ? null : 'Leave needs a duration — all day, a number of hours, or a from–to time.' };
+}
+
 // Validate + normalize a shift body against a location the requester owns.
 function prepareShift(req, res) {
   const locId = parseInt(req.body.location_id, 10);
@@ -337,8 +353,11 @@ function prepareShift(req, res) {
   const linked = db.prepare(`SELECT 1 FROM users WHERE id=? AND location_id=?
     UNION SELECT 1 FROM staff_locations WHERE user_id=? AND location_id=?`).get(userId, locId, userId, locId);
   if (!linked) { res.status(400).json({ error: 'That staff member is not assigned to this location.' }); return null; }
-  const jobIds = Array.isArray(req.body.job_ids) ? [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))] : [];
-  return { locId, userId, jobIds };
+  const spec = leaveSpec(req.body);
+  if (spec.error) { res.status(400).json({ error: spec.error }); return null; }
+  const jobIds = spec.kind === 'work' && Array.isArray(req.body.job_ids)
+    ? [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))] : [];
+  return { locId, userId, jobIds, ...spec };
 }
 function setShiftJobs(shiftId, jobIds) {
   db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(shiftId);
@@ -394,11 +413,15 @@ function setShiftBreaks(shiftId, userId, shiftDate, breaks, shiftStart, shiftEnd
 router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   const p = prepareShift(req, res);
   if (!p) return;
-  const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by) VALUES (?,?,?,?,?,?,?)`)
-    .run(p.userId, p.locId, req.body.shift_date, req.body.start_time || null, req.body.end_time || null, req.body.notes || null, req.user.id);
+  const isLeave = p.kind !== 'work';
+  // Leave stores its hours; a work shift keeps start/end. From–to leave keeps its span too.
+  const start = isLeave && p.allDay ? null : (req.body.start_time || null);
+  const end = isLeave && p.allDay ? null : (req.body.end_time || null);
+  const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(p.userId, p.locId, req.body.shift_date, start, end, req.body.notes || null, req.user.id, p.kind, p.allDay, p.leaveHours);
   setShiftJobs(Number(r.lastInsertRowid), p.jobIds);
-  setShiftBreaks(Number(r.lastInsertRowid), p.userId, req.body.shift_date, req.body.breaks, req.body.start_time, req.body.end_time);
-  auditLog(req, 'shift_create', 'shift', r.lastInsertRowid, { user_id: p.userId, location_id: p.locId, date: req.body.shift_date });
+  if (!isLeave) setShiftBreaks(Number(r.lastInsertRowid), p.userId, req.body.shift_date, req.body.breaks, start, end);
+  auditLog(req, 'shift_create', 'shift', r.lastInsertRowid, { user_id: p.userId, location_id: p.locId, date: req.body.shift_date, kind: p.kind });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
@@ -406,19 +429,22 @@ router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   const shift = db.prepare(`SELECT * FROM shifts WHERE id=?`).get(req.params.id);
   if (!shift) return res.status(404).json({ error: 'Shift not found.' });
   if (!ownsLocation(req, shift.location_id)) return res.status(403).json({ error: 'Not your location.' });
-  const fields = [], vals = [];
-  ['shift_date', 'start_time', 'end_time', 'notes'].forEach(k => {
-    if (req.body[k] !== undefined) { fields.push(`${k}=?`); vals.push(req.body[k] === '' ? null : req.body[k]); }
-  });
-  if (fields.length) { vals.push(shift.id); db.prepare(`UPDATE shifts SET ${fields.join(',')} WHERE id=?`).run(...vals); }
-  if (Array.isArray(req.body.job_ids)) setShiftJobs(shift.id, [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))]);
-  if (Array.isArray(req.body.breaks)) {
-    const es = req.body.start_time !== undefined ? req.body.start_time : shift.start_time;
-    const ee = req.body.end_time !== undefined ? req.body.end_time : shift.end_time;
-    const ed = req.body.shift_date !== undefined ? req.body.shift_date : shift.shift_date;
-    setShiftBreaks(shift.id, shift.user_id, ed, req.body.breaks, es, ee);
+  const spec = leaveSpec(req.body.kind !== undefined ? req.body : { ...req.body, kind: shift.kind || 'work' });
+  if (spec.error) return res.status(400).json({ error: spec.error });
+  const isLeave = spec.kind !== 'work';
+  const start = isLeave && spec.allDay ? null : (req.body.start_time !== undefined ? (req.body.start_time || null) : shift.start_time);
+  const end = isLeave && spec.allDay ? null : (req.body.end_time !== undefined ? (req.body.end_time || null) : shift.end_time);
+  const date = req.body.shift_date !== undefined ? req.body.shift_date : shift.shift_date;
+  const notes = req.body.notes !== undefined ? (req.body.notes || null) : shift.notes;
+  db.prepare(`UPDATE shifts SET shift_date=?, start_time=?, end_time=?, notes=?, kind=?, all_day=?, leave_hours=? WHERE id=?`)
+    .run(date, start, end, notes, spec.kind, spec.allDay, spec.leaveHours, shift.id);
+  // Leave has no jobs or breaks; a work shift keeps them.
+  if (isLeave) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(shift.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shift.id); }
+  else {
+    if (Array.isArray(req.body.job_ids)) setShiftJobs(shift.id, [...new Set(req.body.job_ids.map(n => parseInt(n, 10)).filter(Boolean))]);
+    if (Array.isArray(req.body.breaks)) setShiftBreaks(shift.id, shift.user_id, date, req.body.breaks, start, end);
   }
-  auditLog(req, 'shift_update', 'shift', shift.id, { date: shift.shift_date });
+  auditLog(req, 'shift_update', 'shift', shift.id, { date, kind: spec.kind });
   res.json({ success: true });
 });
 

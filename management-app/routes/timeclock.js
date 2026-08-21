@@ -46,7 +46,7 @@ const fmtDurMin = (m) => { m = Math.max(0, Math.round(m)); return m >= 60 ? `${M
 
 // Minutes a staff member is scheduled to work at a location on a date.
 function scheduledMinutes(userId, locId, date) {
-  return db.prepare(`SELECT start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`)
+  return db.prepare(`SELECT start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`)
     .all(userId, locId, date).reduce((m, s) => m + spanMin(s.start_time, s.end_time), 0);
 }
 // Live worked minutes for an entry (uses now if still on the clock).
@@ -60,7 +60,7 @@ function localMinutesOfDay(tz, d) {
   return (Number(p.find(x => x.type === 'hour').value) % 24) * 60 + Number(p.find(x => x.type === 'minute').value);
 }
 const earliestShiftStart = (userId, locId, date) =>
-  (db.prepare(`SELECT MIN(start_time) s FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?`).get(userId, locId, date) || {}).s || null;
+  (db.prepare(`SELECT MIN(start_time) s FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(userId, locId, date) || {}).s || null;
 function lateMinutesFor(userId, locId, date, tz, clockIn) {
   const start = earliestShiftStart(userId, locId, date);
   if (!start) return 0;
@@ -160,7 +160,7 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
   const scheduled = db.prepare(`SELECT DISTINCT u.id, u.name, u.employee_code,
       MIN(s.start_time) AS start_time, MAX(s.end_time) AS end_time
     FROM shifts s JOIN users u ON u.id=s.user_id
-    WHERE s.location_id=? AND s.shift_date=? GROUP BY u.id ORDER BY u.name`).all(locId, date);
+    WHERE s.location_id=? AND s.shift_date=? AND s.kind='work' GROUP BY u.id ORDER BY u.name`).all(locId, date);
   const notIn = scheduled.filter(s => !byUser[s.id]).map(s => ({
     user_id: s.id, name: s.name, employee_code: s.employee_code,
     scheduled_minutes: spanMin(s.start_time, s.end_time), start_time: s.start_time, end_time: s.end_time,
@@ -203,6 +203,7 @@ function periodRange(kind, anchor) {
   const start = mondayOf(anchor); return { start, end: addDaysIso(start, 6) };
 }
 
+const FULL_DAY_HOURS = 8; // an "all day" leave entry counts as a standard workday
 // One person's own hours for a period, across whatever location(s) they worked.
 function myHoursData(userId, start, end, kind) {
   const byDate = {};
@@ -211,8 +212,14 @@ function myHoursData(userId, start, end, kind) {
     d.worked += r.worked_minutes || 0; d.late = Math.max(d.late, r.late_minutes || 0);
   }
   const schedByDate = {};
-  for (const s of db.prepare(`SELECT shift_date, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ?`).all(userId, start, end)) {
+  for (const s of db.prepare(`SELECT shift_date, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ? AND kind='work'`).all(userId, start, end)) {
     schedByDate[s.shift_date] = (schedByDate[s.shift_date] || 0) + spanMin(s.start_time, s.end_time);
+  }
+  // Scheduled leave (sick / vacation / on-leave) — hours by kind, for the timesheet.
+  const leave = { sick: 0, vacation: 0, leave: 0 };
+  for (const s of db.prepare(`SELECT kind, all_day, leave_hours, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ? AND kind<>'work'`).all(userId, start, end)) {
+    const hrs = s.leave_hours != null ? s.leave_hours : (s.all_day ? FULL_DAY_HOURS : spanMin(s.start_time, s.end_time) / 60);
+    if (leave[s.kind] != null) leave[s.kind] += hrs;
   }
   const adjByDate = {};
   for (const a of db.prepare(`SELECT work_date, adjusted_minutes FROM time_adjustments WHERE user_id=? AND work_date BETWEEN ? AND ?`).all(userId, start, end)) adjByDate[a.work_date] = a.adjusted_minutes;
@@ -233,7 +240,7 @@ function myHoursData(userId, start, end, kind) {
   });
   return {
     kind, start, end, days,
-    totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), late_days: lateDays, late_minutes: lateMin, short_days: shortDays },
+    totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), late_days: lateDays, late_minutes: lateMin, short_days: shortDays, sick_hours: round2(leave.sick), vacation_hours: round2(leave.vacation), leave_hours: round2(leave.leave) },
     approved: tsAppr ? 1 : 0, approved_by: tsAppr ? (userName(tsAppr.approved_by) || null) : null,
     rules: { ot_after_h: OT_AFTER_MIN / 60, ot_mult: OT_MULT, late_grace_min: LATE_GRACE_MIN },
   };
@@ -264,7 +271,7 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
   }
   // Scheduled minutes per person (total) and per person+day.
   const schedByUser = {}, schedByDay = {};
-  for (const s of db.prepare(`SELECT user_id, shift_date, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ?`).all(locId, start, end)) {
+  for (const s of db.prepare(`SELECT user_id, shift_date, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ? AND kind='work'`).all(locId, start, end)) {
     const m = spanMin(s.start_time, s.end_time);
     schedByUser[s.user_id] = (schedByUser[s.user_id] || 0) + m;
     schedByDay[s.user_id + '|' + s.shift_date] = (schedByDay[s.user_id + '|' + s.shift_date] || 0) + m;
@@ -497,7 +504,7 @@ router.get('/performance', requireRole(...ROLES.MANAGE), (req, res) => {
   const end = validDate(req.query.end) || localDate(tz);
   const start = validDate(req.query.start) || addDaysIso(end, -89);
   const adj = {}; for (const a of db.prepare(`SELECT user_id, work_date, adjusted_minutes FROM time_adjustments WHERE location_id=? AND work_date BETWEEN ? AND ?`).all(locId, start, end)) adj[a.user_id + '|' + a.work_date] = a.adjusted_minutes;
-  const schedByDay = {}; for (const s of db.prepare(`SELECT user_id, shift_date, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ?`).all(locId, start, end)) schedByDay[s.user_id + '|' + s.shift_date] = (schedByDay[s.user_id + '|' + s.shift_date] || 0) + spanMin(s.start_time, s.end_time);
+  const schedByDay = {}; for (const s of db.prepare(`SELECT user_id, shift_date, start_time, end_time FROM shifts WHERE location_id=? AND shift_date BETWEEN ? AND ? AND kind='work'`).all(locId, start, end)) schedByDay[s.user_id + '|' + s.shift_date] = (schedByDay[s.user_id + '|' + s.shift_date] || 0) + spanMin(s.start_time, s.end_time);
   const otBy = {}; for (const a of db.prepare(`SELECT user_id, work_date, approved, ot_minutes, dt_minutes FROM ot_approvals WHERE location_id=? AND work_date BETWEEN ? AND ?`).all(locId, start, end)) otBy[a.user_id + '|' + a.work_date] = a;
   // Collapse multiple punches per user+day.
   const perUserDate = {};

@@ -1402,7 +1402,11 @@ function minutesBetween(start, end) {
 }
 const shiftHours = (start, end) => minutesBetween(start, end) / 60;
 // Breaks are paid (10 min each) and do NOT reduce worked hours.
-const shiftWorkedHours = (s) => shiftHours(s.start_time, s.end_time);
+// A schedule entry is a work shift, or a leave entry (sick / vacation / on-leave).
+const isLeaveShift = (s) => !!(s && s.kind && s.kind !== 'work');
+const leaveHoursOf = (s) => s.leave_hours != null ? s.leave_hours : (s.all_day ? 8 : shiftHours(s.start_time, s.end_time));
+const LEAVE_META = { sick: { label: 'Sick', icon: '🤒', chip: 'low' }, vacation: { label: 'Vacation', icon: '🏖️', chip: 'blue' }, leave: { label: 'On-leave', icon: '🗓️', chip: 'gold' } };
+const shiftWorkedHours = (s) => isLeaveShift(s) ? 0 : shiftHours(s.start_time, s.end_time);
 // Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
 // as the manager needs, each within the shift).
 const BREAK_MIN = 10;
@@ -1447,11 +1451,16 @@ async function renderLocSchedule() {
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
     const taskLine = (s) => (s.tasks && s.tasks.length)
       ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? esc(t.task_time) + ' ' : ''}${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
-    const hereCards = here.map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
+    const hereCards = here.filter(s => !isLeaveShift(s)).map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
         <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
         ${taskLine(s)}${brkLine(s)}
       </div>`).join('');
+    const leaveCards = here.filter(isLeaveShift).map(s => {
+      const m = LEAVE_META[s.kind] || { label: s.kind, icon: '', chip: 'gray' };
+      const dur = s.all_day ? 'all day' : `${fmtH(leaveHoursOf(s))}h${s.start_time ? ` · ${s.start_time}–${s.end_time}` : ''}`;
+      return `<div class="leave-card ${m.chip}${canEdit ? ' editable' : ''}" data-shift="${s.id}" title="${esc(m.label)} — ${dur}">${m.icon} <b>${esc(m.label)}</b> <span class="leave-dur">${dur}</span></div>`;
+    }).join('');
     const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
         <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
@@ -1461,7 +1470,7 @@ async function renderLocSchedule() {
     const taskChip = load.min ? ` <span class="day-tasks-sum${load.heavy ? ' heavy' : ''}" title="${load.heavy ? '⚠ Heavy task load: ' : 'Est. day-task time: '}${fmtDur(load.min)} of tasks on ${fmtH(dayTotal)}h (${load.pct}% of the shift)">${load.heavy ? '⚠ ' : ''}📋 ${fmtDur(load.min)}</span>` : '';
     const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}${taskChip}</div>` : '';
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
-    return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${awayCards}${total}${add}</td>`;
+    return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${leaveCards}${awayCards}${total}${add}</td>`;
   };
   const weekBadge = (st) => {
     const h = sumHours(st.shifts);
@@ -1520,11 +1529,26 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide"><h3>Schedule — ${esc(staff.name)}</h3>
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">${wd} ${fmtDay(dayIso)} · ${esc(shortLoc(location.name))}</p>
     <div class="err" id="mErr"></div>
-    <div class="form-grid">
+    <div class="form-grid"><label style="grid-column:1/-1">Type<select id="s_kind">
+        <option value="work">Work shift</option>
+        <option value="sick">🤒 Sick</option>
+        <option value="vacation">🏖️ Vacation</option>
+        <option value="leave">🗓️ On-leave</option>
+      </select></label></div>
+    <div class="form-grid" id="leaveDur" hidden>
+      <label>Duration<select id="s_leave_mode">
+        <option value="all_day">All day (8h)</option>
+        <option value="hours">Number of hours</option>
+        <option value="range">From – to</option>
+      </select></label>
+      <label id="leaveHoursWrap" hidden>Hours<input id="s_leave_hours" type="number" min="0.5" step="0.5" value="${esc(shift && shift.leave_hours != null ? shift.leave_hours : 8)}" /></label>
+    </div>
+    <div class="form-grid" id="timeRow">
       <label>Start<input id="s_start" type="time" value="${esc(shift && shift.start_time || '10:00')}" /></label>
       <label>End<input id="s_end" type="time" value="${esc(shift && shift.end_time || '18:00')}" /></label>
-      <label style="grid-column:1/-1">Notes<input id="s_notes" value="${esc(shift && shift.notes || '')}" placeholder="Optional" /></label>
     </div>
+    <div class="form-grid"><label style="grid-column:1/-1">Notes<input id="s_notes" value="${esc(shift && shift.notes || '')}" placeholder="Optional" /></label></div>
+    <div id="workOnly">
     <div class="brk-head"><span class="job-pick-label" style="margin:0">Breaks <span style="color:var(--muted);font-weight:400">(10 min each, paid)</span></span>
       <button type="button" class="btn sm ghost" id="addBrk">+ Add break</button></div>
     <div id="brkHint" class="brk-hint"></div>
@@ -1537,6 +1561,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
       </div>`).join('')}
     </div>
     <div id="otWarn"></div>
+    </div>
     <div class="actions">
       ${isNew ? '' : '<button class="btn ghost danger" id="mDelete" style="margin-right:auto">Delete shift</button>'}
       <button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${isNew ? 'Add shift' : 'Save'}</button>
@@ -1546,8 +1571,26 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   $('mCancel').onclick = close;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   if (!isNew) $('mDelete').onclick = () => {
-    modal('Delete this shift?', [], async () => { await api('/schedule/shifts/' + shift.id, { method: 'DELETE' }); toast('Shift removed'); renderLocSchedule(); }, 'Delete');
+    modal('Delete this entry?', [], async () => { await api('/schedule/shifts/' + shift.id, { method: 'DELETE' }); toast('Removed'); renderLocSchedule(); }, 'Delete');
   };
+
+  // Toggle work-shift vs leave (sick / vacation / on-leave) and its duration mode.
+  // Use style.display (not the hidden attribute) — .form-grid's display:grid would
+  // otherwise override [hidden].
+  const showEl = (id, on) => { const e = $(id); if (e) e.style.display = on ? '' : 'none'; };
+  const applyType = () => {
+    const leave = $('s_kind').value !== 'work';
+    const mode = $('s_leave_mode').value;
+    showEl('leaveDur', leave);
+    showEl('workOnly', !leave);
+    showEl('timeRow', !leave || mode === 'range');   // shown for work, or from–to leave
+    showEl('leaveHoursWrap', leave && mode === 'hours');
+    $('mOk').textContent = isNew ? (leave ? 'Add' : 'Add shift') : 'Save';
+  };
+  $('s_kind').value = (shift && shift.kind) || 'work';
+  $('s_leave_mode').value = shift && isLeaveShift(shift) ? (shift.all_day ? 'all_day' : (shift.start_time ? 'range' : 'hours')) : 'all_day';
+  $('s_kind').onchange = applyType; $('s_leave_mode').onchange = applyType;
+  applyType();
 
   // Live overtime check — 8h/day and 40h/week, across every location the person works.
   const curId = shift ? shift.id : null;
@@ -1603,6 +1646,21 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
   recompute();
 
   $('mOk').onclick = async () => {
+    // Leave entry (sick / vacation / on-leave): all day, N hours, or a from–to span.
+    const kind = $('s_kind').value;
+    if (kind !== 'work') {
+      const mode = $('s_leave_mode').value;
+      const body = { user_id: staff.id, location_id: location.id, shift_date: dayIso, kind, notes: $('s_notes').value };
+      if (mode === 'all_day') body.all_day = 1;
+      else if (mode === 'hours') { const n = parseFloat($('s_leave_hours').value); if (!(n > 0)) { $('mErr').textContent = 'Enter the number of leave hours.'; return; } body.leave_hours = n; }
+      else { body.start_time = $('s_start').value; body.end_time = $('s_end').value; if (!body.start_time || !body.end_time) { $('mErr').textContent = 'Enter a from and a to time.'; return; } }
+      try {
+        if (isNew) await api('/schedule/shifts', { method: 'POST', body: JSON.stringify(body) });
+        else await api('/schedule/shifts/' + shift.id, { method: 'PUT', body: JSON.stringify(body) });
+        toast(isNew ? 'Leave added' : 'Leave saved'); close(); renderLocSchedule();
+      } catch (e) { $('mErr').textContent = e.message; }
+      return;
+    }
     if (over && !($('s_ot') && $('s_ot').checked)) { $('mErr').textContent = 'Over the hour limit — tick “Approve overtime exception” to schedule anyway.'; return; }
     const job_ids = [...host.querySelectorAll('[data-job]:checked')].map(c => parseInt(c.dataset.job, 10));
     const s0 = $('s_start').value, s1 = $('s_end').value;
@@ -2363,7 +2421,7 @@ async function exportActivityCSV() {
   finally { btn.textContent = orig; btn.disabled = false; }
 }
 
-const STATUS_CHIP = { active: 'ok', inactive: 'out', vacation: 'blue', sick: 'low' };
+const STATUS_CHIP = { active: 'ok', inactive: 'out', vacation: 'blue', sick: 'low', on_leave: 'gold' };
 const staffStatus = (u) => (!u.is_active ? 'inactive' : (u.work_status || 'active'));
 
 async function renderStaffOverview() {
@@ -2646,7 +2704,7 @@ function staffProfileEdit(d, locations, staff) {
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
-      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', p.job_title, JOB_TITLES)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
+      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', p.job_title, JOB_TITLES)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'on_leave', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', p.pay_type, ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', d.hourly_rate, 'number')}${inp('payroll_ref', 'Payroll reference', p.payroll_ref)}</div>
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', p.skills)}<label class="pfl">Notes<textarea id="pf_notes" rows="3">${esc(p.notes || '')}</textarea></label></div>
@@ -2704,7 +2762,7 @@ function renderStaffAdd(locations) {
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', '')}${inp('emergency_relation', 'Relationship', '')}${inp('emergency_phone', 'Phone', '')}</div>
-      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', '', JOB_TITLES)}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
+      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', '', JOB_TITLES)}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'on_leave', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', '', ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', '', 'number')}${inp('payroll_ref', 'Payroll reference', '')}</div>
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', '')}<label class="pfl">Notes<textarea id="pf_notes" rows="3"></textarea></label></div>

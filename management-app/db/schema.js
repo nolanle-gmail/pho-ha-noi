@@ -669,6 +669,12 @@ function migrate() {
     // photo can be attached before Done (stored in task_photos).
     `ALTER TABLE task_assignments ADD COLUMN started_at TEXT`,
     `ALTER TABLE task_assignments ADD COLUMN done_at TEXT`,
+    // A schedule entry is a work shift by default, or a leave entry (sick /
+    // vacation / on-leave). Leave carries its own hours — a full day, a number of
+    // hours, or a from–to span — so the timesheet can total leave vs worked hours.
+    `ALTER TABLE shifts ADD COLUMN kind TEXT NOT NULL DEFAULT 'work'`,
+    `ALTER TABLE shifts ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE shifts ADD COLUMN leave_hours REAL`,
     `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
     `ALTER TABLE users ADD COLUMN employee_code TEXT`,
     `ALTER TABLE service_visits ADD COLUMN help_flag INTEGER NOT NULL DEFAULT 0`,

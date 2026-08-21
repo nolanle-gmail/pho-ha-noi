@@ -374,6 +374,9 @@ async function renderMyHours() {
       <div class="stat"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
       <div class="stat"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="muted" style="font-size:.8rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
       <div class="stat"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
+      ${t.sick_hours ? `<div class="stat"><div class="label">Sick</div><div class="value">${t.sick_hours}h</div></div>` : ''}
+      ${t.vacation_hours ? `<div class="stat"><div class="label">Vacation</div><div class="value">${t.vacation_hours}h</div></div>` : ''}
+      ${t.leave_hours ? `<div class="stat"><div class="label">On-leave</div><div class="value">${t.leave_hours}h</div></div>` : ''}
     </div>
     ${d.approved ? `<p class="sub" style="color:var(--ok)">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
     <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th></tr></thead><tbody>${dayRows || '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;

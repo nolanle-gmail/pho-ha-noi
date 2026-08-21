@@ -88,6 +88,14 @@ td.sched-name { font-size: .86rem; }
 .shift-card.editable { cursor: pointer; }
 .shift-card.editable:hover { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
 .shift-card.away { background: repeating-linear-gradient(45deg, #f4f4f4, #f4f4f4 6px, #eee 6px, #eee 12px); opacity: .8; }
+/* Leave entries (sick / vacation / on-leave) on the schedule grid */
+.leave-card { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; border: 1px solid; border-radius: 8px; padding: .3rem .45rem; margin-bottom: .3rem; font-size: .78rem; }
+.leave-card.editable { cursor: pointer; }
+.leave-card.editable:hover { filter: brightness(.97); box-shadow: 0 0 0 2px rgba(0,0,0,.05); }
+.leave-card .leave-dur { font-weight: 400; opacity: .85; }
+.leave-card.low { background: #fdecec; border-color: #f0c4c4; color: #9a2d2d; }
+.leave-card.blue { background: #e9f0fc; border-color: #c3d6f4; color: #1b4fa0; }
+.leave-card.gold { background: #fbeed3; border-color: #e6c98a; color: #8a5a12; }
 .shift-time { font-weight: 700; font-size: .78rem; color: var(--ink); }
 .shift-away-loc { font-size: .72rem; color: var(--muted); }
 .shift-jobs { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .25rem; }
