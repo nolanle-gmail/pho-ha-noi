@@ -669,7 +669,7 @@ a location dashboard; self-service staff land on a personal home screen.
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
-| **Staff** | Directory (A–Z), add staff + HR profile, jobs/tasks catalog, access-level matrix, activity log | Owner/Admin/Manager |
+| **Staff** | Directory (A–Z), full HR-profile edit, jobs/tasks catalog, access-level matrix, activity log. **Add staff** + access-level/location changes are owner/admin-only; **managers edit their own store's staff** (name, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
 | **Central Kitchen** | Demand, production, recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
@@ -902,6 +902,10 @@ Hand each tester the section that matches their job.
    suggestion into a PO, then receive it and watch stock + a lot appear.
 4. **Approve time** — Reports → Timesheets: review late/short/OT flags, approve
    overtime (or escalate), round a day, and sign off the period.
+5. **Update your staff** — Staff → Directory → **Edit** on any of your store's
+   people to update their full HR profile (contact, address, emergency contact,
+   employment, payroll, skills/notes), status, or reset a password. Access level and
+   home location changes stay with owner/admin, and only they can Add staff.
 
 ### Inventory Support · Analyst / Accountant · Driver
 
