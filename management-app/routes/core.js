@@ -44,6 +44,18 @@ router.get('/staff/overview', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json(rows);
 });
 
+// Who may edit a given staff member. Owner/admin: anyone. A manager: their own
+// store's staff (all-location managers: any store), but never an owner/admin
+// account. Changing access level or home location stays owner/admin-only.
+function canEditStaff(req, target) {
+  if (ROLES.ADMIN.includes(req.user.role)) return true;
+  if (!ROLES.MANAGE.includes(req.user.role)) return false;
+  if (ROLES.ADMIN.includes(target.role)) return false;
+  if (seesAllLocations(req.user.role)) return true;
+  return String(target.location_id) === String(req.user.location_id);
+}
+const isAdminEditor = (req) => ROLES.ADMIN.includes(req.user.role);
+
 // Resolve the location for a role: owner/admin have none; others require one.
 function resolveLocation(role, provided, fallback) {
   if (seesAllLocations(role)) return { location_id: null };
@@ -69,10 +81,16 @@ router.post('/staff', requireRole(...ROLES.ADMIN), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-// Update a staff account (owner/admin only).
-router.put('/staff/:id', requireRole(...ROLES.ADMIN), (req, res) => {
+// Update a staff account. Owner/admin: any staff, all fields. Managers: their own
+// store's staff — name and active status only (access level & location are
+// owner/admin-only).
+router.put('/staff/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found' });
+  if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only edit staff at your own location.' });
+  if (!isAdminEditor(req) && (req.body.role !== undefined || req.body.location_id !== undefined)) {
+    return res.status(403).json({ error: 'Only an owner or admin can change access level or location.' });
+  }
   const fields = [], vals = [];
 
   if (req.body.name !== undefined) { fields.push('name=?'); vals.push(String(req.body.name).slice(0, 120)); }
@@ -104,10 +122,11 @@ router.put('/staff/:id', requireRole(...ROLES.ADMIN), (req, res) => {
   res.json({ success: true });
 });
 
-// Reset a staff member's password (owner/admin only).
-router.post('/staff/:id/reset-password', requireRole(...ROLES.ADMIN), (req, res) => {
+// Reset a staff member's password (owner/admin, or a manager for their own staff).
+router.post('/staff/:id/reset-password', requireRole(...ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found' });
+  if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only manage staff at your own location.' });
   const p = req.body.new_password;
   if (!p || String(p).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   db.prepare(`UPDATE users SET password_hash=? WHERE id=?`).run(bcrypt.hashSync(String(p), 10), u.id);
@@ -136,10 +155,11 @@ router.get('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ ...u, profile, assigned_location_ids: assigned, supervisor });
 });
 
-// Update a profile (owner/admin only).
-router.put('/staff/:id/profile', requireRole(...ROLES.ADMIN), (req, res) => {
-  const u = db.prepare(`SELECT id FROM users WHERE id=?`).get(req.params.id);
+// Update a profile (owner/admin, or a manager for their own staff).
+router.put('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
+  const u = db.prepare(`SELECT id, role, location_id FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found.' });
+  if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only edit staff at your own location.' });
   const b = req.body || {};
 
   // Pay rate lives on users.

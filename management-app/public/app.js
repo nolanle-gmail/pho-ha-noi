@@ -2481,11 +2481,39 @@ function jobModal(job) {
 let staffSearch = '';
 let staffLetter = 'A';
 const letterOf = (u) => { const L = (u.name.trim()[0] || '#').toUpperCase(); return /[A-Z]/.test(L) ? L : '#'; };
+// Editing rights in the Staff directory. Owner/admin edit anyone; managers edit
+// their own store's staff (all-location managers: any store) but never an
+// owner/admin account. Only owner/admin can Add staff or change access level /
+// home location.
+const MGR_EDIT_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const ALL_SCOPE_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager'];
+function canEditStaffRow(u) {
+  const r = S.user.role;
+  if (['owner', 'admin'].includes(r)) return true;
+  if (!MGR_EDIT_ROLES.includes(r)) return false;
+  if (['owner', 'admin'].includes(u.role)) return false;
+  if (ALL_SCOPE_ROLES.includes(r)) return true;
+  return String(u.location_id) === String(S.user.location_id);
+}
+const canEditAccountFields = () => ['owner', 'admin'].includes(S.user.role);
+// Load a person's full record, then open the combined edit form.
+async function openStaffEdit(id) {
+  try {
+    const [d, locations, staff] = await Promise.all([
+      api('/staff/' + id + '/profile'),
+      api('/inventory/locations').catch(() => S.locations || []),
+      api('/staff').catch(() => []),
+    ]);
+    staffProfileEdit(d, locations, staff);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function renderStaffDirectory() {
   let rows, locations;
   try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations').catch(() => S.locations)]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
-  const canManage = ['owner', 'admin'].includes(S.user.role);
+  const canAdd = ['owner', 'admin'].includes(S.user.role);
+  const isManagerish = MGR_EDIT_ROLES.includes(S.user.role);
   const q = staffSearch.trim().toLowerCase();
   const searching = q.length > 0;
   // Which first-letters actually have people (for the A–Z bar).
@@ -2517,7 +2545,7 @@ async function renderStaffDirectory() {
         <td><span class="badge ${STATUS_CHIP[st] || 'gray'}">${st}</span></td>
         <td><div class="actions-cell">
           <button class="btn sm" data-sact="view" data-id="${u.id}">View</button>
-          ${canManage ? `<button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
+          ${canEditStaffRow(u) ? `<button class="btn sm ghost" data-sact="edit" data-id="${u.id}">Edit</button>
           <button class="btn sm ghost" data-sact="pw" data-id="${u.id}">Reset password</button>
           <button class="btn sm ghost" data-sact="toggle" data-id="${u.id}">${u.is_active ? 'Deactivate' : 'Activate'}</button>` : ''}
         </div></td>
@@ -2526,7 +2554,7 @@ async function renderStaffDirectory() {
   }
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
-      ${canManage ? '<button class="btn" id="addStaff">+ Add staff</button>' : '<span class="badge gray">View only</span>'}</div>
+      ${canAdd ? '<button class="btn" id="addStaff">+ Add staff</button>' : (isManagerish ? '' : '<span class="badge gray">View only</span>')}</div>
     <div class="letter-bar">${bar}</div>
     <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
@@ -2546,11 +2574,11 @@ async function renderStaffDirectory() {
     const u = rows.find(x => x.id == b.dataset.id);
     const act = b.dataset.sact;
     if (act === 'view') renderStaffProfile(u.id);
-    else if (act === 'edit') staffModal(u, locations);
+    else if (act === 'edit') openStaffEdit(u.id);
     else if (act === 'pw') resetStaffPassword(u);
     else if (act === 'toggle') toggleStaff(u);
   });
-  if (canManage) $('addStaff').onclick = () => renderStaffAdd(locations);
+  if (canAdd) $('addStaff').onclick = () => renderStaffAdd(locations);
 }
 
 // ── Staff profile (full HR record) ───────────────────────────────────────────
@@ -2558,7 +2586,7 @@ async function renderStaffProfile(id) {
   let d, locations, staff;
   try { [d, locations, staff] = await Promise.all([api('/staff/' + id + '/profile'), api('/inventory/locations').catch(() => S.locations || []), api('/staff').catch(() => [])]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
-  const canEdit = ['owner', 'admin'].includes(S.user.role);
+  const canEdit = canEditStaffRow(d);
   const p = d.profile || {};
   const shortLoc = (n) => (n || '').replace('Pho Ha Noi — ', '');
   const locName = (lid) => { const l = (locations || []).find(x => x.id == lid); return l ? shortLoc(l.name) : ''; };
@@ -2606,8 +2634,14 @@ function staffProfileEdit(d, locations, staff) {
   const supOpts = [{ v: '', n: '—' }].concat((staff || []).filter(s => s.id != d.id).map(s => ({ v: s.id, n: s.name })));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Edit — ${esc(d.name)}</h2>
-      <div><button class="btn ghost" id="cancelProf">Cancel</button> <button class="btn" id="saveProf">Save profile</button></div></div>
+      <div><button class="btn ghost" id="cancelProf">Cancel</button> <button class="btn" id="saveProf">Save</button></div></div>
     <div class="prof-cols">
+      <div class="section"><h3>Account</h3>${inp('name', 'Full name', d.name)}
+        <label class="pfl">Work email<input type="text" value="${esc(d.email || '')}" disabled title="Email is the sign-in and can't be changed here" /></label>
+        ${canEditAccountFields()
+          ? selRaw('role', 'Access level', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
+            + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
+          : `<label class="pfl">Access level<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
@@ -2622,33 +2656,25 @@ function staffProfileEdit(d, locations, staff) {
     const body = {};
     $('view').querySelectorAll('[id^="pf_"]').forEach(el => { body[el.id.slice(3)] = el.value; });
     body.assigned_location_ids = [...$('view').querySelectorAll('[data-loc]:checked')].map(c => c.dataset.loc);
-    try { await api('/staff/' + d.id + '/profile', { method: 'PUT', body: JSON.stringify(body) }); toast('Profile saved'); renderStaffProfile(d.id); }
-    catch (e) { toast(e.message, true); }
+    // Split account fields (users table) from HR profile fields. Access level and
+    // home location only travel when the editor is owner/admin.
+    const account = {};
+    if (body.name !== undefined) { account.name = body.name; delete body.name; }
+    if (canEditAccountFields()) {
+      if (body.role !== undefined) { account.role = body.role; delete body.role; }
+      if (body.location_id !== undefined) { account.location_id = body.location_id; delete body.location_id; }
+    } else { delete body.role; delete body.location_id; }
+    try {
+      if (Object.keys(account).length) await api('/staff/' + d.id, { method: 'PUT', body: JSON.stringify(account) });
+      await api('/staff/' + d.id + '/profile', { method: 'PUT', body: JSON.stringify(body) });
+      toast('Staff saved'); renderStaffProfile(d.id);
+    } catch (e) { toast(e.message, true); }
   };
 }
 
 function locFieldOptions(locations, selected, includeAll) {
   const opts = includeAll ? [{ value: '', label: 'All locations (owner/admin)' }] : [];
   return opts.concat(locations.map(l => ({ value: l.id, label: l.name.replace('Pho Ha Noi — ', '') })));
-}
-function staffModal(u, locations) {
-  const isNew = !u;
-  const roleOpts = accessLevels()
-    .filter(r => r !== 'owner' || S.user.role === 'owner') // only owner can assign owner
-    .map(r => ({ value: r, label: roleLabel(r) }));
-  const fields = [
-    { key: 'name', label: 'Full name', value: u ? u.name : '' },
-    { key: 'email', label: 'Email', value: u ? u.email : '', type: isNew ? 'email' : 'text' },
-    { key: 'role', label: 'Access level', type: 'select', options: roleOpts, value: u ? u.role : 'employee' },
-    { key: 'location_id', label: 'Location', type: 'select', options: locFieldOptions(locations, u ? u.location_id : '', true), value: u ? (u.location_id || '') : '' },
-  ];
-  if (isNew) fields.splice(2, 0, { key: 'password', label: 'Temporary password (min 8)', type: 'password' });
-  modal(isNew ? 'Add staff' : `Edit — ${u.name}`, fields, async (v) => {
-    if (v.email !== undefined && !isNew) delete v.email; // email is immutable on edit
-    if (isNew) { await api('/staff', { method: 'POST', body: JSON.stringify(v) }); toast('Staff account created'); }
-    else { await api('/staff/' + u.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Staff updated'); }
-    renderStaffModule();
-  }, isNew ? 'Create account' : 'Save');
 }
 function resetStaffPassword(u) {
   modal(`Reset password — ${u.name}`, [{ key: 'new_password', label: 'New password (min 8 chars)', type: 'password' }],
