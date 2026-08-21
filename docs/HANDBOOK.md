@@ -806,9 +806,10 @@ seven days):
   On-leave**. Leave takes a duration — **all day** (8 h), a **number of hours**, or a
   **from–to** span — and shows as a coloured chip (🤒 / 🏖️ / 🗓️). Leave never counts
   toward worked hours or the 8h/40h limits; instead the **timesheet totals it as sick,
-  vacation, or leave hours**, shown on the person's **My Hours** (Sick / Vacation /
-  On-leave tiles). A person's HR **status** can also be set to `on_leave` on their
-  profile.
+  vacation, or leave hours** — on the person's **My Hours** (Sick / Vacation / On-leave
+  tiles) and on the manager's **Timesheet** as a **Leave** column (per-period total,
+  included in the CSV export). A person's HR **status** can also be set to `on_leave`
+  on their profile.
 
 ### 6.4 Inventory replenishment & the central kitchen
 
