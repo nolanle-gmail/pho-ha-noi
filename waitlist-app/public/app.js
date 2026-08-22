@@ -404,6 +404,7 @@ async function renderMyTasks() {
   v.querySelectorAll('[data-start]').forEach(b => b.onclick = () => mtStart(b.dataset.start));
   v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => mtDone(b.dataset.done, true));
   v.querySelectorAll('[data-undo]').forEach(b => b.onclick = () => mtDone(b.dataset.undo, false));
+  v.querySelectorAll('[data-check]').forEach(b => b.onclick = () => mtDone(b.dataset.check, b.getAttribute('aria-checked') !== 'true'));
   v.querySelectorAll('[data-up]').forEach(i => i.onchange = () => { if (i.files && i.files[0]) mtUpload(i.dataset.up, i.files[0]); });
   v.querySelectorAll('[data-photo]').forEach(img => { loadTaskPhoto(img.dataset.photo, img); img.onclick = () => mtLightbox(img.src); });
 }
@@ -427,7 +428,7 @@ function mtCard(t) {
   } else {
     actions = `<button class="mt-btn start" data-start="${t.id}">▶ Start</button>`;
   }
-  return `<div class="mt-card${t.done ? ' done' : inProgress ? ' active' : ''}">
+  return `<div class="mt-card${t.done ? ' done' : inProgress ? ' active' : ''}" data-id="${t.id}">
     <div class="mt-body">
       <div class="mt-name">${time}${esc(t.name)}</div>
       ${meta ? `<div class="muted mt-meta">${esc(meta)}</div>` : ''}
@@ -436,11 +437,41 @@ function mtCard(t) {
       <div class="mt-actions">${actions}</div>
     </div>
     ${photo ? `<div class="mt-side">${photo}</div>` : ''}
+    <button type="button" class="mt-check${t.done ? ' on' : ''}" data-check="${t.id}" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" title="${t.done ? 'Done — tap to undo' : 'Mark done'}">
+      <span class="mt-box">${t.done ? '✓' : ''}</span>
+      <span class="mt-check-lbl">Done</span>
+    </button>
   </div>`;
 }
 function fmtT(iso) { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
 async function mtStart(id) { try { await api(`/mytasks/${id}/start`, { method: 'PUT', body: '{}' }); renderMyTasks(); } catch (e) { toast(e.message, true); } }
-async function mtDone(id, done) { try { await api(`/mytasks/${id}/done`, { method: 'PUT', body: JSON.stringify({ done }) }); renderMyTasks(); } catch (e) { toast(e.message, true); } }
+async function mtDone(id, done) {
+  mtMarkDone(id, done);   // tick the Done-status checkbox right away — don't wait for the round-trip
+  try { await api(`/mytasks/${id}/done`, { method: 'PUT', body: JSON.stringify({ done }) }); renderMyTasks(); }
+  catch (e) { toast(e.message, true); renderMyTasks(); }   // re-sync from server if the save failed
+}
+// Optimistic UI: flip the card's done state (checkbox + strike-through + header count)
+// in place so the check lands the instant staff taps Done, ahead of the server reply.
+function mtMarkDone(id, done) {
+  const card = document.querySelector(`.mt-card[data-id="${id}"]`);
+  if (!card) return;
+  const wasDone = card.classList.contains('done');
+  if (wasDone === done) return;
+  card.classList.toggle('done', done);
+  card.classList.remove('active');
+  const box = card.querySelector('.mt-check');
+  if (box) {
+    box.classList.toggle('on', done);
+    box.setAttribute('aria-checked', done ? 'true' : 'false');
+    box.title = done ? 'Done — tap to undo' : 'Mark done';
+    const mark = box.querySelector('.mt-box'); if (mark) mark.textContent = done ? '✓' : '';
+  }
+  const sub = document.querySelector('.sv-head .muted');   // "… · 3/5 done"
+  if (sub) {
+    const m = sub.textContent.match(/(\d+)\/(\d+) done/);
+    if (m) { const n = Math.max(0, Math.min(+m[2], +m[1] + (done ? 1 : -1))); sub.textContent = sub.textContent.replace(/\d+\/\d+ done/, `${n}/${m[2]} done`); }
+  }
+}
 
 // Upload a proof photo: send the raw image bytes (Content-Type = the file's type)
 // so the server stores them as-is. Not through api() because that forces JSON.

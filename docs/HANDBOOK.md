@@ -865,6 +865,11 @@ flowchart LR
 3. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
    Start/Done times and can view the proof photo.
 
+Each task row carries a **Done-status checkbox at the far right** ("DONE" label). It
+ticks green the instant a task is completed — via the ✓ Done button _or_ by tapping
+the checkbox itself — with the running `done/total` header and progress ring updating
+in the same moment, ahead of the server round-trip. Tapping a ticked box undoes it.
+
 The photo is optional — a task can be completed without one. Managers and the task's
 owner can view a stored photo; it persists with the database.
 

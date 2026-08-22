@@ -283,8 +283,13 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .mt-ring.full { border-color: #178a4e; color: #178a4e; }
 .mt-card { display: flex; gap: 12px; align-items: flex-start; background: #fff; border: 1px solid #e7e1d7; border-radius: 14px; padding: 12px; margin-bottom: 10px; }
 .mt-card.done { background: #f4f8f2; border-color: #cfe6cf; }
-.mt-check { flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px; border: 2px solid #c9c1b3; background: #fff; color: #fff; font-weight: 900; font-size: 1.1rem; cursor: pointer; }
-.mt-card.done .mt-check { background: #178a4e; border-color: #178a4e; }
+/* Done-status checkbox at the end of each task row */
+.mt-check { flex-shrink: 0; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 3px; border: 0; background: none; padding: 2px; cursor: pointer; }
+.mt-check .mt-box { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 9px; border: 2px solid #c9c1b3; background: #fff; color: #fff; font-weight: 900; font-size: 1.15rem; line-height: 1; transition: background .12s ease, border-color .12s ease; }
+.mt-check.on .mt-box { background: #178a4e; border-color: #178a4e; }
+.mt-check .mt-check-lbl { font-size: .62rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: #a49a88; }
+.mt-check.on .mt-check-lbl { color: #178a4e; }
+.mt-check:hover .mt-box { border-color: #178a4e; }
 .mt-body { min-width: 0; }
 .mt-name { font-weight: 700; font-size: .98rem; }
 .mt-card.done .mt-name { text-decoration: line-through; color: #8a8172; }

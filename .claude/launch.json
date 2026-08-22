@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "management",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "cwd": "management-app",
+      "port": 4001
+    },
+    {
+      "name": "waitlist",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "cwd": "waitlist-app",
+      "port": 4002
+    }
+  ]
+}
