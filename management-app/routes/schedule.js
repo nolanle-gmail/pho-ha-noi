@@ -172,6 +172,7 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
   const existing = db.prepare(`SELECT id, user_id, task_time, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
   const nu = hasUser ? userId : (existing ? existing.user_id : null);
   let nt = hasTime ? time : (existing ? existing.task_time : null);
+  if (!nu) nt = null; // an unassigned task has no owner, so it has no scheduled time either
   // A task time must fall inside one of the assignee's shifts that day, and not during a break.
   if (nt) {
     if (!nu) return res.status(400).json({ error: 'Assign the task to someone before setting a time.' });
@@ -201,7 +202,12 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
       if (s0 < oe && os < e0) return res.status(400).json({ error: `That overlaps “${o.name}” at ${o.task_time}. Pick a free time.` });
     }
   }
-  if (existing) {
+  if (!nu) {
+    // Unassigned ⇒ no assignment at all. Delete the row so nothing is left behind:
+    // a done flag or time on a task with no owner is meaningless (and would show a
+    // stale "done" tick on the board).
+    if (existing) db.prepare(`DELETE FROM task_assignments WHERE id=?`).run(existing.id);
+  } else if (existing) {
     const nd = done !== null ? done : existing.done;
     db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
   } else {

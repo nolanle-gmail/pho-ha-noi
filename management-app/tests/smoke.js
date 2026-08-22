@@ -338,6 +338,17 @@ const check = (name, ok, detail = '') => {
     check('overlapping task time rejected (400)', r.status === 400, 'status=' + r.status);
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, time: '15:30' }) });
     check('non-overlapping free time allowed', r.status === 200, await r.text());
+    // Unassigning a task clears it completely — no orphaned row, no stale done flag/time.
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, done: true }) });
+    const dtDn = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('a day task can be marked done', !!(dtDn.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {}).done, JSON.stringify(dtDn.tasks.find(t => t.job_id === dt.tasks[0].job_id)));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: null }) });
+    check('unassign a day task', r.status === 200, await r.text());
+    const dtU = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    const un = dtU.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {};
+    check('unassigning clears owner, time and done', !un.user_id && !un.task_time && !un.done, JSON.stringify(un));
+    // Re-assign so the later assigned-count assertions still hold.
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
     const stdJob = allJobs.find(x => x.kind === 'standard');
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: stdJob.id, user_id: schedStaff.id }) });
     check('standard job rejected as a day task (400)', r.status === 400, 'status=' + r.status);
