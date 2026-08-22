@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 21, 2026_
+_Last updated: August 22, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -869,6 +869,11 @@ Each task row carries a **Done-status checkbox at the far right** ("DONE" label)
 ticks green the instant a task is completed — via the ✓ Done button _or_ by tapping
 the checkbox itself — with the running `done/total` header and progress ring updating
 in the same moment, ahead of the server round-trip. Tapping a ticked box undoes it.
+
+On the Day Tasks board a manager assigns each task via its **Assigned to** dropdown
+(assigning notifies the assignee). Setting a task back to **— unassigned —** clears it
+completely: the assignment is removed, so no owner, scheduled time, or "done" tick is
+left behind — the task simply returns to the pool for someone else.
 
 The photo is optional — a task can be completed without one. Managers and the task's
 owner can view a stored photo; it persists with the database.
