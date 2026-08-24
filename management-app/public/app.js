@@ -704,18 +704,29 @@ async function openOrderModal(prefill) {
 
 // ── Orders & Reorder ─────────────────────────────────────────────────────
 async function renderOrders() {
-  const [sugg, orders, vendors] = await Promise.all([
-    api(invQ('/reorder-suggestions')), api(invQ('/supply-orders')), api('/inventory/vendors'),
+  const distQ = (p) => `/distribution${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
+  const [avail, orders, vendors, ckOrders] = await Promise.all([
+    api(distQ('/availability')), api(invQ('/supply-orders')), api('/inventory/vendors'), api(distQ('/orders?scope=store')),
   ]);
+  const sugg = avail.items;
+  const ckTotal = sugg.reduce((a, s) => a + s.from_ck, 0);
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Orders & Reorder</h2>
       <button class="btn" id="newOrder">+ New order</button></div>
     <div class="section">
-      <div class="row-between"><h3>Auto-reorder suggestions (below par)</h3>
-        ${sugg.length ? `<button class="btn" id="createPO">Create PO for all (${sugg.length})</button>` : ''}</div>
-      ${sugg.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Build to</th><th class="num">Suggested</th><th class="num">Est. cost</th></tr></thead><tbody>
-        ${sugg.map(s => `<tr><td>${esc(s.item_name)}</td><td class="num">${numf(s.quantity)}</td><td class="num">${numf(s.min_quantity)}</td><td class="num">${numf(s.build_to)}</td><td class="num"><strong>${numf(s.suggested_qty)} ${esc(s.unit)}</strong></td><td class="num">${money(s.est_cost)}</td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="empty">No items below par. Nothing to reorder.</div>'}
+      <div class="row-between"><h3>Low stock — reorder <span style="font-weight:400;color:var(--muted);font-size:.85rem">Central Kitchen first, vendors for the shortfall</span></h3>
+        ${sugg.length ? `<div style="display:flex;gap:.5rem"><button class="btn" id="orderCK">Order all — CK first (${sugg.length})</button><button class="btn ghost" id="createPO">Vendor PO instead</button></div>` : ''}</div>
+      ${sugg.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Need</th><th class="num">🏭 From CK</th><th class="num">🚚 From vendor</th><th class="num">Est. cost</th></tr></thead><tbody>
+        ${sugg.map(s => `<tr><td>${esc(s.item_name)}</td><td class="num">${numf(s.quantity)}</td><td class="num"><strong>${numf(s.need)} ${esc(s.unit)}</strong></td><td class="num">${s.from_ck > 0 ? `<span class="badge ok">${numf(s.from_ck)}</span>` : '<span style="color:var(--muted)">0</span>'}</td><td class="num">${s.from_vendor > 0 ? `<span class="badge gold">${numf(s.from_vendor)}</span>` : '<span style="color:var(--muted)">0</span>'}</td><td class="num">${money(Math.round(s.need * (s.unit_cost || 0) * 100) / 100)}</td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen can cover <strong>${numf(ckTotal)}</strong> unit${ckTotal === 1 ? '' : 's'} right now; the rest is auto-drafted as vendor POs.</p>` : '<div class="empty">No items below par. Nothing to reorder.</div>'}
+    </div>
+    <div class="section">
+      <h3>Central Kitchen orders <span style="font-weight:400;color:var(--muted);font-size:.85rem">raw food from the warehouse</span></h3>
+      ${ckOrders.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">CK</th><th class="num">Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        ${ckOrders.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${numf(o.ck_qty)}</td><td class="num">${o.vendor_qty > 0 ? numf(o.vendor_qty) : '—'}</td><td>${distBadge(o.status)}</td>
+          <td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No Central Kitchen orders yet.</div>'}
     </div>
     <div class="section">
       <h3>Purchase / supply orders</h3>
@@ -726,17 +737,27 @@ async function renderOrders() {
     </div>`;
 
   $('newOrder').onclick = () => openOrderModal();
+  const orderCK = $('orderCK');
+  if (orderCK) orderCK.onclick = async () => {
+    try { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }
+    catch (e) { toast(e.message, true); }
+  };
   const createPO = $('createPO');
   if (createPO) createPO.onclick = () => {
     const vOpts = [{ value: '', label: '— No vendor —' }].concat(vendors.map(v => ({ value: v.id, label: v.name })));
-    modal('Create purchase order', [{ key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' }],
-      async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: S.loc, vendor_id: v.vendor_id || null, items: sugg.map(s => ({ item_id: s.id, quantity: s.suggested_qty })) }) }); toast(`Created ${r.created} order lines`); render(); }, 'Create PO');
+    modal('Vendor purchase order (skip Central Kitchen)', [{ key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' }],
+      async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: S.loc, vendor_id: v.vendor_id || null, items: sugg.map(s => ({ item_id: s.id, quantity: s.need })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
   };
+  $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
+    try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); render(); }
+    catch (e) { toast(e.message, true); }
+  });
   $('view').querySelectorAll('[data-order]').forEach(b => b.onclick = async () => {
     try { await api('/inventory/order/' + b.dataset.order, { method: 'PUT', body: JSON.stringify({ status: b.dataset.status }) }); toast('Order ' + b.dataset.status); render(); }
     catch (e) { toast(e.message, true); }
   });
 }
+function distBadge(s) { const m = { requested: 'gold', approved: 'gold', shipped: 'blue', received: 'ok', cancelled: 'out' }; return `<span class="badge ${m[s] || 'gray'}">${s}</span>`; }
 function orderBadge(s) { const m = { pending: 'gray', approved: 'gold', shipped: 'gold', received: 'ok', cancelled: 'out' }; return `<span class="badge ${m[s] || 'gray'}">${s}</span>`; }
 function nextOrderActions(o) {
   const steps = { pending: 'approved', approved: 'shipped', shipped: 'received' };
@@ -3240,14 +3261,14 @@ async function renderCompose() {
 }
 
 // ── Central Kitchen module (production & supply hub) ────────────────────────
-const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['recipes', 'Recipes'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['distribution', 'Distribution'], ['recipes', 'Recipes'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
 function renderCkTabs() {
   $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
 }
 function renderCentral() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, recipes: renderCkRecipes, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
+  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, distribution: renderCkDistribution, recipes: renderCkRecipes, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
 }
 
 async function renderCkOverview() {
@@ -3332,6 +3353,48 @@ async function renderCkProduction() {
     { key: 'batches', label: 'Batches produced', type: 'number', value: b.dataset.batches },
     { key: 'actual_output', label: 'Actual usable output (blank = expected)', type: 'number' },
   ], async (v) => { const r = await api('/central/production', { method: 'POST', body: JSON.stringify({ product_id: b.dataset.produce, ...v }) }); toast(`Produced ${numf(r.produced)} units`); renderCentral(); }, 'Record'));
+}
+
+async function renderCkDistribution() {
+  const [q, stock] = await Promise.all([api('/distribution/orders?scope=ck'), api('/distribution/ck-stock')]);
+  const open = q.orders.filter(o => ['requested', 'approved', 'shipped'].includes(o.status));
+  const recent = q.orders.filter(o => ['received', 'cancelled'].includes(o.status)).slice(0, 8);
+  const lowCount = stock.items.filter(i => i.low).length;
+  $('view').innerHTML = `
+    <h2 class="page">Distribution <span style="font-weight:400;color:var(--muted);font-size:.9rem">— raw food to the stores</span></h2>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Stores order raw items from the Central Kitchen first. Shipping an order deducts CK stock; the store confirms receipt to land it in their inventory. Whatever the CK can't cover is auto-routed to a vendor by the store.</p>
+    <div class="section"><h3>Incoming store orders ${open.length ? `<span class="badge gold">${open.length} open</span>` : ''}</h3>
+      ${open.length ? `<div class="table-wrap"><table><thead><tr><th>Store</th><th>Item</th><th class="num">CK qty</th><th>Requested by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        ${open.map(o => `<tr><td><strong>${esc(o.store_name)}</strong></td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)} ${esc(o.unit)}</td><td>${esc(o.requested_by_name || '—')}</td><td>${distBadge(o.status)}</td>
+          <td><div class="actions-cell">${ckOrderActions(o)}</div></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No open store orders.</div>'}
+    </div>
+    <div class="section"><div class="row-between"><h3>Warehouse raw stock ${lowCount ? `<span class="badge low">${lowCount} low</span>` : ''}</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Free</th><th class="num">Min</th><th>Offered to stores</th></tr></thead><tbody>
+        ${stock.items.map(i => `<tr><td>${esc(i.item_name)}${i.low ? ' <span class="badge low">low</span>' : ''}</td><td class="num">${numf(i.quantity)} ${esc(i.unit)}</td><td class="num">${i.reserved > 0 ? numf(i.reserved) : '—'}</td><td class="num"><strong>${numf(i.free)}</strong></td><td class="num">${numf(i.min_quantity)}</td>
+          <td><button class="btn sm ${i.distributable ? '' : 'ghost'}" data-dist-toggle="${i.id}" data-on="${i.distributable}">${i.distributable ? '✓ Offered' : 'Withheld'}</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen restocks itself from vendors on the <strong>Inventory</strong> page (scoped to the Central Kitchen).</p>
+    </div>
+    ${recent.length ? `<div class="section"><h3>Recently settled</h3><div class="table-wrap"><table><thead><tr><th>Store</th><th>Item</th><th class="num">CK qty</th><th>Status</th></tr></thead><tbody>
+      ${recent.map(o => `<tr><td>${esc(o.store_name)}</td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)}</td><td>${distBadge(o.status)}</td></tr>`).join('')}
+    </tbody></table></div></div>` : ''}`;
+  $('view').querySelectorAll('[data-dship]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dship, 'shipped'));
+  $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.drecv, 'received'));
+  $('view').querySelectorAll('[data-dcancel]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dcancel, 'cancelled'));
+  $('view').querySelectorAll('[data-dist-toggle]').forEach(b => b.onclick = async () => {
+    try { await api('/distribution/ck-stock/' + b.dataset.distToggle, { method: 'PUT', body: JSON.stringify({ distributable: b.dataset.on === '1' ? 0 : 1 }) }); renderCentral(); }
+    catch (e) { toast(e.message, true); }
+  });
+}
+function ckOrderActions(o) {
+  if (o.status === 'requested' || o.status === 'approved') return `<button class="btn sm" data-dship="${o.id}">Ship</button><button class="btn sm ghost" data-dcancel="${o.id}">Cancel</button>`;
+  if (o.status === 'shipped') return `<button class="btn sm" data-drecv="${o.id}">Mark received</button>`;
+  return '';
+}
+async function ckOrderAct(id, status) {
+  try { await api('/distribution/orders/' + id, { method: 'PUT', body: JSON.stringify({ status }) }); toast('Order ' + status); renderCentral(); }
+  catch (e) { toast(e.message, true); }
 }
 
 async function renderCkRecipes() {

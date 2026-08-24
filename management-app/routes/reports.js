@@ -19,7 +19,10 @@ function dateRange(req) {
 // ── Items / inventory report ───────────────────────────────────────────────
 router.get('/inventory', requireRole(...ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req);
-  const cond = locId ? 'WHERE i.is_active=1 AND i.location_id=?' : 'WHERE i.is_active=1';
+  // The Central Kitchen is a separate warehouse with its own Distribution view; keep
+  // it out of the store-facing inventory report so store valuations stay store-only.
+  const cond = locId ? 'WHERE i.is_active=1 AND i.location_id=?'
+    : "WHERE i.is_active=1 AND i.location_id IN (SELECT id FROM locations WHERE type='restaurant')";
   const args = locId ? [locId] : [];
   const totals = db.prepare(`SELECT ROUND(COALESCE(SUM(quantity*unit_cost),0),2) value, COUNT(*) items,
     SUM(CASE WHEN quantity<min_quantity THEN 1 ELSE 0 END) low FROM inventory i ${cond}`).get(...args);

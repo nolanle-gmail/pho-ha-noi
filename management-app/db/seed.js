@@ -393,6 +393,20 @@ function run() {
     return { id, name, role };
   });
 
+  // CK raw-food warehouse: the Central Kitchen stocks the same raw items the stores
+  // use, at distribution scale, so a store can order "from the Central Kitchen first."
+  // A couple are forced low to exercise the CK-short → vendor-shortfall split.
+  const CK_LOW = new Set(['Beef Flank', 'Star Anise']);
+  ITEMS.forEach(([name, cat, unit, baseQty, min, par, cost, perishable]) => {
+    const warehouseMin = min * 3;
+    const qty = CK_LOW.has(name) ? Math.round(warehouseMin * 0.4) : Math.round(baseQty * 6);
+    const ckItemId = insItem.run(ckId, name, cat, unit, qty, warehouseMin, par * 6, cost, 'CK-' + (sku++), descFor(name, cat, unit), 'Central Kitchen distribution stock').lastInsertRowid;
+    if (qty > 0) {
+      insTxn.run(ckItemId, ckId, qty, owner.id, 'Opening stock (Central Kitchen)');
+      insLot.run(ckItemId, ckId, 'LOT-CK-' + ckItemId, qty, qty, cost, perishable ? '+10 days' : '+180 days', owner.id);
+    }
+  });
+
   // CK products with master recipes. [name, unit, batch_yield, shrinkage, safety, on_hand, [[ingredient, qtyPerBatch]]]
   const CK_PRODUCTS = [
     ['Beef Pho Broth', 'gal', 40, 0.06, 300, 220, [['Beef Bones (marrow)', 120], ['Yellow Onion', 20], ['Ginger', 8], ['Star Anise', 2], ['Cinnamon Stick', 2], ['Fish Sauce', 3], ['Rock Sugar', 5], ['Salt', 4]]],

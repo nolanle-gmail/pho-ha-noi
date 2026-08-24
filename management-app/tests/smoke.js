@@ -825,6 +825,50 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/central/summary', { headers: H(emp.token) });
     check('employee blocked from central kitchen (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Central-Kitchen distribution (raw-food warehouse → stores) ──────────
+    const ckStock = await j(await fetch(base + '/api/distribution/ck-stock', { headers: H(token) }));
+    check('CK distribution stock lists warehouse items', !!ckStock.location && ckStock.items.length >= 40 && ckStock.items.some(i => i.low) && ckStock.items.every(i => 'free' in i && 'reserved' in i), 'n=' + ckStock.items.length);
+    const ckStar0 = ckStock.items.find(i => i.item_name === 'Star Anise').quantity; // seeded low
+
+    const avail = await j(await fetch(base + `/api/distribution/availability?location_id=${loc2}`, { headers: H(token) }));
+    const availStar = avail.items.find(i => i.item_name === 'Star Anise');
+    check('availability splits CK-first vs vendor', !!availStar && availStar.from_ck > 0 && availStar.from_vendor > 0 && availStar.need === availStar.from_ck + availStar.from_vendor, JSON.stringify(availStar && { need: availStar.need, ck: availStar.from_ck, v: availStar.from_vendor }));
+    check('availability covers some items fully from CK', avail.items.some(i => i.from_vendor === 0 && i.from_ck > 0), 'none fully from CK');
+
+    r = await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, items: [{ item_id: availStar.id, item_name: 'Star Anise', quantity: availStar.need }] }) });
+    const placed = await j(r);
+    check('place a CK-first distribution order', r.status === 200 && placed.created === 1, JSON.stringify(placed));
+
+    const ckQueue = await j(await fetch(base + '/api/distribution/orders?scope=ck', { headers: H(token) }));
+    const dord = ckQueue.orders.find(o => o.item_name === 'Star Anise' && o.status === 'requested' && o.to_location_id === loc2);
+    check('order splits with an auto vendor PO', !!dord && dord.ck_qty === availStar.from_ck && dord.vendor_qty === availStar.from_vendor && dord.vendor_order_id > 0 && dord.vendor_status === 'pending', JSON.stringify(dord && { ck: dord.ck_qty, v: dord.vendor_qty, po: dord.vendor_order_id }));
+
+    r = await fetch(base + `/api/distribution/orders/${dord.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'shipped' }) });
+    check('ship the CK order', r.status === 200, await r.text());
+    const ckStar1 = (await j(await fetch(base + '/api/distribution/ck-stock', { headers: H(token) }))).items.find(i => i.item_name === 'Star Anise').quantity;
+    check('shipping deducts CK stock', Math.abs(ckStar1 - (ckStar0 - dord.ck_qty)) < 1e-9, JSON.stringify({ before: ckStar0, after: ckStar1, ck: dord.ck_qty }));
+
+    const storeStar0 = (await j(await fetch(base + `/api/inventory/?location_id=${loc2}`, { headers: H(token) }))).find(i => i.item_name === 'Star Anise').quantity;
+    r = await fetch(base + `/api/distribution/orders/${dord.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) });
+    check('receive the CK order', r.status === 200, await r.text());
+    const storeStar1 = (await j(await fetch(base + `/api/inventory/?location_id=${loc2}`, { headers: H(token) }))).find(i => i.item_name === 'Star Anise').quantity;
+    check('receiving lands CK stock in the store', Math.abs(storeStar1 - (storeStar0 + dord.ck_qty)) < 1e-9, JSON.stringify({ before: storeStar0, after: storeStar1, ck: dord.ck_qty }));
+    r = await fetch(base + `/api/distribution/orders/${dord.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'shipped' }) });
+    check('a received order cannot be re-shipped (400)', r.status === 400, 'status=' + r.status);
+
+    r = await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, source: 'vendor', items: [{ item_id: availStar.id, item_name: 'Star Anise', quantity: 6 }] }) });
+    check('vendor-only override order', (await j(r)).created === 1);
+    const vOrder = (await j(await fetch(base + `/api/distribution/orders?scope=store&location_id=${loc2}`, { headers: H(token) }))).orders.find(o => o.item_name === 'Star Anise' && o.ck_qty === 0);
+    check('vendor-only order skips CK (all vendor, settled)', !!vOrder && vOrder.vendor_qty === 6 && vOrder.status === 'received' && vOrder.vendor_order_id > 0, JSON.stringify(vOrder && { ck: vOrder.ck_qty, v: vOrder.vendor_qty, s: vOrder.status }));
+
+    // RBAC: store staff can't touch the CK warehouse or its incoming queue.
+    r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
+    check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/distribution/orders?scope=ck', { headers: H(mgr.token) });
+    check('store manager blocked from CK queue (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/distribution/ck-stock', { headers: H(emp.token) });
+    check('employee blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
+
     // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
     const tdb = require('../db/database');
     const tsLoc = mgr.user.location_id;

@@ -643,6 +643,29 @@ function migrate() {
       end_time   TEXT,
       label      TEXT
     );
+
+    -- Central-Kitchen distribution: a store's raw-food order to the Central Kitchen,
+    -- tracked as one unit with its CK-first / vendor-fallback split. The CK portion
+    -- (ck_qty) moves through this row's own ship→receive lifecycle; the shortfall
+    -- (vendor_qty) is an ordinary vendor supply_order linked via vendor_order_id.
+    CREATE TABLE IF NOT EXISTS distribution_orders (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      to_location_id  INTEGER NOT NULL REFERENCES locations(id),  -- the ordering store
+      item_id         INTEGER REFERENCES inventory(id),           -- the store's inventory row (nullable)
+      item_name       TEXT NOT NULL,
+      unit            TEXT DEFAULT 'units',
+      requested_qty   REAL NOT NULL,
+      ck_qty          REAL NOT NULL DEFAULT 0,                     -- filled from Central Kitchen
+      vendor_qty      REAL NOT NULL DEFAULT 0,                     -- shortfall routed to a vendor
+      status          TEXT NOT NULL DEFAULT 'requested'
+                        CHECK(status IN ('requested','approved','shipped','received','cancelled')),
+      vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
+      requested_by    INTEGER REFERENCES users(id),
+      approved_by     INTEGER REFERENCES users(id),
+      notes           TEXT,
+      created_at      TEXT DEFAULT (datetime('now')),
+      updated_at      TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migrations for databases created before these columns existed.
@@ -650,6 +673,8 @@ function migrate() {
     `ALTER TABLE inventory ADD COLUMN description TEXT`,
     `ALTER TABLE inventory ADD COLUMN notes TEXT`,
     `ALTER TABLE inventory ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
+    // Central-Kitchen stock only: whether this raw item is offered to stores for distribution.
+    `ALTER TABLE inventory ADD COLUMN distributable INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE locations ADD COLUMN city TEXT`,
     `ALTER TABLE locations ADD COLUMN state TEXT`,

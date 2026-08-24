@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 22, 2026_
+_Last updated: August 24, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -8,7 +8,7 @@ to staff at any location for testing.
 
 > **Owner:** Harry Nguyen · **Stack:** Node.js + Express + built-in `node:sqlite`,
 > vanilla-JS front ends (no build step) · **Scale:** 10 stores + 1 central
-> kitchen · **48 tables** across 2 databases.
+> kitchen · **49 tables** across 2 databases.
 
 A styled, interactive version of this document (with rendered diagrams and a
 sticky table of contents) is also published as a Claude Artifact.
@@ -600,7 +600,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 41 tables
+### Management database — 42 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -636,6 +636,7 @@ erDiagram
 | `ck_products` | Central K. | Items the central kitchen produces |
 | `ck_recipe_ingredients` | Central K. | Master recipe per product |
 | `store_requests` | Central K. | Daily item requests from each store |
+| `distribution_orders` | Central K. | A store's raw-food order to the CK, with its CK-fill / vendor-shortfall split |
 | `ck_production_runs` | Central K. | Batch runs with yield & shrinkage |
 | `ck_tasks` | Central K. | Photo-verified kitchen tasks |
 | `ck_shifts` | Central K. | Central-kitchen shift schedule |
@@ -829,6 +830,35 @@ flowchart TB
 
 Two ways stock arrives: vendor POs and central-kitchen fulfillment. Waste and cycle
 counts also adjust the ledger.
+
+#### Central-Kitchen-first raw ordering
+
+The Central Kitchen is also the group's **raw-food warehouse** — it stocks the same
+raw items the stores use and distributes them. On a store's **Inventory → Orders &
+Reorder** page, "Order — Central Kitchen first" is the preferred default: each
+below-par item is split automatically, filling as much as the CK has on hand and
+auto-drafting a **vendor PO for the shortfall** (a manager can still override to a
+vendor-only PO).
+
+```mermaid
+flowchart LR
+  NEED[Store item below par] --> SPLIT{CK on hand?}
+  SPLIT -->|covers it| CKALL[All from Central Kitchen]
+  SPLIT -->|partial| MIX[CK ships what it has]
+  SPLIT -->|none / override| VEND[Vendor PO]
+  MIX --> VEND2[Vendor PO for the shortfall]
+  CKALL --> SHIP[CK ships · CK stock out]
+  MIX --> SHIP
+  SHIP --> RECV[Store receives · stock + lot in]
+```
+
+The CK portion moves through a **ship → receive** lifecycle on the Central Kitchen's
+**Distribution** tab: shipping deducts CK warehouse stock (an `out` movement), and the
+store confirms receipt to land it in its own inventory (an `in` movement). Each order
+is one `distribution_orders` row carrying its `ck_qty` / `vendor_qty` split; the
+shortfall is an ordinary vendor `supply_orders` PO linked back to it. The CK curates
+which items it offers (`inventory.distributable`) and restocks itself from vendors
+through the normal inventory tools, scoped to the Central Kitchen.
 
 ### 6.5 Team messaging
 
