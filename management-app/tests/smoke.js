@@ -668,7 +668,8 @@ const check = (name, ok, detail = '') => {
 
     // ── Reports module ─────────────────────────────────────────
     const repInv = await j(await fetch(base + '/api/reports/inventory', { headers: H(token) }));
-    check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 10 && repInv.top_items.length > 0, JSON.stringify(repInv.total_value));
+    // Org-wide report includes the Central Kitchen warehouse: 10 stores + 1 CK = 11 locations.
+    check('inventory report', repInv.total_value > 0 && repInv.by_category.length >= 4 && repInv.by_location.length === 11 && repInv.by_location.some(l => /Central Kitchen/.test(l.location)) && repInv.top_items.length > 0, JSON.stringify({ v: repInv.total_value, locs: repInv.by_location.length }));
     const repSales = await j(await fetch(base + '/api/reports/sales', { headers: H(token) }));
     check('sales report', repSales.total_revenue > 0 && repSales.by_day.length >= 25 && repSales.by_location.length === 10 && repSales.avg_check > 0, JSON.stringify(repSales.total_revenue));
     const repPay = await j(await fetch(base + '/api/reports/payments', { headers: H(token) }));
