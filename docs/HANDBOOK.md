@@ -675,7 +675,7 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
 | **Staff** | Directory (A–Z), full HR-profile edit, jobs/tasks catalog, access-level matrix, activity log. **Add staff** + access-level/location changes are owner/admin-only; **managers edit their own store's staff** (name, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
-| **Central Kitchen** | Demand, production, recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
+| **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
 | **Messages** | Inbox, sent, compose (direct or broadcast) | All |
@@ -859,6 +859,11 @@ is one `distribution_orders` row carrying its `ck_qty` / `vendor_qty` split; the
 shortfall is an ordinary vendor `supply_orders` PO linked back to it. The CK curates
 which items it offers (`inventory.distributable`) and restocks itself from vendors
 through the normal inventory tools, scoped to the Central Kitchen.
+
+The CK warehouse is a real stock holding, so the **org-wide inventory report**
+(Reports → Items with no location selected) counts it alongside the ten stores — its
+value shows up in the total, the by-category and by-location breakdowns, and the top
+items. Scope the report to a single store and it stays store-only, as before.
 
 ### 6.5 Team messaging
 
