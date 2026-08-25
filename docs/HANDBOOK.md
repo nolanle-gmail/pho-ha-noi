@@ -865,6 +865,13 @@ The CK warehouse is a real stock holding, so the **org-wide inventory report**
 value shows up in the total, the by-category and by-location breakdowns, and the top
 items. Scope the report to a single store and it stays store-only, as before.
 
+On the **Stock** page, a single item's **Order** button opens a picker whose *source*
+**defaults to the Central Kitchen** whenever the CK stocks that item (falling back to
+the vendor list otherwise), so ordering CK-first is the one-click default there too.
+And **+ Add item** picks its name from the **Glossary** — a dropdown of catalog items
+not yet stocked at that location, auto-filling category and unit — so item names stay
+consistent; brand-new names are still created on the Glossary tab.
+
 ### 6.5 Team messaging
 
 Everyone can send **direct** messages; managers and above can **broadcast** to all
