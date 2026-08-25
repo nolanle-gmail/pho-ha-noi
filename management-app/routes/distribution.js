@@ -93,6 +93,21 @@ router.get('/availability', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ items });
 });
 
+// Quick lookup for the store order screen: which raw items the CK can supply right
+// now (item_name → available qty). Any OPS user (store managers included) may read it,
+// so the order modal can default the source to the Central Kitchen when it has stock.
+router.get('/ck-catalog', requireRole(...ROLES.OPS), (req, res) => {
+  const ck = ckLoc();
+  const items = {};
+  if (ck) {
+    for (const r of db.prepare(`SELECT item_name, quantity FROM inventory
+      WHERE location_id=? AND is_active=1 AND distributable=1 AND quantity > 0`).all(ck.id)) {
+      items[r.item_name] = r3(r.quantity);
+    }
+  }
+  res.json({ items });
+});
+
 // Create one or more distribution orders. Each item is split CK-first: ck_qty from
 // the kitchen, the remainder auto-drafted as a vendor PO — unless the manager
 // overrides source to 'vendor' (skip CK entirely).

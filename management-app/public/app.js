@@ -540,14 +540,7 @@ async function renderStock() {
       </tr>`).join('')}
     </tbody></table></div>`;
 
-  $('addItem').onclick = () => modal('Add item', [
-    { key: 'item_name', label: 'Item name' }, { key: 'category', label: 'Category', value: 'Produce' },
-    { key: 'unit', label: 'Unit', value: 'lbs' }, { key: 'quantity', label: 'Opening qty', type: 'number', value: 0 },
-    { key: 'min_quantity', label: 'Min (reorder trigger)', type: 'number', value: 0 },
-    { key: 'par_level', label: 'Par (target level)', type: 'number' },
-    { key: 'unit_cost', label: 'Unit cost ($)', type: 'number', step: '0.01', value: 0 },
-    { key: 'sku', label: 'SKU (optional)' },
-  ], async (v) => { await api('/inventory/', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: S.loc }, v)) }); toast('Item added'); render(); });
+  $('addItem').onclick = () => openAddItemModal(items);
 
   $('receiveSku').onclick = () => modal('Receive by SKU', [
     { key: 'sku', label: 'SKU' }, { key: 'quantity', label: 'Quantity', type: 'number' },
@@ -578,6 +571,52 @@ function itemAction(act, id, name, items) {
       { key: 'sku', label: 'SKU', value: it.sku },
     ], async (v) => { await api('/inventory/' + id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); render(); });
   }
+}
+
+// Add a stock item by picking from the Glossary catalog (the master item list),
+// so item names stay consistent. New names are created on the Glossary tab.
+async function openAddItemModal(existing) {
+  const have = new Set((existing || []).map(i => i.item_name));
+  let gloss;
+  try { gloss = await api('/inventory/warehouse'); } catch (e) { return toast(e.message, true); }
+  const catalog = (gloss.items || []).filter(g => !have.has(g.item_name));
+  const host = $('modalHost');
+  const close = () => host.innerHTML = '';
+  if (!catalog.length) {
+    host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Add item to stock</h3>
+      <p>Every item in the Glossary is already stocked at this location. To add a brand-new item name, use the <strong>Glossary</strong> tab.</p>
+      <div class="actions"><button class="btn" id="mCancel">Close</button></div></div></div>`;
+    $('mCancel').onclick = close;
+    host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    return;
+  }
+  const opts = catalog.map(g => `<option value="${esc(g.item_name)}" data-cat="${esc(g.category || '')}" data-unit="${esc(g.unit || '')}">${esc(g.item_name)} — ${esc(g.category || 'Other')}</option>`).join('');
+  host.innerHTML = `<div class="modal-bg"><div class="modal">
+    <h3>Add item to stock</h3><div class="err" id="mErr"></div>
+    <label>Item (from Glossary)</label><select id="aiItem">${opts}</select>
+    <div style="display:flex;gap:.6rem"><div style="flex:1"><label>Category</label><input id="aiCat" /></div><div style="flex:1"><label>Unit</label><input id="aiUnit" /></div></div>
+    <label>Opening qty</label><input id="aiQty" type="number" value="0" />
+    <div style="display:flex;gap:.6rem"><div style="flex:1"><label>Min (reorder trigger)</label><input id="aiMin" type="number" value="0" /></div><div style="flex:1"><label>Par (target level)</label><input id="aiPar" type="number" /></div></div>
+    <label>Unit cost ($)</label><input id="aiCost" type="number" step="0.01" value="0" />
+    <label>SKU (optional)</label><input id="aiSku" />
+    <p class="sub" style="color:var(--muted);margin:.5rem 0 0">To add a brand-new item name, use the <strong>Glossary</strong> tab.</p>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Add item</button></div>
+  </div></div>`;
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const fill = () => { const o = $('aiItem').selectedOptions[0]; if (o) { $('aiCat').value = o.dataset.cat || ''; $('aiUnit').value = o.dataset.unit || ''; } };
+  fill(); $('aiItem').onchange = fill;
+  $('mOk').onclick = async () => {
+    try {
+      await api('/inventory/', { method: 'POST', body: JSON.stringify({
+        location_id: S.loc, item_name: $('aiItem').value,
+        category: $('aiCat').value.trim() || 'Other', unit: $('aiUnit').value.trim() || 'units',
+        quantity: $('aiQty').value, min_quantity: $('aiMin').value, par_level: $('aiPar').value,
+        unit_cost: $('aiCost').value, sku: $('aiSku').value.trim() || null,
+      }) });
+      toast('Item added'); close(); render();
+    } catch (e) { $('mErr').textContent = e.message; }
+  };
 }
 
 // ── Glossary (item catalog) ─────────────────────────────────────────────
@@ -654,12 +693,20 @@ function confirmDelete(it) {
 // ── Create order (PO) — pick existing item or add a new one ────────────────
 async function openOrderModal(prefill) {
   prefill = prefill || {};
-  const [items, vendors] = await Promise.all([api(invQ('/')), api('/inventory/vendors')]);
+  const [items, vendors, ckCat] = await Promise.all([api(invQ('/')), api('/inventory/vendors'), api('/distribution/ck-catalog').catch(() => ({ items: {} }))]);
+  const ckItems = (ckCat && ckCat.items) || {};
   const iOpts = items.map(i => `<option value="${i.id}" ${prefill.item_id == i.id ? 'selected' : ''}>${esc(i.item_name)} — ${numf(i.quantity)} ${esc(i.unit)} on hand</option>`).join('');
-  const vOpts = '<option value="">— No vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+  const vendorTail = '<option value="">— No vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+  // The source dropdown puts the Central Kitchen first and pre-selected when the item is
+  // stocked there; otherwise it's the plain vendor list.
+  const sourceOptionsFor = (itemName) => {
+    const avail = ckItems[itemName];
+    return (avail > 0 ? `<option value="ck" selected>🏭 Central Kitchen — ${numf(avail)} on hand</option>` : '') + vendorTail;
+  };
+  const nameOf = (id) => { const it = items.find(x => x.id == id); return it ? it.item_name : ''; };
   const host = $('modalHost');
   host.innerHTML = `<div class="modal-bg"><div class="modal">
-    <h3>Create order (PO)</h3><div class="err" id="mErr"></div>
+    <h3>Create order</h3><div class="err" id="mErr"></div>
     <div class="seg"><button type="button" class="seg-btn active" data-mode="existing">Existing item</button><button type="button" class="seg-btn" data-mode="new">+ New item</button></div>
     <div id="existBlock"><label>Item</label><select id="oItem">${iOpts}</select></div>
     <div id="newBlock" class="hidden">
@@ -668,7 +715,7 @@ async function openOrderModal(prefill) {
       <label>Unit cost ($)</label><input id="nCost" type="number" step="0.01" value="0" />
     </div>
     <label>Quantity to order</label><input id="oQty" type="number" value="${prefill.suggested_qty || ''}" />
-    <label>Vendor (optional)</label><select id="oVendor">${vOpts}</select>
+    <label>Order from</label><select id="oVendor">${sourceOptionsFor(nameOf(prefill.item_id))}</select>
     <label>Expected date (optional)</label><input id="oDate" type="date" />
     <label>Notes</label><input id="oNotes" placeholder="optional" />
     <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Create order</button></div>
@@ -677,17 +724,28 @@ async function openOrderModal(prefill) {
   const close = () => host.innerHTML = '';
   $('mCancel').onclick = close;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  // Re-pick the source list whenever the chosen existing item changes.
+  $('oItem').onchange = () => { $('oVendor').innerHTML = sourceOptionsFor(nameOf($('oItem').value)); };
   host.querySelectorAll('.seg-btn').forEach(b => b.onclick = () => {
     mode = b.dataset.mode;
     host.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', x === b));
     $('existBlock').classList.toggle('hidden', mode !== 'existing');
     $('newBlock').classList.toggle('hidden', mode !== 'new');
+    // A brand-new item can't already be at the Central Kitchen — vendors only.
+    $('oVendor').innerHTML = mode === 'new' ? vendorTail : sourceOptionsFor(nameOf($('oItem').value));
   });
   $('mOk').onclick = async () => {
     try {
       const qty = parseFloat($('oQty').value);
       if (!(qty > 0)) throw new Error('Enter a quantity greater than 0.');
-      const vendor_id = $('oVendor').value || null, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
+      const source = $('oVendor').value, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
+      // Central Kitchen source → the CK-first distribution flow (splits any shortfall to a vendor).
+      if (mode === 'existing' && source === 'ck') {
+        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
+        toast('Ordered — Central Kitchen first'); close();
+        if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
+        return;
+      }
       let item_id;
       if (mode === 'new') {
         const name = $('nName').value.trim();
@@ -695,7 +753,7 @@ async function openOrderModal(prefill) {
         const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0 }) });
         item_id = created.id;
       } else { item_id = $('oItem').value; }
-      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_id, quantity: qty, vendor_id, expected_date, notes }) });
+      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_id, quantity: qty, vendor_id: source || null, expected_date, notes }) });
       toast('Order created'); close();
       if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
     } catch (e) { $('mErr').textContent = e.message; }

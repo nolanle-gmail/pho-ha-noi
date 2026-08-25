@@ -870,6 +870,20 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(emp.token) });
     check('employee blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
 
+    // ck-catalog powers the Stock "Order" screen's Central-Kitchen-default source; any
+    // OPS user (a store manager) may read it, unlike the CK-only warehouse view.
+    // (Sriracha is a well-stocked CK item the earlier tests don't touch.)
+    const ckCat = await j(await fetch(base + '/api/distribution/ck-catalog', { headers: H(mgr.token) }));
+    check('ck-catalog readable by a store manager, lists CK stock', ckCat.items && ckCat.items['Sriracha'] > 0 && Object.keys(ckCat.items).length >= 40, JSON.stringify({ srir: ckCat.items && ckCat.items['Sriracha'], n: ckCat.items && Object.keys(ckCat.items).length }));
+    // Withheld (non-distributable) items drop out of the catalog, then return when re-offered.
+    const ckSrir = (await j(await fetch(base + '/api/distribution/ck-stock', { headers: H(token) }))).items.find(i => i.item_name === 'Sriracha');
+    await fetch(base + `/api/distribution/ck-stock/${ckSrir.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ distributable: false }) });
+    const ckCat2 = await j(await fetch(base + '/api/distribution/ck-catalog', { headers: H(mgr.token) }));
+    check('withheld CK item leaves the catalog', ckCat2.items['Sriracha'] === undefined, JSON.stringify({ srir: ckCat2.items['Sriracha'] }));
+    await fetch(base + `/api/distribution/ck-stock/${ckSrir.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ distributable: true }) });
+    const ckCat3 = await j(await fetch(base + '/api/distribution/ck-catalog', { headers: H(mgr.token) }));
+    check('re-offered CK item returns to the catalog', ckCat3.items['Sriracha'] > 0);
+
     // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
     const tdb = require('../db/database');
     const tsLoc = mgr.user.location_id;
