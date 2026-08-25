@@ -1072,3 +1072,28 @@ place in line until "your table is ready."
    dashboard; confirm the store's numbers moved.
 5. **Owner watches** — as the owner, switch locations and confirm the visit shows in
    Guest History and the daily report.
+
+### Central-Kitchen-first reorder (raw food)
+
+Exercises the CK-first split ordering across the store and Central-Kitchen roles.
+Manager logins run `manager1@phohanoi.com` … `manager10@phohanoi.com` (all
+`Manager123!`); the Milpitas store (`manager2@phohanoi.com`) carries low **Star Anise**
+and **Beef Flank** — items the CK is also short on — so it shows a true split.
+
+1. **Manager sees the split** — sign in as `manager2@phohanoi.com`, open **Inventory →
+   Orders & Reorder**. The low-stock list is headed *"Central Kitchen first, vendors for
+   the shortfall,"* with **From CK** / **From vendor** columns. Confirm the split, e.g.
+   Star Anise (need 14 → CK 5 + vendor 9) and Beef Flank (need 85 → CK 36 + vendor 49).
+2. **Place the order** — click **Order all — CK first**. The items appear under **Central
+   Kitchen orders** as `requested`, and the shortfall shows as vendor POs under
+   **Purchase / supply orders**. (Or use **Vendor PO instead** to skip the CK entirely.)
+3. **CK ships** — sign in as the owner / GM, open **Central Kitchen → Distribution →
+   Incoming store orders**, and **Ship** an order. Confirm the item's warehouse **On
+   hand** drops by the shipped quantity.
+4. **Store receives** — back on the store's **Orders & Reorder** (as the manager or the
+   CK), **Mark received**. Confirm the quantity lands in the store's **Stock**.
+5. **CK restocks itself** — as the CK, open **Inventory** scoped to the Central Kitchen
+   and reorder low warehouse items from vendors — the normal PO flow.
+
+> **Access check:** a store manager never sees the **Central Kitchen** nav — they order
+> *from* the CK but can't touch its warehouse or fulfilment queue (those return 403).
