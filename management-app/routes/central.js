@@ -126,6 +126,7 @@ router.put('/products/:id', requireRole(...A), (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(p.id);
   db.prepare(`UPDATE ck_products SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  auditLog(req, 'ck_product_update', 'ck_product', p.id, { name: p.name, changes: req.body });
   res.json({ success: true });
 });
 
@@ -140,6 +141,7 @@ router.put('/products/:id/recipe', requireRole(...A), (req, res) => {
     ings.forEach(i => { const q = parseFloat(i.quantity) || 0; if (i.item_name && q > 0) ins.run(p.id, String(i.item_name), q); });
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
+  auditLog(req, 'ck_recipe_set', 'ck_product', p.id, { name: p.name, ingredients: ings.length });
   res.json({ success: true });
 });
 
@@ -278,6 +280,7 @@ router.post('/tasks', requireRole(...A), (req, res) => {
   if (!title) return res.status(400).json({ error: 'Task title required.' });
   const r = db.prepare(`INSERT INTO ck_tasks (title, assigned_to, requires_photo, due) VALUES (?,?,?,?)`)
     .run(title, req.body.assigned_to || null, req.body.requires_photo ? 1 : 0, req.body.due || null);
+  auditLog(req, 'ck_task_create', 'ck_task', r.lastInsertRowid, { title, assigned_to: req.body.assigned_to || null, requires_photo: req.body.requires_photo ? 1 : 0 });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 router.put('/tasks/:id/complete', requireRole(...A), (req, res) => {
@@ -285,6 +288,7 @@ router.put('/tasks/:id/complete', requireRole(...A), (req, res) => {
   if (!t) return res.status(404).json({ error: 'Task not found' });
   if (t.requires_photo && !req.body.photo_url) return res.status(400).json({ error: 'This task requires a verification photo.' });
   db.prepare(`UPDATE ck_tasks SET status='done', photo_url=?, completed_at=datetime('now') WHERE id=?`).run(req.body.photo_url || null, t.id);
+  auditLog(req, 'ck_task_complete', 'ck_task', t.id, { title: t.title, photo: !!req.body.photo_url });
   res.json({ success: true });
 });
 router.get('/schedule', requireRole(...A), (req, res) => {
@@ -296,6 +300,7 @@ router.post('/schedule', requireRole(...A), (req, res) => {
   const { user_id, shift_date, start_time, end_time } = req.body || {};
   if (!user_id || !shift_date) return res.status(400).json({ error: 'Staff and date required.' });
   const r = db.prepare(`INSERT INTO ck_shifts (user_id, shift_date, start_time, end_time) VALUES (?,?,?,?)`).run(user_id, shift_date, start_time || null, end_time || null);
+  auditLog(req, 'ck_shift_create', 'ck_shift', r.lastInsertRowid, { user_id: Number(user_id), shift_date, start_time: start_time || null, end_time: end_time || null });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
@@ -309,9 +314,11 @@ router.post('/clock', requireRole(...A), (req, res) => {
   if (open) {
     const hrs = Math.round((Date.now() - new Date(open.clock_in.replace(' ', 'T') + 'Z').getTime()) / 36e5 * 100) / 100;
     db.prepare(`UPDATE timesheets SET clock_out=datetime('now'), hours=? WHERE id=?`).run(Math.max(0, hrs), open.id);
+    auditLog(req, 'ck_clock_out', 'user', u.id, { name: u.name, hours: Math.max(0, hrs) });
     return res.json({ success: true, action: 'clock_out', name: u.name, hours: Math.max(0, hrs) });
   }
   db.prepare(`INSERT INTO timesheets (user_id, location_id, clock_in) VALUES (?,?, datetime('now'))`).run(u.id, ck.id);
+  auditLog(req, 'ck_clock_in', 'user', u.id, { name: u.name });
   res.json({ success: true, action: 'clock_in', name: u.name });
 });
 router.get('/timeclock', requireRole(...A), (req, res) => {

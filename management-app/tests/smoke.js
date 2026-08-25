@@ -884,6 +884,11 @@ const check = (name, ok, detail = '') => {
     const ckCat3 = await j(await fetch(base + '/api/distribution/ck-catalog', { headers: H(mgr.token) }));
     check('re-offered CK item returns to the catalog', ckCat3.items['Sriracha'] > 0);
 
+    // Audit trail: the CK + inventory actions performed above are all recorded for later audit.
+    const auditActions = new Set((await j(await fetch(base + '/api/inventory/audit', { headers: H(token) }))).map(a => a.action));
+    const mustLog = ['ck_product_update', 'ck_recipe_set', 'ck_production', 'distribution_order', 'distribution_ship', 'distribution_receive', 'ck_stock_update', 'item_update'];
+    check('audit log captures CK + inventory activity', mustLog.every(x => auditActions.has(x)), 'missing: ' + mustLog.filter(x => !auditActions.has(x)).join(', '));
+
     // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
     const tdb = require('../db/database');
     const tsLoc = mgr.user.location_id;

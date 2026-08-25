@@ -897,19 +897,38 @@ async function renderReports() {
 
 // ── Activity (transactions, waste, counts) ──────────────────────────────────
 const ACTION_LABEL = {
+  // Inventory
   order_create: ['Order created', 'gold'], order_status: ['Order updated', 'gold'], order_received: ['Order received', 'ok'],
   reorder_create: ['Reorder → PO', 'gold'], transfer: ['Transfer', 'gold'], transfer_status: ['Transfer updated', 'gold'],
-  transfer_received: ['Transfer received', 'ok'], stock_received: ['Stock received', 'ok'], item_create: ['Item added', 'gray'],
+  transfer_received: ['Transfer received', 'ok'], transfer_request_create: ['Transfer requested', 'gold'],
+  stock_received: ['Stock received', 'ok'], item_create: ['Item added', 'gray'],
   item_update: ['Item edited', 'gray'], item_delete: ['Item removed', 'out'], waste_logged: ['Waste', 'out'],
-  cycle_count: ['Cycle count', 'gray'], lot_discarded: ['Lot discarded', 'out'], vendor_create: ['Vendor added', 'gray'],
+  cycle_count: ['Cycle count', 'gray'], lot_discarded: ['Lot discarded', 'out'],
+  vendor_create: ['Vendor added', 'gray'], vendor_update: ['Vendor edited', 'gray'], vendor_delete: ['Vendor removed', 'out'],
+  // Central Kitchen distribution
+  distribution_order: ['CK order placed', 'blue'], distribution_ship: ['CK shipped', 'blue'],
+  distribution_receive: ['CK received', 'ok'], distribution_cancel: ['CK order cancelled', 'out'],
+  ck_stock_update: ['CK stock curated', 'gray'],
+  // Central Kitchen production & HR
+  ck_generate_requests: ['CK demand generated', 'gray'], ck_product_create: ['CK product added', 'gray'],
+  ck_product_update: ['CK product edited', 'gray'], ck_recipe_set: ['CK recipe set', 'gray'],
+  ck_production: ['CK production run', 'blue'], ck_fulfill: ['CK fulfilled store', 'ok'],
+  ck_task_create: ['CK task added', 'gray'], ck_task_complete: ['CK task done', 'ok'],
+  ck_shift_create: ['CK shift added', 'gray'], ck_clock_in: ['CK clock-in', 'gray'], ck_clock_out: ['CK clock-out', 'gray'],
 };
 function auditSummary(a) {
   const d = a.detail || {};
   const bits = [];
-  if (d.item) bits.push(esc(d.item));
+  const label = d.item || d.name || d.title || d.product;
+  if (label) bits.push(esc(label));
   if (d.quantity != null) bits.push('qty ' + numf(d.quantity));
+  else if (d.qty != null) bits.push('qty ' + numf(d.qty));
+  if (d.source) bits.push(esc(d.source));
   if (d.status) bits.push('→ ' + esc(d.status));
-  if (d.count) bits.push(d.count + ' lines');
+  if (d.count != null) bits.push(d.count + (d.count === 1 ? ' line' : ' lines'));
+  if (d.lines != null) bits.push(d.lines + (d.lines === 1 ? ' line' : ' lines'));
+  if (d.ingredients != null) bits.push(d.ingredients + ' ingredients');
+  if (d.hours != null) bits.push(numf(d.hours) + 'h');
   if (d.reason) bits.push(esc(d.reason));
   return bits.join(' · ');
 }
@@ -917,12 +936,14 @@ function auditSummary(a) {
 async function renderActivity() {
   const [txns, waste, counts, audit] = await Promise.all([api(invQ('/transactions')), api(invQ('/waste')), api(invQ('/counts')), api('/inventory/audit')]);
   const typeBadge = (t) => ({ in: '<span class="badge ok">IN</span>', out: '<span class="badge out">OUT</span>', transfer_sent: '<span class="badge gold">TRANSFER</span>' }[t] || t);
-  const orderish = audit.filter(a => ['order_create', 'order_status', 'order_received', 'reorder_create', 'transfer', 'transfer_status', 'transfer_received', 'stock_received'].includes(a.action));
+  // Every inventory, central-kitchen and distribution action we have a label for —
+  // the full audit trail for those modules (see ACTION_LABEL).
+  const logged = audit.filter(a => ACTION_LABEL[a.action]);
   $('view').innerHTML = `
     <h2 class="page">Activity</h2>
-    <div class="section"><h3>Activity log — who did what <span style="font-weight:400;color:var(--muted);font-size:.85rem">(orders · transfers · reorders · receiving)</span></h3>
+    <div class="section"><h3>Activity log — who did what <span style="font-weight:400;color:var(--muted);font-size:.85rem">(inventory · central kitchen · distribution — every logged action)</span></h3>
       <div class="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th>Details</th><th>Who</th></tr></thead><tbody>
-        ${orderish.length ? orderish.map(a => { const [lbl, tone] = ACTION_LABEL[a.action] || [a.action, 'gray']; return `<tr><td class="mono">${esc((a.created_at || '').slice(0, 16))}</td><td><span class="badge ${tone}">${lbl}</span></td><td>${auditSummary(a)}</td><td><strong>${esc(a.user_name || '—')}</strong>${a.user_role ? ` <span style="color:var(--muted)">· ${esc(a.user_role)}</span>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="4" class="empty">No order/transfer/receive activity yet.</td></tr>'}
+        ${logged.length ? logged.map(a => { const [lbl, tone] = ACTION_LABEL[a.action] || [a.action, 'gray']; return `<tr><td class="mono">${esc((a.created_at || '').slice(0, 16))}</td><td><span class="badge ${tone}">${lbl}</span></td><td>${auditSummary(a)}</td><td><strong>${esc(a.user_name || '—')}</strong>${a.user_role ? ` <span style="color:var(--muted)">· ${esc(a.user_role)}</span>` : ''}</td></tr>`; }).join('') : '<tr><td colspan="4" class="empty">No activity logged yet.</td></tr>'}
       </tbody></table></div>
     </div>
     <div class="section"><h3>Movement ledger</h3>

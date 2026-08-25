@@ -188,10 +188,13 @@ router.put('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(req.params.id);
   db.prepare(`UPDATE vendors SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  auditLog(req, 'vendor_update', 'vendor', v.id, { name: v.name, changes: req.body });
   res.json({ success: true });
 });
 router.delete('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+  const v = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(req.params.id);
   db.prepare(`UPDATE vendors SET is_active=0 WHERE id=?`).run(req.params.id);
+  auditLog(req, 'vendor_delete', 'vendor', Number(req.params.id), { name: v && v.name });
   res.json({ success: true });
 });
 
@@ -318,8 +321,9 @@ router.post('/transfer-request', requireRole(...ROLES.OPS), (req, res) => {
   const { item_name, quantity, from_location_id, to_location_id, notes } = req.body;
   if (!item_name || !quantity || !from_location_id || !to_location_id) return res.status(400).json({ error: 'item_name, quantity, from_location_id, to_location_id required' });
   if (from_location_id == to_location_id) return res.status(400).json({ error: 'Source and destination must differ' });
-  db.prepare(`INSERT INTO transfer_requests (item_name, quantity, from_location_id, to_location_id, requested_by, notes) VALUES (?,?,?,?,?,?)`)
+  const r = db.prepare(`INSERT INTO transfer_requests (item_name, quantity, from_location_id, to_location_id, requested_by, notes) VALUES (?,?,?,?,?,?)`)
     .run(item_name, quantity, from_location_id, to_location_id, req.user.id, notes || null);
+  auditLog(req, 'transfer_request_create', 'transfer_request', Number(r.lastInsertRowid), { item: item_name, quantity, from: Number(from_location_id), to: Number(to_location_id) });
   res.json({ success: true });
 });
 
