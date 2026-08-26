@@ -889,6 +889,11 @@ const check = (name, ok, detail = '') => {
     const mustLog = ['ck_product_update', 'ck_recipe_set', 'ck_production', 'distribution_order', 'distribution_ship', 'distribution_receive', 'ck_stock_update', 'item_update'];
     check('audit log captures CK + inventory activity', mustLog.every(x => auditActions.has(x)), 'missing: ' + mustLog.filter(x => !auditActions.has(x)).join(', '));
 
+    // A reason/note supplied with an action is captured in the audit detail (who + why).
+    const arItem = await j(await fetch(base + '/api/inventory/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, item_name: 'Audit Reason Widget', category: 'Other', unit: 'each', quantity: 1, reason: 'audit-reason-check-42' }) }));
+    const arAudit = (await j(await fetch(base + '/api/inventory/audit', { headers: H(token) }))).find(a => a.action === 'item_create' && a.entity_id === arItem.id);
+    check('audit captures the reason/note on an action', !!arAudit && arAudit.detail && arAudit.detail.reason === 'audit-reason-check-42', JSON.stringify(arAudit && arAudit.detail));
+
     // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
     const tdb = require('../db/database');
     const tsLoc = mgr.user.location_id;

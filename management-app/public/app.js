@@ -569,6 +569,7 @@ function itemAction(act, id, name, items) {
       { key: 'min_quantity', label: 'Min', type: 'number', value: it.min_quantity },
       { key: 'par_level', label: 'Par', type: 'number', value: it.par_level }, { key: 'unit_cost', label: 'Unit cost ($)', type: 'number', step: '0.01', value: it.unit_cost },
       { key: 'sku', label: 'SKU', value: it.sku },
+      { key: 'reason', label: 'Reason / note (for audit)' },
     ], async (v) => { await api('/inventory/' + id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); render(); });
   }
 }
@@ -599,6 +600,7 @@ async function openAddItemModal(existing) {
     <div style="display:flex;gap:.6rem"><div style="flex:1"><label>Min (reorder trigger)</label><input id="aiMin" type="number" value="0" /></div><div style="flex:1"><label>Par (target level)</label><input id="aiPar" type="number" /></div></div>
     <label>Unit cost ($)</label><input id="aiCost" type="number" step="0.01" value="0" />
     <label>SKU (optional)</label><input id="aiSku" />
+    <label>Reason / note (for audit)</label><input id="aiReason" placeholder="why this item is being added" />
     <p class="sub" style="color:var(--muted);margin:.5rem 0 0">To add a brand-new item name, use the <strong>Glossary</strong> tab.</p>
     <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Add item</button></div>
   </div></div>`;
@@ -612,7 +614,7 @@ async function openAddItemModal(existing) {
         location_id: S.loc, item_name: $('aiItem').value,
         category: $('aiCat').value.trim() || 'Other', unit: $('aiUnit').value.trim() || 'units',
         quantity: $('aiQty').value, min_quantity: $('aiMin').value, par_level: $('aiPar').value,
-        unit_cost: $('aiCost').value, sku: $('aiSku').value.trim() || null,
+        unit_cost: $('aiCost').value, sku: $('aiSku').value.trim() || null, reason: $('aiReason').value.trim(),
       }) });
       toast('Item added'); close(); render();
     } catch (e) { $('mErr').textContent = e.message; }
@@ -674,6 +676,7 @@ function glossaryEdit(it) {
     { key: 'unit_cost', label: 'Unit cost ($)', type: 'number', step: '0.01', value: it ? it.unit_cost : 0 },
   ];
   if (isNew) fields.push({ key: 'quantity', label: 'Opening qty', type: 'number', value: 0 });
+  fields.push({ key: 'reason', label: 'Reason / note (for audit)' });
   modal(isNew ? 'Add item' : `Edit — ${it.item_name}`, fields, async (v) => {
     if (isNew) { await api('/inventory/', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: S.loc }, v)) }); toast('Item added'); }
     else { await api('/inventory/' + it.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); }
@@ -684,9 +687,10 @@ function glossaryEdit(it) {
 function confirmDelete(it) {
   modal(`Remove “${it.item_name}”?`, [
     { key: '_', label: 'This hides the item from stock & glossary. History is preserved. Type REMOVE to confirm.', placeholder: 'REMOVE' },
+    { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => {
     if ((v._ || '').trim().toUpperCase() !== 'REMOVE') throw new Error('Type REMOVE to confirm.');
-    await api('/inventory/' + it.id, { method: 'DELETE' }); toast('Item removed'); render();
+    await api('/inventory/' + it.id, { method: 'DELETE', body: JSON.stringify({ reason: v.reason || '' }) }); toast('Item removed'); render();
   }, 'Remove');
 }
 
@@ -717,7 +721,7 @@ async function openOrderModal(prefill) {
     <label>Quantity to order</label><input id="oQty" type="number" value="${prefill.suggested_qty || ''}" />
     <label>Order from</label><select id="oVendor">${sourceOptionsFor(nameOf(prefill.item_id))}</select>
     <label>Expected date (optional)</label><input id="oDate" type="date" />
-    <label>Notes</label><input id="oNotes" placeholder="optional" />
+    <label>Reason / note (for audit)</label><input id="oNotes" placeholder="why you're ordering — kept on the order & the audit log" />
     <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Create order</button></div>
   </div></div>`;
   let mode = 'existing';
@@ -741,7 +745,7 @@ async function openOrderModal(prefill) {
       const source = $('oVendor').value, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
       // Central Kitchen source → the CK-first distribution flow (splits any shortfall to a vendor).
       if (mode === 'existing' && source === 'ck') {
-        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
+        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
         toast('Ordered — Central Kitchen first'); close();
         if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
         return;
@@ -750,10 +754,10 @@ async function openOrderModal(prefill) {
       if (mode === 'new') {
         const name = $('nName').value.trim();
         if (!name) throw new Error('Enter the new item name.');
-        const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0 }) });
+        const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0, reason: notes || '' }) });
         item_id = created.id;
       } else { item_id = $('oItem').value; }
-      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_id, quantity: qty, vendor_id: source || null, expected_date, notes }) });
+      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_id, quantity: qty, vendor_id: source || null, expected_date, notes, reason: notes || '' }) });
       toast('Order created'); close();
       if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
     } catch (e) { $('mErr').textContent = e.message; }
@@ -796,15 +800,16 @@ async function renderOrders() {
 
   $('newOrder').onclick = () => openOrderModal();
   const orderCK = $('orderCK');
-  if (orderCK) orderCK.onclick = async () => {
-    try { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }
-    catch (e) { toast(e.message, true); }
-  };
+  if (orderCK) orderCK.onclick = () => modal('Order all — Central Kitchen first', [
+    { key: 'reason', label: 'Reason / note (for audit)' },
+  ], async (v) => { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }, 'Place order');
   const createPO = $('createPO');
   if (createPO) createPO.onclick = () => {
     const vOpts = [{ value: '', label: '— No vendor —' }].concat(vendors.map(v => ({ value: v.id, label: v.name })));
-    modal('Vendor purchase order (skip Central Kitchen)', [{ key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' }],
-      async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: S.loc, vendor_id: v.vendor_id || null, items: sugg.map(s => ({ item_id: s.id, quantity: s.need })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
+    modal('Vendor purchase order (skip Central Kitchen)', [
+      { key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' },
+      { key: 'reason', label: 'Reason / note (for audit)' },
+    ], async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: S.loc, vendor_id: v.vendor_id || null, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, quantity: s.need })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
   };
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
     try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); render(); }
@@ -874,6 +879,7 @@ async function renderVendors() {
     { key: 'name', label: 'Name' }, { key: 'contact_name', label: 'Contact name' },
     { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' },
     { key: 'lead_time_days', label: 'Lead time (days)', type: 'number', value: 1 }, { key: 'notes', label: 'Notes' },
+    { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => { await api('/inventory/vendors', { method: 'POST', body: JSON.stringify(v) }); toast('Vendor added'); render(); });
 }
 
@@ -3431,6 +3437,7 @@ async function renderCkProduction() {
   $('view').querySelectorAll('[data-produce]').forEach(b => b.onclick = () => modal(`Record production — ${b.dataset.name}`, [
     { key: 'batches', label: 'Batches produced', type: 'number', value: b.dataset.batches },
     { key: 'actual_output', label: 'Actual usable output (blank = expected)', type: 'number' },
+    { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => { const r = await api('/central/production', { method: 'POST', body: JSON.stringify({ product_id: b.dataset.produce, ...v }) }); toast(`Produced ${numf(r.produced)} units`); renderCentral(); }, 'Record'));
 }
 
@@ -3513,6 +3520,7 @@ function ckProductModal(p) {
     { key: 'shrinkage_pct', label: 'Shrinkage (0–0.9, e.g. 0.06 = 6%)', type: 'number', step: '0.01', value: p ? p.shrinkage_pct : 0 },
     { key: 'safety_stock', label: 'Safety stock', type: 'number', value: p ? p.safety_stock : 0 },
     { key: 'on_hand', label: 'On hand', type: 'number', value: p ? p.on_hand : 0 },
+    { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => {
     if (isNew) { await api('/central/products', { method: 'POST', body: JSON.stringify(v) }); toast('Product added — add its recipe next'); }
     else { await api('/central/products/' + p.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Product updated'); }
@@ -3523,6 +3531,7 @@ function ckProductModal(p) {
 async function ckRecipeModal(p) {
   const ingredients = await api('/central/ingredients');
   let list = p.ingredients.map(i => ({ item_name: i.item_name, quantity: i.quantity }));
+  let reasonVal = '';   // preserved across the modal's re-renders when ingredients change
   const host = $('modalHost');
   const render = () => {
     host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:560px"><h3>Recipe — ${esc(p.name)}</h3><div class="err" id="mErr"></div>
@@ -3532,11 +3541,13 @@ async function ckRecipeModal(p) {
       </tbody></table></div>
       <div class="ck-rec-add"><select id="ckIng">${ingredients.map(i => `<option value="${esc(i.item_name)}">${esc(i.item_name)} · ${money(i.avg_cost)}</option>`).join('')}</select>
         <input id="ckQty" type="number" step="0.01" min="0" placeholder="Qty / batch"><button class="btn ghost" id="ckAddIng">+ Add</button></div>
+      <label>Reason / note (for audit)</label><input id="ckReason" placeholder="why the recipe changed" value="${esc(reasonVal)}" />
       <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save recipe</button></div>
     </div></div>`;
     const close = () => host.innerHTML = '';
     $('mCancel').onclick = close;
     host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    $('ckReason').oninput = (e) => { reasonVal = e.target.value; };
     host.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { list.splice(+b.dataset.rm, 1); render(); });
     $('ckAddIng').onclick = () => {
       const name = $('ckIng').value, q = parseFloat($('ckQty').value);
@@ -3546,7 +3557,7 @@ async function ckRecipeModal(p) {
       render();
     };
     $('mOk').onclick = async () => {
-      try { await api('/central/products/' + p.id + '/recipe', { method: 'PUT', body: JSON.stringify({ ingredients: list }) }); toast('Recipe saved'); close(); renderCentral(); }
+      try { await api('/central/products/' + p.id + '/recipe', { method: 'PUT', body: JSON.stringify({ ingredients: list, reason: reasonVal.trim() }) }); toast('Recipe saved'); close(); renderCentral(); }
       catch (e) { $('mErr').textContent = e.message; }
     };
   };
@@ -3610,6 +3621,7 @@ async function renderCkStaff() {
     { key: 'title', label: 'Task' },
     { key: 'assigned_to', label: 'Assign to', type: 'select', options: staff.map(u => ({ value: u.id, label: u.name })) },
     { key: 'requires_photo', label: 'Requires photo?', type: 'select', options: [{ value: '', label: 'No' }, { value: '1', label: 'Yes' }] },
+    { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => { await api('/central/tasks', { method: 'POST', body: JSON.stringify(v) }); toast('Task added'); renderCentral(); });
   $('view').querySelectorAll('[data-ckdone]').forEach(b => b.onclick = () => {
     if (b.dataset.photo === '1') modal('Complete task (photo required)', [{ key: 'photo_url', label: 'Photo URL / reference' }],
