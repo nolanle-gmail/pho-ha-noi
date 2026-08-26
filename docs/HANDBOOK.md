@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 24, 2026_
+_Last updated: August 26, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -871,6 +871,14 @@ the vendor list otherwise), so ordering CK-first is the one-click default there 
 And **+ Add item** picks its name from the **Glossary** — a dropdown of catalog items
 not yet stocked at that location, auto-filling category and unit — so item names stay
 consistent; brand-new names are still created on the Glossary tab.
+
+**Everything is audited — with a reason.** Every add, edit, order, receive, transfer,
+waste, count and Central-Kitchen action writes an `audit_log` entry recording **who ·
+when · what**. The Add / Edit / Order forms across Inventory and the Central Kitchen
+also carry an optional **Reason / note** field, so the audit records **why** too. The
+full trail is on **Inventory → Activity** ("who did what" — inventory, central kitchen
+and distribution), where each row shows the action, the item and quantity, the reason,
+and the person who did it.
 
 ### 6.5 Team messaging
 
