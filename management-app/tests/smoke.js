@@ -894,6 +894,35 @@ const check = (name, ok, detail = '') => {
     const arAudit = (await j(await fetch(base + '/api/inventory/audit', { headers: H(token) }))).find(a => a.action === 'item_create' && a.entity_id === arItem.id);
     check('audit captures the reason/note on an action', !!arAudit && arAudit.detail && arAudit.detail.reason === 'audit-reason-check-42', JSON.stringify(arAudit && arAudit.detail));
 
+    // ── Floor alerts (manager → working staff, live pop-up + acknowledge) ────
+    const alsrv = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'server@phohanoi.com', password: 'Server123!' }) }));
+    r = await fetch(base + '/api/alerts', { method: 'POST', headers: H(alsrv.token), body: JSON.stringify({ target_type: 'all', body: 'nope' }) });
+    check('non-manager cannot send floor alerts (403)', r.status === 403, 'status=' + r.status);
+    const alStaff = await j(await fetch(base + '/api/alerts/staff', { headers: H(mgr.token) }));
+    check('alert picker lists store staff + roles', Array.isArray(alStaff.staff) && alStaff.staff.length > 0 && alStaff.roles.includes('server'), JSON.stringify({ n: alStaff.staff.length, roles: alStaff.roles }));
+    const al1 = await j(await fetch(base + '/api/alerts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ target_type: 'user', target_user_id: alsrv.user.id, body: 'Help table 5 now', priority: 'urgent' }) }));
+    check('send a direct floor alert', al1.success && al1.id > 0);
+    let act = await j(await fetch(base + '/api/alerts/active', { headers: H(alsrv.token) }));
+    check('recipient sees the active alert', act.alerts.some(a => a.id === al1.id && a.body === 'Help table 5 now' && a.sender_name), JSON.stringify(act.alerts.map(a => a.id)));
+    r = await fetch(base + `/api/alerts/${al1.id}/ack`, { method: 'POST', headers: H(alsrv.token), body: '{}' });
+    check('recipient acknowledges', r.status === 200);
+    act = await j(await fetch(base + '/api/alerts/active', { headers: H(alsrv.token) }));
+    check('acked alert drops off active', !act.alerts.some(a => a.id === al1.id));
+    const sentList = await j(await fetch(base + '/api/alerts/sent', { headers: H(mgr.token) }));
+    check('sender sees the ack count', (sentList.alerts.find(a => a.id === al1.id) || {}).ack_count === 1, JSON.stringify(sentList.alerts.find(a => a.id === al1.id)));
+    const acks = await j(await fetch(base + `/api/alerts/${al1.id}/acks`, { headers: H(mgr.token) }));
+    check('sender sees who acknowledged', acks.acks.length === 1 && !!acks.acks[0].name, JSON.stringify(acks.acks));
+    const al2 = await j(await fetch(base + '/api/alerts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ target_type: 'role', target_role: 'server', body: 'All servers: run food to 3 and 4' }) }));
+    const al3 = await j(await fetch(base + '/api/alerts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ target_type: 'all', body: 'Pre-shift huddle at 4' }) }));
+    act = await j(await fetch(base + '/api/alerts/active', { headers: H(alsrv.token) }));
+    check('role + everyone alerts reach a matching staffer', act.alerts.some(a => a.id === al2.id) && act.alerts.some(a => a.id === al3.id), JSON.stringify(act.alerts.map(a => a.id)));
+    const alOther = locsList.find(l => l.id !== loc1 && l.type !== 'central_kitchen').id;
+    r = await fetch(base + '/api/alerts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ target_type: 'all', body: 'x', location_id: alOther }) });
+    check('manager blocked from alerting another store (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/alerts/${al3.id}/close`, { method: 'POST', headers: H(mgr.token), body: '{}' });
+    check('sender closes an alert', r.status === 200);
+    check('floor alert is audited', new Set((await j(await fetch(base + '/api/inventory/audit', { headers: H(token) }))).map(a => a.action)).has('floor_alert'));
+
     // ── Timesheet: late/OT flags, rounding, approve-total, OT escalation ──
     const tdb = require('../db/database');
     const tsLoc = mgr.user.location_id;

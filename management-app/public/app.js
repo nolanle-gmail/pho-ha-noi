@@ -214,7 +214,10 @@ function setupMessageStream() {
   const token = localStorage.getItem('phn_token');
   if (!token) return;
   MSG_ES = new EventSource(`/api/messages/stream?token=${encodeURIComponent(token)}`);
-  MSG_ES.onmessage = () => {
+  MSG_ES.onmessage = (e) => {
+    let d = null; try { d = JSON.parse(e.data); } catch { /* heartbeat */ }
+    if (d && d.type === 'alert') { showAlertPopup(d.alert); return; }               // urgent floor ping → pop up
+    if (d && d.type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); if (S.section === 'messages' && S.msgTab === 'alerts') renderMessages(); return; }
     refreshUnread();
     if (S.section === 'messages' && !S.msgThread && S.msgTab === 'inbox') renderMessages();
   };
@@ -3198,7 +3201,117 @@ async function renderRepPayments() {
 }
 
 // ── Messages module (horizontal tabs) ──────────────────────────────────────
-const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose']];
+// ── Floor alerts (Management side): compose + track acknowledgements ──────────
+const ALERT_PRESETS = [
+  'Help table {n} right away', 'Bring food from the kitchen to table {n}', 'Clear & clean table {n}',
+  'Table {n} needs a refill / bus', 'Come to the front desk', 'Check on your section',
+];
+const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
+const ALERT_SEES_ALL = ['owner', 'admin', 'general_manager', 'regional_manager'];
+
+function alertCue() {
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+    const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+    g.gain.setValueAtTime(0.001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+    o.start(); o.stop(ac.currentTime + 0.5); setTimeout(() => { try { ac.close(); } catch {} }, 800);
+  } catch { /* audio blocked until a gesture — the visual pop-up still shows */ }
+}
+const _shownAlerts = new Set();
+function showAlertPopup(a) {
+  if (!a || _shownAlerts.has(a.id)) return;
+  _shownAlerts.add(a.id); alertCue();
+  const host = document.createElement('div'); host.className = 'alert-pop';
+  host.innerHTML = `<div class="alert-pop-card ${a.priority === 'urgent' ? 'urgent' : ''}">
+    <div class="alert-pop-top">🔔 ${a.priority === 'urgent' ? 'URGENT ALERT' : 'Alert'}</div>
+    <div class="alert-pop-body">${esc(a.body)}</div>
+    <div class="alert-pop-from">from ${esc(a.sender_name || 'Management')}</div>
+    <div class="alert-pop-actions"><button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button></div>
+  </div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.querySelector('[data-dismiss]').onclick = close;
+  host.querySelector('[data-ack]').onclick = async () => {
+    try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged'); } catch (e) { toast(e.message, true); }
+    close();
+  };
+}
+
+async function renderFloorAlerts() {
+  const v = $('view');
+  if (!myCap('manage')) { v.innerHTML = '<div class="empty">Floor alerts are sent by managers and owners. Any alert sent to you will pop up on screen.</div>'; return; }
+  const seesAll = ALERT_SEES_ALL.includes(S.user.role);
+  const stores = (S.locations || []).filter(l => l.type !== 'central_kitchen');
+  let locId = seesAll ? (S.loc || (stores[0] && stores[0].id)) : S.user.location_id;
+  let data = { staff: [], roles: [] }, sent = { alerts: [] };
+  try { [data, sent] = await Promise.all([api('/alerts/staff?location_id=' + encodeURIComponent(locId || '')), api('/alerts/sent')]); }
+  catch (e) { /* staff may fail if no location yet */ }
+  const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(ALERT_ROLE_LABEL[r] || roleLabel(r))}</option>`).join('');
+  const staffOpts = (data.staff || []).map(s => `<option value="${s.id}">${esc(s.name)} · ${esc(roleLabel(s.role))}</option>`).join('');
+  const chips = ALERT_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p.replace('{n}', '#'))}</button>`).join('');
+  const targetDesc = (a) => a.target_type === 'user' ? esc(a.target_user_name || 'a person') : a.target_type === 'role' ? (ALERT_ROLE_LABEL[a.target_role] || a.target_role) : 'Everyone on floor';
+  v.innerHTML = `
+    <h2 class="page">🔔 Floor alerts <span style="font-weight:400;color:var(--muted);font-size:.9rem">— urgent on-screen pings to working staff</span></h2>
+    <div class="section" style="max-width:640px">
+      <div class="err" id="alErr"></div>
+      ${seesAll ? `<div class="al-field"><label>Store</label><select id="alLoc">${stores.map(l => `<option value="${l.id}" ${String(l.id) === String(locId) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>` : ''}
+      <div class="al-field"><label>Who</label>
+        <div class="seg" id="alTarget">
+          <button type="button" class="seg-btn active" data-t="all">Everyone on floor</button>
+          <button type="button" class="seg-btn" data-t="role" ${data.roles && data.roles.length ? '' : 'disabled'}>A role</button>
+          <button type="button" class="seg-btn" data-t="user" ${data.staff && data.staff.length ? '' : 'disabled'}>A person</button>
+        </div>
+        <select id="alRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
+        <select id="alUser" class="hidden" style="margin-top:.4rem">${staffOpts || '<option>—</option>'}</select>
+      </div>
+      <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div>
+        <div style="display:flex;gap:.5rem;align-items:center;margin-top:.4rem"><span style="font-size:.85rem;color:var(--muted)">Table #</span><input id="alTable" inputmode="numeric" style="width:80px" placeholder="e.g. 5"></div>
+      </div>
+      <div class="al-field"><label>Message</label><textarea id="alBody" rows="2" placeholder="Type or pick a quick message above"></textarea></div>
+      <div class="al-field"><label>Priority</label>
+        <div class="seg" id="alPrio"><button type="button" class="seg-btn active" data-p="urgent">🔴 Urgent</button><button type="button" class="seg-btn" data-p="normal">Normal</button></div>
+      </div>
+      <button class="btn" id="alSend">🔔 Send alert</button>
+    </div>
+    <div class="section">
+      <h3>Recent sent alerts <span style="font-weight:400;color:var(--muted);font-size:.85rem">last 24h · live acknowledgements</span></h3>
+      ${sent.alerts.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Message</th><th class="num">Acked</th><th></th></tr></thead><tbody>
+        ${sent.alerts.map(a => `<tr><td class="mono">${esc((a.created_at || '').slice(0, 16).replace('T', ' '))}</td><td>${targetDesc(a)}</td><td>${esc(a.body)} ${a.priority === 'urgent' ? '<span class="badge out">urgent</span>' : ''}</td><td class="num"><strong>${a.ack_count}</strong></td>
+          <td><div class="actions-cell"><button class="btn sm ghost" data-acks="${a.id}">Who</button>${a.active ? `<button class="btn sm ghost" data-close="${a.id}">Close</button>` : '<span class="badge gray">closed</span>'}</div></td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No alerts sent recently.</div>'}
+    </div>`;
+
+  const setTable = () => { const n = ($('alTable').value || '').trim(); v.querySelectorAll('.al-chip').forEach(c => c.textContent = c.dataset.preset.replace('{n}', n || '#')); };
+  $('alTable').oninput = setTable;
+  v.querySelectorAll('#alTarget .seg-btn').forEach(b => b.onclick = () => { if (b.disabled) return; v.querySelectorAll('#alTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b)); $('alRole').classList.toggle('hidden', b.dataset.t !== 'role'); $('alUser').classList.toggle('hidden', b.dataset.t !== 'user'); });
+  v.querySelectorAll('#alPrio .seg-btn').forEach(b => b.onclick = () => v.querySelectorAll('#alPrio .seg-btn').forEach(x => x.classList.toggle('active', x === b)));
+  v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { const n = ($('alTable').value || '').trim(); $('alBody').value = c.dataset.preset.replace('{n}', n || ''); });
+  const alLoc = $('alLoc'); if (alLoc) alLoc.onchange = () => { S.loc = alLoc.value; renderMessages(); };
+  $('alSend').onclick = async () => {
+    $('alErr').textContent = '';
+    try {
+      const target = v.querySelector('#alTarget .seg-btn.active').dataset.t;
+      const priority = v.querySelector('#alPrio .seg-btn.active').dataset.p;
+      const text = $('alBody').value.trim();
+      if (!text) throw new Error('Type or pick a message.');
+      const payload = { target_type: target, body: text, priority, location_id: locId };
+      if (target === 'role') payload.target_role = $('alRole').value;
+      if (target === 'user') payload.target_user_id = $('alUser').value;
+      await api('/alerts', { method: 'POST', body: JSON.stringify(payload) });
+      toast('Alert sent 🔔'); renderMessages();
+    } catch (e) { $('alErr').textContent = e.message; }
+  };
+  v.querySelectorAll('[data-close]').forEach(b => b.onclick = async () => { try { await api(`/alerts/${b.dataset.close}/close`, { method: 'POST', body: '{}' }); toast('Alert closed'); renderMessages(); } catch (e) { toast(e.message, true); } });
+  v.querySelectorAll('[data-acks]').forEach(b => b.onclick = async () => {
+    try { const d = await api(`/alerts/${b.dataset.acks}/acks`); toast(d.acks.length ? '✓ ' + d.acks.map(a => a.name).join(', ') : 'No one has acknowledged yet'); }
+    catch (e) { toast(e.message, true); }
+  });
+}
+
+const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['alerts', '🔔 Floor alerts']];
 function renderMsgTabs() {
   $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; renderMsgTabs(); renderMessages(); });
@@ -3206,7 +3319,7 @@ function renderMsgTabs() {
 function renderMessages() {
   if (S.msgThread) return renderThread();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose }[S.msgTab])();
+  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts }[S.msgTab])();
 }
 
 async function renderThread() {

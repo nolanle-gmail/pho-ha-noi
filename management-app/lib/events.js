@@ -16,4 +16,10 @@ module.exports = {
   // A new message delivered to these recipient user ids — for live inbox/badge.
   emitMessages: (userIds) => { bus.emit('messages', { user_ids: (userIds || []).map(Number).filter(Boolean) }); },
   onMessages: (handler) => { bus.on('messages', handler); return () => bus.off('messages', handler); },
+  // A floor alert was raised (the SSE stream decides who it matches) …
+  emitAlert: (alert) => { bus.emit('alert', alert); },
+  onAlert: (handler) => { bus.on('alert', handler); return () => bus.off('alert', handler); },
+  // … and acknowledged (pushed back to the sender so they see who's on it).
+  emitAlertAck: (ack) => { bus.emit('alert_ack', ack); },
+  onAlertAck: (handler) => { bus.on('alert_ack', handler); return () => bus.off('alert_ack', handler); },
 };

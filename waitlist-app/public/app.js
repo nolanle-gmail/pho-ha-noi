@@ -57,6 +57,8 @@ const SELF_SERVICE_ROLES = ['server', 'busser', 'host', 'frontdesk', 'cashier', 
 const isServerRole = (r) => SERVER_ROLES.includes(r);
 const isFrontDeskRole = (r) => FD_ROLES.includes(r);
 const isSelfServiceRole = (r) => SELF_SERVICE_ROLES.includes(r);
+// Who can send floor alerts (mirrors the Management alerts route CAN_SEND).
+const ALERT_SENDERS = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 // Back-of-house kitchen roles can see the floor but not seat / change tables.
 const KITCHEN_ROLES = ['chef', 'line_cook', 'prep_cook', 'dishwasher'];
 const canEditFloor = (r) => !KITCHEN_ROLES.includes(r);
@@ -117,6 +119,11 @@ async function boot() {
   render();
   setupStaffStream();   // sub-second push (SSE) for live views
   refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
+  // Floor alerts: managers get a Send button; everyone gets any pending alert on load.
+  const ab = $('alertBtn');
+  ab.classList.toggle('hidden', !ALERT_SENDERS.includes(S.user.role));
+  ab.onclick = openAlertComposer;
+  checkPendingAlerts();
   // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
   // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
@@ -156,7 +163,10 @@ function setupStaffStream() {
   es.onopen = () => setStaffLive('live');
   es.onmessage = (e) => {
     setStaffLive('live');   // any event means the pipe is healthy
-    let type = ''; try { type = JSON.parse(e.data).type; } catch { /* comment/heartbeat */ }
+    let d = null; try { d = JSON.parse(e.data); } catch { /* comment/heartbeat */ }
+    const type = d && d.type;
+    if (type === 'alert') { showAlertPopup(d.alert); return; }              // urgent floor ping → pop up
+    if (type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); return; }  // recipient acknowledged (I'm the sender)
     if (type === 'message') {   // a message arrived for me → update badge + open inbox
       refreshMsgUnread();
       if (S.view === 'messages' && !S.msgThread && !$('modalHost').innerHTML) renderMessages();
@@ -725,6 +735,109 @@ function modal(title, bodyHtml, onOk, okLabel = 'Add party') {
   $('mCancel').onclick = close;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('mOk').onclick = async () => { try { await onOk(); close(); } catch (e) { $('mErr').textContent = e.message; } };
+}
+
+// ── Floor alerts — urgent on-screen pings between managers and working staff ───
+// Quick templates; "{n}" is filled from the table-number box in the composer.
+const ALERT_PRESETS = [
+  'Help table {n} right away',
+  'Bring food from the kitchen to table {n}',
+  'Clear & clean table {n}',
+  'Table {n} needs a refill / bus',
+  'Come to the front desk',
+  'Check on your section',
+];
+const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
+
+// A short attention cue: a soft beep (if allowed) and a device vibration.
+function alertCue() {
+  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ }
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+    const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+    g.gain.setValueAtTime(0.001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
+    o.start(); o.stop(ac.currentTime + 0.5); setTimeout(() => { try { ac.close(); } catch {} }, 800);
+  } catch { /* audio blocked until a user gesture — the visual pop-up still shows */ }
+}
+
+const _shownAlerts = new Set();   // don't double-pop the same alert (SSE + active-poll)
+function showAlertPopup(a) {
+  if (!a || _shownAlerts.has(a.id)) return;
+  _shownAlerts.add(a.id);
+  alertCue();
+  const host = document.createElement('div');
+  host.className = 'alert-pop';
+  host.innerHTML = `<div class="alert-pop-card ${a.priority === 'urgent' ? 'urgent' : ''}">
+    <div class="alert-pop-top">🔔 ${a.priority === 'urgent' ? 'URGENT ALERT' : 'Alert'}</div>
+    <div class="alert-pop-body">${esc(a.body)}</div>
+    <div class="alert-pop-from">from ${esc(a.sender_name || 'Management')}</div>
+    <div class="alert-pop-actions"><button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button></div>
+  </div>`;
+  document.body.appendChild(host);
+  const close = () => host.remove();
+  host.querySelector('[data-dismiss]').onclick = close;
+  host.querySelector('[data-ack]').onclick = async () => {
+    try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged — thanks!'); }
+    catch (e) { toast(e.message, true); }
+    close();
+  };
+}
+
+// On load / reconnect, surface anything still pending for me.
+async function checkPendingAlerts() {
+  try { const d = await api('/alerts/active'); (d.alerts || []).forEach(showAlertPopup); }
+  catch { /* alerts optional — never block the app */ }
+}
+
+// Manager composer: pick who, pick a preset or type a message, choose priority, send.
+async function openAlertComposer() {
+  let staff = [], roles = [];
+  try { const d = await api('/alerts/staff?location_id=' + encodeURIComponent(S.loc || '')); staff = d.staff || []; roles = d.roles || []; }
+  catch (e) { return toast(e.message, true); }
+  const roleOpts = roles.map(r => `<option value="${r}">${esc(ALERT_ROLE_LABEL[r] || roleWord(r))}</option>`).join('');
+  const staffOpts = staff.map(s => `<option value="${s.id}">${esc(s.name)} · ${esc(roleWord(s.role))}</option>`).join('');
+  const chips = ALERT_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p.replace('{n}', '#'))}</button>`).join('');
+  const body = `
+    <div class="al-field"><label>Who</label>
+      <div class="seg" id="alTarget">
+        <button type="button" class="seg-btn active" data-t="all">Everyone on floor</button>
+        <button type="button" class="seg-btn" data-t="role" ${roles.length ? '' : 'disabled'}>A role</button>
+        <button type="button" class="seg-btn" data-t="user" ${staff.length ? '' : 'disabled'}>A person</button>
+      </div>
+      <select id="alRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
+      <select id="alUser" class="hidden" style="margin-top:.4rem">${staffOpts || '<option>—</option>'}</select>
+    </div>
+    <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div>
+      <div style="display:flex;gap:.5rem;align-items:center;margin-top:.4rem"><span style="font-size:.85rem;color:var(--muted)">Table #</span><input id="alTable" inputmode="numeric" style="width:70px" placeholder="e.g. 5"></div>
+    </div>
+    <div class="al-field"><label>Message</label><textarea id="alBody" rows="2" placeholder="Type or pick a quick message above"></textarea></div>
+    <div class="al-field"><label>Priority</label>
+      <div class="seg" id="alPrio"><button type="button" class="seg-btn active" data-p="urgent">🔴 Urgent</button><button type="button" class="seg-btn" data-p="normal">Normal</button></div>
+    </div>`;
+  modal('🔔 Send floor alert', body, async () => {
+    const target = document.querySelector('#alTarget .seg-btn.active').dataset.t;
+    const priority = document.querySelector('#alPrio .seg-btn.active').dataset.p;
+    const text = $('alBody').value.trim();
+    if (!text) throw new Error('Type or pick a message.');
+    const payload = { target_type: target, body: text, priority, location_id: S.loc };
+    if (target === 'role') payload.target_role = $('alRole').value;
+    if (target === 'user') payload.target_user_id = $('alUser').value;
+    await api('/alerts', { method: 'POST', body: JSON.stringify(payload) });
+    toast('Alert sent 🔔');
+  }, 'Send alert');
+  // Wire the composer's inner controls.
+  const setTable = () => { const n = ($('alTable').value || '').trim(); document.querySelectorAll('.al-chip').forEach(c => c.textContent = c.dataset.preset.replace('{n}', n || '#')); };
+  $('alTable').oninput = setTable;
+  document.querySelectorAll('#alTarget .seg-btn').forEach(b => b.onclick = () => {
+    if (b.disabled) return;
+    document.querySelectorAll('#alTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b));
+    $('alRole').classList.toggle('hidden', b.dataset.t !== 'role');
+    $('alUser').classList.toggle('hidden', b.dataset.t !== 'user');
+  });
+  document.querySelectorAll('#alPrio .seg-btn').forEach(b => b.onclick = () => document.querySelectorAll('#alPrio .seg-btn').forEach(x => x.classList.toggle('active', x === b)));
+  document.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { const n = ($('alTable').value || '').trim(); $('alBody').value = c.dataset.preset.replace('{n}', n || ''); });
 }
 
 // ── Visual floor map (shared by the seat picker and the Floor Plan editor) ────

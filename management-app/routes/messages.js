@@ -6,7 +6,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
-const { emitMessages, onMessages } = require('../lib/events');
+const { emitMessages, onMessages, onAlert, onAlertAck } = require('../lib/events');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -17,10 +17,18 @@ function streamUser(req) {
   const key = req.headers['x-service-key'] || req.query.key;
   if (key && key === SERVICE_KEY) {
     const email = String(req.query.as || '').toLowerCase().trim();
-    const u = email && db.prepare(`SELECT id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
-    return u ? { id: u.id } : null;
+    const u = email && db.prepare(`SELECT id, role, location_id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    return u ? { id: u.id, role: u.role, location_id: u.location_id } : null;
   }
   try { return jwt.verify(req.query.token || '', SECRET); } catch { return null; }
+}
+// Does a floor alert target this connected user? (them specifically, their role
+// at their store, or everyone at their store.)
+function alertHitsUser(a, user) {
+  if (a.target_type === 'user') return Number(a.target_user_id) === Number(user.id);
+  const sameLoc = user.location_id != null && String(a.location_id) === String(user.location_id);
+  if (a.target_type === 'role') return sameLoc && a.target_role === user.role;
+  return sameLoc; // 'all'
 }
 
 // Live push: fires whenever a message is delivered to me (badge + inbox refresh).
@@ -34,8 +42,15 @@ router.get('/stream', (req, res) => {
   const unsub = onMessages((p) => {
     if (p.user_ids.includes(Number(user.id))) { try { res.write('data: {"type":"message"}\n\n'); } catch { /* closed */ } }
   });
+  // Floor alerts targeting me pop up live; acks flow back to me when I'm the sender.
+  const unsubAlert = onAlert((a) => {
+    if (alertHitsUser(a, user)) { try { res.write(`data: ${JSON.stringify({ type: 'alert', alert: a })}\n\n`); } catch { /* closed */ } }
+  });
+  const unsubAck = onAlertAck((k) => {
+    if (Number(k.sender_id) === Number(user.id)) { try { res.write(`data: ${JSON.stringify({ type: 'alert_ack', alert_id: k.alert_id, user_id: k.user_id, user_name: k.user_name })}\n\n`); } catch { /* closed */ } }
+  });
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
-  req.on('close', () => { clearInterval(hb); unsub(); });
+  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); });
 });
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>

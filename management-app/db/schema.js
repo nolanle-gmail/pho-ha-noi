@@ -666,6 +666,31 @@ function migrate() {
       created_at      TEXT DEFAULT (datetime('now')),
       updated_at      TEXT DEFAULT (datetime('now'))
     );
+
+    -- Floor alerts: an urgent, on-screen ping a manager/owner pushes to working
+    -- staff (e.g. "help table 5 now"). Targets one person, a whole role at the
+    -- store, or everyone on the floor. Delivered live over SSE and popped up in
+    -- the Staff app; recipients acknowledge ("On it") in floor_alert_acks.
+    CREATE TABLE IF NOT EXISTS floor_alerts (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id    INTEGER NOT NULL REFERENCES locations(id),
+      sender_id      INTEGER NOT NULL REFERENCES users(id),
+      target_type    TEXT NOT NULL CHECK(target_type IN ('user','role','all')),
+      target_user_id INTEGER REFERENCES users(id),   -- when target_type='user'
+      target_role    TEXT,                            -- when target_type='role'
+      body           TEXT NOT NULL,
+      priority       TEXT NOT NULL DEFAULT 'urgent' CHECK(priority IN ('normal','urgent')),
+      active         INTEGER NOT NULL DEFAULT 1,      -- sender can close it
+      created_at     TEXT DEFAULT (datetime('now'))
+    );
+    -- One row per staff member who acknowledged an alert.
+    CREATE TABLE IF NOT EXISTS floor_alert_acks (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      alert_id  INTEGER NOT NULL REFERENCES floor_alerts(id) ON DELETE CASCADE,
+      user_id   INTEGER NOT NULL REFERENCES users(id),
+      ack_at    TEXT DEFAULT (datetime('now')),
+      UNIQUE(alert_id, user_id)
+    );
   `);
 
   // Migrations for databases created before these columns existed.
