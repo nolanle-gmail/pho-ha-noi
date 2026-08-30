@@ -956,7 +956,9 @@ flowchart LR
   choose **Urgent** or **Normal**, and send.
 - **Receive** — the alert rides the same live stream as messages, so it appears within a
   moment on every targeted staff member's screen; anything still pending also shows when
-  they next open the app. They tap **✓ On it** to acknowledge (or Dismiss).
+  they next open the app. They tap **✓ On it** to acknowledge (or Dismiss). Each staff
+  member can mute the chime and/or vibration for their own device under
+  **⚙️ Settings → Floor alerts** (the pop-up still appears).
 - **Track** — the sender's **Floor alerts** tab lists recent alerts with a live
   acknowledgement count, who acknowledged, and a **Close** button. Only owner / admin /
   GM / regional / store managers can send; a manager can only alert their own store.
