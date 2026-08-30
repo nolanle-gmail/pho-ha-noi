@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 26, 2026_
+_Last updated: August 30, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -8,7 +8,7 @@ to staff at any location for testing.
 
 > **Owner:** Harry Nguyen · **Stack:** Node.js + Express + built-in `node:sqlite`,
 > vanilla-JS front ends (no build step) · **Scale:** 10 stores + 1 central
-> kitchen · **49 tables** across 2 databases.
+> kitchen · **51 tables** across 2 databases.
 
 A styled, interactive version of this document (with rendered diagrams and a
 sticky table of contents) is also published as a Claude Artifact.
@@ -600,7 +600,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 42 tables
+### Management database — 44 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -646,6 +646,8 @@ erDiagram
 | `equipment` | Assets | Equipment register with maintenance schedule |
 | `daily_sales` | Reporting | Per-day revenue & covers by location |
 | `messages` · `message_recipients` | Messaging | Threaded team messaging + per-person read state |
+| `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
+| `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -678,7 +680,7 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
-| **Messages** | Inbox, sent, compose (direct or broadcast) | All |
+| **Messages** | Inbox, sent, compose (direct or broadcast), **Floor alerts** (urgent on-screen pings) | All · alerts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
@@ -928,6 +930,41 @@ left behind — the task simply returns to the pool for someone else.
 The photo is optional — a task can be completed without one. Managers and the task's
 owner can view a stored photo; it persists with the database.
 
+### 6.7 Floor alerts: an urgent ping to staff on shift
+
+When a manager/owner needs a staff member's attention *right now* — "help table 5",
+"run food to tables 3 & 4", "come bus a table" — a **floor alert** pops up full-screen
+on the working staff member's Staff app (with a chime + vibration), separate from the
+regular message inbox.
+
+```mermaid
+flowchart LR
+  M[Manager taps 🔔 Alert] --> T{Target}
+  T -->|a person| P[One staff member]
+  T -->|a role| R[All servers / bussers / hosts …]
+  T -->|everyone| E[Everyone on the floor]
+  P --> D[Live SSE push]
+  R --> D
+  E --> D
+  D --> POP[Pop-up on staff screen] -->|✓ On it| ACK[Acknowledged]
+  ACK --> S[Sender sees who's on it]
+```
+
+- **Send** from the **🔔 Alert** button in the Staff app header, or in the Management
+  console under **Messages → Floor alerts**. Pick **who** (a person, a role, or everyone
+  on the floor), tap a **quick message** (with a table-number fill-in) or type your own,
+  choose **Urgent** or **Normal**, and send.
+- **Receive** — the alert rides the same live stream as messages, so it appears within a
+  moment on every targeted staff member's screen; anything still pending also shows when
+  they next open the app. They tap **✓ On it** to acknowledge (or Dismiss).
+- **Track** — the sender's **Floor alerts** tab lists recent alerts with a live
+  acknowledgement count, who acknowledged, and a **Close** button. Only owner / admin /
+  GM / regional / store managers can send; a manager can only alert their own store.
+  Every send is written to the audit log.
+
+Alerts are for immediate floor coordination; use **Messages** (§6.5) for anything that
+should live in an inbox or thread.
+
 ---
 
 ## 7. Access levels
@@ -1112,3 +1149,22 @@ and **Beef Flank** — items the CK is also short on — so it shows a true spli
 
 > **Access check:** a store manager never sees the **Central Kitchen** nav — they order
 > *from* the CK but can't touch its warehouse or fulfilment queue (those return 403).
+
+### Floor alert (manager → working staff)
+
+Needs two devices/tabs: one signed in as a **manager** (`manager2@phohanoi.com` /
+`Manager123!`, Milpitas) and one as a **server at that store**
+(`server@phohanoi.com` / `Server123!`).
+
+1. **Staff waits on the floor** — on the server's device, open the Staff app and stay on
+   **My Tables** (their live stream is connected — the green ● Live badge shows).
+2. **Manager sends** — on the manager's device, tap **🔔 Alert** in the Staff app header
+   (or Management **Messages → Floor alerts**). Choose **A role → Servers**, tap the
+   *"Help table {n} right away"* quick message with **#** = 5, leave it **Urgent**, and
+   **Send**.
+3. **Pops up** — within a moment the server's screen shows a full-screen **URGENT ALERT**
+   card ("Help table 5 right away — from …") with a chime. Tap **✓ On it**.
+4. **Sender sees it** — the manager gets a "✓ … is on it" toast, and the **Floor alerts**
+   tab shows the alert's acknowledgement count tick up (tap **Who** to see the name).
+5. **Access check** — sign in as the server and confirm there is **no 🔔 Alert button**;
+   a non-manager cannot send (the API returns 403).
