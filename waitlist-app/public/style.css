@@ -339,3 +339,14 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .alert-pop-actions { display: flex; gap: .6rem; justify-content: center; }
 .alert-pop-actions .btn { padding: .7rem 1.4rem; font-size: 1rem; }
 .alert-pop-actions .btn:not(.ghost) { background: #16a34a; }
+
+/* ── Settings: preference rows + toggle switch ────────────────────────────── */
+.set-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 1.1rem 1.3rem; max-width: 560px; }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 0; border-top: 1px solid var(--line); }
+.set-row:first-of-type { border-top: 0; }
+.set-label { font-weight: 700; font-size: 1rem; }
+.set-desc { color: var(--muted); font-size: .85rem; margin-top: .15rem; }
+.tgl { flex-shrink: 0; width: 52px; height: 30px; border-radius: 999px; border: 0; background: #cfc8bd; position: relative; cursor: pointer; transition: background .15s; padding: 0; }
+.tgl.on { background: var(--ok); }
+.tgl-dot { position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: left .15s; }
+.tgl.on .tgl-dot { left: 25px; }

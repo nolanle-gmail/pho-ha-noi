@@ -192,6 +192,7 @@ function renderNav() {
   items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
   items.push(['myhours', '⏱ My Hours']);   // each staff member's own timesheet
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
+  items.push(['settings', '⚙️ Settings']);   // per-device preferences (alert sound / vibration)
   nav.classList.remove('hidden');
   const cur = items.find(([k]) => k === S.view) || items[0];
   const open = nav.classList.contains('open');
@@ -224,6 +225,7 @@ function render() {
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
   if (S.view === 'tables') return renderTables();
+  if (S.view === 'settings') return renderSettings();
   return renderBoard();
 }
 
@@ -749,9 +751,16 @@ const ALERT_PRESETS = [
 ];
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
 
-// A short attention cue: a soft beep (if allowed) and a device vibration.
+// Per-device alert cue preferences (Settings). Default on; stored locally so each
+// person's phone can be silent/loud independently.
+const alertSoundOn = () => localStorage.getItem('phnw_alert_sound') !== '0';
+const alertVibrateOn = () => localStorage.getItem('phnw_alert_vibrate') !== '0';
+
+// A short attention cue: a soft beep (if allowed) and a device vibration — each
+// gated by the staff member's Settings toggles.
 function alertCue() {
-  try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ }
+  if (alertVibrateOn()) { try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ } }
+  if (!alertSoundOn()) return;
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
     const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
@@ -779,6 +788,7 @@ function showAlertPopup(a) {
   const close = () => host.remove();
   host.querySelector('[data-dismiss]').onclick = close;
   host.querySelector('[data-ack]').onclick = async () => {
+    if (a.preview) { close(); return; }   // Settings preview — nothing to acknowledge
     try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged — thanks!'); }
     catch (e) { toast(e.message, true); }
     close();
@@ -789,6 +799,31 @@ function showAlertPopup(a) {
 async function checkPendingAlerts() {
   try { const d = await api('/alerts/active'); (d.alerts || []).forEach(showAlertPopup); }
   catch { /* alerts optional — never block the app */ }
+}
+
+// ── Settings: per-device preferences (currently the alert sound / vibration) ───
+function renderSettings() {
+  const v = $('view');
+  const row = (key, label, desc, on) => `<div class="set-row">
+    <div class="set-text"><div class="set-label">${label}</div><div class="set-desc">${esc(desc)}</div></div>
+    <button class="tgl ${on ? 'on' : ''}" data-tgl="${key}" role="switch" aria-checked="${on}" title="Toggle"><span class="tgl-dot"></span></button>
+  </div>`;
+  v.innerHTML = `
+    <div class="section-head"><h2>⚙️ Settings</h2></div>
+    <p class="sub" style="margin-top:-.6rem;color:var(--muted)">Saved on <strong>this device</strong> only — set your phone loud on the floor, silent at the pass.</p>
+    <div class="set-card">
+      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Floor alerts</h3>
+      ${row('phnw_alert_sound', 'Alert sound', 'Play a chime when an urgent alert pops up.', alertSoundOn())}
+      ${row('phnw_alert_vibrate', 'Vibration', 'Vibrate the device (phones & tablets) on an alert.', alertVibrateOn())}
+      <button class="btn ghost" id="setTest" style="margin-top:.9rem">🔔 Preview alert</button>
+    </div>`;
+  v.querySelectorAll('[data-tgl]').forEach(b => b.onclick = () => {
+    const k = b.dataset.tgl, on = localStorage.getItem(k) !== '0';
+    try { localStorage.setItem(k, on ? '0' : '1'); } catch { /* private mode */ }
+    b.classList.toggle('on', !on); b.setAttribute('aria-checked', String(!on));
+    toast(!on ? 'On' : 'Off');
+  });
+  $('setTest').onclick = () => showAlertPopup({ id: 'preview-' + Date.now(), preview: true, body: 'This is a preview alert', sender_name: 'You', priority: 'urgent' });
 }
 
 // Manager composer: pick who, pick a preset or type a message, choose priority, send.
