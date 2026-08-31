@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 30, 2026_
+_Last updated: August 31, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -716,8 +716,10 @@ guard and a 16 KB body cap.
 
 ### Staff app (PWA)
 
-The floor-facing phone app. Installs to the home screen; its nav collapses to a
-hamburger drawer on phones. Views depend on role:
+The floor-facing phone app. Installs to the home screen — an **install banner**
+offers a one-tap **Install** on Android/desktop Chrome, and the **Share → Add to
+Home Screen** hint on iPhone/iPad (dismissible; it snoozes for two weeks). Its nav
+collapses to a hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
@@ -727,6 +729,8 @@ hamburger drawer on phones. Views depend on role:
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / month, OT & late | Everyone |
+| ⚙️ Settings | Per-device preferences — floor-alert sound & vibration | Everyone |
+| 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
 
 ### Time-clock station (shared terminal)
