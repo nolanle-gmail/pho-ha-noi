@@ -87,6 +87,42 @@ $('loginForm').onsubmit = async (e) => {
 };
 $('logout').onclick = () => { localStorage.clear(); location.reload(); };
 
+// ── Install banner: prompt staff to add the app to their home screen ───────────
+let _deferredInstall = null;
+// Chrome/Android/desktop fire this — capture it so our own button can trigger install.
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _deferredInstall = e; if (S.user) showInstallBanner(); });
+window.addEventListener('appinstalled', () => { try { localStorage.setItem('phnw_installed', '1'); } catch { /* private mode */ } hideInstallBanner(); });
+
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+const isIosDevice = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function installSnoozed() {
+  const t = Number(localStorage.getItem('phnw_install_dismissed') || 0);
+  return t && (Date.now() - t) < 14 * 864e5;   // hidden for 14 days after a dismiss
+}
+function hideInstallBanner() { const b = $('installBanner'); if (b) b.remove(); }
+function showInstallBanner() {
+  if (isStandalone() || localStorage.getItem('phnw_installed') === '1' || installSnoozed()) return;
+  const ios = !_deferredInstall && isIosDevice();   // iOS can't use the prompt API — show Share instructions
+  if (!_deferredInstall && !ios) return;            // nothing installable to offer on this browser
+  if ($('installBanner')) return;
+  const b = document.createElement('div'); b.id = 'installBanner'; b.className = 'install-banner';
+  b.innerHTML = `<span class="ib-icon">📲</span>
+    <span class="ib-text">${ios
+      ? 'Install <b>PHN&nbsp;Staff</b>: tap <b>Share</b> then <b>Add to Home Screen</b>.'
+      : 'Install <b>PHN&nbsp;Staff</b> for quick access on your phone.'}</span>
+    ${ios ? '' : '<button class="btn ib-go" id="ibInstall">Install</button>'}
+    <button class="ib-x" id="ibClose" aria-label="Dismiss">✕</button>`;
+  document.body.appendChild(b);
+  $('ibClose').onclick = () => { try { localStorage.setItem('phnw_install_dismissed', String(Date.now())); } catch { /* private mode */ } hideInstallBanner(); };
+  const go = $('ibInstall');
+  if (go) go.onclick = async () => {
+    if (!_deferredInstall) return;
+    _deferredInstall.prompt();
+    try { const r = await _deferredInstall.userChoice; if (r && r.outcome === 'dismissed') localStorage.setItem('phnw_install_dismissed', String(Date.now())); } catch { /* dialog closed */ }
+    _deferredInstall = null; hideInstallBanner();
+  };
+}
+
 function tick() { $('clock').textContent = new Date().toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }); }
 
 async function boot() {
@@ -124,6 +160,7 @@ async function boot() {
   ab.classList.toggle('hidden', !ALERT_SENDERS.includes(S.user.role));
   ab.onclick = openAlertComposer;
   checkPendingAlerts();
+  showInstallBanner();   // offer "add to home screen" once signed in (if not already installed)
   // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
   // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
