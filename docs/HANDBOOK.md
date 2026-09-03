@@ -779,11 +779,10 @@ history, guest history & daily reports (owner/admin), and an access/activity log
 ### Guest Check-in kiosk (no login)
 
 Public page at `/checkin`, or per-store `/checkin/<slug>` / `/checkin?loc=<id>` for
-a lobby tablet or QR. The guest sees the current wait, enters name / party size /
-phone and special-request chips (high chair, booth, patio, birthday…), joins, and
-then **tracks their spot live** — the screen flips to "🔔 Your table is ready!" the
-moment the host pages them. Hardened with per-IP rate limits, a duplicate-submit
-guard and a 16 KB body cap.
+a lobby tablet or QR. The guest sees the current wait, enters just **name, party
+size and mobile number**, joins, and then **tracks their spot live** — the screen
+flips to "🔔 Your table is ready!" the moment the host pages them. Hardened with
+per-IP rate limits, a duplicate-submit guard and a 16 KB body cap.
 
 ### Staff app (PWA)
 
