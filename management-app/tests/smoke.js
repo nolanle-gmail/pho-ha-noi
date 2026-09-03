@@ -1096,6 +1096,45 @@ const check = (name, ok, detail = '') => {
     check('deleted message is gone (404)', r.status === 404, 'status=' + r.status);
     r = await fetch(base + `/api/messages/${gsend.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('a manager can delete any message (moderation)', r.status === 200, await r.text());
+
+    // ── Staff chat groups ──────────────────────────────────────────────────
+    const cg = await j(await fetch(base + '/api/chat/groups', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Smoke Chat', member_ids: [empMe.id, mgr.user.id] }) }));
+    check('create chat group (creator auto-joins)', cg.success === true && !!cg.id && cg.member_count === 3, JSON.stringify(cg));
+    r = await fetch(base + '/api/chat/groups', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'No members' }) });
+    check('chat group needs another member (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(token), body: JSON.stringify({ body: 'hello team' }) });
+    check('member posts a chat message', r.status === 200, await r.text());
+    const cgThread = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(emp.token) }));
+    check('member reads the chat thread', cgThread.member === true && cgThread.messages.length === 1 && cgThread.messages[0].body === 'hello team', JSON.stringify(cgThread.messages.length));
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ body: 'on it' }) });
+    check('second member posts', r.status === 200, await r.text());
+    // A non-member, non-leadership user is fully blocked.
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(svTok) });
+    check('non-member cannot read chat (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(svTok), body: JSON.stringify({ body: 'sneak' }) });
+    check('non-member cannot post chat (403)', r.status === 403, 'status=' + r.status);
+    // Leadership (GM) can audit a group they are not a member of, but cannot post.
+    const cgAudit = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(gmTok) }));
+    check('leadership can audit any group (read)', cgAudit.messages.length === 2 && cgAudit.is_audit === true && cgAudit.member === false, JSON.stringify({ n: cgAudit.messages.length, audit: cgAudit.is_audit }));
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(gmTok), body: JSON.stringify({ body: 'audit post' }) });
+    check('audit viewer cannot post (403)', r.status === 403, 'status=' + r.status);
+    // Group listing + unread for a member.
+    const myGroups = await j(await fetch(base + '/api/chat/groups', { headers: H(emp.token) }));
+    check('member sees the group in their list', Array.isArray(myGroups) && myGroups.some(g => g.id === cg.id), 'n=' + (myGroups || []).length);
+    const auditAll = await j(await fetch(base + '/api/chat/groups?scope=all', { headers: H(gmTok) }));
+    check('leadership lists all groups (audit scope)', Array.isArray(auditAll) && auditAll.some(g => g.id === cg.id), 'n=' + (auditAll || []).length);
+    r = await fetch(base + '/api/chat/groups?scope=all', { headers: H(svTok) });
+    const svScope = await j(r);
+    check('non-leadership scope=all is ignored (own groups only)', !svScope.some(g => g.id === cg.id), JSON.stringify((svScope || []).length));
+    // Delete: manager cannot; owner can; then members are locked out but audit persists.
+    r = await fetch(base + `/api/chat/groups/${cg.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('manager cannot delete a chat group (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}`, { method: 'DELETE', headers: H(token) });
+    check('owner deletes (deactivates) the chat group', r.status === 200, await r.text());
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ body: 'after delete' }) });
+    check('cannot post to a deleted group (404)', r.status === 404, 'status=' + r.status);
+    const cgAfter = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(gmTok) }));
+    check('audit can still read a deleted group', cgAfter.messages.length === 2 && cgAfter.is_active === false, JSON.stringify({ n: cgAfter.messages.length, active: cgAfter.is_active }));
     // Archive + mark-unread (recipient state — test as the actual recipient host1).
     const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
     const host1 = mrecips.find(u => u.name === 'Front Desk 1');

@@ -483,6 +483,11 @@ tr:hover .order-hover { opacity: 1; }
 .msg-att-rm { position: absolute; top: -6px; right: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--red, #b3261e); color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .msg-del { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: .82rem; padding: 0 2px; opacity: .6; }
 .msg-del:hover { opacity: 1; }
+/* Chat-group new-group picker */
+.cg-bulk { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .6rem 0; }
+.cg-bulk select { padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.cg-members { max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; display: flex; flex-direction: column; gap: .3rem; margin-top: .3rem; }
+.cg-members .chk { display: flex; align-items: center; gap: .5rem; }
 /* Top notice banner (e.g. an expired session). Fixed strip above everything. */
 .session-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; gap: .75rem; padding: .7rem 1rem; background: #fef3c7; color: #92400e; border-bottom: 1px solid #f2c98b; font-weight: 700; font-size: .9rem; box-shadow: 0 2px 8px #0002; animation: bannerdrop .25s ease; }
 .session-banner[hidden] { display: none; }

@@ -6,7 +6,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
-const { emitMessages, onMessages, onAlert, onAlertAck } = require('../lib/events');
+const { emitMessages, onMessages, onAlert, onAlertAck, onChat } = require('../lib/events');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -56,8 +56,14 @@ router.get('/stream', (req, res) => {
   const unsubAck = onAlertAck((k) => {
     if (Number(k.sender_id) === Number(user.id)) { try { res.write(`data: ${JSON.stringify({ type: 'alert_ack', alert_id: k.alert_id, user_id: k.user_id, user_name: k.user_name })}\n\n`); } catch { /* closed */ } }
   });
+  // A new chat-group message reaches the group's members (live list/thread refresh).
+  const unsubChat = onChat((c) => {
+    if ((c.member_ids || []).map(Number).includes(Number(user.id))) {
+      try { res.write(`data: ${JSON.stringify({ type: 'chat', group_id: c.group_id })}\n\n`); } catch { /* closed */ }
+    }
+  });
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
-  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); });
+  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); });
 });
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>

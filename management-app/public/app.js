@@ -208,6 +208,11 @@ async function refreshUnread() {
   try { S.unread = (await api('/messages/unread-count')).count; } catch { S.unread = 0; }
   renderSidebar();
 }
+// Chat unread drives the 💬 Chat tab badge (separate from the message inbox badge).
+async function refreshChatUnread() {
+  try { S.chatUnread = (await api('/chat/unread-count')).count || 0; } catch { S.chatUnread = 0; }
+  if (S.section === 'messages') renderMsgTabs();
+}
 
 // App-wide live push for messages: the badge (and an open inbox) update the
 // moment someone sends to me, instead of waiting for the next poll.
@@ -221,6 +226,14 @@ function setupMessageStream() {
     let d = null; try { d = JSON.parse(e.data); } catch { /* heartbeat */ }
     if (d && d.type === 'alert') { showAlertPopup(d.alert); return; }               // urgent floor ping → pop up
     if (d && d.type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); if (S.section === 'messages' && S.msgTab === 'alerts') renderMessages(); return; }
+    if (d && d.type === 'chat') {                                                    // new chat-group message
+      if (S.section === 'messages') {
+        if (S.msgTab === 'chat' && S.chatGroup && String(S.chatGroup) === String(d.group_id)) renderChatGroup(true);
+        else if (S.msgTab === 'chat' && !S.chatGroup) renderChatList();
+        else refreshChatUnread();
+      }
+      return;
+    }
     refreshUnread();
     if (S.section === 'messages' && !S.msgThread && S.msgTab === 'inbox') renderMessages();
   };
@@ -3396,12 +3409,13 @@ async function renderFloorAlerts() {
   });
 }
 
-const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['alerts', '🔔 Floor alerts']];
+const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['chat', '💬 Chat'], ['alerts', '🔔 Floor alerts']];
 function renderMsgTabs() {
-  $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}</button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; renderMsgTabs(); renderMessages(); });
+  $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}${k === 'chat' && S.chatUnread ? ` <span class="tab-badge">${S.chatUnread}</span>` : ''}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; S.chatGroup = null; renderMsgTabs(); renderMessages(); });
 }
 function renderMessages() {
+  if (S.msgTab === 'chat') { if (S.chatGroup) return renderChatGroup(); $('view').innerHTML = '<div class="empty">Loading…</div>'; return renderChatList(); }
   if (S.msgThread) return renderThread();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts }[S.msgTab])();
@@ -3639,6 +3653,127 @@ async function renderCompose() {
       toast(`Message sent to ${r.recipients} recipient${r.recipients > 1 ? 's' : ''}`);
       S.msgTab = 'sent'; renderMsgTabs(); renderMessages();
     } catch (e) { $('cErr').textContent = e.message; $('cSend').disabled = false; }
+  };
+}
+
+// ── Staff chat groups (Messages → 💬 Chat) ──────────────────────────────────
+async function renderChatList() {
+  refreshChatUnread();
+  const isLead = MSG_LEADERSHIP.includes(S.user.role);
+  const scopeAll = isLead && S.chatScope === 'all';
+  let groups;
+  try { groups = await api('/chat/groups' + (scopeAll ? '?scope=all' : '')); }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Chat groups ${scopeAll ? '<span class="badge gray">all · audit</span>' : ''}</h2>
+      <div style="display:flex;gap:.4rem">
+        ${isLead ? `<button class="btn sm ghost" id="chatScopeToggle">${scopeAll ? '← My groups' : 'All groups (audit)'}</button>` : ''}
+        <button class="btn" id="chatNew">＋ New group</button>
+      </div></div>
+    ${groups.length ? `<div class="msg-list">${groups.map(g => `
+      <div class="msg-card ${g.unread ? 'unread' : ''}" data-cg="${g.id}">
+        <div class="msg-head">
+          <span class="msg-from">${g.unread ? '<span class="dot"></span>' : ''}💬 ${esc(g.name)} <span class="badge gray">${g.member_count} member${g.member_count > 1 ? 's' : ''}</span>${scopeAll && !g.is_member ? ' <span class="badge gray">not a member</span>' : ''}</span>
+          <span class="msg-time">${g.last_at ? msgTime(g.last_at) : ''}</span>
+        </div>
+        <div class="msg-body">${g.last_body ? esc(g.last_body) : '<span style="color:var(--muted)">No messages yet.</span>'}${g.unread ? ` <span class="tab-badge">${g.unread} new</span>` : ''}</div>
+      </div>`).join('')}</div>` : '<div class="empty">No chat groups yet. Click <strong>＋ New group</strong> to start one.</div>'}`;
+  if ($('chatScopeToggle')) $('chatScopeToggle').onclick = () => { S.chatScope = scopeAll ? 'mine' : 'all'; renderChatList(); };
+  $('chatNew').onclick = () => openNewChatGroup();
+  $('view').querySelectorAll('[data-cg]').forEach(c => c.onclick = () => { S.chatGroup = c.dataset.cg; renderMessages(); });
+}
+
+async function renderChatGroup(silent) {
+  const gid = S.chatGroup;
+  const draft = silent && $('chatBody') ? $('chatBody').value : '';
+  let d;
+  try { d = await api(`/chat/groups/${gid}/messages`); }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  refreshChatUnread();
+  const me = d.me;
+  const stream = d.messages.map(m => `
+    <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
+      <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
+      <div class="thread-body">${esc(m.body)}</div>
+    </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">💬 ${esc(d.name)}${d.is_audit ? ' <span class="badge gray">audit view</span>' : ''}${!d.is_active ? ' <span class="badge out">deleted</span>' : ''}</h2>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+        <button class="btn sm ghost" id="chatMembers">👥 Members</button>
+        ${d.can_delete && d.is_active ? '<button class="btn sm ghost" id="chatDelete">🗑 Delete group</button>' : ''}
+        <button class="btn sm ghost" id="chatBack">← Back to chats</button>
+      </div></div>
+    <div id="chatMemberList" class="hidden"></div>
+    <div class="thread" id="chatStream">${stream}</div>
+    ${d.member && d.is_active
+      ? `<div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea><button class="btn" id="chatSend">Send</button></div>`
+      : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member of this group.' : 'This group is no longer active.'}</div>`}`;
+  const stEl = $('chatStream'); if (stEl) stEl.scrollTop = stEl.scrollHeight;
+  $('chatBack').onclick = () => { S.chatGroup = null; renderMessages(); };
+  $('chatMembers').onclick = async () => {
+    const el = $('chatMemberList');
+    if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
+    try { const g = await api(`/chat/groups/${gid}`); el.innerHTML = `<div class="section" style="margin:.4rem 0"><strong>${g.members.length} members:</strong> ${g.members.map(u => esc(u.name) + ' (' + roleLabel(u.role) + ')').join(', ')}</div>`; el.classList.remove('hidden'); }
+    catch (e) { toast(e.message, true); }
+  };
+  if ($('chatDelete')) $('chatDelete').onclick = async () => {
+    if (!confirm('Delete this chat group? Members lose access; messages are kept for audit.')) return;
+    try { await api(`/chat/groups/${gid}`, { method: 'DELETE' }); toast('Group deleted'); S.chatGroup = null; renderMessages(); }
+    catch (e) { toast(e.message, true); }
+  };
+  if ($('chatSend')) {
+    if (draft) $('chatBody').value = draft;
+    const send = async () => {
+      const body = $('chatBody').value.trim(); if (!body) return;
+      $('chatSend').disabled = true;
+      try { await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) }); $('chatBody').value = ''; renderChatGroup(); }
+      catch (e) { toast(e.message, true); $('chatSend').disabled = false; }
+    };
+    $('chatSend').onclick = send;
+    $('chatBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+  }
+}
+
+// New-group modal: name + member picker. Managers and above also get quick
+// "add by location / by role" builders.
+async function openNewChatGroup() {
+  let recips;
+  try { recips = await api('/messages/recipients'); } catch (e) { toast(e.message, true); return; }
+  const bulk = MSG_LEADERSHIP.includes(S.user.role) || MSG_MANAGERS.includes(S.user.role);
+  const host = $('modalHost');
+  const locs = [...new Map(recips.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
+  const roles = [...new Set(recips.map(u => u.role))];
+  const memberRow = (u) => `<label class="chk"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
+  host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide">
+    <div class="row-between"><h3 style="margin:0">New chat group</h3><button class="btn sm ghost" id="cgCancel">Cancel</button></div>
+    <div class="err" id="cgErr"></div>
+    <label class="fld-label">Group name</label><input id="cgName" class="fld" placeholder="e.g. San Jose Servers" />
+    ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
+      <select id="cgLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
+      <select id="cgRole"><option value="">— by role —</option>${roles.map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
+      <button class="btn sm ghost" id="cgClear">Clear</button></div>` : ''}
+    <div class="cg-members">${recips.map(memberRow).join('')}</div>
+    <div class="actions" style="margin-top:1rem"><span id="cgCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="cgCreate">Create group</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  const boxes = () => [...host.querySelectorAll('.cg-mem')];
+  const updateCount = () => $('cgCount').textContent = `${boxes().filter(b => b.checked).length} selected`;
+  const pick = (pred) => { recips.forEach(u => { if (pred(u)) { const b = host.querySelector(`.cg-mem[value="${u.id}"]`); if (b) b.checked = true; } }); updateCount(); };
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('cgCancel').onclick = close;
+  boxes().forEach(b => b.onchange = updateCount);
+  if (bulk) {
+    $('cgLoc').onchange = () => { const v = $('cgLoc').value; if (v) pick(u => String(u.location_id) === v); $('cgLoc').value = ''; };
+    $('cgRole').onchange = () => { const v = $('cgRole').value; if (v) pick(u => u.role === v); $('cgRole').value = ''; };
+    $('cgClear').onclick = () => { boxes().forEach(b => b.checked = false); updateCount(); };
+  }
+  $('cgCreate').onclick = async () => {
+    const name = $('cgName').value.trim();
+    const member_ids = boxes().filter(b => b.checked).map(b => parseInt(b.value, 10));
+    if (!name) { $('cgErr').textContent = 'Enter a group name.'; return; }
+    if (!member_ids.length) { $('cgErr').textContent = 'Pick at least one member.'; return; }
+    try { const r = await api('/chat/groups', { method: 'POST', body: JSON.stringify({ name, member_ids }) }); toast('Group created'); close(); S.chatGroup = r.id; renderMessages(); }
+    catch (e) { $('cgErr').textContent = e.message; }
   };
 }
 

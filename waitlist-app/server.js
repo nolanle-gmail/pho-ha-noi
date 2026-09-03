@@ -26,6 +26,7 @@ app.use('/api/service', require('./routes/service'));
 app.use('/api/mytasks', require('./routes/mytasks'));
 app.use('/api/activity-feed', require('./routes/activityfeed'));
 app.use('/api/messages', require('./routes/messages'));
+app.use('/api/chat', require('./routes/chat'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/timeclock', require('./routes/timeclock'));
 app.use('/api/stream', require('./routes/stream'));

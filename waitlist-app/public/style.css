@@ -82,6 +82,12 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .msg-att-rm { position: absolute; top: -6px; right: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 50%; border: none; background: #b3261e; color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .msg-del { border: none; background: transparent; color: #8a8172; cursor: pointer; font-size: .82rem; padding: 0 2px; opacity: .65; }
 .msg-del:hover { opacity: 1; }
+/* Chat-group new-group picker */
+.cg-bulk { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+.cg-bulk select { padding: .45rem .5rem; border: 1px solid var(--line); border-radius: 8px; font: inherit; flex: 1; min-width: 120px; }
+.cg-count { font-size: .8rem; color: #8a8172; margin: .4rem 0 .2rem; }
+.cg-members { max-height: 46vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
+.cg-row { display: flex; align-items: center; gap: .5rem; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }

@@ -8,7 +8,7 @@ to staff at any location for testing.
 
 > **Owner:** Harry Nguyen · **Stack:** Node.js + Express + built-in `node:sqlite`,
 > vanilla-JS front ends (no build step) · **Scale:** 10 stores + 1 central
-> kitchen · **53 tables** across 2 databases.
+> kitchen · **57 tables** across 2 databases.
 
 A styled, interactive version of this document (with rendered diagrams and a
 sticky table of contents) is also published as a Claude Artifact.
@@ -526,6 +526,10 @@ erDiagram
   users ||--o{ message_recipients : "receives"
   messages ||--o{ messages : "thread / reply"
   messages ||--o{ message_attachments : "pictures / videos"
+  chat_groups ||--o{ chat_group_members : "has"
+  users ||--o{ chat_group_members : "in"
+  chat_groups ||--o{ chat_messages : "holds"
+  users ||--o{ chat_messages : "posts"
   users ||--o{ activity_log : "acts"
   equipment {
     int id PK
@@ -561,6 +565,23 @@ erDiagram
     text kind "image / video"
     blob bytes
     int byte_size
+  }
+  chat_groups {
+    int id PK
+    text name
+    int created_by FK
+    int is_active
+  }
+  chat_group_members {
+    int id PK
+    int group_id FK
+    int user_id FK
+  }
+  chat_messages {
+    int id PK
+    int group_id FK
+    int sender_id FK
+    text body
   }
   activity_log {
     int id PK
@@ -624,7 +645,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 46 tables
+### Management database — 50 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -672,6 +693,10 @@ erDiagram
 | `daily_sales` | Reporting | Per-day revenue & covers by location |
 | `messages` · `message_recipients` | Messaging | Threaded team messaging + per-person read state |
 | `message_attachments` | Messaging | Pictures & videos on a message (bytes in the DB; per-kind size caps) |
+| `chat_groups` | Chat | Persistent staff chat groups (channels); `is_active=0` when deleted (kept for audit) |
+| `chat_group_members` | Chat | Who belongs to each chat group |
+| `chat_messages` | Chat | Messages posted in a chat group (retained for audit) |
+| `chat_reads` | Chat | Per-member read cursor for unread counts |
 | `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
 | `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
 
@@ -706,7 +731,7 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
-| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **Floor alerts** (urgent on-screen pings) | All · alerts sent by managers |
+| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings) | All · alerts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
@@ -755,7 +780,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
-| ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments | Everyone |
+| ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / month, OT & late | Everyone |
 | ⚙️ Settings | Per-device preferences — floor-alert sound & vibration | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
@@ -937,6 +962,17 @@ the thread stay); its recipients and attachments go with it.
 | Owner / Admin / GM | Anyone — everyone, a group, or an individual |
 | Manager | Owner/admin, their staff, and manager peers |
 | Staff (self-service) | Their manager, owner/admin, and peers |
+
+**Chat groups.** The Messages page also has a **💬 Chat** tab: persistent, membership-
+scoped group conversations (like channels), stored in `chat_groups` / `chat_group_members`
+/ `chat_messages`. **Everyone** can create a group from the staff list; **managers and
+above** additionally get quick **add-by-location** and **add-by-role** builders. Only a
+group's **members** see and post in it; the whole thread is delivered live over the SSE
+stream (both apps). Everyone sees the groups they belong to, with unread counts
+(`chat_reads`). **Leadership (owner/admin/GM)** can switch to **All groups (audit)** to
+read any group for review — read-only unless they're a member. **Owner/admin** can
+**delete** a group; it's a soft-delete (deactivated and hidden from members) so all
+messages are **retained for audit**. A group lives until then.
 
 ### 6.6 Daily tasks: start, done, proof photos & comments
 

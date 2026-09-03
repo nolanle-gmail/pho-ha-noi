@@ -22,4 +22,7 @@ module.exports = {
   // … and acknowledged (pushed back to the sender so they see who's on it).
   emitAlertAck: (ack) => { bus.emit('alert_ack', ack); },
   onAlertAck: (handler) => { bus.on('alert_ack', handler); return () => bus.off('alert_ack', handler); },
+  // A new chat-group message — delivered live to the group's members.
+  emitChat: (payload) => { bus.emit('chat', payload); },
+  onChat: (handler) => { bus.on('chat', handler); return () => bus.off('chat', handler); },
 };

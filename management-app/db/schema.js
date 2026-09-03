@@ -370,6 +370,41 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_msg_attach ON message_attachments(message_id);
+
+    -- Persistent staff chat groups (like channels). A group has a stable membership;
+    -- only members see and post; leadership can audit any group; owner/admin can
+    -- deactivate a group (is_active=0) — messages are retained for audit.
+    CREATE TABLE IF NOT EXISTS chat_groups (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      created_by INTEGER REFERENCES users(id),
+      is_active  INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS chat_group_members (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(group_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_member ON chat_group_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_member_group ON chat_group_members(group_id);
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id   INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+      sender_id  INTEGER NOT NULL REFERENCES users(id),
+      body       TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_msg_group ON chat_messages(group_id, id);
+    -- Per-member read cursor, so the group list can show unread counts.
+    CREATE TABLE IF NOT EXISTS chat_reads (
+      group_id     INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,
+      user_id      INTEGER NOT NULL REFERENCES users(id),
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (group_id, user_id)
+    );
   `);
 
   // Staff profiles: full HR record per person (1:1 with users). Sensitive
