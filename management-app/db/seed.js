@@ -164,7 +164,6 @@ function run() {
     db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run(name, email, phone, hash(pw), role, lid);
   mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null, '4084830030');   // sees everything
   mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null, '4085550001');     // sees everything (for now)
-  mkUser('Holly Reyes', 'hr@phohanoi.com', 'Hr123456!', 'hr', null, '4085550009');          // HR — full admin-level access
   // Ten managers, one per store — real names (login emails stay manager1..10@phohanoi.com).
   const MANAGER_NAMES = [
     'Danh Pham', 'Kim Tran', 'Long Nguyen', 'Mai Vo', 'Quang Bui',
@@ -183,6 +182,9 @@ function run() {
   mkUser('Mai Pham', 'server3@phohanoi.com', 'Server123!', 'server', locIds[0], '4085550009');
   mkUser('Holly Vu', 'host@phohanoi.com', 'Host123!', 'host', locIds[0], '4085550010');
   mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0], '4085550011');
+  // HR — full admin-level access (added after the fixed-code accounts so the
+  // deterministic employee codes of earlier accounts, e.g. PHN-0014, don't shift).
+  mkUser('Holly Reyes', 'hr@phohanoi.com', 'Hr123456!', 'hr', null, '4085550012');
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
