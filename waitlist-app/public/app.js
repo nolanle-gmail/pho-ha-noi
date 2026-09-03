@@ -925,7 +925,7 @@ async function renderServer() {
   const myCards = mine.length ? mine.map(svServerCard).join('') : '<div class="sv-empty">No tables yet — claim one below.</div>';
   const claimCards = claim.length ? claim.map((t, i) => `<div class="sv-row${i === 0 ? ' first' : ''}">
       <span class="sv-tnum sm">T${esc(t.table_label || '?')}</span>
-      <span class="sv-row-info">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤${t.notes ? ` <span class="sv-note-i">${esc(t.notes)}</span>` : ''}<br><span class="muted">seated ${t.seated_min_ago ?? 0}m ago</span></span>
+      <span class="sv-row-info">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤<br><span class="muted">seated ${t.seated_min_ago ?? 0}m ago</span></span>
       <button class="sv-btn claim" data-act="claim" data-vid="${t.id}">Claim</button></div>`).join('') : '<div class="sv-empty">No open tables to claim.</div>';
   const busSection = toBus.length ? `<div class="sv-sec-h">To bus <span class="sv-n">${toBus.length}</span></div>${toBus.map(t => `<div class="sv-row">
       <span class="sv-tnum sm">T${esc(t.table_label || '?')}</span>
@@ -948,14 +948,12 @@ function svServerCard(t) {
   const paying = t.stage === 'paying';
   const chk = paying ? '<span class="sv-pay">paying</span>'
     : (t.minutes_to_check == null ? '' : (t.check_due ? `<b class="sv-due">check overdue ${Math.abs(t.minutes_to_check)}m</b>` : `check in ${t.minutes_to_check}m`));
-  const note = t.notes ? `<div class="sv-note">⚠ ${esc(t.notes)}</div>` : '';
   const actions = paying
     ? `<button class="sv-btn go wide" data-act="done" data-vid="${t.id}">✓ Done</button>`
     : `<button class="sv-btn go" data-act="check" data-vid="${t.id}">✓ Check</button><button class="sv-btn" data-act="pay" data-vid="${t.id}">To pay</button><button class="sv-btn" data-act="done" data-vid="${t.id}">Done</button>`;
   return `<div class="sv-card${t.check_due ? ' due' : ''}">
     <div class="sv-card-top"><span class="sv-tnum">T${esc(t.table_label || '?')}</span>
       <div class="sv-card-info"><div class="sv-g">${esc(t.guest_name || 'Guest')} · ${t.party_size}👤</div><div class="muted">${chk}</div></div></div>
-    ${note}
     <div class="sv-actions">${actions}</div>
     <div class="sv-flags">
       <button class="sv-flag${t.help_flag ? ' on' : ''}" data-act="help" data-vid="${t.id}">${t.help_flag ? '✋ Help raised' : '✋ Call for help'}</button>
