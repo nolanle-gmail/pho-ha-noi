@@ -457,6 +457,7 @@ async function renderMyTasks() {
   v.querySelectorAll('[data-check]').forEach(b => b.onclick = () => mtDone(b.dataset.check, b.getAttribute('aria-checked') !== 'true'));
   v.querySelectorAll('[data-up]').forEach(i => i.onchange = () => { if (i.files && i.files.length) mtUpload(i.dataset.up, i.files); });
   v.querySelectorAll('[data-photos]').forEach(el => loadTaskPhotos(el.dataset.photos, el, el.dataset.editable === '1'));
+  v.querySelectorAll('[data-comments]').forEach(el => loadTaskComments(el.dataset.comments, el, el.dataset.editable === '1'));
 }
 
 // A day task moves to-do → (Start) in progress → (Done) done. A proof photo can be
@@ -466,8 +467,11 @@ function mtCard(t) {
   const meta = [t.department, t.est_minutes ? `~${t.est_minutes}m` : '', t.complexity].filter(Boolean).join(' · ');
   const inProgress = !t.done && t.started_at;
   const nphotos = t.photo_count || 0;
+  const ncomments = t.comment_count || 0;
   // A strip of proof-photo thumbnails, filled lazily once the card is on screen.
   const photos = nphotos ? `<div class="mt-photos" data-photos="${t.id}" data-editable="${!t.done && inProgress ? 1 : 0}"></div>` : '';
+  // Comments / feedback: existing notes + (while the task isn't done) a composer.
+  const comments = (ncomments || !t.done) ? `<div class="mt-comments" data-comments="${t.id}" data-editable="${!t.done ? 1 : 0}"></div>` : '';
   let status = '';
   if (t.done) status = `<span class="mt-stamp ok">✓ Done ${esc(fmtT(t.done_at))}</span>`;
   else if (inProgress) status = `<span class="mt-stamp">▶ Started ${esc(fmtT(t.started_at))}</span>`;
@@ -487,6 +491,7 @@ function mtCard(t) {
       ${t.description ? `<div class="mt-desc">${esc(t.description)}</div>` : ''}
       ${status ? `<div class="mt-status">${status}</div>` : ''}
       ${photos}
+      ${comments}
       <div class="mt-actions">${actions}</div>
     </div>
     <button type="button" class="mt-check${t.done ? ' on' : ''}" data-check="${t.id}" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" title="${t.done ? 'Done — tap to undo' : 'Mark done'}">
@@ -579,6 +584,42 @@ async function mtRemovePhoto(id, pid) {
   try { await api(`/mytasks/${id}/photo/${pid}`, { method: 'DELETE' }); toast('Photo removed'); renderMyTasks(); }
   catch (e) { toast(e.message, true); }
 }
+
+// Load a task's comments/feedback into its block: each shows author · time · body
+// (own comments get a ✕ while the task isn't done), and — when editable — a composer.
+async function loadTaskComments(id, el, editable) {
+  let d;
+  try { d = await api(`/mytasks/${id}/comments`); } catch { return; }
+  const list = (d.comments || []).map(c => {
+    const mine = String(c.author_id) === String(S.user.id);
+    const rm = (editable && mine) ? `<button type="button" class="mt-cm-rm" title="Remove" data-rmc="${c.id}">✕</button>` : '';
+    return `<div class="mt-cm"><div class="mt-cm-head"><strong>${esc(c.author_name || 'Staff')}</strong><span>${esc(mtCommentTime(c.created_at))}</span>${rm}</div><div class="mt-cm-body">${esc(c.body)}</div></div>`;
+  }).join('');
+  const composer = editable
+    ? `<div class="mt-cm-add"><input type="text" class="mt-cm-input" maxlength="1000" placeholder="Add a comment or feedback…" data-cin="${id}"><button type="button" class="mt-btn ghost mt-cm-send" data-caddid="${id}">Comment</button></div>`
+    : '';
+  if (!list && !composer) { el.remove(); return; }
+  el.innerHTML = `<div class="mt-cm-label">💬 Comments &amp; feedback</div>${list}${composer}`;
+  el.querySelectorAll('[data-rmc]').forEach(b => b.onclick = () => mtRemoveComment(id, b.dataset.rmc));
+  const input = el.querySelector('[data-cin]');
+  const send = el.querySelector('[data-caddid]');
+  if (send && input) {
+    send.onclick = () => mtAddComment(id, input);
+    input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); mtAddComment(id, input); } };
+  }
+}
+function mtCommentTime(iso) { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+async function mtAddComment(id, input) {
+  const body = (input.value || '').trim();
+  if (!body) { toast('Write a comment first.', true); return; }
+  try { await api(`/mytasks/${id}/comment`, { method: 'POST', body: JSON.stringify({ body }) }); input.value = ''; toast('Comment added'); renderMyTasks(); }
+  catch (e) { toast(e.message, true); }
+}
+async function mtRemoveComment(id, cid) {
+  try { await api(`/mytasks/${id}/comment/${cid}`, { method: 'DELETE' }); toast('Comment removed'); renderMyTasks(); }
+  catch (e) { toast(e.message, true); }
+}
+
 function mtLightbox(src) {
   if (!src) return;
   const o = document.createElement('div'); o.className = 'mt-lightbox';

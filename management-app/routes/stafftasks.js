@@ -46,12 +46,13 @@ router.get('/', (req, res) => {
   const tasks = db.prepare(`
     SELECT ta.id, ta.job_id, ta.task_time, ta.done, ta.started_at, ta.done_at, ta.location_id, l.name AS location_name,
            j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
-           (SELECT COUNT(*) FROM task_photos tp WHERE tp.task_id=ta.id) AS photo_count
+           (SELECT COUNT(*) FROM task_photos tp WHERE tp.task_id=ta.id) AS photo_count,
+           (SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id=ta.id) AS comment_count
     FROM task_assignments ta
     JOIN jobs j ON j.id=ta.job_id
     JOIN locations l ON l.id=ta.location_id
     WHERE ta.user_id=? AND ta.task_date=? ORDER BY ta.task_time IS NULL, ta.task_time, j.name`).all(uid, date)
-    .map(t => ({ ...t, done: !!t.done, photo_count: t.photo_count, has_photo: t.photo_count > 0 }));
+    .map(t => ({ ...t, done: !!t.done, photo_count: t.photo_count, comment_count: t.comment_count, has_photo: t.photo_count > 0 }));
   res.json({ user: { id: u.id, name: u.name }, date, tasks, summary: { total: tasks.length, done: tasks.filter(t => t.done).length } });
 });
 
@@ -155,5 +156,57 @@ function sendPhoto(res, p) {
   res.setHeader('Cache-Control', 'private, max-age=60');
   res.end(buf);
 }
+
+// ── Comments / feedback on a day task ─────────────────────────────────────────
+// The assigned staff member leaves notes alongside their photos; a manager can
+// reply with feedback. Everyone who can see the task (its staff or any manager)
+// sees the whole thread.
+const MAX_COMMENT_LEN = 1000;
+
+// Who is writing: the acting user (staff via service key, or the signed-in manager).
+function commentAuthorId(req) {
+  return req.service ? (req.query.user_id ? parseInt(req.query.user_id, 10) : null) : (req.user && req.user.id) || null;
+}
+
+// Add a comment to a task.
+router.post('/:id/comment', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const body = String(req.body && req.body.body || '').trim().slice(0, MAX_COMMENT_LEN);
+  if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
+  const authorId = commentAuthorId(req);
+  const info = db.prepare(`INSERT INTO task_comments (task_id, body, author_id, created_at)
+    VALUES (?,?,?,datetime('now'))`).run(ta.id, body, authorId);
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM task_comments WHERE task_id=?`).get(ta.id).n;
+  const c = db.prepare(`SELECT c.id, c.body, c.author_id, c.created_at, u.name AS author_name, u.role AS author_role
+    FROM task_comments c LEFT JOIN users u ON u.id=c.author_id WHERE c.id=?`).get(Number(info.lastInsertRowid));
+  res.json({ success: true, id: ta.id, count, comment: c });
+});
+
+// List a task's comments (oldest first). Owner or a manager.
+router.get('/:id/comments', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const comments = db.prepare(`SELECT c.id, c.body, c.author_id, c.created_at, u.name AS author_name, u.role AS author_role
+    FROM task_comments c LEFT JOIN users u ON u.id=c.author_id
+    WHERE c.task_id=? ORDER BY c.id`).all(ta.id);
+  res.json({ id: ta.id, count: comments.length, comments });
+});
+
+// Delete one comment — a manager, or the person who wrote it.
+router.delete('/:id/comment/:commentId', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const c = db.prepare(`SELECT * FROM task_comments WHERE id=? AND task_id=?`).get(req.params.commentId, ta.id);
+  if (!c) return res.status(404).json({ error: 'No such comment.' });
+  const isAuthor = c.author_id != null && String(c.author_id) === String(commentAuthorId(req));
+  if (!isManage(req) && !isAuthor) return res.status(403).json({ error: 'You can only remove your own comment.' });
+  db.prepare(`DELETE FROM task_comments WHERE id=?`).run(c.id);
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM task_comments WHERE task_id=?`).get(ta.id).n;
+  res.json({ success: true, id: ta.id, count });
+});
 
 module.exports = router;

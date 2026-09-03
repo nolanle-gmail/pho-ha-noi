@@ -1854,7 +1854,7 @@ async function renderLocDayTasks() {
     <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
-    <td>${t.assignment_id && t.photo_count ? `<button type="button" class="btn sm ghost dt-photos" data-photos="${t.assignment_id}" data-taskname="${esc(t.name)}" title="View proof photos">📷 ${t.photo_count}</button>` : '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${t.assignment_id && (t.photo_count || t.comment_count) ? `<button type="button" class="btn sm ghost dt-photos" data-photos="${t.assignment_id}" data-taskname="${esc(t.name)}" title="View proof photos & comments">${t.photo_count ? `📷 ${t.photo_count}` : ''}${t.photo_count && t.comment_count ? ' · ' : ''}${t.comment_count ? `💬 ${t.comment_count}` : ''}</button>` : (t.assignment_id ? '<button type="button" class="btn sm ghost dt-photos" data-photos="' + t.assignment_id + '" data-taskname="' + esc(t.name) + '" title="Add a comment">💬 +</button>' : '<span style="color:var(--muted)">—</span>')}</td>
   </tr>`).join('');
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
@@ -1891,8 +1891,8 @@ async function renderLocDayTasks() {
   }
 }
 
-// Manager view of a day task's proof photos: fetch the list, then load each image
-// with the session token (they're private) into a grid; click one to view full size.
+// Manager view of a day task: its proof photos (loaded with the session token, as
+// they're private) plus the comment/feedback thread, where a manager can reply.
 async function openTaskPhotoGallery(assignmentId, taskName) {
   const host = $('modalHost');
   const urls = [];
@@ -1900,28 +1900,60 @@ async function openTaskPhotoGallery(assignmentId, taskName) {
   const close = () => { cleanup(); host.innerHTML = ''; };
   const fmt = (iso) => { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
   host.innerHTML = `<div class="modal-bg"><div class="modal photo-gallery">
-    <div class="row-between"><h3 style="margin:0">📷 Proof photos <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(taskName || 'task')}</span></h3>
+    <div class="row-between"><h3 style="margin:0">Proof &amp; comments <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(taskName || 'task')}</span></h3>
       <button class="btn sm ghost" id="pgClose">Close</button></div>
-    <div class="pg-grid" id="pgGrid"><div class="empty">Loading…</div></div></div></div>`;
+    <h4 class="pg-sec">📷 Proof photos</h4>
+    <div class="pg-grid" id="pgGrid"><div class="empty">Loading…</div></div>
+    <h4 class="pg-sec">💬 Comments &amp; feedback</h4>
+    <div id="pgComments"><div class="empty">Loading…</div></div>
+    <div class="pg-cadd"><input type="text" id="pgCin" maxlength="1000" placeholder="Add feedback for the staff member…"><button class="btn sm" id="pgCadd">Comment</button></div>
+  </div></div>`;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('pgClose').onclick = close;
-  let data;
-  try { data = await api(`/stafftasks/${assignmentId}/photos`); }
-  catch (e) { $('pgGrid').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  if (!data.photos.length) { $('pgGrid').innerHTML = '<div class="empty">No photos.</div>'; return; }
-  $('pgGrid').innerHTML = data.photos.map(p => `<figure class="pg-item">
-    <div class="pg-img-wrap"><img alt="Proof photo" data-load="${p.id}"></div>
-    <figcaption>${esc(p.uploaded_by_name || 'Staff')}<span>${esc(fmt(p.uploaded_at))}</span></figcaption>
-  </figure>`).join('');
-  for (const p of data.photos) {
-    try {
-      const res = await fetch(`/api/stafftasks/${assignmentId}/photo/${p.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
-      if (!res.ok) continue;
-      const url = URL.createObjectURL(await res.blob()); urls.push(url);
-      const img = $('pgGrid').querySelector(`img[data-load="${p.id}"]`);
-      if (img) { img.src = url; img.onclick = () => pgLightbox(url); }
-    } catch { /* one thumbnail failing shouldn't break the grid */ }
-  }
+
+  // Photos
+  try {
+    const data = await api(`/stafftasks/${assignmentId}/photos`);
+    if (!data.photos.length) { $('pgGrid').innerHTML = '<div class="empty">No photos.</div>'; }
+    else {
+      $('pgGrid').innerHTML = data.photos.map(p => `<figure class="pg-item">
+        <div class="pg-img-wrap"><img alt="Proof photo" data-load="${p.id}"></div>
+        <figcaption>${esc(p.uploaded_by_name || 'Staff')}<span>${esc(fmt(p.uploaded_at))}</span></figcaption>
+      </figure>`).join('');
+      for (const p of data.photos) {
+        try {
+          const res = await fetch(`/api/stafftasks/${assignmentId}/photo/${p.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+          if (!res.ok) continue;
+          const url = URL.createObjectURL(await res.blob()); urls.push(url);
+          const img = $('pgGrid').querySelector(`img[data-load="${p.id}"]`);
+          if (img) { img.src = url; img.onclick = () => pgLightbox(url); }
+        } catch { /* one thumbnail failing shouldn't break the grid */ }
+      }
+    }
+  } catch (e) { $('pgGrid').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+
+  // Comments
+  const loadComments = async () => {
+    let d;
+    try { d = await api(`/stafftasks/${assignmentId}/comments`); }
+    catch (e) { $('pgComments').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    $('pgComments').innerHTML = d.comments.length ? d.comments.map(c => `<div class="pg-cm">
+      <div class="pg-cm-head"><strong>${esc(c.author_name || 'Staff')}</strong>${c.author_role ? ` <span class="badge ${ROLE_CHIP[c.author_role] || 'gray'}">${esc(roleLabel(c.author_role))}</span>` : ''}<span class="pg-cm-time">${esc(fmt(c.created_at))}</span><button class="pg-cm-rm" data-rmc="${c.id}" title="Remove">✕</button></div>
+      <div class="pg-cm-body">${esc(c.body)}</div></div>`).join('') : '<div class="empty">No comments yet.</div>';
+    $('pgComments').querySelectorAll('[data-rmc]').forEach(b => b.onclick = async () => {
+      try { await api(`/stafftasks/${assignmentId}/comment/${b.dataset.rmc}`, { method: 'DELETE' }); loadComments(); }
+      catch (e) { toast(e.message, true); }
+    });
+  };
+  await loadComments();
+  const addComment = async () => {
+    const body = ($('pgCin').value || '').trim();
+    if (!body) { toast('Write a comment first.', true); return; }
+    try { await api(`/stafftasks/${assignmentId}/comment`, { method: 'POST', body: JSON.stringify({ body }) }); $('pgCin').value = ''; toast('Comment added'); loadComments(); }
+    catch (e) { toast(e.message, true); }
+  };
+  $('pgCadd').onclick = addComment;
+  $('pgCin').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addComment(); } };
 }
 // Full-screen view of a single proof photo (tap anywhere to dismiss).
 function pgLightbox(src) {

@@ -445,6 +445,18 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_task_photos_task ON task_photos(task_id);
 
+    -- Comments / feedback on a day task (optional). Many per task — staff leave a
+    -- note alongside their proof photos; managers can reply with feedback. Shown in
+    -- My Tasks and in the Day Tasks board next to the photos.
+    CREATE TABLE IF NOT EXISTS task_comments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id    INTEGER NOT NULL REFERENCES task_assignments(id) ON DELETE CASCADE,
+      body       TEXT NOT NULL,
+      author_id  INTEGER REFERENCES users(id),
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id);
+
     -- Which specific tasks apply to which location. A row = the task is on that
     -- location's day-task list. Most restaurants share a set; each can add/remove,
     -- and the Central Kitchen has its own.

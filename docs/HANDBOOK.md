@@ -8,7 +8,7 @@ to staff at any location for testing.
 
 > **Owner:** Harry Nguyen · **Stack:** Node.js + Express + built-in `node:sqlite`,
 > vanilla-JS front ends (no build step) · **Scale:** 10 stores + 1 central
-> kitchen · **51 tables** across 2 databases.
+> kitchen · **52 tables** across 2 databases.
 
 A styled, interactive version of this document (with rendered diagrams and a
 sticky table of contents) is also published as a Claude Artifact.
@@ -232,8 +232,9 @@ several jobs from the shared `jobs` catalog and paid `shift_breaks`. Separately,
 `task_assignments` pins a specific day-task to a working person. Breaks are 10 min &
 paid; the grid enforces 8h/day and 40h/week soft limits. When a staff member works a
 day task they tap **Start** (`started_at`) then **Done** (`done_at`), and may attach
-**one or more proof photos** (up to 8), stored as bytes in `task_photos` (one row
-per image). Managers view every photo on a task from the **Day Tasks** board.
+**one or more proof photos** (up to 8, stored as bytes in `task_photos`, one row per
+image) and **comments / feedback** (`task_comments`). Managers view every photo and
+comment on a task from the **Day Tasks** board, and can reply with feedback.
 
 ```mermaid
 erDiagram
@@ -248,6 +249,7 @@ erDiagram
   users ||--o{ task_assignments : "done by"
   locations ||--o{ task_assignments : "at"
   task_assignments ||--o{ task_photos : "proof photos"
+  task_assignments ||--o{ task_comments : "comments"
   jobs {
     int id PK
     text code UK
@@ -290,6 +292,13 @@ erDiagram
     text mime
     blob bytes
     int uploaded_by FK
+  }
+  task_comments {
+    int id PK
+    int task_id FK
+    text body
+    int author_id FK
+    text created_at
   }
   location_tasks {
     int id PK
@@ -607,7 +616,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 44 tables
+### Management database — 45 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -626,6 +635,7 @@ erDiagram
 | `jobs` | Schedule | Shared job/task catalog by department |
 | `task_assignments` | Schedule | A specific day-task pinned to a working person, with Start/Done timestamps |
 | `task_photos` | Schedule | Optional proof photos for a day task — many per task, one row per image (image bytes in the DB) |
+| `task_comments` | Schedule | Comments / feedback on a day task — staff notes and manager replies (many per task) |
 | `location_tasks` | Schedule | Which specific tasks apply at which store |
 | `time_entries` | Time | One work day: clock-in/out, worked & late minutes |
 | `ot_approvals` | Time | Manager approval of overtime; can escalate |
@@ -732,7 +742,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
-| 📋 My Tasks | Assigned day-tasks — Start, Done, and optional proof photos (multi-upload) | Everyone |
+| 📋 My Tasks | Assigned day-tasks — Start, Done, optional proof photos (multi-upload) and comments / feedback | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
@@ -908,7 +918,7 @@ real time.
 | Manager | Owner/admin, their staff, and manager peers |
 | Staff (self-service) | Their manager, owner/admin, and peers |
 
-### 6.6 Daily tasks: start, done, proof photos
+### 6.6 Daily tasks: start, done, proof photos & comments
 
 Managers assign specific day tasks on the Management **Day Tasks** board. Each
 working staff member sees their own tasks in the Staff app's **My Tasks**:
@@ -917,7 +927,9 @@ working staff member sees their own tasks in the Staff app's **My Tasks**:
 flowchart LR
   TODO[To-do] -->|tap Start| PROG[In progress · started_at]
   PROG -->|optional| PHOTO[Attach proof photos]
+  PROG -->|optional| NOTE[Add comments / feedback]
   PHOTO --> PROG
+  NOTE --> PROG
   PROG -->|tap Done| DONE[Done · done_at]
   DONE -->|Undo| PROG
 ```
@@ -929,8 +941,14 @@ flowchart LR
    image bytes and stored as its own row in `task_photos` on the Management DB volume,
    then shown in a thumbnail strip (tap to zoom). Up to **8 photos per task**; while a
    task is in progress each thumbnail carries a **✕** to remove it.
-3. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
-   Start/Done times and can view every proof photo.
+3. **Comments / feedback (optional)** — right next to the photos, a **💬 Comments &
+   feedback** box lets staff add notes (e.g. "walk-in was warm, flagged maintenance").
+   Each comment is stored in `task_comments` with its author and time, and the whole
+   thread is shared: a manager can **reply with feedback** from the Day Tasks board and
+   the staff member sees it in My Tasks. You can delete your own comment; a manager can
+   delete any.
+4. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
+   Start/Done times and can view every proof photo and comment.
 
 Each task row carries a **Done-status checkbox at the far right** ("DONE" label). It
 ticks green the instant a task is completed — via the ✓ Done button _or_ by tapping
@@ -942,11 +960,12 @@ On the Day Tasks board a manager assigns each task via its **Assigned to** dropd
 completely: the assignment is removed, so no owner, scheduled time, or "done" tick is
 left behind — the task simply returns to the pool for someone else.
 
-Photos are optional — a task can be completed without any. On the Day Tasks board a
-task with photos shows a **📷 _n_** button in the **Proof** column; a manager, owner,
-or general manager clicks it to open a **gallery** of every image on that task, each
-captioned with who uploaded it and when (tap an image for full size). The task's own
-staff member and any manager can view them; they persist with the database.
+Photos and comments are optional — a task can be completed without either. On the Day
+Tasks board the **Proof** column shows a **📷 _n_ · 💬 _m_** button (a **💬 +** when
+empty); a manager, owner, or general manager clicks it to open a panel with the
+**gallery** of every image (each captioned with who uploaded it and when — tap for full
+size) and the **comment thread**, where they can leave feedback. The task's own staff
+member and any manager can view both; they persist with the database.
 
 ### 6.7 Floor alerts: an urgent ping to staff on shift
 

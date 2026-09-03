@@ -316,6 +316,17 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .mt-thumb { position: relative; width: 62px; height: 62px; }
 .mt-photo { width: 62px; height: 62px; object-fit: cover; border-radius: 10px; border: 1px solid #e7e1d7; cursor: zoom-in; background: #f4efe7; }
 .mt-thumb-rm { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: none; background: #b3261e; color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+/* Comments / feedback on a day task */
+.mt-comments { margin-top: 10px; }
+.mt-cm-label { font-size: .72rem; font-weight: 700; color: #8a8172; text-transform: uppercase; letter-spacing: .03em; margin-bottom: 6px; }
+.mt-cm { background: #f7f3ec; border: 1px solid #eee5d7; border-radius: 10px; padding: 7px 10px; margin-bottom: 6px; }
+.mt-cm-head { display: flex; align-items: center; gap: 8px; font-size: .74rem; color: #8a8172; }
+.mt-cm-head strong { color: #4a4034; }
+.mt-cm-rm { margin-left: auto; border: none; background: transparent; color: #b3261e; font-size: .8rem; cursor: pointer; padding: 0 2px; }
+.mt-cm-body { font-size: .88rem; color: #2c261e; margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.mt-cm-add { display: flex; gap: 6px; margin-top: 4px; }
+.mt-cm-input { flex: 1; min-width: 0; border: 1px solid #ddd5c8; border-radius: 10px; padding: .5rem .7rem; font: inherit; font-size: .86rem; }
+.mt-cm-send { flex-shrink: 0; }
 .mt-lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 14, 8, .82); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
 .mt-lightbox img { max-width: 92vw; max-height: 85vh; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 

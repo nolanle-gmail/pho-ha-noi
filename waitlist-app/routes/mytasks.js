@@ -44,6 +44,11 @@ router.post('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES
   } catch { res.status(502).json({ error: 'Photo upload is unavailable.' }); }
 });
 
+// Comments / feedback on a task.
+router.get('/:id/comments', (req, res) => fwd(res, 'GET', `/${encodeURIComponent(req.params.id)}/comments`, req));
+router.post('/:id/comment', (req, res) => fwd(res, 'POST', `/${encodeURIComponent(req.params.id)}/comment`, req, req.body));
+router.delete('/:id/comment/:cid', (req, res) => fwd(res, 'DELETE', `/${encodeURIComponent(req.params.id)}/comment/${encodeURIComponent(req.params.cid)}`, req));
+
 // List the task's photos (metadata only).
 router.get('/:id/photos', (req, res) => fwd(res, 'GET', `/${encodeURIComponent(req.params.id)}/photos`, req));
 // Remove one photo.

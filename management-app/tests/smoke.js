@@ -643,6 +643,36 @@ const check = (name, ok, detail = '') => {
     const del = await j(r);
     check('manager removes one photo', r.status === 200 && del.count === 1, JSON.stringify(del));
 
+    // ── Comments / feedback on a day task ──────────────────────────────────
+    const cUrl = `/api/stafftasks/${myTask.id}/comment?user_id=${sara.id}`;
+    r = await fetch(base + cUrl, { method: 'POST', headers: svc(), body: JSON.stringify({ body: 'Ran low on sanitizer, used the backup.', user_id: sara.id }) });
+    const c1 = await j(r);
+    check('staff adds a task comment', r.status === 200 && c1.count === 1 && c1.comment.body.includes('sanitizer'), JSON.stringify(c1.count));
+    r = await fetch(base + cUrl, { method: 'POST', headers: svc(), body: JSON.stringify({ body: '   ', user_id: sara.id }) });
+    check('empty comment rejected (400)', r.status === 400, 'status=' + r.status);
+    // Manager leaves feedback on the same task.
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/comment`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ body: 'Thanks — I reordered sanitizer.' }) });
+    const c2 = await j(r);
+    check('manager adds feedback comment', r.status === 200 && c2.count === 2, JSON.stringify(c2.count));
+    const clist = await j(await fetch(base + `/api/stafftasks/${myTask.id}/comments`, { headers: H(mgr.token) }));
+    check('comment thread lists both with authors', clist.count === 2 && clist.comments.every(c => 'author_name' in c), JSON.stringify(clist.count));
+    const stC = await j(await fetch(base + `/api/stafftasks?user_id=${sara.id}`, { headers: svc() }));
+    check('staff task list carries comment_count', (stC.tasks.find(t => t.id === myTask.id) || {}).comment_count === 2, JSON.stringify((stC.tasks.find(t => t.id === myTask.id) || {}).comment_count));
+    if (otherStaff) {
+      r = await fetch(base + `/api/stafftasks/${myTask.id}/comments?user_id=${otherStaff.id}`, { headers: svc() });
+      check('another staff cannot view comments (403)', r.status === 403, 'status=' + r.status);
+    }
+    // A staff member cannot delete the manager's comment; the author can delete their own.
+    const mgrComment = clist.comments.find(c => String(c.author_id) === String(mgr.user.id));
+    const saraComment = clist.comments.find(c => String(c.author_id) === String(sara.id));
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/comment/${mgrComment.id}?user_id=${sara.id}`, { method: 'DELETE', headers: svc() });
+    check('staff cannot delete a manager comment (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/comment/${saraComment.id}?user_id=${sara.id}`, { method: 'DELETE', headers: svc() });
+    const cd = await j(r);
+    check('staff deletes their own comment', r.status === 200 && cd.count === 1, JSON.stringify(cd));
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/comment/${mgrComment.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('manager removes a comment', r.status === 200, await r.text());
+
     // ── Location activity trail (merged Management + Staff-app, filterable) ──
     const act1 = await j(await fetch(base + `/api/locations/${loc1}/activity?range=all&limit=200`, { headers: H(token) }));
     check('owner sees location activity', Array.isArray(act1) && act1.length >= 1, 'n=' + (act1 || []).length);
