@@ -1414,13 +1414,12 @@ async function openAdd() {
     <label>Phone (for SMS page)</label><input id="fPhone" inputmode="tel" placeholder="+1 408 555 0100" />
     <label>Party size</label>
     <div class="stepper"><button type="button" id="minus">−</button><span class="n" id="sizeN">2</span><button type="button" id="plus">+</button></div>
-    <label>Notes</label><input id="fNotes" placeholder="Booth, high chair, birthday…" />
   `, async () => {
     const name = $('fName').value.trim();
     if (!name) throw new Error('Guest name is required.');
     await api('/waitlist/', { method: 'POST', body: JSON.stringify({
       location_id: S.loc, guest_name: name, party_size: size, phone: $('fPhone').value.trim() || null,
-      notes: $('fNotes').value.trim() || null }) });
+      notes: null }) });
     toast('Party added to waitlist'); render();
   });
   const setN = () => $('sizeN').textContent = size;
