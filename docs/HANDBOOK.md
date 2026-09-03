@@ -21,7 +21,7 @@ sticky table of contents) is also published as a Claude Artifact.
 4. [Table catalog](#4-table-catalog)
 5. [The apps in detail](#5-the-apps-in-detail)
 6. [Workflows](#6-workflows)
-7. [Access levels](#7-access-levels)
+7. [Roles & access levels](#7-roles--access-levels)
 8. [User guide by role](#8-user-guide-by-role)
 9. [Test plan & logins](#9-test-plan--logins)
 
@@ -132,16 +132,25 @@ purpose. The Waitlist database (§3.9) is deliberately small.
 
 Every person is a `users` row with a `role` and a home `location_id`; their full HR
 record is a 1:1 `staff_profiles` row, and `staff_locations` lists the other stores
-they can cover. **SSN and bank details are intentionally not stored** — those stay
-in the payroll provider.
+they can cover. Each `role` points at the `roles` registry (the access levels
+Owner/Admin manage). **SSN and bank details are intentionally not stored** — those
+stay in the payroll provider.
 
 ```mermaid
 erDiagram
   locations ||--o{ users : "home store"
   locations ||--o{ location_hours : "opening times"
+  roles ||--o{ users : "role"
   users ||--o| staff_profiles : "HR record"
   users ||--o{ staff_locations : "also works at"
   locations ||--o{ staff_locations : "covered by"
+  roles {
+    text key PK
+    text label
+    text scope "access level"
+    text caps "capabilities (JSON)"
+    int is_builtin
+  }
   locations {
     int id PK
     text name
@@ -657,6 +666,7 @@ erDiagram
 | Table | Domain | Purpose |
 |---|---|---|
 | `users` | People | Staff accounts: name, **phone (10-digit login)**, email, role, home location, hourly rate |
+| `roles` | People | Access-level registry (Roles): label, access level (scope) & capabilities; Owner/Admin-managed |
 | `staff_profiles` | People | Full HR record, 1:1 with users (no SSN / bank data) |
 | `staff_locations` | People | Additional stores a person can work at |
 | `locations` | Org | Restaurants + the central kitchen |
@@ -734,7 +744,7 @@ a location dashboard; self-service staff land on a personal home screen.
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
-| **Staff** | Directory (A–Z, searchable by phone/name/code), full HR-profile edit, jobs/tasks catalog, access-level matrix, activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + access-level/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
+| **Staff** | Directory (A–Z, searchable by phone/name/code), full HR-profile edit, jobs/tasks catalog, Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
@@ -746,16 +756,16 @@ a location dashboard; self-service staff land on a personal home screen.
 > their **full HR profile** — Account (name), Personal, Contact, Mailing address,
 > Emergency contact, Employment, Payroll, "Also works at," and Skills/Notes — plus
 > reset password and activate/deactivate. **Who can edit whom:**
-> - **Owner / Admin** — anyone, every field, including **access level** and **home
+> - **Owner / Admin** — anyone, every field, including **role** and **home
 >   location**; only they can **Add staff**.
 > - **Managers** — their own store's staff (all-location managers: any store), but not
 >   owner/admin accounts. They edit the full profile, **login phone**, status, and
->   password, while **access level and home location stay read-only** and there's **no
+>   password, while **role and home location stay read-only** and there's **no
 >   Add staff** button.
 >
 > **Phone is the sign-in** (a 10-digit number, mandatory when adding staff) and can be
 > edited by anyone who can edit the account; email is an optional internal identity and
-> is read-only here. Change access level or location to move someone between roles or
+> is read-only here. Change **role** or location to move someone between roles or
 > stores (owner/admin).
 
 ### Front Desk / Waitlist app (port 4002)
@@ -1080,18 +1090,27 @@ should live in an inbox or thread.
 
 ---
 
-## 7. Access levels
+## 7. Roles & access levels
 
-Access levels are defined once in `lib/auth.js` as a **scope** (all locations /
-their own / just themselves) plus **capabilities**. Route permissions, the sidebar,
-and the on-screen access-level page all derive from that one table — and the API
-returns **403** on any disallowed action, so hiding in the UI is convenience, not
-the security boundary.
+A **role** has an **access level** (its scope — all locations / their own / just
+themselves) plus **capabilities** (what it can do). The registry lives in the
+`roles` table, seeded from `lib/auth.js` defaults. Route permissions, the sidebar,
+and the on-screen page all derive from it — and the API returns **403** on any
+disallowed action, so hiding in the UI is convenience, not the security boundary.
 
-**Scopes:** `all` (sees and switches between every location) · `location` (pinned to
-their own store) · `self` (only their own schedule, tasks & messages).
+On the **Staff → Access Levels** page the columns are **Roles · Access Level · Can
+do**. **Owner/Admin** can **＋ Add role**, **Edit** any role (its access level and
+capabilities), or **Remove** one — changes take effect immediately, no redeploy.
+Guards: the **Owner** and **Admin** roles can't be removed, a role still assigned to
+staff can't be removed (reassign those people first), and Owner always keeps org
+admin. Everywhere a staff member's role is chosen or shown — **＋ Add Staff**, the
+edit form, the directory, the profile — the field is labelled **Role**.
 
-| Access level | Scope | Capabilities | In short |
+**Access levels (scopes):** `all` (sees and switches between every location) ·
+`location` (pinned to their own store) · `self` (only their own schedule, tasks &
+messages).
+
+| Role | Access Level | Capabilities | In short |
 |---|---|---|---|
 | **Owner** | all | org · manage · ops · reports · central | Everything; only an owner can create owners |
 | **Admin** | all | org · manage · ops · reports · central | Everything; created by an owner |
@@ -1125,7 +1144,7 @@ Hand each tester the section that matches their job.
 1. **Sign in to the Management console** — you land on an org-wide overview. Use the
    location picker (top bar) to switch between all ten stores + the central kitchen.
 2. **Add a staff member** — Staff → Add staff: fill the account + HR profile, set
-   the **10-digit login phone** (mandatory; email optional), access level, home
+   the **10-digit login phone** (mandatory; email optional), role, home
    location and any "also works at" stores. Confirm they appear in the A–Z directory,
    then sign in as them with that phone number.
 3. **Check the central kitchen** — Central Kitchen → Demand → "Generate from sales",
@@ -1146,7 +1165,7 @@ Hand each tester the section that matches their job.
    overtime (or escalate), round a day, and sign off the period.
 5. **Update your staff** — Staff → Directory → **Edit** on any of your store's
    people to update their full HR profile (contact, address, emergency contact,
-   employment, payroll, skills/notes), status, or reset a password. Access level and
+   employment, payroll, skills/notes), status, or reset a password. Role and
    home location changes stay with owner/admin, and only they can Add staff.
 
 ### Inventory Support · Analyst / Accountant · Driver
