@@ -530,6 +530,7 @@ erDiagram
   users ||--o{ chat_group_members : "in"
   chat_groups ||--o{ chat_messages : "holds"
   users ||--o{ chat_messages : "posts"
+  chat_messages ||--o{ chat_message_attachments : "pictures / videos"
   users ||--o{ activity_log : "acts"
   equipment {
     int id PK
@@ -582,6 +583,12 @@ erDiagram
     int group_id FK
     int sender_id FK
     text body
+  }
+  chat_message_attachments {
+    int id PK
+    int chat_message_id FK
+    text kind "image / video"
+    blob bytes
   }
   activity_log {
     int id PK
@@ -696,6 +703,7 @@ erDiagram
 | `chat_groups` | Chat | Persistent staff chat groups (channels); `is_active=0` when deleted (kept for audit) |
 | `chat_group_members` | Chat | Who belongs to each chat group |
 | `chat_messages` | Chat | Messages posted in a chat group (retained for audit) |
+| `chat_message_attachments` | Chat | Pictures & videos on a chat message (bytes in the DB; per-kind size caps) |
 | `chat_reads` | Chat | Per-member read cursor for unread counts |
 | `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
 | `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
@@ -975,6 +983,14 @@ leadership** can **edit membership** from the group's 👥 Members panel (add st
 the same by-location / by-role builders — or remove a member with their ✕). **Owner/admin**
 can **delete** a group; it's a soft-delete (deactivated and hidden from members) so all
 messages are **retained for audit**. A group lives until then.
+
+**Pictures & videos in chat.** Like direct messages, the chat composer carries a **📎**
+control (multi-select): members can attach images and videos to a group message — same
+caps and formats (images up to 10 MB, videos up to 25 MB, 10 per message), stored as bytes
+in `chat_message_attachments` and shown inline in the thread (images tap-to-zoom, videos as
+inline players). Only the message's sender can attach to it; **members and auditing
+leadership** can view. New media is pushed live over the SSE stream so the group sees it
+without reloading. Attachments are retained with their message for audit.
 
 ### 6.6 Daily tasks: start, done, proof photos & comments
 

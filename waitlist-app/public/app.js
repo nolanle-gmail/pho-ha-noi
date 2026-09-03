@@ -375,7 +375,8 @@ async function renderChatGroupView(silent) {
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
-      <div class="thread-body">${esc(m.body)}</div>
+      ${m.body ? `<div class="thread-body">${esc(m.body)}</div>` : ''}
+      ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   v.innerHTML = `
     <div class="section-head"><h2>💬 ${esc(d.name)}${d.is_audit ? ' <span class="msg-role">audit</span>' : ''}${!d.is_active ? ' <span class="msg-role bc">deleted</span>' : ''}</h2>
@@ -387,8 +388,12 @@ async function renderChatGroupView(silent) {
     <div id="cgMemberList" class="hidden"></div>
     <div class="thread" id="cgStream">${stream}</div>
     ${d.member && d.is_active
-      ? `<div class="reply-box"><textarea id="cgBody" rows="2" placeholder="Message…"></textarea><button class="btn" id="cgSend">Send</button></div>`
+      ? `<div class="reply-box"><textarea id="cgBody" rows="2" placeholder="Message…"></textarea>
+          <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="cgFiles"></label>
+          <button class="btn" id="cgSend">Send</button></div>
+         <div id="cgFileNames" class="msg-attach-names"></div>`
       : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member.' : 'This group is no longer active.'}</div>`}`;
+  v.querySelectorAll('[data-catts]').forEach(el => loadMsgAttachments(`/chat/groups/${gid}/messages/${el.dataset.catts}`, el, { canDelete: false }));
   const st = $('cgStream'); if (st) st.scrollTop = st.scrollHeight;
   $('cgBack').onclick = () => { S.chatGroup = null; renderMessages(); };
   $('cgMembers').onclick = async () => {
@@ -413,7 +418,20 @@ async function renderChatGroupView(silent) {
   };
   if ($('cgSend')) {
     if (draft) $('cgBody').value = draft;
-    const send = async () => { const body = $('cgBody').value.trim(); if (!body) return; $('cgSend').disabled = true; try { await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) }); $('cgBody').value = ''; renderChatGroupView(); } catch (e) { toast(e.message, true); $('cgSend').disabled = false; } };
+    const cgFiles = $('cgFiles');
+    if (cgFiles) cgFiles.onchange = () => { $('cgFileNames').textContent = cgFiles.files.length ? `📎 ${cgFiles.files.length} file${cgFiles.files.length > 1 ? 's' : ''} attached` : ''; };
+    const send = async () => {
+      const files = cgFiles ? cgFiles.files : null;
+      const typed = $('cgBody').value.trim();
+      if (!typed && !(files && files.length)) return;
+      const body = typed || msgFilesCaption(files);
+      $('cgSend').disabled = true;
+      try {
+        const r = await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+        if (files && files.length) { const u = await uploadMsgAttachments(`/chat/groups/${gid}/messages/${r.id}`, files); if (u.err) toast(u.err, true); }
+        $('cgBody').value = ''; renderChatGroupView();
+      } catch (e) { toast(e.message, true); $('cgSend').disabled = false; }
+    };
     $('cgSend').onclick = send;
     $('cgBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   }
@@ -493,12 +511,14 @@ function msgFilesCaption(files) {
   const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
   return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
 }
-async function uploadMsgAttachments(messageId, files) {
+// `base` is the api path of the message or chat-message, e.g. "/messages/42" or
+// "/chat/groups/3/messages/9".
+async function uploadMsgAttachments(base, files) {
   const list = [...files].filter(f => /^(image|video)\//.test(f.type));
   let ok = 0, err = '';
   for (const f of list) {
     try {
-      const res = await fetch(`/api/messages/${messageId}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
+      const res = await fetch(`/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
         method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
@@ -507,21 +527,22 @@ async function uploadMsgAttachments(messageId, files) {
   }
   return { ok, err };
 }
-async function loadMsgAttachments(messageId, el, canDelete) {
+async function loadMsgAttachments(base, el, opts) {
+  opts = opts || {};
   let d;
-  try { d = await api(`/messages/${messageId}/attachments`); } catch { return; }
+  try { d = await api(`${base}/attachments`); } catch { return; }
   if (!d.attachments.length) { el.remove(); return; }
   el.innerHTML = '';
   for (const a of d.attachments) {
     const wrap = document.createElement('div'); wrap.className = 'msg-att';
     el.appendChild(wrap);
-    if (canDelete) {
+    if (opts.canDelete) {
       const x = document.createElement('button'); x.type = 'button'; x.className = 'msg-att-rm'; x.textContent = '✕'; x.title = 'Remove attachment';
-      x.onclick = () => deleteMsgAttachment(messageId, a.id);
+      x.onclick = async () => { if (!confirm('Remove this attachment?')) return; try { await api(`${base}/attachment/${a.id}`, { method: 'DELETE' }); toast('Attachment removed'); (opts.reload || (() => {}))(); } catch (e) { toast(e.message, true); } };
       wrap.appendChild(x);
     }
     try {
-      const res = await fetch(`/api/messages/${messageId}/attachment/${a.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
+      const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
       if (!res.ok) continue;
       const url = URL.createObjectURL(await res.blob()); _msgAttUrls.push(url);
       if (a.kind === 'video') {
@@ -533,11 +554,6 @@ async function loadMsgAttachments(messageId, el, canDelete) {
       }
     } catch { /* one attachment failing shouldn't break the rest */ }
   }
-}
-async function deleteMsgAttachment(messageId, aid) {
-  if (!confirm('Remove this attachment?')) return;
-  try { await api(`/messages/${messageId}/attachment/${aid}`, { method: 'DELETE' }); toast('Attachment removed'); renderThreadView(); }
-  catch (e) { toast(e.message, true); }
 }
 async function deleteMessage(messageId, threadCount) {
   if (!confirm('Delete this message for everyone? This cannot be undone.')) return;
@@ -576,7 +592,7 @@ async function renderThreadView() {
       <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="rFiles"></label>
       <button class="btn" id="rSend">Reply</button></div>
     <div id="rFileNames" class="msg-attach-names"></div>`;
-  v.querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el, el.dataset.candel === '1'));
+  v.querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThreadView }));
   v.querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
   const rFiles = $('rFiles'); if (rFiles) rFiles.onchange = () => { $('rFileNames').textContent = rFiles.files.length ? `📎 ${rFiles.files.length} file${rFiles.files.length > 1 ? 's' : ''} attached` : ''; };
   const backToList = () => { S.msgThread = null; renderMessages(); };
@@ -593,7 +609,7 @@ async function renderThreadView() {
     $('rSend').disabled = true;
     try {
       const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) });
-      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+      if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
       renderThreadView();
     } catch (e) { toast(e.message, true); $('rSend').disabled = false; }
   };
@@ -634,7 +650,7 @@ async function composeModal() {
     else ids = shown[parseInt(to.split(':')[1], 10)][1];
     if (!ids.length) throw new Error('No recipients in that group.');
     const r = await api('/messages', { method: 'POST', body: JSON.stringify({ recipient_ids: ids, subject, body: bodyTxt }) });
-    if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+    if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
     toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
   }, 'Send');
   $('mTo').onchange = () => $('mPersonWrap').classList.toggle('hidden', $('mTo').value !== 'person');

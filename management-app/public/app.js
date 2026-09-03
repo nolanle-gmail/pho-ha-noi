@@ -3431,13 +3431,14 @@ function msgFilesCaption(files) {
   const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
   return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
 }
-// POST each selected file's bytes to a message. Returns {ok, err}.
-async function uploadMsgAttachments(messageId, files) {
+// POST each selected file's bytes. `base` is the api path of the message or
+// chat-message (e.g. "/messages/42" or "/chat/groups/3/messages/9"). Returns {ok, err}.
+async function uploadMsgAttachments(base, files) {
   const list = [...files].filter(f => /^(image|video)\//.test(f.type));
   let ok = 0, err = '';
   for (const f of list) {
     try {
-      const res = await fetch(`/api/messages/${messageId}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
+      const res = await fetch(`/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
         method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
       });
       if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
@@ -3446,23 +3447,24 @@ async function uploadMsgAttachments(messageId, files) {
   }
   return { ok, err };
 }
-// Load a message's attachments into a container: images (click to zoom) + video
-// players. When canDelete, each carries a ✕ to remove it.
-async function loadMsgAttachments(messageId, el, canDelete) {
+// Render a message's/chat-message's attachments into a container: images (click to
+// zoom) + video players. opts.canDelete adds a ✕ (calls opts.reload after removing).
+async function loadMsgAttachments(base, el, opts) {
+  opts = opts || {};
   let d;
-  try { d = await api(`/messages/${messageId}/attachments`); } catch { return; }
+  try { d = await api(`${base}/attachments`); } catch { return; }
   if (!d.attachments.length) { el.remove(); return; }
   el.innerHTML = '';
   for (const a of d.attachments) {
     const wrap = document.createElement('div'); wrap.className = 'msg-att';
     el.appendChild(wrap);
-    if (canDelete) {
+    if (opts.canDelete) {
       const x = document.createElement('button'); x.type = 'button'; x.className = 'msg-att-rm'; x.textContent = '✕'; x.title = 'Remove attachment';
-      x.onclick = () => deleteMsgAttachment(messageId, a.id);
+      x.onclick = async () => { if (!confirm('Remove this attachment?')) return; try { await api(`${base}/attachment/${a.id}`, { method: 'DELETE' }); toast('Attachment removed'); (opts.reload || (() => {}))(); } catch (e) { toast(e.message, true); } };
       wrap.appendChild(x);
     }
     try {
-      const res = await fetch(`/api/messages/${messageId}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+      const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
       if (!res.ok) continue;
       const url = URL.createObjectURL(await res.blob()); _msgAttUrls.push(url);
       if (a.kind === 'video') {
@@ -3474,11 +3476,6 @@ async function loadMsgAttachments(messageId, el, canDelete) {
       }
     } catch { /* one attachment failing shouldn't break the rest */ }
   }
-}
-async function deleteMsgAttachment(messageId, aid) {
-  if (!confirm('Remove this attachment?')) return;
-  try { await api(`/messages/${messageId}/attachment/${aid}`, { method: 'DELETE' }); toast('Attachment removed'); renderThread(); }
-  catch (e) { toast(e.message, true); }
 }
 // Delete a whole message from the thread (sender or a manager).
 async function deleteMessage(messageId, threadCount) {
@@ -3522,7 +3519,7 @@ async function renderThread() {
       <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="thFiles"></label>
       <button class="btn" id="thSend">Reply</button></div>
     <div id="thFileNames" class="msg-attach-names"></div>`;
-  $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el, el.dataset.candel === '1'));
+  $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThread }));
   $('view').querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
   wireAttachInput('thFiles', 'thFileNames');
   const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
@@ -3539,7 +3536,7 @@ async function renderThread() {
     $('thSend').disabled = true;
     try {
       const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) });
-      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+      if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
       renderThread();
     } catch (e) { toast(e.message, true); $('thSend').disabled = false; }
   };
@@ -3649,7 +3646,7 @@ async function renderCompose() {
     $('cSend').disabled = true;
     try {
       const r = await api('/messages', { method: 'POST', body: JSON.stringify(payload) });
-      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+      if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
       toast(`Message sent to ${r.recipients} recipient${r.recipients > 1 ? 's' : ''}`);
       S.msgTab = 'sent'; renderMsgTabs(); renderMessages();
     } catch (e) { $('cErr').textContent = e.message; $('cSend').disabled = false; }
@@ -3694,7 +3691,8 @@ async function renderChatGroup(silent) {
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
-      <div class="thread-body">${esc(m.body)}</div>
+      ${m.body ? `<div class="thread-body">${esc(m.body)}</div>` : ''}
+      ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">💬 ${esc(d.name)}${d.is_audit ? ' <span class="badge gray">audit view</span>' : ''}${!d.is_active ? ' <span class="badge out">deleted</span>' : ''}</h2>
@@ -3706,8 +3704,12 @@ async function renderChatGroup(silent) {
     <div id="chatMemberList" class="hidden"></div>
     <div class="thread" id="chatStream">${stream}</div>
     ${d.member && d.is_active
-      ? `<div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea><button class="btn" id="chatSend">Send</button></div>`
+      ? `<div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea>
+          <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="chatFiles"></label>
+          <button class="btn" id="chatSend">Send</button></div>
+         <div id="chatFileNames" class="msg-attach-names"></div>`
       : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member of this group.' : 'This group is no longer active.'}</div>`}`;
+  $('view').querySelectorAll('[data-catts]').forEach(el => loadMsgAttachments(`/chat/groups/${gid}/messages/${el.dataset.catts}`, el, { canDelete: false }));
   const stEl = $('chatStream'); if (stEl) stEl.scrollTop = stEl.scrollHeight;
   $('chatBack').onclick = () => { S.chatGroup = null; renderMessages(); };
   $('chatMembers').onclick = async () => {
@@ -3732,11 +3734,18 @@ async function renderChatGroup(silent) {
   };
   if ($('chatSend')) {
     if (draft) $('chatBody').value = draft;
+    wireAttachInput('chatFiles', 'chatFileNames');
     const send = async () => {
-      const body = $('chatBody').value.trim(); if (!body) return;
+      const files = $('chatFiles') ? $('chatFiles').files : null;
+      const typed = $('chatBody').value.trim();
+      if (!typed && !(files && files.length)) return;
+      const body = typed || msgFilesCaption(files);
       $('chatSend').disabled = true;
-      try { await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) }); $('chatBody').value = ''; renderChatGroup(); }
-      catch (e) { toast(e.message, true); $('chatSend').disabled = false; }
+      try {
+        const r = await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+        if (files && files.length) { const u = await uploadMsgAttachments(`/chat/groups/${gid}/messages/${r.id}`, files); if (u.err) toast(u.err, true); }
+        $('chatBody').value = ''; renderChatGroup();
+      } catch (e) { toast(e.message, true); $('chatSend').disabled = false; }
     };
     $('chatSend').onclick = send;
     $('chatBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };

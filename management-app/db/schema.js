@@ -398,6 +398,18 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_chat_msg_group ON chat_messages(group_id, id);
+    -- Picture / video attachments on a chat message (same as message_attachments).
+    CREATE TABLE IF NOT EXISTS chat_message_attachments (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+      kind            TEXT NOT NULL CHECK(kind IN ('image','video')),
+      mime            TEXT NOT NULL,
+      bytes           BLOB NOT NULL,
+      byte_size       INTEGER NOT NULL DEFAULT 0,
+      filename        TEXT,
+      created_at      TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_attach ON chat_message_attachments(chat_message_id);
     -- Per-member read cursor, so the group list can show unread counts.
     CREATE TABLE IF NOT EXISTS chat_reads (
       group_id     INTEGER NOT NULL REFERENCES chat_groups(id) ON DELETE CASCADE,

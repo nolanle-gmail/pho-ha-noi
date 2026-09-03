@@ -12,6 +12,12 @@ const { emitChat } = require('../lib/events');
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const MAX_BODY = 4000;
+// Attachments (pictures & videos) — same caps as message attachments.
+const MAX_IMG = parseInt(process.env.MESSAGE_IMG_MAX || '', 10) || 10 * 1024 * 1024;
+const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024;
+const MAX_ATTACH = parseInt(process.env.MESSAGE_ATTACH_MAX || '', 10) || 10;
+const OK_IMG = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
+const OK_VID = /^video\/(mp4|quicktime|webm|ogg|3gpp|x-m4v|x-matroska)$/i;
 const AUDIT = ['owner', 'admin', 'general_manager']; // may read/list any group
 const CAN_DELETE = ['owner', 'admin'];                // may deactivate a group
 
@@ -110,7 +116,8 @@ router.get('/groups/:id/messages', (req, res) => {
   const member = isMember(g.id, req.user.id);
   if (!member && !isAudit(req.user.role)) return res.status(403).json({ error: 'Not a member of this group.' });
   const messages = db.prepare(`
-    SELECT c.id, c.body, c.created_at, c.sender_id, u.name AS sender_name, u.role AS sender_role
+    SELECT c.id, c.body, c.created_at, c.sender_id, u.name AS sender_name, u.role AS sender_role,
+           (SELECT COUNT(*) FROM chat_message_attachments a WHERE a.chat_message_id=c.id) AS attachment_count
     FROM chat_messages c JOIN users u ON u.id=c.sender_id
     WHERE c.group_id=? ORDER BY c.id ASC LIMIT 500`).all(g.id);
   if (member && messages.length) markRead(g.id, req.user.id, messages[messages.length - 1].id);
@@ -129,6 +136,63 @@ router.post('/groups/:id/messages', (req, res) => {
   const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
   try { emitChat({ group_id: g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* live push best-effort */ }
   res.json({ success: true, id: mid });
+});
+
+// ── Chat message attachments (pictures & videos) ──────────────────────────────
+// Resolve a chat message within a group and whether the caller may see it.
+function chatMsgAccess(req) {
+  const g = db.prepare(`SELECT * FROM chat_groups WHERE id=?`).get(req.params.id);
+  if (!g) return { err: 404, msg: 'Group not found.' };
+  const cm = db.prepare(`SELECT * FROM chat_messages WHERE id=? AND group_id=?`).get(req.params.mid, g.id);
+  if (!cm) return { err: 404, msg: 'Message not found.' };
+  const member = isMember(g.id, req.user.id);
+  if (!member && !isAudit(req.user.role)) return { err: 403, msg: 'Not a member of this group.' };
+  return { g, cm, member };
+}
+
+// Attach an image or video to a chat message you sent (raw bytes; member only).
+router.post('/groups/:id/messages/:mid/attachment', express.raw({ type: () => true, limit: MAX_VID }), (req, res) => {
+  const a = chatMsgAccess(req);
+  if (a.err) return res.status(a.err).json({ error: a.msg });
+  if (!a.member || String(a.cm.sender_id) !== String(req.user.id)) return res.status(403).json({ error: 'You can only attach to your own message.' });
+  if (!a.g.is_active) return res.status(404).json({ error: 'Group not found.' });
+  const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const kind = OK_IMG.test(mime) ? 'image' : OK_VID.test(mime) ? 'video' : null;
+  if (!kind) return res.status(415).json({ error: 'Attach an image (JPG, PNG, WEBP, HEIC, GIF) or video (MP4, MOV, WEBM).' });
+  const bytes = req.body;
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return res.status(400).json({ error: 'No file received.' });
+  const cap = kind === 'video' ? MAX_VID : MAX_IMG;
+  if (bytes.length > cap) return res.status(413).json({ error: `${kind === 'video' ? 'Video' : 'Image'} too large (max ${Math.round(cap / 1048576)} MB).` });
+  const count = db.prepare(`SELECT COUNT(*) n FROM chat_message_attachments WHERE chat_message_id=?`).get(a.cm.id).n;
+  if (count >= MAX_ATTACH) return res.status(409).json({ error: `Up to ${MAX_ATTACH} attachments per message.` });
+  const filename = String(req.query.filename || '').slice(0, 200) || null;
+  const info = db.prepare(`INSERT INTO chat_message_attachments (chat_message_id, kind, mime, bytes, byte_size, filename) VALUES (?,?,?,?,?,?)`)
+    .run(a.cm.id, kind, mime, bytes, bytes.length, filename);
+  // Nudge members to reload so the new media shows up live.
+  const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(a.g.id).map(r => r.user_id);
+  try { emitChat({ group_id: a.g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* best-effort */ }
+  res.json({ success: true, id: Number(info.lastInsertRowid), kind, count: count + 1, byte_size: bytes.length });
+});
+
+// List a chat message's attachments (metadata only). Member or audit.
+router.get('/groups/:id/messages/:mid/attachments', (req, res) => {
+  const a = chatMsgAccess(req);
+  if (a.err) return res.status(a.err).json({ error: a.msg });
+  const attachments = db.prepare(`SELECT id, kind, mime, byte_size, filename FROM chat_message_attachments WHERE chat_message_id=? ORDER BY id`).all(a.cm.id);
+  res.json({ id: a.cm.id, count: attachments.length, attachments });
+});
+
+// Stream one chat attachment's bytes. Member or audit.
+router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res) => {
+  const a = chatMsgAccess(req);
+  if (a.err) return res.status(a.err).json({ error: a.msg });
+  const att = db.prepare(`SELECT mime, bytes FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
+  if (!att) return res.status(404).json({ error: 'No such attachment.' });
+  const buf = Buffer.from(att.bytes);
+  res.setHeader('Content-Type', att.mime);
+  res.setHeader('Content-Length', buf.length);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.end(buf);
 });
 
 // Add members to a group (creator or leadership).
