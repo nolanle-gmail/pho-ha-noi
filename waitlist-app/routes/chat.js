@@ -32,6 +32,8 @@ router.post('/groups', (req, res) => fwd(req, res, 'POST', '/groups', req.body))
 router.get('/groups/:id', (req, res) => fwd(req, res, 'GET', `/groups/${encodeURIComponent(req.params.id)}`));
 router.get('/groups/:id/messages', (req, res) => fwd(req, res, 'GET', `/groups/${encodeURIComponent(req.params.id)}/messages`));
 router.post('/groups/:id/messages', (req, res) => fwd(req, res, 'POST', `/groups/${encodeURIComponent(req.params.id)}/messages`, req.body));
+router.post('/groups/:id/members', (req, res) => fwd(req, res, 'POST', `/groups/${encodeURIComponent(req.params.id)}/members`, req.body));
+router.delete('/groups/:id/members/:uid', (req, res) => fwd(req, res, 'DELETE', `/groups/${encodeURIComponent(req.params.id)}/members/${encodeURIComponent(req.params.uid)}`));
 router.delete('/groups/:id', (req, res) => fwd(req, res, 'DELETE', `/groups/${encodeURIComponent(req.params.id)}`));
 
 module.exports = router;

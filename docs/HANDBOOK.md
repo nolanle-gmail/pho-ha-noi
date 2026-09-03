@@ -970,8 +970,10 @@ above** additionally get quick **add-by-location** and **add-by-role** builders.
 group's **members** see and post in it; the whole thread is delivered live over the SSE
 stream (both apps). Everyone sees the groups they belong to, with unread counts
 (`chat_reads`). **Leadership (owner/admin/GM)** can switch to **All groups (audit)** to
-read any group for review — read-only unless they're a member. **Owner/admin** can
-**delete** a group; it's a soft-delete (deactivated and hidden from members) so all
+read any group for review — read-only unless they're a member. The **group's creator or
+leadership** can **edit membership** from the group's 👥 Members panel (add staff — with
+the same by-location / by-role builders — or remove a member with their ✕). **Owner/admin**
+can **delete** a group; it's a soft-delete (deactivated and hidden from members) so all
 messages are **retained for audit**. A group lives until then.
 
 ### 6.6 Daily tasks: start, done, proof photos & comments

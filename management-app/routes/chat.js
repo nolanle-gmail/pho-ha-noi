@@ -30,6 +30,8 @@ router.use((req, res, next) => {
 
 const isMember = (groupId, userId) => !!db.prepare(`SELECT 1 FROM chat_group_members WHERE group_id=? AND user_id=?`).get(groupId, userId);
 const isAudit = (role) => AUDIT.includes(role);
+// Who may change a group's membership: its creator, or leadership.
+const canManageGroup = (user, g) => String(g.created_by) === String(user.id) || AUDIT.includes(user.role);
 const markRead = (groupId, userId, lastId) => db.prepare(
   `INSERT INTO chat_reads (group_id, user_id, last_read_id) VALUES (?,?,?)
    ON CONFLICT(group_id, user_id) DO UPDATE SET last_read_id=MAX(last_read_id, excluded.last_read_id)`
@@ -97,7 +99,7 @@ router.get('/groups/:id', (req, res) => {
   const member = isMember(g.id, req.user.id);
   if (!member && !isAudit(req.user.role)) return res.status(403).json({ error: 'Not a member of this group.' });
   const members = db.prepare(`SELECT u.id, u.name, u.role FROM chat_group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY u.name`).all(g.id);
-  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, created_by: g.created_by, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), members });
+  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, created_by: g.created_by, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), can_manage: canManageGroup(req.user, g), members });
 });
 
 // A group's messages (oldest first). Members, or leadership for audit. Opening as a
@@ -112,7 +114,7 @@ router.get('/groups/:id/messages', (req, res) => {
     FROM chat_messages c JOIN users u ON u.id=c.sender_id
     WHERE c.group_id=? ORDER BY c.id ASC LIMIT 500`).all(g.id);
   if (member && messages.length) markRead(g.id, req.user.id, messages[messages.length - 1].id);
-  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, me: req.user.id, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), messages });
+  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, me: req.user.id, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), can_manage: canManageGroup(req.user, g), messages });
 });
 
 // Post a message to a group. Members only (leadership audit is read-only).
@@ -127,6 +129,36 @@ router.post('/groups/:id/messages', (req, res) => {
   const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
   try { emitChat({ group_id: g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* live push best-effort */ }
   res.json({ success: true, id: mid });
+});
+
+// Add members to a group (creator or leadership).
+router.post('/groups/:id/members', (req, res) => {
+  const g = db.prepare(`SELECT * FROM chat_groups WHERE id=? AND is_active=1`).get(req.params.id);
+  if (!g) return res.status(404).json({ error: 'Group not found.' });
+  if (!canManageGroup(req.user, g)) return res.status(403).json({ error: 'Only the group creator or a manager can change members.' });
+  const ids = Array.isArray(req.body.member_ids) ? req.body.member_ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
+  const valid = ids.length ? db.prepare(`SELECT id FROM users WHERE is_active=1 AND id IN (${ids.map(() => '?').join(',')})`).all(...ids).map(r => r.id) : [];
+  if (!valid.length) return res.status(400).json({ error: 'Pick at least one valid member.' });
+  const ins = db.prepare(`INSERT OR IGNORE INTO chat_group_members (group_id, user_id) VALUES (?,?)`);
+  let added = 0; valid.forEach(u => { added += ins.run(g.id, u).changes; });
+  const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
+  try { emitChat({ group_id: g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* best-effort */ }
+  res.json({ success: true, id: g.id, added, member_count: memberIds.length });
+});
+
+// Remove one member from a group (creator or leadership).
+router.delete('/groups/:id/members/:uid', (req, res) => {
+  const g = db.prepare(`SELECT * FROM chat_groups WHERE id=? AND is_active=1`).get(req.params.id);
+  if (!g) return res.status(404).json({ error: 'Group not found.' });
+  if (!canManageGroup(req.user, g)) return res.status(403).json({ error: 'Only the group creator or a manager can change members.' });
+  const uid = parseInt(req.params.uid, 10);
+  const info = db.prepare(`DELETE FROM chat_group_members WHERE group_id=? AND user_id=?`).run(g.id, uid);
+  if (!info.changes) return res.status(404).json({ error: 'Not a member of this group.' });
+  db.prepare(`DELETE FROM chat_reads WHERE group_id=? AND user_id=?`).run(g.id, uid);
+  const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
+  // Notify remaining members and the removed person (so their lists refresh).
+  try { emitChat({ group_id: g.id, member_ids: [...memberIds, uid], sender_id: req.user.id }); } catch { /* best-effort */ }
+  res.json({ success: true, id: g.id, member_count: memberIds.length });
 });
 
 // Deactivate a group (owner/admin). Messages are retained for audit.

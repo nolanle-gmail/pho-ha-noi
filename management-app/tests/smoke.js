@@ -1126,6 +1126,23 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/chat/groups?scope=all', { headers: H(svTok) });
     const svScope = await j(r);
     check('non-leadership scope=all is ignored (own groups only)', !svScope.some(g => g.id === cg.id), JSON.stringify((svScope || []).length));
+
+    // Membership editing (creator or leadership).
+    const svMe = await j(await fetch(base + '/api/auth/me', { headers: H(svTok) }));
+    r = await fetch(base + `/api/chat/groups/${cg.id}/members`, { method: 'POST', headers: H(token), body: JSON.stringify({ member_ids: [svMe.id] }) });
+    const addRes = await j(r);
+    check('creator adds a member', r.status === 200 && addRes.added === 1 && addRes.member_count === 4, JSON.stringify(addRes));
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(svTok) });
+    check('added member can now read the group', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}/members`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ member_ids: [empMe.id] }) });
+    check('non-creator member cannot edit membership (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}/members/${svMe.id}`, { method: 'DELETE', headers: H(gmTok) });
+    const rmRes = await j(r);
+    check('leadership removes a member', r.status === 200 && rmRes.member_count === 3, JSON.stringify(rmRes));
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(svTok) });
+    check('removed member loses access (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/chat/groups/${cg.id}/members/${svMe.id}`, { method: 'DELETE', headers: H(token) });
+    check('removing a non-member returns 404', r.status === 404, 'status=' + r.status);
     // Delete: manager cannot; owner can; then members are locked out but audit persists.
     r = await fetch(base + `/api/chat/groups/${cg.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager cannot delete a chat group (403)', r.status === 403, 'status=' + r.status);

@@ -394,8 +394,17 @@ async function renderChatGroupView(silent) {
   $('cgMembers').onclick = async () => {
     const el = $('cgMemberList');
     if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
-    try { const g = await api(`/chat/groups/${gid}`); el.innerHTML = `<div class="muted" style="padding:.4rem 0"><strong>${g.members.length} members:</strong> ${g.members.map(u => esc(u.name)).join(', ')}</div>`; el.classList.remove('hidden'); }
-    catch (e) { toast(e.message, true); }
+    try {
+      const g = await api(`/chat/groups/${gid}`);
+      const mng = g.can_manage && g.is_active;
+      el.innerHTML = `<div style="padding:.4rem 0">
+        <div class="section-head" style="margin:0 0 .3rem"><strong>${g.members.length} member${g.members.length > 1 ? 's' : ''}</strong>${mng ? '<button class="btn ghost" id="cgAddMem">＋ Add</button>' : ''}</div>
+        <div class="cg-chips">${g.members.map(u => `<span class="cg-chip">${esc(u.name)}${mng ? ` <button class="cg-chip-x" data-rmmem="${u.id}" title="Remove">✕</button>` : ''}</span>`).join('')}</div>
+      </div>`;
+      el.classList.remove('hidden');
+      el.querySelectorAll('[data-rmmem]').forEach(b => b.onclick = () => removeChatMember(gid, b.dataset.rmmem));
+      if ($('cgAddMem')) $('cgAddMem').onclick = () => openAddChatMembersStaff(gid, g.members.map(m => m.id));
+    } catch (e) { toast(e.message, true); }
   };
   if ($('cgDelete')) $('cgDelete').onclick = async () => {
     if (!confirm('Delete this chat group? Members lose access; messages are kept for audit.')) return;
@@ -437,6 +446,41 @@ async function openNewChatGroupStaff() {
     $('cgLoc').onchange = () => { const val = $('cgLoc').value; if (val) pick(u => String(u.location_id) === val); $('cgLoc').value = ''; };
     $('cgRole').onchange = () => { const val = $('cgRole').value; if (val) pick(u => u.role === val); $('cgRole').value = ''; };
     $('cgClear').onclick = () => { boxes().forEach(b => b.checked = false); upd(); };
+  }
+}
+
+async function removeChatMember(gid, uid) {
+  if (!confirm('Remove this member from the group?')) return;
+  try { await api(`/chat/groups/${gid}/members/${uid}`, { method: 'DELETE' }); toast('Member removed'); renderChatGroupView(); }
+  catch (e) { toast(e.message, true); }
+}
+async function openAddChatMembersStaff(gid, existingIds) {
+  let recips; try { recips = await api('/messages/recipients'); } catch (e) { toast(e.message, true); return; }
+  const ex = new Set((existingIds || []).map(String));
+  const candidates = recips.filter(u => !ex.has(String(u.id)));
+  if (!candidates.length) { toast('Everyone is already in this group.'); return; }
+  const bulk = MSG_LEADERSHIP.includes(S.user.role) || MSG_MANAGERS.includes(S.user.role);
+  const locs = [...new Map(candidates.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
+  const roles = [...new Set(candidates.map(u => u.role))];
+  const row = (u) => `<label class="chk cg-row"><input type="checkbox" class="cg-mem" value="${u.id}"> <span>${esc(u.name)} <span class="msg-role">${esc(roleWord(u.role))}</span>${u.location ? ` <span class="muted" style="font-size:.72rem">${esc(u.location.replace('Pho Ha Noi — ', ''))}</span>` : ''}</span></label>`;
+  modal('Add members', `
+    ${bulk ? `<div class="cg-bulk"><select id="amLoc"><option value="">— by location —</option>${locs.map(([id, n]) => `<option value="${id}">${esc(n.replace('Pho Ha Noi — ', ''))}</option>`).join('')}</select><select id="amRole"><option value="">— by role —</option>${roles.map(r => `<option value="${r}">${esc(roleWord(r))}</option>`).join('')}</select><button type="button" class="btn ghost" id="amClear">Clear</button></div>` : ''}
+    <div class="cg-count" id="amCount">0 selected</div>
+    <div class="cg-members">${candidates.map(row).join('')}</div>
+  `, async () => {
+    const member_ids = [...document.querySelectorAll('.cg-mem')].filter(b => b.checked).map(b => parseInt(b.value, 10));
+    if (!member_ids.length) throw new Error('Pick at least one person.');
+    const r = await api(`/chat/groups/${gid}/members`, { method: 'POST', body: JSON.stringify({ member_ids }) });
+    toast(`Added ${r.added} member${r.added === 1 ? '' : 's'}`); renderChatGroupView();
+  }, 'Add');
+  const boxes = () => [...document.querySelectorAll('.cg-mem')];
+  const upd = () => { const el = $('amCount'); if (el) el.textContent = `${boxes().filter(b => b.checked).length} selected`; };
+  boxes().forEach(b => b.onchange = upd);
+  const pick = (pred) => { candidates.forEach(u => { if (pred(u)) { const b = document.querySelector(`.cg-mem[value="${u.id}"]`); if (b) b.checked = true; } }); upd(); };
+  if (bulk) {
+    $('amLoc').onchange = () => { const v = $('amLoc').value; if (v) pick(u => String(u.location_id) === v); $('amLoc').value = ''; };
+    $('amRole').onchange = () => { const v = $('amRole').value; if (v) pick(u => u.role === v); $('amRole').value = ''; };
+    $('amClear').onclick = () => { boxes().forEach(b => b.checked = false); upd(); };
   }
 }
 
