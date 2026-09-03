@@ -18,6 +18,21 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    -- Access-level registry (the "Roles" managed on the Access Levels page).
+    -- Seeded from lib/auth.js defaults; Owner/Admin can add/edit/remove rows.
+    -- 'scope' is the role's access level (all / location / self); 'caps' is a
+    -- JSON array of capabilities (org, manage, ops, reports, central, delivery).
+    CREATE TABLE IF NOT EXISTS roles (
+      key         TEXT PRIMARY KEY,
+      label       TEXT NOT NULL,
+      scope       TEXT NOT NULL DEFAULT 'self',
+      rank        INTEGER NOT NULL DEFAULT 10,
+      caps        TEXT NOT NULL DEFAULT '[]',
+      is_builtin  INTEGER NOT NULL DEFAULT 0,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+
     -- Physical locations (restaurants / central commissary).
     CREATE TABLE IF NOT EXISTS locations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

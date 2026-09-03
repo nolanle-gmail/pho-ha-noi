@@ -1495,7 +1495,7 @@ async function renderLocStaff() {
   const staff = await api('/locations/' + S.locDetailId + '/staff');
   $('locBody').innerHTML = `
     <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location. Add or reassign staff in the Staff section.</p>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Access level</th><th>Status</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>
       ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.employee_code || '—')}</td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
 }
@@ -2824,7 +2824,7 @@ async function renderStaffDirectory() {
     <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, phone, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Name</th><th>Code</th><th>Phone (login)</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
+      <th>Name</th><th>Code</th><th>Phone (login)</th><th>Role</th><th>Location</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 
   // A–Z letter bar — clicking a letter filters to it and clears any search.
@@ -2905,9 +2905,9 @@ function staffProfileEdit(d, locations, staff) {
         ${inp('acct_phone', 'Login phone — 10 digits', d.phone || '', 'tel')}
         <label class="pfl">Work email<input type="text" value="${esc(d.email || '')}" disabled title="Email is an optional internal identity; sign-in is by phone" /></label>
         ${canEditAccountFields()
-          ? selRaw('role', 'Access level', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
+          ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
-          : `<label class="pfl">Access level<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
+          : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
@@ -2971,7 +2971,7 @@ function renderStaffAdd(locations) {
       <div><button class="btn ghost" id="cancelAdd">Cancel</button> <button class="btn" id="saveAdd">Create account</button></div></div>
     <div class="err" id="addErr"></div>
     <div class="prof-cols">
-      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Access level', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
+      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Role', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code', '')}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
@@ -3003,8 +3003,19 @@ function renderStaffAdd(locations) {
   };
 }
 
+const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+
+// Refresh the client-side role registry after a change on the Access Levels page.
+async function reloadRoleDefs() {
+  try {
+    const roles = await api('/auth/roles');
+    Object.keys(ROLE_DEFS).forEach(k => delete ROLE_DEFS[k]);
+    roles.forEach(r => { ROLE_DEFS[r.key] = r; ROLE_CHIP[r.key] = roleChip(r.key); });
+  } catch { /* keep the roles we already have */ }
+}
+
 function renderAccessLevels() {
-  const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+  const canManageRoles = ORG_ADMIN.includes(S.user.role); // Owner / Admin (org cap)
   const rows = accessLevels().map(r => {
     const d = roleDef(r);
     const caps = CAP_ORDER.filter(c => d.caps.includes(c)).map(c => CAP_LABEL[c]);
@@ -3012,15 +3023,69 @@ function renderAccessLevels() {
     return { r, d, summary };
   });
   $('view').innerHTML = `
-    <h2 class="page">Access Levels <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
-    <p class="sub" style="color:var(--muted);margin-top:-.4rem">Every access level and what it can do. <strong>Scope</strong> = how much it can see: all locations, its own location, or just the person's own schedule. Job titles (Server, Chef, Front Desk, …) are self-service levels — same access, different position.</p>
-    <div class="table-wrap"><table><thead><tr><th>Access level</th><th>Scope</th><th>Can do</th></tr></thead><tbody>
+    <div class="row-between"><h2 class="page">Access Levels <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length}</span></h2>
+      ${canManageRoles ? '<button class="btn" id="roleAdd">＋ Add role</button>' : ''}</div>
+    <p class="sub" style="color:var(--muted);margin-top:-.4rem">Every <strong>role</strong> and what it can do. <strong>Access level</strong> = how much it can see: all locations, its own location, or just the person's own schedule. Job titles (Server, Chef, Front Desk, …) are self-service roles — same access, different position.</p>
+    <div class="table-wrap"><table><thead><tr><th>Roles</th><th>Access Level</th><th>Can do</th>${canManageRoles ? '<th></th>' : ''}</tr></thead><tbody>
       ${rows.map(({ r, d, summary }) => `<tr>
         <td><span class="badge ${roleChip(r)}">${esc(d.label)}</span></td>
         <td><strong>${esc(SCOPE_LABEL[d.scope] || d.scope)}</strong></td>
         <td style="color:#374151">${esc(summary)}</td>
+        ${canManageRoles ? `<td><div class="actions-cell">
+          <button class="btn sm ghost" data-roleedit="${esc(r)}">Edit</button>
+          ${r === 'owner' || r === 'admin' ? '' : `<button class="btn sm ghost" data-roledel="${esc(r)}">Remove</button>`}
+        </div></td>` : ''}
       </tr>`).join('')}
     </tbody></table></div>`;
+  if (canManageRoles) {
+    $('roleAdd').onclick = () => openRoleEditor(null);
+    $('view').querySelectorAll('[data-roleedit]').forEach(b => b.onclick = () => openRoleEditor(b.dataset.roleedit));
+    $('view').querySelectorAll('[data-roledel]').forEach(b => b.onclick = () => removeRole(b.dataset.roledel));
+  }
+}
+
+// Add / edit a role (Owner/Admin). Custom modal — needs capability checkboxes.
+function openRoleEditor(key) {
+  const editing = !!key;
+  const d = editing ? roleDef(key) : { label: '', scope: 'self', caps: [], rank: 10 };
+  const scopeOpts = Object.entries(SCOPE_LABEL).map(([v, n]) => `<option value="${v}" ${v === d.scope ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  const capBoxes = CAP_ORDER.map(c => `<label class="chk"><input type="checkbox" class="role-cap" value="${c}" ${d.caps.includes(c) ? 'checked' : ''}> ${esc(CAP_LABEL[c])}</label>`).join('');
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal">
+    <h3>${editing ? 'Edit role' : 'Add role'}</h3>
+    <div class="err" id="roleErr"></div>
+    ${editing ? '' : `<label>Key (identifier, e.g. <code>shift_lead</code>)</label><input id="roleKey" placeholder="lowercase, letters/digits/_" />`}
+    <label>Display name</label><input id="roleLabel" value="${esc(d.label)}" placeholder="e.g. Shift Lead" />
+    <label>Access level</label><select id="roleScope">${scopeOpts}</select>
+    <label>Can do</label>
+    <div style="display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .5rem">${capBoxes}</div>
+    <label>Order (higher shows first)</label><input id="roleRank" type="number" value="${d.rank != null ? d.rank : 10}" />
+    <div class="actions"><button class="btn ghost" id="roleCancel">Cancel</button><button class="btn" id="roleSave">${editing ? 'Save' : 'Add role'}</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('roleCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('roleSave').onclick = async () => {
+    const body = {
+      label: $('roleLabel').value.trim(),
+      scope: $('roleScope').value,
+      caps: [...host.querySelectorAll('.role-cap:checked')].map(c => c.value),
+      rank: parseInt($('roleRank').value, 10),
+    };
+    if (!editing) body.key = $('roleKey').value.trim().toLowerCase();
+    try {
+      if (editing) await api('/roles/' + encodeURIComponent(key), { method: 'PUT', body: JSON.stringify(body) });
+      else await api('/roles', { method: 'POST', body: JSON.stringify(body) });
+      await reloadRoleDefs();
+      close(); toast(editing ? 'Role updated' : 'Role added'); renderAccessLevels();
+    } catch (e) { $('roleErr').textContent = e.message; }
+  };
+}
+
+async function removeRole(key) {
+  if (!confirm(`Remove the “${roleLabel(key)}” role? This can't be undone.`)) return;
+  try { await api('/roles/' + encodeURIComponent(key), { method: 'DELETE' }); await reloadRoleDefs(); toast('Role removed'); renderAccessLevels(); }
+  catch (e) { toast(e.message, true); }
 }
 
 // ── Placeholder section (modules land here later) ──────────────────────────
@@ -4147,7 +4212,7 @@ async function openAccount() {
         <div class="profile-row"><span>Name</span><strong>${esc(me.name || S.user.name)}</strong></div>
         <div class="profile-row"><span>Phone (sign-in)</span><strong>${esc(fmtPhone(me.phone))}</strong></div>
         <div class="profile-row"><span>Email</span><strong>${esc(me.email || '—')}</strong></div>
-        <div class="profile-row"><span>Access level</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(roleLabel(me.role || S.user.role))}</span></div>
+        <div class="profile-row"><span>Role</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(roleLabel(me.role || S.user.role))}</span></div>
         <div class="profile-row"><span>Location</span><strong>${esc((me.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</strong></div>
       </div>
       <div class="section"><h3>Change password</h3>

@@ -10,7 +10,7 @@ const router = express.Router();
 router.use(verifyToken);
 
 // Staff directory. Owner/admin see all locations; managers see their own (view only).
-router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/staff', requireRole(ROLES.MANAGE), (req, res) => {
   const scopeAll = seesAllLocations(req.user.role);
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
@@ -26,7 +26,7 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Staff overview: per-location roster health (count, manager, status breakdown).
-router.get('/staff/overview', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/staff/overview', requireRole(ROLES.MANAGE), (req, res) => {
   const scopeAll = seesAllLocations(req.user.role);
   const locs = db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ${scopeAll ? '' : 'AND id=?'} ORDER BY name`)
     .all(...(scopeAll ? [] : [req.user.location_id]));
@@ -61,12 +61,12 @@ const isAdminEditor = (req) => ROLES.ADMIN.includes(req.user.role);
 function resolveLocation(role, provided, fallback) {
   if (seesAllLocations(role)) return { location_id: null };
   const loc = (provided !== undefined ? provided : fallback) || null;
-  if (!loc) return { error: 'This access level requires a location.' };
+  if (!loc) return { error: 'This role requires a location.' };
   return { location_id: loc };
 }
 
 // Create a staff account (owner/admin only).
-router.post('/staff', requireRole(...ROLES.ADMIN), (req, res) => {
+router.post('/staff', requireRole(ROLES.ADMIN), (req, res) => {
   const { name, email, password, role, phone } = req.body || {};
   // Phone is the login credential and is required; email is optional (kept for the
   // internal directory/messaging identity — a placeholder is generated if omitted).
@@ -74,7 +74,7 @@ router.post('/staff', requireRole(...ROLES.ADMIN), (req, res) => {
   if (!phone) return res.status(400).json({ error: 'Phone number is required.' });
   if (!isValidPhone(phone)) return res.status(400).json({ error: 'Enter a 10-digit phone number.' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
-  if (!ROLES.ALL.includes(role)) return res.status(400).json({ error: 'Invalid access level.' });
+  if (!ROLES.ALL.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
   if (role === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can create owner accounts.' });
   const loc = resolveLocation(role, req.body.location_id, null);
   if (loc.error) return res.status(400).json({ error: loc.error });
@@ -91,12 +91,12 @@ router.post('/staff', requireRole(...ROLES.ADMIN), (req, res) => {
 // Update a staff account. Owner/admin: any staff, all fields. Managers: their own
 // store's staff — name and active status only (access level & location are
 // owner/admin-only).
-router.put('/staff/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found' });
   if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only edit staff at your own location.' });
   if (!isAdminEditor(req) && (req.body.role !== undefined || req.body.location_id !== undefined)) {
-    return res.status(403).json({ error: 'Only an owner or admin can change access level or location.' });
+    return res.status(403).json({ error: 'Only an owner or admin can change role or location.' });
   }
   const fields = [], vals = [];
 
@@ -113,7 +113,7 @@ router.put('/staff/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 
   const newRole = req.body.role;
   if (newRole !== undefined) {
-    if (!ROLES.ALL.includes(newRole)) return res.status(400).json({ error: 'Invalid access level.' });
+    if (!ROLES.ALL.includes(newRole)) return res.status(400).json({ error: 'Invalid role.' });
     if (newRole === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can assign the owner level.' });
     if (u.role === 'owner' && newRole !== 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can change an owner account.' });
     fields.push('role=?'); vals.push(newRole);
@@ -139,7 +139,7 @@ router.put('/staff/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Reset a staff member's password (owner/admin, or a manager for their own staff).
-router.post('/staff/:id/reset-password', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/staff/:id/reset-password', requireRole(ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found' });
   if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only manage staff at your own location.' });
@@ -161,7 +161,7 @@ const PROFILE_COLS = [
 ];
 
 // View a full profile (owner/admin/manager).
-router.get('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.hourly_rate, u.is_active, u.created_at,
       l.name AS location_name FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found.' });
@@ -172,7 +172,7 @@ router.get('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Update a profile (owner/admin, or a manager for their own staff).
-router.put('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT id, role, location_id FROM users WHERE id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found.' });
   if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only edit staff at your own location.' });
@@ -208,7 +208,7 @@ router.put('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Activity log (access trail: logins, writes, denied attempts) ─────────────
-router.get('/activity', requireRole(...ROLES.ADMIN), (req, res) => {
+router.get('/activity', requireRole(ROLES.ADMIN), (req, res) => {
   const conds = [], args = [];
   if (req.query.event === 'logins') conds.push(`path='/api/auth/login'`);
   else if (req.query.event === 'denied') conds.push('status IN (401,403)');

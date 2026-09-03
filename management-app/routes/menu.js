@@ -33,10 +33,10 @@ function withCost(item, costs) {
 }
 
 // ── Categories ──────────────────────────────────────────────────────────────
-router.get('/categories', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/categories', requireRole(ROLES.MANAGE), (req, res) => {
   res.json(db.prepare(`SELECT * FROM menu_categories ORDER BY sort_order, name`).all());
 });
-router.post('/categories', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/categories', requireRole(ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Category name required.' });
   const r = db.prepare(`INSERT INTO menu_categories (name, sort_order) VALUES (?,?)`).run(name, parseInt(req.body.sort_order) || 0);
@@ -44,7 +44,7 @@ router.post('/categories', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Ingredient picker — distinct inventory items with average cost + unit.
-router.get('/ingredients', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/ingredients', requireRole(ROLES.MANAGE), (req, res) => {
   const costs = ingredientCosts();
   res.json(Object.entries(costs)
     .map(([item_name, c]) => ({ item_name, unit: c.unit, avg_cost: c.avg_cost }))
@@ -52,7 +52,7 @@ router.get('/ingredients', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Menu items ──────────────────────────────────────────────────────────────
-router.get('/items', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/items', requireRole(ROLES.MANAGE), (req, res) => {
   const costs = ingredientCosts();
   const rows = db.prepare(`
     SELECT m.*, c.name AS category_name, c.sort_order AS cat_sort
@@ -62,7 +62,7 @@ router.get('/items', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json(rows.map(r => withCost(r, costs)));
 });
 
-router.post('/items', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/items', requireRole(ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Item name required.' });
   const r = db.prepare(`INSERT INTO menu_items (category_id, name, description, price) VALUES (?,?,?,?)`)
@@ -71,7 +71,7 @@ router.post('/items', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/items/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/items/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const it = db.prepare(`SELECT * FROM menu_items WHERE id=?`).get(req.params.id);
   if (!it) return res.status(404).json({ error: 'Menu item not found' });
   const fields = [], vals = [];
@@ -86,7 +86,7 @@ router.put('/items/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/items/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.delete('/items/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const it = db.prepare(`SELECT * FROM menu_items WHERE id=?`).get(req.params.id);
   if (!it) return res.status(404).json({ error: 'Menu item not found' });
   db.prepare(`DELETE FROM recipe_ingredients WHERE menu_item_id=?`).run(it.id);
@@ -96,7 +96,7 @@ router.delete('/items/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Recipe for one item ─────────────────────────────────────────────────────
-router.get('/items/:id/recipe', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/items/:id/recipe', requireRole(ROLES.MANAGE), (req, res) => {
   const it = db.prepare(`SELECT * FROM menu_items WHERE id=?`).get(req.params.id);
   if (!it) return res.status(404).json({ error: 'Menu item not found' });
   const costs = ingredientCosts();
@@ -115,7 +115,7 @@ router.get('/items/:id/recipe', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Replace a recipe's ingredient list.
-router.put('/items/:id/recipe', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/items/:id/recipe', requireRole(ROLES.MANAGE), (req, res) => {
   const it = db.prepare(`SELECT * FROM menu_items WHERE id=?`).get(req.params.id);
   if (!it) return res.status(404).json({ error: 'Menu item not found' });
   const ings = Array.isArray(req.body.ingredients) ? req.body.ingredients : [];
@@ -131,7 +131,7 @@ router.put('/items/:id/recipe', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Costing report ──────────────────────────────────────────────────────────
-router.get('/costing', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/costing', requireRole(ROLES.MANAGE), (req, res) => {
   const costs = ingredientCosts();
   const rows = db.prepare(`
     SELECT m.*, c.name AS category_name FROM menu_items m LEFT JOIN menu_categories c ON m.category_id=c.id

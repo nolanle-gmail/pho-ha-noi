@@ -39,7 +39,7 @@ function ckAvailable(itemName) {
 // ── CK raw-stock warehouse (CK staff) ────────────────────────────────────────
 // The Central Kitchen's own raw inventory, with how much is already promised to
 // open store orders (reserved) so the kitchen can see true free-to-promise stock.
-router.get('/ck-stock', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/ck-stock', requireRole(ROLES.OPS), (req, res) => {
   const ck = ckLoc();
   if (!ck) return res.status(404).json({ error: 'No Central Kitchen is configured.' });
   if (!isCKStaff(req)) return res.status(403).json({ error: 'Central Kitchen staff only.' });
@@ -58,7 +58,7 @@ router.get('/ck-stock', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // Curate a CK item: offer/withhold it from stores, or set its reorder thresholds.
-router.put('/ck-stock/:id', requireRole(...ROLES.OPS), (req, res) => {
+router.put('/ck-stock/:id', requireRole(ROLES.OPS), (req, res) => {
   const ck = ckLoc();
   if (!ck || !isCKStaff(req)) return res.status(403).json({ error: 'Central Kitchen staff only.' });
   const item = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=?`).get(req.params.id, ck.id);
@@ -77,7 +77,7 @@ router.put('/ck-stock/:id', requireRole(...ROLES.OPS), (req, res) => {
 // ── Store side: what can I reorder, and from where? ──────────────────────────
 // Every below-par item at the store, annotated with the CK's current availability
 // so the reorder screen can show the CK-first / vendor split before ordering.
-router.get('/availability', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/availability', requireRole(ROLES.OPS), (req, res) => {
   const locId = storeScope(req, true);
   if (!locId) return res.json({ items: [] });
   const rows = db.prepare(`SELECT id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost
@@ -96,7 +96,7 @@ router.get('/availability', requireRole(...ROLES.OPS), (req, res) => {
 // Quick lookup for the store order screen: which raw items the CK can supply right
 // now (item_name → available qty). Any OPS user (store managers included) may read it,
 // so the order modal can default the source to the Central Kitchen when it has stock.
-router.get('/ck-catalog', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/ck-catalog', requireRole(ROLES.OPS), (req, res) => {
   const ck = ckLoc();
   const items = {};
   if (ck) {
@@ -111,7 +111,7 @@ router.get('/ck-catalog', requireRole(...ROLES.OPS), (req, res) => {
 // Create one or more distribution orders. Each item is split CK-first: ck_qty from
 // the kitchen, the remainder auto-drafted as a vendor PO — unless the manager
 // overrides source to 'vendor' (skip CK entirely).
-router.post('/order', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   const locId = storeScope(req, false);
   if (!locId) return res.status(400).json({ error: 'A store location is required.' });
   const ck = ckLoc();
@@ -159,7 +159,7 @@ router.post('/order', requireRole(...ROLES.OPS), (req, res) => {
 
 // ── Order lists ──────────────────────────────────────────────────────────────
 // scope=ck → the kitchen's incoming queue (all stores); scope=store → my orders.
-router.get('/orders', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   const scope = req.query.scope === 'ck' ? 'ck' : 'store';
   let where, args;
   if (scope === 'ck') {
@@ -182,7 +182,7 @@ router.get('/orders', requireRole(...ROLES.OPS), (req, res) => {
 
 // Advance a CK order: requested → shipped (decrement CK stock, in transit) →
 // received (land it in the store). Cancel is allowed before shipping.
-router.put('/orders/:id', requireRole(...ROLES.OPS), (req, res) => {
+router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
   const ck = ckLoc();
   const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
   if (!d) return res.status(404).json({ error: 'Order not found.' });

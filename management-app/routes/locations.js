@@ -19,7 +19,7 @@ function locationOf(equipmentId) {
 }
 
 // ── Directory ────────────────────────────────────────────────────────────────
-router.get('/', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/', requireRole(ROLES.MANAGE), (req, res) => {
   const where = isAdmin(req) ? '' : 'WHERE l.id=?';
   const args = isAdmin(req) ? [] : [req.user.location_id];
   const rows = db.prepare(`
@@ -34,7 +34,7 @@ router.get('/', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Detail (info + hours + manager) ──────────────────────────────────────────
-router.get('/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   const loc = db.prepare(`SELECT * FROM locations WHERE id=?`).get(req.params.id);
   if (!loc) return res.status(404).json({ error: 'Location not found' });
@@ -44,7 +44,7 @@ router.get('/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Staff at a location.
-router.get('/:id/staff', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/:id/staff', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   res.json(db.prepare(`SELECT id, name, email, employee_code, role, is_active FROM users WHERE location_id=?
     ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(req.params.id));
@@ -85,7 +85,7 @@ router.get('/:id/activity', requireRole('owner', 'admin', 'hr', 'general_manager
 
 // ── Create / edit location (owner/admin) ─────────────────────────────────────
 const LOC_FIELDS = ['name', 'address', 'city', 'state', 'zip', 'phone', 'email', 'timezone', 'opening_date'];
-router.post('/', requireRole(...ROLES.ADMIN), (req, res) => {
+router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Location name is required.' });
   const status = ['active', 'draft', 'closed'].includes(req.body.status) ? req.body.status : 'active';
@@ -101,7 +101,7 @@ router.post('/', requireRole(...ROLES.ADMIN), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/:id', requireRole(...ROLES.ADMIN), (req, res) => {
+router.put('/:id', requireRole(ROLES.ADMIN), (req, res) => {
   const loc = db.prepare(`SELECT * FROM locations WHERE id=?`).get(req.params.id);
   if (!loc) return res.status(404).json({ error: 'Location not found' });
   const fields = [], vals = [];
@@ -119,7 +119,7 @@ router.put('/:id', requireRole(...ROLES.ADMIN), (req, res) => {
 });
 
 // Operating hours — manager may set their own location's.
-router.put('/:id/hours', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/:id/hours', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   const hours = Array.isArray(req.body.hours) ? req.body.hours : [];
   db.prepare(`DELETE FROM location_hours WHERE location_id=?`).run(req.params.id);
@@ -129,13 +129,13 @@ router.put('/:id/hours', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Equipment ────────────────────────────────────────────────────────────────
-router.get('/:id/equipment', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/:id/equipment', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   res.json(db.prepare(`SELECT * FROM equipment WHERE location_id=? ORDER BY category, name`).all(req.params.id));
 });
 
 const EQ_FIELDS = ['name', 'category', 'model', 'serial', 'vendor', 'vendor_phone', 'purchase_date', 'warranty_expiry', 'maintenance_freq', 'last_service', 'next_service', 'notes'];
-router.post('/:id/equipment', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/:id/equipment', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Equipment name is required.' });
@@ -147,7 +147,7 @@ router.post('/:id/equipment', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/equipment/:eid', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/equipment/:eid', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = locationOf(req.params.eid);
   if (locId == null) return res.status(404).json({ error: 'Equipment not found' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -162,7 +162,7 @@ router.put('/equipment/:eid', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/equipment/:eid', requireRole(...ROLES.MANAGE), (req, res) => {
+router.delete('/equipment/:eid', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = locationOf(req.params.eid);
   if (locId == null) return res.status(404).json({ error: 'Equipment not found' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });

@@ -29,7 +29,7 @@ function weekStart(dateStr) {
 function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocal(d); }
 
 // ── Job/task catalog ─────────────────────────────────────────────────────────
-router.get('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/jobs', requireRole(ROLES.MANAGE), (req, res) => {
   const activeOnly = req.query.active === '1';
   res.json(db.prepare(`SELECT * FROM jobs ${activeOnly ? 'WHERE is_active=1' : ''}
     ORDER BY department, code, name`).all());
@@ -38,7 +38,7 @@ router.get('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
 const JOB_KINDS = ['standard', 'specific'];
 const JOB_FIELDS = ['code', 'name', 'description', 'department', 'complexity', 'est_minutes', 'notes', 'kind'];
 // Managers can grow the shared catalog too, not just owner/admin.
-router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/jobs', requireRole(ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Job name is required.' });
   const code = (req.body.code || '').toString().trim() || null;
@@ -57,7 +57,7 @@ router.post('/jobs', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/jobs/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   if (req.body.code !== undefined && req.body.code !== job.code) {
@@ -88,7 +88,7 @@ router.put('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Soft-delete (retire) a job so historical shift assignments stay intact.
-router.delete('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.delete('/jobs/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const job = db.prepare(`SELECT * FROM jobs WHERE id=?`).get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
   db.prepare(`UPDATE jobs SET is_active=0 WHERE id=?`).run(job.id);
@@ -97,7 +97,7 @@ router.delete('/jobs/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Day tasks — assign specific tasks to that day's working staff ────────────
-router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -140,7 +140,7 @@ router.get('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Assign / unassign / complete a specific task for a location + date.
-router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const jobId = parseInt(req.body.job_id, 10);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : null;
@@ -225,7 +225,7 @@ router.put('/day-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // ── Per-location task lists — which specific tasks apply at a location ────────
 // The full specific-task catalog with an `enabled` flag for this location.
-router.get('/location-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/location-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -242,7 +242,7 @@ router.get('/location-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Add or remove a specific task from a location's list.
-router.put('/location-tasks', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/location-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const jobId = parseInt(req.body.job_id, 10);
   if (!locId || !jobId) return res.status(400).json({ error: 'location_id and job_id are required.' });
@@ -302,7 +302,7 @@ function shiftsForUsers(userIds, weekStartIso) {
   return byUser;
 }
 
-router.get('/week', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/week', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -354,7 +354,7 @@ function prepareShift(req, res) {
   if (!ownsLocation(req, locId)) { res.status(403).json({ error: 'You can only schedule your own location.' }); return null; }
   const user = db.prepare(`SELECT id, role FROM users WHERE id=? AND is_active=1`).get(userId);
   if (!user) { res.status(404).json({ error: 'Staff member not found.' }); return null; }
-  if (roleScope(user.role) === 'all') { res.status(400).json({ error: 'This access level is not shift-scheduled.' }); return null; }
+  if (roleScope(user.role) === 'all') { res.status(400).json({ error: 'This role is not shift-scheduled.' }); return null; }
   // The person must actually belong to this location (home or also-works).
   const linked = db.prepare(`SELECT 1 FROM users WHERE id=? AND location_id=?
     UNION SELECT 1 FROM staff_locations WHERE user_id=? AND location_id=?`).get(userId, locId, userId, locId);
@@ -416,7 +416,7 @@ function setShiftBreaks(shiftId, userId, shiftDate, breaks, shiftStart, shiftEnd
   }
 }
 
-router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/shifts', requireRole(ROLES.MANAGE), (req, res) => {
   const p = prepareShift(req, res);
   if (!p) return;
   const isLeave = p.kind !== 'work';
@@ -431,7 +431,7 @@ router.post('/shifts', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
-router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const shift = db.prepare(`SELECT * FROM shifts WHERE id=?`).get(req.params.id);
   if (!shift) return res.status(404).json({ error: 'Shift not found.' });
   if (!ownsLocation(req, shift.location_id)) return res.status(403).json({ error: 'Not your location.' });
@@ -454,7 +454,7 @@ router.put('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
-router.delete('/shifts/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.delete('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const shift = db.prepare(`SELECT * FROM shifts WHERE id=?`).get(req.params.id);
   if (!shift) return res.status(404).json({ error: 'Shift not found.' });
   if (!ownsLocation(req, shift.location_id)) return res.status(403).json({ error: 'Not your location.' });

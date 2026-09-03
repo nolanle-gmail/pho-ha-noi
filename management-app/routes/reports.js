@@ -17,7 +17,7 @@ function dateRange(req) {
 }
 
 // ── Items / inventory report ───────────────────────────────────────────────
-router.get('/inventory', requireRole(...ROLES.REPORTS), (req, res) => {
+router.get('/inventory', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req);
   // Org-wide (no location filter) counts everything the group holds, including the
   // Central Kitchen warehouse; a specific location scopes to just that location.
@@ -39,7 +39,7 @@ router.get('/inventory', requireRole(...ROLES.REPORTS), (req, res) => {
 });
 
 // ── Sales report ────────────────────────────────────────────────────────────
-router.get('/sales', requireRole(...ROLES.REPORTS), (req, res) => {
+router.get('/sales', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const conds = ['date(sale_date)>=?', 'date(sale_date)<=?'], args = [start, end];
   if (locId) { conds.push('location_id=?'); args.push(locId); }
@@ -58,7 +58,7 @@ router.get('/sales', requireRole(...ROLES.REPORTS), (req, res) => {
 });
 
 // ── Payments report (method breakdown) ──────────────────────────────────────
-router.get('/payments', requireRole(...ROLES.REPORTS), (req, res) => {
+router.get('/payments', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const conds = ['date(sale_date)>=?', 'date(sale_date)<=?'], args = [start, end];
   if (locId) { conds.push('location_id=?'); args.push(locId); }
@@ -73,7 +73,7 @@ router.get('/payments', requireRole(...ROLES.REPORTS), (req, res) => {
 });
 
 // ── Timesheets report (hours + labor cost) ──────────────────────────────────
-router.get('/timesheets', requireRole(...ROLES.REPORTS), (req, res) => {
+router.get('/timesheets', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const conds = ['date(t.clock_in)>=?', 'date(t.clock_in)<=?'], args = [start, end];
   if (locId) { conds.push('t.location_id=?'); args.push(locId); }
@@ -87,7 +87,7 @@ router.get('/timesheets', requireRole(...ROLES.REPORTS), (req, res) => {
 });
 
 // ── Analytics report (executive summary) ────────────────────────────────────
-router.get('/analytics', requireRole(...ROLES.REPORTS), (req, res) => {
+router.get('/analytics', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const sconds = ['date(sale_date)>=?', 'date(sale_date)<=?'], sargs = [start, end];
   if (locId) { sconds.push('location_id=?'); sargs.push(locId); }

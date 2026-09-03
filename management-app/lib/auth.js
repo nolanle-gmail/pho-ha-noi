@@ -1,6 +1,6 @@
 // JWT auth + the access-level model.
 //
-// Access levels are defined once in ROLE_DEFS below. Each role has:
+// Each role (access level) has:
 //   • scope — 'all' (every location), 'location' (their own store), or
 //             'self' (only their own schedule/tasks/messages)
 //   • caps  — the capabilities that unlock modules:
@@ -11,16 +11,24 @@
 //             central  the Central Kitchen production/supply hub
 //             delivery delivery manifests / fulfillment (drivers)
 //
-// Route permission groups (ROLES.MANAGE, .OPS, …) and the frontend navigation
-// are both derived from this one table, so adding a role here wires it up
-// everywhere. Job titles (Server, Line Cook, …) are separate access levels that
-// all share the 'self' scope — same permissions, different position.
+// The registry lives in the `roles` DB table (seeded from DEFAULT_ROLE_DEFS below)
+// so Owner/Admin can add, edit and remove roles at runtime from the Access Levels
+// page. Route permission groups (ROLES.MANAGE, .OPS, …) and the frontend navigation
+// both derive from it. The ROLES.* groups are STABLE array instances mutated in
+// place on reloadRoles(), so route guards (requireRole(ROLES.X)) and inline
+// ROLES.X.includes(...) checks always reflect the current registry.
 const jwt = require('jsonwebtoken');
+const db = require('../db/database');
 
 const SECRET = process.env.JWT_SECRET || 'pho-ha-noi-dev-secret-change-in-prod';
 const EXPIRES = '12h';
 
-const ROLE_DEFS = {
+// Known capabilities and scopes (the editable vocabulary for a role).
+const CAPS = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+const SCOPES = ['all', 'location', 'self'];
+
+// Built-in defaults — seed the `roles` table, and a fallback if the DB is empty.
+const DEFAULT_ROLE_DEFS = {
   // Executive / all-location administration
   owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
@@ -56,26 +64,60 @@ const ROLE_DEFS = {
   employee:          { label: 'Staff (General)',   scope: 'self',     rank: 20,  caps: [] },
 };
 
-const ROLE_KEYS = Object.keys(ROLE_DEFS);
-const withCap = (cap) => ROLE_KEYS.filter((k) => ROLE_DEFS[k].caps.includes(cap));
+// The live registry, populated from the DB by reloadRoles().
+let ROLE_DEFS = {};
+let ROLE_KEYS = [];
+
+// Permission groups — STABLE instances, repopulated in place on reload so any
+// held reference (route guards, inline checks) stays live.
+const ROLES = { ALL: [], ADMIN: [], MANAGE: [], OPS: [], REPORTS: [], CENTRAL: [], DELIVERY: [], SCHEDULED: [] };
+const setArr = (arr, vals) => { arr.length = 0; for (const v of vals) arr.push(v); };
 const uniq = (a) => [...new Set(a)];
 
-// Access levels: groups derived from the capability table above.
-const ROLES = {
-  ALL: ROLE_KEYS,                                            // any signed-in user / valid role
-  ADMIN: withCap('org'),                                     // account & access-level admin
-  MANAGE: withCap('manage'),                                 // staff, schedules, menu, locations
-  OPS: withCap('ops'),                                       // inventory operations
-  REPORTS: withCap('reports'),                               // reports & analytics
-  CENTRAL: withCap('central'),                               // Central Kitchen hub
-  DELIVERY: uniq([...withCap('central'), ...withCap('delivery')]), // manifests / fulfillment
-  SCHEDULED: ROLE_KEYS.filter((k) => ROLE_DEFS[k].scope !== 'all'), // people who get a shift schedule
-};
+// Insert any missing built-in roles (adds new code-defined roles without
+// clobbering rows an admin has edited). Best-effort — the table may not exist yet.
+function ensureSeeded() {
+  try {
+    const ins = db.prepare(`INSERT OR IGNORE INTO roles (key,label,scope,rank,caps,is_builtin,is_active) VALUES (?,?,?,?,?,1,1)`);
+    for (const [key, d] of Object.entries(DEFAULT_ROLE_DEFS)) ins.run(key, d.label, d.scope, d.rank, JSON.stringify(d.caps));
+  } catch { /* table not migrated yet in this context */ }
+}
+
+// Rebuild ROLE_DEFS + the ROLES.* groups from the DB (fallback: code defaults).
+function reloadRoles() {
+  let rows = [];
+  try { rows = db.prepare(`SELECT key,label,scope,rank,caps,is_builtin FROM roles WHERE is_active=1`).all(); } catch { rows = []; }
+  const defs = {};
+  if (rows.length) {
+    for (const r of rows) {
+      let caps = [];
+      try { caps = JSON.parse(r.caps || '[]'); } catch { caps = []; }
+      defs[r.key] = { label: r.label, scope: r.scope, rank: r.rank, caps: caps.filter((c) => CAPS.includes(c)), builtin: !!r.is_builtin };
+    }
+  } else {
+    for (const [key, d] of Object.entries(DEFAULT_ROLE_DEFS)) defs[key] = { ...d, builtin: true };
+  }
+  ROLE_DEFS = defs;
+  ROLE_KEYS = Object.keys(defs);
+  const withCap = (cap) => ROLE_KEYS.filter((k) => defs[k].caps.includes(cap));
+  setArr(ROLES.ALL, ROLE_KEYS);
+  setArr(ROLES.ADMIN, withCap('org'));
+  setArr(ROLES.MANAGE, withCap('manage'));
+  setArr(ROLES.OPS, withCap('ops'));
+  setArr(ROLES.REPORTS, withCap('reports'));
+  setArr(ROLES.CENTRAL, withCap('central'));
+  setArr(ROLES.DELIVERY, uniq([...withCap('central'), ...withCap('delivery')]));
+  setArr(ROLES.SCHEDULED, ROLE_KEYS.filter((k) => defs[k].scope !== 'all'));
+}
+
+ensureSeeded();
+reloadRoles();
 
 const roleScope = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].scope : 'self');
 const seesAllLocations = (role) => roleScope(role) === 'all';
 const roleLabel = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].label : role);
-// Public view of the registry for the frontend (labels, scope, caps).
+const roleHasCap = (role, cap) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].caps.includes(cap));
+// Public view of the registry for the frontend (labels, scope, caps, builtin).
 const publicRoles = () => ROLE_KEYS.map((key) => ({ key, ...ROLE_DEFS[key] }));
 
 function signToken(user) {
@@ -98,9 +140,14 @@ function verifyToken(req, res, next) {
   }
 }
 
+// Accepts explicit role names — requireRole('owner','admin') — OR a single live
+// group array — requireRole(ROLES.MANAGE) — which is read at request time so it
+// tracks runtime edits to the registry.
 function requireRole(...roles) {
+  const live = roles.length === 1 && Array.isArray(roles[0]);
+  const list = live ? roles[0] : roles;
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || !list.includes(req.user.role)) {
       return res.status(403).json({ error: 'You do not have permission for this action.' });
     }
     next();
@@ -109,5 +156,6 @@ function requireRole(...roles) {
 
 module.exports = {
   signToken, verifyToken, requireRole, SECRET,
-  ROLES, ROLE_DEFS, roleScope, seesAllLocations, roleLabel, publicRoles,
+  ROLES, ROLE_DEFS, CAPS, SCOPES, DEFAULT_ROLE_DEFS,
+  roleScope, seesAllLocations, roleLabel, roleHasCap, publicRoles, reloadRoles,
 };

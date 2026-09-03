@@ -205,7 +205,7 @@ const ROUTES = {
   'SoCal': ['Fountain Valley'],
 };
 // Drivers can view fulfillment (pick lists / delivery manifests) too, read-only.
-router.get('/fulfillment', requireRole(...ROLES.DELIVERY), (req, res) => {
+router.get('/fulfillment', requireRole(ROLES.DELIVERY), (req, res) => {
   const date = req.query.date || today();
   const rows = db.prepare(`
     SELECT sr.location_id, l.name location, p.name product, p.unit, sr.quantity, sr.status

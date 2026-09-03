@@ -71,7 +71,7 @@ function lateMinutesFor(userId, locId, date, tz, clockIn) {
 
 // ── Staff punch (check-in / check-out) ───────────────────────────────────────
 // Authorized by an opener (manager+) whose session pins the station's location.
-router.post('/punch', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'This station is not your location.' });
@@ -131,7 +131,7 @@ router.post('/punch', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Manager / GM / Owner: today's clock board for a location ──────────────────
-router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -246,7 +246,7 @@ function myHoursData(userId, start, end, kind) {
   };
 }
 
-router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/payroll', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -374,7 +374,7 @@ router.get('/payroll', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // Approve (or revoke) a staff member's overtime for a day. A note is required to
 // approve; only Owner / General Manager may change the approved OT/DT amount.
-router.put('/ot-approval', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/ot-approval', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
   const date = validDate(req.body.work_date);
@@ -416,7 +416,7 @@ router.put('/ot-approval', requireRole(...ROLES.MANAGE), (req, res) => {
 
 // Round a day's worked minutes (e.g. 7.5h→8h, or +30m→1h OT). Overtime is then
 // re-derived from the adjusted total. Set adjusted_minutes to clear (=clocked).
-router.put('/adjust', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/adjust', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
   const date = validDate(req.body.work_date);
@@ -439,7 +439,7 @@ router.put('/adjust', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Sign off a person's total hours for a period (day / week / month).
-router.post('/approve-total', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/approve-total', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
   const kind = ['daily', 'weekly', 'monthly'].includes(req.body.period_kind) ? req.body.period_kind : null;
@@ -461,7 +461,7 @@ router.post('/approve-total', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Un-approve a period total.
-router.post('/approve-total/undo', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/approve-total/undo', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
   const kind = req.body.period_kind, start = validDate(req.body.period_start);
@@ -472,7 +472,7 @@ router.post('/approve-total/undo', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Manager escalates a day's overtime to Owner / GM / Admin for sign-off.
-router.post('/ot-escalate', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/ot-escalate', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
   const date = validDate(req.body.work_date);
@@ -509,7 +509,7 @@ router.get('/ot-requests', requireRole('owner', 'admin', 'hr', 'general_manager'
 
 // Performance / attendance history for a location over a range (default 90 days):
 // per-staff tallies of late, short, and overtime for reviews. Owner/admin any loc.
-router.get('/performance', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/performance', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -551,7 +551,7 @@ router.get('/performance', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Short-shift alerts for a location ─────────────────────────────────────────
-router.get('/alerts', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/alerts', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
@@ -561,7 +561,7 @@ router.get('/alerts', requireRole(...ROLES.MANAGE), (req, res) => {
   res.json({ alerts: rows });
 });
 
-router.post('/alerts/:id/resolve', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/alerts/:id/resolve', requireRole(ROLES.MANAGE), (req, res) => {
   const a = db.prepare(`SELECT * FROM staff_alerts WHERE id=?`).get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Alert not found.' });
   if (!ownsLocation(req, a.location_id)) return res.status(403).json({ error: 'Not your location.' });

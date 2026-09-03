@@ -25,6 +25,7 @@ app.get('/clock', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clo
 app.use(require('./lib/activity').activityLogger);
 
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/roles', require('./routes/roles'));
 // Mounted before the '/api' core router: these accept a Waitlist service key
 // (no JWT), which core's verifyToken would otherwise reject. Messages does too
 // (the Staff app proxies here with ?as=<email>).

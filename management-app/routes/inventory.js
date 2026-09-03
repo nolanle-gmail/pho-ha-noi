@@ -24,7 +24,7 @@ router.get('/categories', (req, res) => {
 });
 
 // ── Dashboard summary ──────────────────────────────────────────────────────
-router.get('/dashboard', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/dashboard', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE location_id=?' : '';
   const args = locId ? [locId] : [];
@@ -40,7 +40,7 @@ router.get('/dashboard', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Activity / audit log — who did what (orders, transfers, reorders, receives) ─
-router.get('/audit', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/audit', requireRole(ROLES.OPS), (req, res) => {
   const rows = db.prepare(`
     SELECT a.id, a.action, a.entity, a.entity_id, a.detail, a.created_at, u.name AS user_name, u.role AS user_role
     FROM audit_log a LEFT JOIN users u ON a.user_id=u.id
@@ -50,7 +50,7 @@ router.get('/audit', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Inventory levels ───────────────────────────────────────────────────────
-router.get('/', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   if (!locId) {
     return res.json(db.prepare(`SELECT i.*, l.name as location_name FROM inventory i JOIN locations l ON i.location_id=l.id WHERE i.is_active=1 ORDER BY l.name, i.category, i.item_name`).all());
@@ -59,7 +59,7 @@ router.get('/', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // Warehouse view — one row per item, quantities across all locations.
-router.get('/warehouse', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/warehouse', requireRole(ROLES.OPS), (req, res) => {
   const locations = db.prepare(`SELECT * FROM locations WHERE is_active=1 AND type='restaurant' ORDER BY name`).all();
   const items = db.prepare(`
     SELECT i.item_name, i.category, i.unit,
@@ -78,7 +78,7 @@ router.get('/warehouse', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Create a new item ──────────────────────────────────────────────────────
-router.post('/', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, false);
   if (!locId) return res.status(400).json({ error: 'A location is required.' });
   const name = (req.body.item_name || '').toString().trim();
@@ -106,7 +106,7 @@ router.post('/', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Waste / spoilage ───────────────────────────────────────────────────────
-router.post('/waste', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/waste', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
   if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only log waste for your location.' });
@@ -122,7 +122,7 @@ router.post('/waste', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true });
 });
 
-router.get('/waste', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/waste', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE w.location_id=?' : '';
   const args = locId ? [locId] : [];
@@ -135,7 +135,7 @@ router.get('/waste', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Cycle counts ───────────────────────────────────────────────────────────
-router.post('/count', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/count', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
   if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only count items at your location.' });
@@ -156,7 +156,7 @@ router.post('/count', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true, system_qty: systemQty, counted_qty: counted, variance });
 });
 
-router.get('/counts', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/counts', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE cc.location_id=?' : '';
   const args = locId ? [locId] : [];
@@ -168,10 +168,10 @@ router.get('/counts', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Vendors ────────────────────────────────────────────────────────────────
-router.get('/vendors', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/vendors', requireRole(ROLES.OPS), (req, res) => {
   res.json(db.prepare(`SELECT * FROM vendors WHERE is_active=1 ORDER BY name`).all());
 });
-router.post('/vendors', requireRole(...ROLES.MANAGE), (req, res) => {
+router.post('/vendors', requireRole(ROLES.MANAGE), (req, res) => {
   const { name, contact_name, phone, email, lead_time_days, notes } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Vendor name required' });
   const r = db.prepare(`INSERT INTO vendors (name, contact_name, phone, email, lead_time_days, notes) VALUES (?,?,?,?,?,?)`)
@@ -179,7 +179,7 @@ router.post('/vendors', requireRole(...ROLES.MANAGE), (req, res) => {
   auditLog(req, 'vendor_create', 'vendor', r.lastInsertRowid, { name });
   res.json({ success: true, id: r.lastInsertRowid });
 });
-router.put('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/vendors/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const v = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(req.params.id);
   if (!v) return res.status(404).json({ error: 'Vendor not found' });
   const fields = [], vals = [];
@@ -191,7 +191,7 @@ router.put('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   auditLog(req, 'vendor_update', 'vendor', v.id, { name: v.name, changes: req.body });
   res.json({ success: true });
 });
-router.delete('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.delete('/vendors/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const v = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(req.params.id);
   db.prepare(`UPDATE vendors SET is_active=0 WHERE id=?`).run(req.params.id);
   auditLog(req, 'vendor_delete', 'vendor', Number(req.params.id), { name: v && v.name });
@@ -199,7 +199,7 @@ router.delete('/vendors/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Supply orders (purchase orders) ────────────────────────────────────────
-router.get('/supply-orders', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/supply-orders', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE so.location_id=?' : '';
   const args = locId ? [locId] : [];
@@ -214,7 +214,7 @@ router.get('/supply-orders', requireRole(...ROLES.OPS), (req, res) => {
   `).all(...args));
 });
 
-router.post('/order', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   const { item_id, item_name: reqItemName, quantity, vendor, vendor_id, shipping_address, tracking_number, expected_date, notes } = req.body;
   if (!quantity) return res.status(400).json({ error: 'quantity required' });
   if (!item_id && !reqItemName) return res.status(400).json({ error: 'item_id or item_name required' });
@@ -242,7 +242,7 @@ router.post('/order', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true });
 });
 
-router.get('/reorder-suggestions', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/reorder-suggestions', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   if (!locId) return res.json([]);
   const rows = db.prepare(`
@@ -256,7 +256,7 @@ router.get('/reorder-suggestions', requireRole(...ROLES.OPS), (req, res) => {
   }).filter(r => r.suggested_qty > 0));
 });
 
-router.post('/reorder/create', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/reorder/create', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, false);
   if (!locId) return res.status(400).json({ error: 'A location is required.' });
   const items = Array.isArray(req.body.items) ? req.body.items : [];
@@ -279,7 +279,7 @@ router.post('/reorder/create', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true, created });
 });
 
-router.put('/order/:id', requireRole(...ROLES.MANAGE), (req, res) => {
+router.put('/order/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const { status, tracking_number, shipping_address } = req.body;
   const valid = ['pending', 'approved', 'shipped', 'received', 'cancelled'];
   if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' });
@@ -303,7 +303,7 @@ router.put('/order/:id', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // ── Transfers ──────────────────────────────────────────────────────────────
-router.get('/transfer-requests', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/transfer-requests', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE (tr.from_location_id=? OR tr.to_location_id=?)' : '';
   const args = locId ? [locId, locId] : [];
@@ -317,7 +317,7 @@ router.get('/transfer-requests', requireRole(...ROLES.OPS), (req, res) => {
   `).all(...args));
 });
 
-router.post('/transfer-request', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/transfer-request', requireRole(ROLES.OPS), (req, res) => {
   const { item_name, quantity, from_location_id, to_location_id, notes } = req.body;
   if (!item_name || !quantity || !from_location_id || !to_location_id) return res.status(400).json({ error: 'item_name, quantity, from_location_id, to_location_id required' });
   if (from_location_id == to_location_id) return res.status(400).json({ error: 'Source and destination must differ' });
@@ -327,7 +327,7 @@ router.post('/transfer-request', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true });
 });
 
-router.put('/transfer-request/:id', requireRole(...ROLES.OPS), (req, res) => {
+router.put('/transfer-request/:id', requireRole(ROLES.OPS), (req, res) => {
   const { status, tracking_number, notes } = req.body;
   const valid = ['approved', 'in_transit', 'received', 'cancelled'];
   if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' });
@@ -356,7 +356,7 @@ router.put('/transfer-request/:id', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/transfer', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/transfer', requireRole(ROLES.OPS), (req, res) => {
   const { item_id, from_location_id, to_location_id, quantity } = req.body;
   if (!item_id || !from_location_id || !to_location_id || !quantity) return res.status(400).json({ error: 'All fields required' });
   const src = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=?`).get(item_id, from_location_id);
@@ -373,7 +373,7 @@ router.post('/transfer', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Transaction ledger ─────────────────────────────────────────────────────
-router.get('/transactions', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/transactions', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const cond = locId ? 'WHERE (t.from_location_id=? OR t.to_location_id=?)' : '';
   const args = locId ? [locId, locId] : [];
@@ -386,7 +386,7 @@ router.get('/transactions', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Receiving (SKU / barcode) & item attribute edits ───────────────────────
-router.post('/receive', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/receive', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, false);
   let item;
   if (req.body.item_id) item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
@@ -406,7 +406,7 @@ router.post('/receive', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ success: true, item_name: item.item_name, new_quantity: Math.round((item.quantity + qty) * 1000) / 1000 });
 });
 
-router.put('/:id', requireRole(...ROLES.OPS), (req, res) => {
+router.put('/:id', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
@@ -428,7 +428,7 @@ router.put('/:id', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // Remove an item (soft-delete to preserve transaction/lot history).
-router.delete('/:id', requireRole(...ROLES.OPS), (req, res) => {
+router.delete('/:id', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
   if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
@@ -438,7 +438,7 @@ router.delete('/:id', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Lots & expiry ──────────────────────────────────────────────────────────
-router.get('/lots', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/lots', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const conds = ['lo.quantity > 0'], args = [];
   if (locId) { conds.push('lo.location_id=?'); args.push(locId); }
@@ -450,7 +450,7 @@ router.get('/lots', requireRole(...ROLES.OPS), (req, res) => {
   `).all(...args));
 });
 
-router.get('/expiring', requireRole(...ROLES.OPS), (req, res) => {
+router.get('/expiring', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const days = Math.max(0, parseInt(req.query.days) || 7);
   const conds = ['lo.quantity > 0', 'lo.expiry_date IS NOT NULL', `date(lo.expiry_date) <= date('now', '+' || ? || ' days')`];
@@ -466,7 +466,7 @@ router.get('/expiring', requireRole(...ROLES.OPS), (req, res) => {
   res.json({ days, expired, soon: rows.length - expired, lots: rows });
 });
 
-router.post('/lots/:id/discard', requireRole(...ROLES.OPS), (req, res) => {
+router.post('/lots/:id/discard', requireRole(ROLES.OPS), (req, res) => {
   const lot = db.prepare(`SELECT * FROM inventory_lots WHERE id=?`).get(req.params.id);
   if (!lot) return res.status(404).json({ error: 'Lot not found' });
   if (!seesAllLocations(req.user.role) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
@@ -487,7 +487,7 @@ router.post('/lots/:id/discard', requireRole(...ROLES.OPS), (req, res) => {
 });
 
 // ── Valuation & COGS ───────────────────────────────────────────────────────
-router.get('/valuation', requireRole(...ROLES.MANAGE), (req, res) => {
+router.get('/valuation', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = scopeLoc(req, true);
   const end = req.query.end || new Date().toISOString().slice(0, 10);
   const start = req.query.start || new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10);
