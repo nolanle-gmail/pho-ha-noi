@@ -1851,6 +1851,7 @@ async function renderLocDayTasks() {
     <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
+    <td>${t.assignment_id && t.photo_count ? `<button type="button" class="btn sm ghost dt-photos" data-photos="${t.assignment_id}" data-taskname="${esc(t.name)}" title="View proof photos">📷 ${t.photo_count}</button>` : '<span style="color:var(--muted)">—</span>'}</td>
   </tr>`).join('');
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
@@ -1862,13 +1863,14 @@ async function renderLocDayTasks() {
       </div>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
-    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : `<tr><td colspan="6" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Proof</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : `<tr><td colspan="7" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('dtNext').onclick = () => go(addDaysIso(data.date, 1));
   $('dtToday').onclick = () => go(data.today || fmtLocalIso(new Date()));
+  $('locBody').querySelectorAll('.dt-photos').forEach(b => b.onclick = () => openTaskPhotoGallery(b.dataset.photos, b.dataset.taskname));
   if (canEdit) {
     if ($('dtManage')) $('dtManage').onclick = () => openLocTaskListModal(S.locDetailId, data.location.name);
     $('locBody').querySelectorAll('[data-assign]').forEach(sel => sel.onchange = async () => {
@@ -1884,6 +1886,45 @@ async function renderLocDayTasks() {
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
   }
+}
+
+// Manager view of a day task's proof photos: fetch the list, then load each image
+// with the session token (they're private) into a grid; click one to view full size.
+async function openTaskPhotoGallery(assignmentId, taskName) {
+  const host = $('modalHost');
+  const urls = [];
+  const cleanup = () => { while (urls.length) URL.revokeObjectURL(urls.pop()); };
+  const close = () => { cleanup(); host.innerHTML = ''; };
+  const fmt = (iso) => { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); };
+  host.innerHTML = `<div class="modal-bg"><div class="modal photo-gallery">
+    <div class="row-between"><h3 style="margin:0">📷 Proof photos <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(taskName || 'task')}</span></h3>
+      <button class="btn sm ghost" id="pgClose">Close</button></div>
+    <div class="pg-grid" id="pgGrid"><div class="empty">Loading…</div></div></div></div>`;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('pgClose').onclick = close;
+  let data;
+  try { data = await api(`/stafftasks/${assignmentId}/photos`); }
+  catch (e) { $('pgGrid').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!data.photos.length) { $('pgGrid').innerHTML = '<div class="empty">No photos.</div>'; return; }
+  $('pgGrid').innerHTML = data.photos.map(p => `<figure class="pg-item">
+    <div class="pg-img-wrap"><img alt="Proof photo" data-load="${p.id}"></div>
+    <figcaption>${esc(p.uploaded_by_name || 'Staff')}<span>${esc(fmt(p.uploaded_at))}</span></figcaption>
+  </figure>`).join('');
+  for (const p of data.photos) {
+    try {
+      const res = await fetch(`/api/stafftasks/${assignmentId}/photo/${p.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+      if (!res.ok) continue;
+      const url = URL.createObjectURL(await res.blob()); urls.push(url);
+      const img = $('pgGrid').querySelector(`img[data-load="${p.id}"]`);
+      if (img) { img.src = url; img.onclick = () => pgLightbox(url); }
+    } catch { /* one thumbnail failing shouldn't break the grid */ }
+  }
+}
+// Full-screen view of a single proof photo (tap anywhere to dismiss).
+function pgLightbox(src) {
+  const o = document.createElement('div'); o.className = 'pg-lightbox';
+  const img = document.createElement('img'); img.src = src; img.alt = 'Proof photo';
+  o.appendChild(img); o.onclick = () => o.remove(); document.body.appendChild(o);
 }
 
 // Manage which specific tasks apply at this location (per-location task list).

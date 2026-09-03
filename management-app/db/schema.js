@@ -430,16 +430,19 @@ function migrate() {
       UNIQUE (location_id, task_date, job_id)
     );
 
-    -- Proof photo for a completed day task (optional). Stored as bytes in the DB
-    -- so it persists on the mounted volume with no extra file storage. One per task.
+    -- Proof photos for a day task (optional). Stored as bytes in the DB so they
+    -- persist on the mounted volume with no extra file storage. Many per task —
+    -- staff can attach several images; managers view them all in the Day Tasks tab.
     CREATE TABLE IF NOT EXISTS task_photos (
-      task_id     INTEGER PRIMARY KEY REFERENCES task_assignments(id) ON DELETE CASCADE,
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id     INTEGER NOT NULL REFERENCES task_assignments(id) ON DELETE CASCADE,
       mime        TEXT NOT NULL,
       bytes       BLOB NOT NULL,
       byte_size   INTEGER NOT NULL DEFAULT 0,
       uploaded_by INTEGER REFERENCES users(id),
       uploaded_at TEXT DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_task_photos_task ON task_photos(task_id);
 
     -- Which specific tasks apply to which location. A row = the task is on that
     -- location's day-task list. Most restaurants share a set; each can add/remove,
@@ -747,6 +750,36 @@ function migrate() {
     `ALTER TABLE ot_approvals ADD COLUMN escalated_at TEXT`,
     `ALTER TABLE ot_approvals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Day-task proof photos: rebuild the old one-per-task table (task_id was the
+  // PRIMARY KEY) into a many-per-task table with its own autoincrement id, so
+  // staff can attach several images. Runs once — detected by the absence of an
+  // `id` column — and copies every existing photo across before dropping the old
+  // table. Wrapped in a transaction so a failure leaves the original intact.
+  try {
+    const cols = db.prepare(`PRAGMA table_info('task_photos')`).all();
+    if (cols.length && !cols.some(c => c.name === 'id')) {
+      db.exec('BEGIN');
+      try {
+        db.exec(`
+          CREATE TABLE task_photos_new (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id     INTEGER NOT NULL REFERENCES task_assignments(id) ON DELETE CASCADE,
+            mime        TEXT NOT NULL,
+            bytes       BLOB NOT NULL,
+            byte_size   INTEGER NOT NULL DEFAULT 0,
+            uploaded_by INTEGER REFERENCES users(id),
+            uploaded_at TEXT DEFAULT (datetime('now'))
+          );
+          INSERT INTO task_photos_new (task_id, mime, bytes, byte_size, uploaded_by, uploaded_at)
+            SELECT task_id, mime, bytes, byte_size, uploaded_by, uploaded_at FROM task_photos;
+          DROP TABLE task_photos;
+          ALTER TABLE task_photos_new RENAME TO task_photos;
+          CREATE INDEX IF NOT EXISTS idx_task_photos_task ON task_photos(task_id);`);
+        db.exec('COMMIT');
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
+    }
+  } catch { /* task_photos not present yet, or already rebuilt */ }
 
   // Existing messages become the root of their own thread.
   try { db.exec(`UPDATE messages SET thread_id = id WHERE thread_id IS NULL`); } catch { /* messages table not present yet */ }

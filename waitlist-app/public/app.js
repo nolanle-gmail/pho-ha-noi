@@ -454,8 +454,8 @@ async function renderMyTasks() {
   v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => mtDone(b.dataset.done, true));
   v.querySelectorAll('[data-undo]').forEach(b => b.onclick = () => mtDone(b.dataset.undo, false));
   v.querySelectorAll('[data-check]').forEach(b => b.onclick = () => mtDone(b.dataset.check, b.getAttribute('aria-checked') !== 'true'));
-  v.querySelectorAll('[data-up]').forEach(i => i.onchange = () => { if (i.files && i.files[0]) mtUpload(i.dataset.up, i.files[0]); });
-  v.querySelectorAll('[data-photo]').forEach(img => { loadTaskPhoto(img.dataset.photo, img); img.onclick = () => mtLightbox(img.src); });
+  v.querySelectorAll('[data-up]').forEach(i => i.onchange = () => { if (i.files && i.files.length) mtUpload(i.dataset.up, i.files); });
+  v.querySelectorAll('[data-photos]').forEach(el => loadTaskPhotos(el.dataset.photos, el, el.dataset.editable === '1'));
 }
 
 // A day task moves to-do → (Start) in progress → (Done) done. A proof photo can be
@@ -464,7 +464,9 @@ function mtCard(t) {
   const time = t.task_time ? `<span class="mt-time">${esc(t.task_time)}</span>` : '';
   const meta = [t.department, t.est_minutes ? `~${t.est_minutes}m` : '', t.complexity].filter(Boolean).join(' · ');
   const inProgress = !t.done && t.started_at;
-  const photo = t.has_photo ? `<img class="mt-photo" data-photo="${t.id}" alt="Proof photo" title="View proof">` : '';
+  const nphotos = t.photo_count || 0;
+  // A strip of proof-photo thumbnails, filled lazily once the card is on screen.
+  const photos = nphotos ? `<div class="mt-photos" data-photos="${t.id}" data-editable="${!t.done && inProgress ? 1 : 0}"></div>` : '';
   let status = '';
   if (t.done) status = `<span class="mt-stamp ok">✓ Done ${esc(fmtT(t.done_at))}</span>`;
   else if (inProgress) status = `<span class="mt-stamp">▶ Started ${esc(fmtT(t.started_at))}</span>`;
@@ -472,7 +474,7 @@ function mtCard(t) {
   if (t.done) {
     actions = `<button class="mt-btn ghost" data-undo="${t.id}">Undo</button>`;
   } else if (inProgress) {
-    actions = `<label class="mt-btn photo">${t.has_photo ? '📷 Replace photo' : '📷 Add proof photo'}<input type="file" accept="image/*" capture="environment" data-up="${t.id}" hidden></label>
+    actions = `<label class="mt-btn photo">${nphotos ? '📷 Add more' : '📷 Add proof photos'}<input type="file" accept="image/*" capture="environment" multiple data-up="${t.id}" hidden></label>
       <button class="mt-btn done" data-done="${t.id}">✓ Done</button>`;
   } else {
     actions = `<button class="mt-btn start" data-start="${t.id}">▶ Start</button>`;
@@ -483,9 +485,9 @@ function mtCard(t) {
       ${meta ? `<div class="muted mt-meta">${esc(meta)}</div>` : ''}
       ${t.description ? `<div class="mt-desc">${esc(t.description)}</div>` : ''}
       ${status ? `<div class="mt-status">${status}</div>` : ''}
+      ${photos}
       <div class="mt-actions">${actions}</div>
     </div>
-    ${photo ? `<div class="mt-side">${photo}</div>` : ''}
     <button type="button" class="mt-check${t.done ? ' on' : ''}" data-check="${t.id}" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" title="${t.done ? 'Done — tap to undo' : 'Mark done'}">
       <span class="mt-box">${t.done ? '✓' : ''}</span>
       <span class="mt-check-lbl">Done</span>
@@ -522,30 +524,59 @@ function mtMarkDone(id, done) {
   }
 }
 
-// Upload a proof photo: send the raw image bytes (Content-Type = the file's type)
-// so the server stores them as-is. Not through api() because that forces JSON.
-async function mtUpload(id, file) {
-  if (!file || !/^image\//.test(file.type)) { toast('Please choose an image.', true); return; }
-  toast('Uploading photo…');
-  try {
-    const res = await fetch(`/api/mytasks/${id}/photo`, {
-      method: 'POST',
-      headers: { 'Content-Type': file.type, Authorization: 'Bearer ' + S.token },
-      body: file,
-    });
-    if (res.status === 401 && S.token) { forceRelogin(); return; }
-    const d = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(d.error || 'Upload failed');
-    toast('Proof photo added'); renderMyTasks();
-  } catch (e) { toast(e.message, true); }
+// Upload one or more proof photos: POST each file's raw bytes in turn (the server
+// appends them, up to its per-task cap). Not through api() because that forces JSON.
+async function mtUpload(id, files) {
+  const list = [...files].filter(f => /^image\//.test(f.type));
+  if (!list.length) { toast('Please choose image files.', true); return; }
+  toast(list.length > 1 ? `Uploading ${list.length} photos…` : 'Uploading photo…');
+  let ok = 0, err = '';
+  for (const file of list) {
+    try {
+      const res = await fetch(`/api/mytasks/${id}/photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type, Authorization: 'Bearer ' + S.token },
+        body: file,
+      });
+      if (res.status === 401 && S.token) { forceRelogin(); return; }
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { err = d.error || 'Upload failed'; break; }
+      ok++;
+    } catch (e) { err = e.message; break; }
+  }
+  if (err) toast(err, true); else toast(ok > 1 ? `${ok} photos added` : 'Proof photo added');
+  renderMyTasks();
 }
 const _mtPhotoUrls = [];
-async function loadTaskPhoto(id, img) {
-  try {
-    const res = await fetch(`/api/mytasks/${id}/photo`, { headers: { Authorization: 'Bearer ' + S.token } });
-    if (!res.ok) return;
-    const url = URL.createObjectURL(await res.blob()); _mtPhotoUrls.push(url); img.src = url;
-  } catch { /* thumbnail just won't load */ }
+// Load a task's proof-photo thumbnails into its strip; each opens full-size on tap,
+// and (while the task is in progress) can be removed with its ✕ button.
+async function loadTaskPhotos(id, el, editable) {
+  let d;
+  try { d = await api(`/mytasks/${id}/photos`); } catch { return; }
+  if (!d.photos || !d.photos.length) { el.remove(); return; }
+  el.innerHTML = '';
+  for (const p of d.photos) {
+    const fig = document.createElement('div'); fig.className = 'mt-thumb';
+    const img = document.createElement('img'); img.className = 'mt-photo'; img.alt = 'Proof photo';
+    fig.appendChild(img);
+    if (editable) {
+      const x = document.createElement('button');
+      x.type = 'button'; x.className = 'mt-thumb-rm'; x.textContent = '✕'; x.title = 'Remove photo';
+      x.onclick = (e) => { e.stopPropagation(); mtRemovePhoto(id, p.id); };
+      fig.appendChild(x);
+    }
+    el.appendChild(fig);
+    try {
+      const res = await fetch(`/api/mytasks/${id}/photo/${p.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
+      if (!res.ok) continue;
+      const url = URL.createObjectURL(await res.blob()); _mtPhotoUrls.push(url);
+      img.src = url; img.onclick = () => mtLightbox(url);
+    } catch { /* one thumbnail failing is fine */ }
+  }
+}
+async function mtRemovePhoto(id, pid) {
+  try { await api(`/mytasks/${id}/photo/${pid}`, { method: 'DELETE' }); toast('Photo removed'); renderMyTasks(); }
+  catch (e) { toast(e.message, true); }
 }
 function mtLightbox(src) {
   if (!src) return;

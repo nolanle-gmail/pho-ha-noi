@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: August 31, 2026_
+_Last updated: September 2, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -228,7 +228,8 @@ several jobs from the shared `jobs` catalog and paid `shift_breaks`. Separately,
 `task_assignments` pins a specific day-task to a working person. Breaks are 10 min &
 paid; the grid enforces 8h/day and 40h/week soft limits. When a staff member works a
 day task they tap **Start** (`started_at`) then **Done** (`done_at`), and may attach
-one **proof photo**, stored as bytes in `task_photos`.
+**one or more proof photos** (up to 8), stored as bytes in `task_photos` (one row
+per image). Managers view every photo on a task from the **Day Tasks** board.
 
 ```mermaid
 erDiagram
@@ -242,7 +243,7 @@ erDiagram
   jobs ||--o{ task_assignments : "of"
   users ||--o{ task_assignments : "done by"
   locations ||--o{ task_assignments : "at"
-  task_assignments ||--o| task_photos : "proof photo"
+  task_assignments ||--o{ task_photos : "proof photos"
   jobs {
     int id PK
     text code UK
@@ -280,7 +281,8 @@ erDiagram
     text done_at
   }
   task_photos {
-    int task_id PK,FK
+    int id PK
+    int task_id FK
     text mime
     blob bytes
     int uploaded_by FK
@@ -618,7 +620,7 @@ erDiagram
 | `shift_breaks` | Schedule | Paid 10-min breaks within a shift |
 | `jobs` | Schedule | Shared job/task catalog by department |
 | `task_assignments` | Schedule | A specific day-task pinned to a working person, with Start/Done timestamps |
-| `task_photos` | Schedule | Optional proof photo for a day task (image bytes in the DB) |
+| `task_photos` | Schedule | Optional proof photos for a day task — many per task, one row per image (image bytes in the DB) |
 | `location_tasks` | Schedule | Which specific tasks apply at which store |
 | `time_entries` | Time | One work day: clock-in/out, worked & late minutes |
 | `ot_approvals` | Time | Manager approval of overtime; can escalate |
@@ -723,7 +725,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
-| 📋 My Tasks | Assigned day-tasks — Start, Done, and an optional proof photo | Everyone |
+| 📋 My Tasks | Assigned day-tasks — Start, Done, and optional proof photos (multi-upload) | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
@@ -899,7 +901,7 @@ real time.
 | Manager | Owner/admin, their staff, and manager peers |
 | Staff (self-service) | Their manager, owner/admin, and peers |
 
-### 6.6 Daily tasks: start, done, proof photo
+### 6.6 Daily tasks: start, done, proof photos
 
 Managers assign specific day tasks on the Management **Day Tasks** board. Each
 working staff member sees their own tasks in the Staff app's **My Tasks**:
@@ -907,7 +909,7 @@ working staff member sees their own tasks in the Staff app's **My Tasks**:
 ```mermaid
 flowchart LR
   TODO[To-do] -->|tap Start| PROG[In progress · started_at]
-  PROG -->|optional| PHOTO[Attach proof photo]
+  PROG -->|optional| PHOTO[Attach proof photos]
   PHOTO --> PROG
   PROG -->|tap Done| DONE[Done · done_at]
   DONE -->|Undo| PROG
@@ -915,11 +917,13 @@ flowchart LR
 
 1. **Start** — the staff member taps Start; `started_at` is stamped and the card
    shows as in progress.
-2. **Proof photo (optional)** — before finishing, they may attach one photo (camera
-   or library). It's sent as raw image bytes and stored in `task_photos` on the
-   Management DB volume, then shown as a thumbnail (tap to zoom).
+2. **Proof photos (optional)** — before finishing, they may attach **one or more
+   photos** (camera or library — the picker allows multi-select). Each is sent as raw
+   image bytes and stored as its own row in `task_photos` on the Management DB volume,
+   then shown in a thumbnail strip (tap to zoom). Up to **8 photos per task**; while a
+   task is in progress each thumbnail carries a **✕** to remove it.
 3. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
-   Start/Done times and can view the proof photo.
+   Start/Done times and can view every proof photo.
 
 Each task row carries a **Done-status checkbox at the far right** ("DONE" label). It
 ticks green the instant a task is completed — via the ✓ Done button _or_ by tapping
@@ -931,8 +935,11 @@ On the Day Tasks board a manager assigns each task via its **Assigned to** dropd
 completely: the assignment is removed, so no owner, scheduled time, or "done" tick is
 left behind — the task simply returns to the pool for someone else.
 
-The photo is optional — a task can be completed without one. Managers and the task's
-owner can view a stored photo; it persists with the database.
+Photos are optional — a task can be completed without any. On the Day Tasks board a
+task with photos shows a **📷 _n_** button in the **Proof** column; a manager, owner,
+or general manager clicks it to open a **gallery** of every image on that task, each
+captioned with who uploaded it and when (tap an image for full size). The task's own
+staff member and any manager can view them; they persist with the database.
 
 ### 6.7 Floor alerts: an urgent ping to staff on shift
 

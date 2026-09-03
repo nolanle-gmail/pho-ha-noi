@@ -312,7 +312,10 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .mt-btn:hover { filter: brightness(.97); }
 /* proof thumbnail + lightbox */
 .mt-side { flex-shrink: 0; }
+.mt-photos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.mt-thumb { position: relative; width: 62px; height: 62px; }
 .mt-photo { width: 62px; height: 62px; object-fit: cover; border-radius: 10px; border: 1px solid #e7e1d7; cursor: zoom-in; background: #f4efe7; }
+.mt-thumb-rm { position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%; border: none; background: #b3261e; color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .mt-lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(20, 14, 8, .82); display: flex; align-items: center; justify-content: center; padding: 20px; cursor: zoom-out; }
 .mt-lightbox img { max-width: 92vw; max-height: 85vh; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
 

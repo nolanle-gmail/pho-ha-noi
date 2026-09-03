@@ -593,6 +593,32 @@ const check = (name, ok, detail = '') => {
       check('cannot complete a task that is not yours (403)', r.status === 403, 'status=' + r.status);
     }
 
+    // ── Multiple proof photos per day task ─────────────────────────────────
+    const photoHdr = (mime) => ({ 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': mime });
+    const upUrl = `/api/stafftasks/${myTask.id}/photo?user_id=${sara.id}`;
+    r = await fetch(base + upUrl, { method: 'POST', headers: photoHdr('image/png'), body: Buffer.from('fake-png-bytes-1') });
+    const up1 = await j(r);
+    check('staff uploads proof photo #1', r.status === 200 && up1.count === 1, JSON.stringify(up1));
+    r = await fetch(base + upUrl, { method: 'POST', headers: photoHdr('image/jpeg'), body: Buffer.from('fake-jpeg-bytes-2') });
+    const up2 = await j(r);
+    check('staff uploads proof photo #2 (append, not replace)', r.status === 200 && up2.count === 2, JSON.stringify(up2));
+    r = await fetch(base + upUrl, { method: 'POST', headers: photoHdr('application/pdf'), body: Buffer.from('not-an-image') });
+    check('non-image upload rejected (415)', r.status === 415, 'status=' + r.status);
+    // Manager (any role in MANAGE) can list every photo on the task.
+    const plist = await j(await fetch(base + `/api/stafftasks/${myTask.id}/photos`, { headers: H(mgr.token) }));
+    check('manager lists all proof photos', plist.count === 2 && plist.photos.length === 2 && plist.photos.every(p => p.id && 'uploaded_by_name' in p), JSON.stringify(plist.count));
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/photo/${plist.photos[0].id}`, { headers: H(mgr.token) });
+    check('manager fetches one photo by id (image bytes)', r.status === 200 && /^image\//.test(r.headers.get('content-type') || ''), 'ct=' + r.headers.get('content-type'));
+    const stP = await j(await fetch(base + `/api/stafftasks?user_id=${sara.id}`, { headers: svc() }));
+    check('staff task list carries photo_count', (stP.tasks.find(t => t.id === myTask.id) || {}).photo_count === 2, JSON.stringify((stP.tasks.find(t => t.id === myTask.id) || {}).photo_count));
+    if (otherStaff) {
+      r = await fetch(base + `/api/stafftasks/${myTask.id}/photos?user_id=${otherStaff.id}`, { headers: svc() });
+      check('another staff cannot view your photos (403)', r.status === 403, 'status=' + r.status);
+    }
+    r = await fetch(base + `/api/stafftasks/${myTask.id}/photo/${plist.photos[0].id}`, { method: 'DELETE', headers: H(mgr.token) });
+    const del = await j(r);
+    check('manager removes one photo', r.status === 200 && del.count === 1, JSON.stringify(del));
+
     // ── Location activity trail (merged Management + Staff-app, filterable) ──
     const act1 = await j(await fetch(base + `/api/locations/${loc1}/activity?range=all&limit=200`, { headers: H(token) }));
     check('owner sees location activity', Array.isArray(act1) && act1.length >= 1, 'n=' + (act1 || []).length);

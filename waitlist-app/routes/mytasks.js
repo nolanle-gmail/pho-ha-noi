@@ -44,17 +44,24 @@ router.post('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES
   } catch { res.status(502).json({ error: 'Photo upload is unavailable.' }); }
 });
 
-// Stream the stored photo back to the staff app.
-router.get('/:id/photo', async (req, res) => {
+// List the task's photos (metadata only).
+router.get('/:id/photos', (req, res) => fwd(res, 'GET', `/${encodeURIComponent(req.params.id)}/photos`, req));
+// Remove one photo.
+router.delete('/:id/photo/:pid', (req, res) => fwd(res, 'DELETE', `/${encodeURIComponent(req.params.id)}/photo/${encodeURIComponent(req.params.pid)}`, req));
+
+// Stream one specific photo's bytes back to the staff app.
+router.get('/:id/photo/:pid', (req, res) => streamPhoto(res, `/${encodeURIComponent(req.params.id)}/photo/${encodeURIComponent(req.params.pid)}`, req));
+// Back-compat: stream the task's most recent photo.
+router.get('/:id/photo', (req, res) => streamPhoto(res, `/${encodeURIComponent(req.params.id)}/photo`, req));
+
+async function streamPhoto(res, path, req) {
   try {
-    const r = await fetch(mgmtUrl(`/${encodeURIComponent(req.params.id)}/photo`, req.user.id), {
-      headers: { 'X-Service-Key': KEY },
-    });
+    const r = await fetch(mgmtUrl(path, req.user.id), { headers: { 'X-Service-Key': KEY } });
     if (!r.ok) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
     res.setHeader('Content-Type', r.headers.get('content-type') || 'image/jpeg');
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.send(Buffer.from(await r.arrayBuffer()));
   } catch { res.status(502).json({ error: 'Photo is unavailable.' }); }
-});
+}
 
 module.exports = router;

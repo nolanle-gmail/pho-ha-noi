@@ -11,6 +11,7 @@ const jwt = require('jsonwebtoken');
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const MAX_PHOTO_BYTES = parseInt(process.env.TASK_PHOTO_MAX || '', 10) || 8 * 1024 * 1024; // 8 MB
+const MAX_PHOTOS_PER_TASK = parseInt(process.env.TASK_PHOTO_COUNT_MAX || '', 10) || 8;
 const OK_IMAGE = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
 
 function auth(req, res, next) {
@@ -45,13 +46,12 @@ router.get('/', (req, res) => {
   const tasks = db.prepare(`
     SELECT ta.id, ta.job_id, ta.task_time, ta.done, ta.started_at, ta.done_at, ta.location_id, l.name AS location_name,
            j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
-           (tp.task_id IS NOT NULL) AS has_photo
+           (SELECT COUNT(*) FROM task_photos tp WHERE tp.task_id=ta.id) AS photo_count
     FROM task_assignments ta
     JOIN jobs j ON j.id=ta.job_id
     JOIN locations l ON l.id=ta.location_id
-    LEFT JOIN task_photos tp ON tp.task_id=ta.id
     WHERE ta.user_id=? AND ta.task_date=? ORDER BY ta.task_time IS NULL, ta.task_time, j.name`).all(uid, date)
-    .map(t => ({ ...t, done: !!t.done, has_photo: !!t.has_photo }));
+    .map(t => ({ ...t, done: !!t.done, photo_count: t.photo_count, has_photo: t.photo_count > 0 }));
   res.json({ user: { id: u.id, name: u.name }, date, tasks, summary: { total: tasks.length, done: tasks.filter(t => t.done).length } });
 });
 
@@ -85,8 +85,9 @@ router.put('/:id/done', (req, res) => {
   res.json({ success: true, id: ta.id, done: !!row.done, done_at: row.done_at, started_at: row.started_at });
 });
 
-// Upload the proof photo (raw image bytes; Content-Type is the image type). One
-// photo per task — re-uploading replaces it. Kept small and stored in the DB.
+// Append a proof photo (raw image bytes; Content-Type is the image type). Many
+// photos per task, capped at MAX_PHOTOS_PER_TASK; each is stored as a row so it
+// can be viewed or removed individually.
 router.post('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), (req, res) => {
   const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
   if (!ta) return res.status(404).json({ error: 'Task not found.' });
@@ -95,28 +96,64 @@ router.post('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES
   if (!OK_IMAGE.test(mime)) return res.status(415).json({ error: 'Please upload an image (JPG, PNG, WEBP or HEIC).' });
   const bytes = req.body;
   if (!Buffer.isBuffer(bytes) || bytes.length === 0) return res.status(400).json({ error: 'No image received.' });
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM task_photos WHERE task_id=?`).get(ta.id).n;
+  if (count >= MAX_PHOTOS_PER_TASK) return res.status(409).json({ error: `Up to ${MAX_PHOTOS_PER_TASK} photos per task.` });
   const uploadedBy = req.service ? (req.query.user_id ? parseInt(req.query.user_id, 10) : ta.user_id) : req.user.id;
-  db.prepare(`INSERT INTO task_photos (task_id, mime, bytes, byte_size, uploaded_by, uploaded_at)
-    VALUES (?,?,?,?,?,datetime('now'))
-    ON CONFLICT(task_id) DO UPDATE SET mime=excluded.mime, bytes=excluded.bytes, byte_size=excluded.byte_size, uploaded_by=excluded.uploaded_by, uploaded_at=excluded.uploaded_at`)
-    .run(ta.id, mime, bytes, bytes.length, uploadedBy);
-  res.json({ success: true, id: ta.id, has_photo: true, byte_size: bytes.length });
+  const info = db.prepare(`INSERT INTO task_photos (task_id, mime, bytes, byte_size, uploaded_by, uploaded_at)
+    VALUES (?,?,?,?,?,datetime('now'))`).run(ta.id, mime, bytes, bytes.length, uploadedBy);
+  res.json({ success: true, id: ta.id, photo_id: Number(info.lastInsertRowid), has_photo: true, count: count + 1, byte_size: bytes.length });
 });
 
-// Fetch the stored proof photo (owner or a manager).
+// List a task's proof photos (metadata only — no bytes). Owner or a manager.
+router.get('/:id/photos', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const photos = db.prepare(`SELECT p.id, p.mime, p.byte_size, p.uploaded_by, p.uploaded_at, u.name AS uploaded_by_name
+    FROM task_photos p LEFT JOIN users u ON u.id=p.uploaded_by
+    WHERE p.task_id=? ORDER BY p.id`).all(ta.id);
+  res.json({ id: ta.id, count: photos.length, photos });
+});
+
+// Stream one specific proof photo's bytes. Owner or a manager.
+router.get('/:id/photo/:photoId', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const p = db.prepare(`SELECT mime, bytes FROM task_photos WHERE id=? AND task_id=?`).get(req.params.photoId, ta.id);
+  if (!p) return res.status(404).json({ error: 'No such photo.' });
+  sendPhoto(res, p);
+});
+
+// Delete one proof photo (the assigned staff member or a manager).
+router.delete('/:id/photo/:photoId', (req, res) => {
+  const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
+  if (!ta) return res.status(404).json({ error: 'Task not found.' });
+  if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
+  const info = db.prepare(`DELETE FROM task_photos WHERE id=? AND task_id=?`).run(req.params.photoId, ta.id);
+  if (!info.changes) return res.status(404).json({ error: 'No such photo.' });
+  const count = db.prepare(`SELECT COUNT(*) AS n FROM task_photos WHERE task_id=?`).get(ta.id).n;
+  res.json({ success: true, id: ta.id, count, has_photo: count > 0 });
+});
+
+// Back-compat: fetch the task's most recent proof photo (single-photo callers).
 router.get('/:id/photo', (req, res) => {
   const ta = db.prepare(`SELECT * FROM task_assignments WHERE id=?`).get(req.params.id);
   if (!ta) return res.status(404).json({ error: 'Task not found.' });
   if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
-  const p = db.prepare(`SELECT mime, bytes FROM task_photos WHERE task_id=?`).get(ta.id);
+  const p = db.prepare(`SELECT mime, bytes FROM task_photos WHERE task_id=? ORDER BY id DESC LIMIT 1`).get(ta.id);
   if (!p) return res.status(404).json({ error: 'No photo for this task.' });
-  // node:sqlite returns a BLOB as a Uint8Array; wrap in a Buffer so Express sends
-  // the raw bytes instead of JSON-serializing the typed array.
+  sendPhoto(res, p);
+});
+
+// node:sqlite returns a BLOB as a Uint8Array; wrap in a Buffer so Express sends
+// the raw bytes instead of JSON-serializing the typed array.
+function sendPhoto(res, p) {
   const buf = Buffer.from(p.bytes);
   res.setHeader('Content-Type', p.mime);
   res.setHeader('Content-Length', buf.length);
   res.setHeader('Cache-Control', 'private, max-age=60');
   res.end(buf);
-});
+}
 
 module.exports = router;
