@@ -2,6 +2,8 @@
 const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'weekly', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Display a stored 10-digit login phone as (xxx) xxx-xxxx; pass anything else through.
+const fmtPhone = (v) => { const d = String(v == null ? '' : v).replace(/\D+/g, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (v || '—'); };
 // Stored timestamps are UTC ('YYYY-MM-DD HH:MM:SS', via SQLite datetime('now')).
 // Show them in the viewer's local time instead of raw UTC.
 function fmtLocalTs(ts) {
@@ -120,7 +122,8 @@ $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
   $('loginErr').textContent = '';
   try {
-    const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: $('email').value, password: $('password').value }) });
+    const phone = ($('phone').value || '').replace(/\D+/g, '');
+    const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone, password: $('password').value }) });
     S.token = d.token; S.user = d.user;
     localStorage.setItem('phn_token', d.token);
     localStorage.setItem('phn_user', JSON.stringify(d.user));
@@ -2732,7 +2735,7 @@ async function renderStaffDirectory() {
   // Which first-letters actually have people (for the A–Z bar).
   const present = new Set(rows.map(letterOf));
   const shown = (searching
-    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + u.role + ' ' + (u.employee_code || '')).toLowerCase().includes(q))
+    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + (u.phone || '') + ' ' + u.role + ' ' + (u.employee_code || '')).toLowerCase().includes(q))
     : rows.filter(u => letterOf(u) === staffLetter))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
 
@@ -2752,7 +2755,7 @@ async function renderStaffDirectory() {
       body += `<tr>
         <td><a href="#" class="staff-link" data-prof="${u.id}"><strong>${esc(u.name)}</strong></a>${u.job_title ? `<div class="job-title-sub">${esc(u.job_title)}</div>` : ''}</td>
         <td class="mono">${esc(u.employee_code || '—')}</td>
-        <td class="mono">${esc(u.email)}</td>
+        <td class="mono">${esc(fmtPhone(u.phone))}</td>
         <td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td>
         <td>${esc((u.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</td>
         <td><span class="badge ${STATUS_CHIP[st] || 'gray'}">${st}</span></td>
@@ -2769,10 +2772,10 @@ async function renderStaffDirectory() {
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
       ${canAdd ? '<button class="btn" id="addStaff">+ Add staff</button>' : (isManagerish ? '' : '<span class="badge gray">View only</span>')}</div>
     <div class="letter-bar">${bar}</div>
-    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
+    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, phone, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Name</th><th>Code</th><th>Email</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
+      <th>Name</th><th>Code</th><th>Phone (login)</th><th>Access level</th><th>Location</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>${body}</tbody></table></div>`;
 
   // A–Z letter bar — clicking a letter filters to it and clears any search.
@@ -2850,7 +2853,8 @@ function staffProfileEdit(d, locations, staff) {
       <div><button class="btn ghost" id="cancelProf">Cancel</button> <button class="btn" id="saveProf">Save</button></div></div>
     <div class="prof-cols">
       <div class="section"><h3>Account</h3>${inp('name', 'Full name', d.name)}
-        <label class="pfl">Work email<input type="text" value="${esc(d.email || '')}" disabled title="Email is the sign-in and can't be changed here" /></label>
+        ${inp('acct_phone', 'Login phone — 10 digits', d.phone || '', 'tel')}
+        <label class="pfl">Work email<input type="text" value="${esc(d.email || '')}" disabled title="Email is an optional internal identity; sign-in is by phone" /></label>
         ${canEditAccountFields()
           ? selRaw('role', 'Access level', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
@@ -2873,6 +2877,12 @@ function staffProfileEdit(d, locations, staff) {
     // home location only travel when the editor is owner/admin.
     const account = {};
     if (body.name !== undefined) { account.name = body.name; delete body.name; }
+    // Login phone lives on the account (users table), not the HR profile.
+    if (body.acct_phone !== undefined) {
+      const digits = (body.acct_phone || '').replace(/\D+/g, '');
+      delete body.acct_phone;
+      if (digits) { if (digits.length !== 10) { toast('Login phone must be 10 digits.', true); return; } account.phone = digits; }
+    }
     if (canEditAccountFields()) {
       if (body.role !== undefined) { account.role = body.role; delete body.role; }
       if (body.location_id !== undefined) { account.location_id = body.location_id; delete body.location_id; }
@@ -2912,7 +2922,7 @@ function renderStaffAdd(locations) {
       <div><button class="btn ghost" id="cancelAdd">Cancel</button> <button class="btn" id="saveAdd">Create account</button></div></div>
     <div class="err" id="addErr"></div>
     <div class="prof-cols">
-      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('email', 'Email', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Access level', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
+      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Access level', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code', '')}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
@@ -2927,11 +2937,13 @@ function renderStaffAdd(locations) {
     $('addErr').textContent = '';
     const get = (k) => { const el = $('pf_' + k); return el ? el.value : ''; };
     const name = get('name'), email = get('email'), password = get('password'), role = get('role'), location_id = get('location_id');
-    if (!name || !email || !password) { $('addErr').textContent = 'Name, email and temporary password are required.'; return; }
+    const phone = get('acct_phone'), phoneDigits = phone.replace(/\D+/g, '');
+    if (!name || !phone || !password) { $('addErr').textContent = 'Name, phone number and temporary password are required.'; return; }
+    if (phoneDigits.length !== 10) { $('addErr').textContent = 'Phone number must be exactly 10 digits.'; return; }
     if (password.length < 8) { $('addErr').textContent = 'Password must be at least 8 characters.'; return; }
     try {
-      const created = await api('/staff', { method: 'POST', body: JSON.stringify({ name, email, password, role, location_id: location_id || undefined }) });
-      const accountKeys = new Set(['name', 'email', 'password', 'role', 'location_id']);
+      const created = await api('/staff', { method: 'POST', body: JSON.stringify({ name, phone: phoneDigits, email: email || undefined, password, role, location_id: location_id || undefined }) });
+      const accountKeys = new Set(['name', 'acct_phone', 'email', 'password', 'role', 'location_id']);
       const body = {};
       $('view').querySelectorAll('[id^="pf_"]').forEach(el => { const k = el.id.slice(3); if (!accountKeys.has(k)) body[k] = el.value; });
       body.assigned_location_ids = [...$('view').querySelectorAll('[data-loc]:checked')].map(c => c.dataset.loc);
@@ -3797,6 +3809,7 @@ async function openAccount() {
     <div class="acct-grid">
       <div class="section"><h3>My profile</h3>
         <div class="profile-row"><span>Name</span><strong>${esc(me.name || S.user.name)}</strong></div>
+        <div class="profile-row"><span>Phone (sign-in)</span><strong>${esc(fmtPhone(me.phone))}</strong></div>
         <div class="profile-row"><span>Email</span><strong>${esc(me.email || '—')}</strong></div>
         <div class="profile-row"><span>Access level</span><span class="badge ${ROLE_CHIP[me.role] || 'gray'}">${esc(roleLabel(me.role || S.user.role))}</span></div>
         <div class="profile-row"><span>Location</span><strong>${esc((me.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}</strong></div>

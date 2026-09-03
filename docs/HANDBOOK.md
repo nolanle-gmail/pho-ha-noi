@@ -51,7 +51,9 @@ who only sees their own tasks.
 
 Each service is a small Node.js + Express app with its own SQLite database, a
 vanilla-JS single-page front end, and a REST API under `/api/*`. Auth is a 12-hour
-JWT; passwords are bcrypt hashes.
+JWT; passwords are bcrypt hashes. **Staff sign in with their 10-digit phone number**
+(any format is accepted and normalized to digits); email is kept only as an optional
+internal identity.
 
 The Management app holds the authoritative data. The Front Desk and Staff apps read
 and write the shared operational data (floor plan, guest visits, staff messages,
@@ -97,13 +99,14 @@ flowchart TB
 *Two services, two databases. Dotted lines are trusted server-to-server calls
 carrying a service key.*
 
-- **Single-source sign-in** — the Front Desk / Staff app authenticates against the
-  Management directory (the system of record), so one password per person works
-  across both apps and can't drift. Local Front-Desk accounts are an **offline
-  break-glass** only: if Management is unreachable, a host can still sign in and keep
-  the local waiting list running.
+- **Single-source sign-in** — staff sign in with their **10-digit phone number**; the
+  Front Desk / Staff app authenticates against the Management directory (the system of
+  record), so one phone + password per person works across both apps and can't drift.
+  Local Front-Desk accounts are an **offline break-glass** only: if Management is
+  unreachable, a host can still sign in (by phone) and keep the local waiting list running.
 - **Service key + `as=`** — cross-app calls send `X-Service-Key` and act "as" the
-  signed-in staff email, so Management applies that person's permissions.
+  signed-in staff email (the internal identity carried in the token), so Management
+  applies that person's permissions.
 - **Server-sent events** — one SSE stream pushes waitlist, visit and message
   changes to the boards sub-second; a seated guest appears on the floor instantly.
 
@@ -148,6 +151,7 @@ erDiagram
   }
   users {
     int id PK
+    text phone UK "10-digit login"
     text email UK
     text role "access level"
     int location_id FK
@@ -583,6 +587,7 @@ erDiagram
   }
   users {
     int id PK
+    text phone UK "10-digit login"
     text email UK
     text role "owner / manager / frontdesk"
   }
@@ -606,7 +611,7 @@ erDiagram
 
 | Table | Domain | Purpose |
 |---|---|---|
-| `users` | People | Staff accounts: name, email, role, home location, hourly rate |
+| `users` | People | Staff accounts: name, **phone (10-digit login)**, email, role, home location, hourly rate |
 | `staff_profiles` | People | Full HR record, 1:1 with users (no SSN / bank data) |
 | `staff_locations` | People | Additional stores a person can work at |
 | `locations` | Org | Restaurants + the central kitchen |
@@ -677,7 +682,7 @@ a location dashboard; self-service staff land on a personal home screen.
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
-| **Staff** | Directory (A–Z), full HR-profile edit, jobs/tasks catalog, access-level matrix, activity log. **Add staff** + access-level/location changes are owner/admin-only; **managers edit their own store's staff** (name, status, password, all HR fields) | Owner/Admin/Manager |
+| **Staff** | Directory (A–Z, searchable by phone/name/code), full HR-profile edit, jobs/tasks catalog, access-level matrix, activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + access-level/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
@@ -692,12 +697,14 @@ a location dashboard; self-service staff land on a personal home screen.
 > - **Owner / Admin** — anyone, every field, including **access level** and **home
 >   location**; only they can **Add staff**.
 > - **Managers** — their own store's staff (all-location managers: any store), but not
->   owner/admin accounts. They edit the full profile, status, and password, while
->   **access level, home location, and email stay read-only** and there's **no Add
->   staff** button.
+>   owner/admin accounts. They edit the full profile, **login phone**, status, and
+>   password, while **access level and home location stay read-only** and there's **no
+>   Add staff** button.
 >
-> Email is the sign-in and is read-only for everyone; change access level or location
-> to move someone between roles or stores (owner/admin).
+> **Phone is the sign-in** (a 10-digit number, mandatory when adding staff) and can be
+> edited by anyone who can edit the account; email is an optional internal identity and
+> is read-only here. Change access level or location to move someone between roles or
+> stores (owner/admin).
 
 ### Front Desk / Waitlist app (port 4002)
 
@@ -1019,8 +1026,9 @@ Hand each tester the section that matches their job.
 1. **Sign in to the Management console** — you land on an org-wide overview. Use the
    location picker (top bar) to switch between all ten stores + the central kitchen.
 2. **Add a staff member** — Staff → Add staff: fill the account + HR profile, set
-   access level, home location and any "also works at" stores. Confirm they appear
-   in the A–Z directory.
+   the **10-digit login phone** (mandatory; email optional), access level, home
+   location and any "also works at" stores. Confirm they appear in the A–Z directory,
+   then sign in as them with that phone number.
 3. **Check the central kitchen** — Central Kitchen → Demand → "Generate from sales",
    then Production to scale a batch sheet, then Fulfillment to deliver into a store.
 4. **Review reports & the activity log** — Reports for sales/analytics/timesheets;
@@ -1100,30 +1108,34 @@ place in line until "your table is ready."
 
 ### Demo logins
 
-> **One login, both apps.** Sign-in is unified to the Management directory, so **the
-> same email + password works on both the Management console and the Staff / Front
-> Desk app** — every account below is verified working on both. Signing in works
-> everywhere; each role then sees the UI appropriate to it (e.g. an Analyst or Driver
-> can open the Staff app but only sees the self-service views — My Tasks, Messages,
-> My Hours). Front-desk staff use the Staff app; back-office roles use the console.
+> **One login, both apps.** Sign-in is by **10-digit phone number** and is unified to
+> the Management directory, so **the same phone + password works on both the Management
+> console and the Staff / Front Desk app** — every account below is verified working on
+> both. Any input format is accepted — `(408) 483-0030`, `408-483-0030`, `4084830030` —
+> and normalized to the 10 digits before matching. Each role then sees the UI
+> appropriate to it (e.g. an Analyst or Driver can open the Staff app but only sees the
+> self-service views — My Tasks, Messages, My Hours). Front-desk staff use the Staff
+> app; back-office roles use the console.
 
-| Role | Email | Password |
+| Role | Phone (login) | Password |
 |---|---|---|
-| Owner (all) | `harry@phohanoi.com` | `Harry123!` |
-| Admin (all) | `admin@phohanoi.com` | `Admin123!` |
-| General Manager (all) | `gm@phohanoi.com` | `Gm123456!` |
-| Manager (location) | `manager1@phohanoi.com` | `Manager123!` |
-| Analyst (reports) | `analyst@phohanoi.com` | `Analyst123!` |
-| Inventory Support (ops) | `support@phohanoi.com` | `Support123!` |
-| Driver (delivery) | `driver@phohanoi.com` | `Driver123!` |
-| Server (self) | `server@phohanoi.com` | `Server123!` |
-| Chef (self) | `chef@phohanoi.com` | `Chef123456!` |
-| Host — role `host` (waitlist) | `host@phohanoi.com` | `Host123!` |
-| Front Desk — role `frontdesk` (waitlist) | `host1@phohanoi.com` | `Host123!` |
+| Owner (all) | `(408) 483-0030` | `Harry123!` |
+| Admin (all) | `(408) 555-0001` | `Admin123!` |
+| General Manager (all) | `(408) 555-0004` | `Gm123456!` |
+| Manager (location) | `(408) 555-0101` | `Manager123!` |
+| Analyst (reports) | `(408) 555-0005` | `Analyst123!` |
+| Inventory Support (ops) | `(408) 555-0002` | `Support123!` |
+| Driver (delivery) | `(408) 555-0006` | `Driver123!` |
+| Server (self) | `(408) 555-0007` | `Server123!` |
+| Chef (self) | `(408) 555-0011` | `Chef123456!` |
+| Host — role `host` (waitlist) | `(408) 555-0010` | `Host123!` |
+| Front Desk — role `frontdesk` (waitlist) | `(408) 555-0201` | `Host123!` |
 
 > **Note:** all logins above are verified working on production, on **both** apps. If
-> a login ever fails, the owner account (`harry@phohanoi.com` / `Harry123!`) is the
-> safe fallback.
+> a login ever fails, the owner account (`(408) 483-0030` / `Harry123!`) is the safe
+> fallback. Email is no longer used to sign in — it's kept only as an optional internal
+> identity (messaging/directory). The ten store managers are `(408) 555-0101` …
+> `(408) 555-0110`.
 
 ### A 10-minute smoke test for a store
 
@@ -1141,11 +1153,11 @@ place in line until "your table is ready."
 ### Central-Kitchen-first reorder (raw food)
 
 Exercises the CK-first split ordering across the store and Central-Kitchen roles.
-Manager logins run `manager1@phohanoi.com` … `manager10@phohanoi.com` (all
-`Manager123!`); the Milpitas store (`manager2@phohanoi.com`) carries low **Star Anise**
-and **Beef Flank** — items the CK is also short on — so it shows a true split.
+Manager logins run `(408) 555-0101` … `(408) 555-0110` (all `Manager123!`); the
+Milpitas store (`(408) 555-0102`) carries low **Star Anise** and **Beef Flank** —
+items the CK is also short on — so it shows a true split.
 
-1. **Manager sees the split** — sign in as `manager2@phohanoi.com`, open **Inventory →
+1. **Manager sees the split** — sign in as `(408) 555-0102`, open **Inventory →
    Orders & Reorder**. The low-stock list is headed *"Central Kitchen first, vendors for
    the shortfall,"* with **From CK** / **From vendor** columns. Confirm the split, e.g.
    Star Anise (need 14 → CK 5 + vendor 9) and Beef Flank (need 85 → CK 36 + vendor 49).
@@ -1165,9 +1177,9 @@ and **Beef Flank** — items the CK is also short on — so it shows a true spli
 
 ### Floor alert (manager → working staff)
 
-Needs two devices/tabs: one signed in as a **manager** (`manager2@phohanoi.com` /
+Needs two devices/tabs: one signed in as a **manager** (`(408) 555-0102` /
 `Manager123!`, Milpitas) and one as a **server at that store**
-(`server@phohanoi.com` / `Server123!`).
+(`(408) 555-0007` / `Server123!`).
 
 1. **Staff waits on the floor** — on the server's device, open the Staff app and stay on
    **My Tables** (their live stream is connected — the green ● Live badge shows).

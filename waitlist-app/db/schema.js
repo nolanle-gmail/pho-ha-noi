@@ -17,6 +17,7 @@ function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
+      phone TEXT,                          -- 10-digit login credential (offline break-glass)
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('owner','manager','frontdesk')),
       location_id INTEGER REFERENCES locations(id),
@@ -125,6 +126,8 @@ function migrate() {
     // and role onto audit_log so the "who did what" log still shows who acted.
     `ALTER TABLE audit_log ADD COLUMN user_name TEXT`,
     `ALTER TABLE audit_log ADD COLUMN user_role TEXT`,
+    // Phone is the login credential for the offline break-glass accounts too.
+    `ALTER TABLE users ADD COLUMN phone TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

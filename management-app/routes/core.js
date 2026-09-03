@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { normalizePhone, isValidPhone } = require('../lib/phone');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -14,7 +15,7 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
   const rows = db.prepare(`
-    SELECT u.id, u.name, u.email, u.employee_code, u.role, u.location_id, u.is_active, l.name AS location_name,
+    SELECT u.id, u.name, u.email, u.phone, u.employee_code, u.role, u.location_id, u.is_active, l.name AS location_name,
            sp.status AS work_status, sp.job_title
     FROM users u LEFT JOIN locations l ON u.location_id=l.id
     LEFT JOIN staff_profiles sp ON sp.user_id=u.id
@@ -66,18 +67,24 @@ function resolveLocation(role, provided, fallback) {
 
 // Create a staff account (owner/admin only).
 router.post('/staff', requireRole(...ROLES.ADMIN), (req, res) => {
-  const { name, email, password, role } = req.body || {};
-  if (!name || !email || !password) return res.status(400).json({ error: 'Name, email and password are required.' });
+  const { name, email, password, role, phone } = req.body || {};
+  // Phone is the login credential and is required; email is optional (kept for the
+  // internal directory/messaging identity — a placeholder is generated if omitted).
+  if (!name || !password) return res.status(400).json({ error: 'Name and password are required.' });
+  if (!phone) return res.status(400).json({ error: 'Phone number is required.' });
+  if (!isValidPhone(phone)) return res.status(400).json({ error: 'Enter a 10-digit phone number.' });
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!ROLES.ALL.includes(role)) return res.status(400).json({ error: 'Invalid access level.' });
   if (role === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can create owner accounts.' });
   const loc = resolveLocation(role, req.body.location_id, null);
   if (loc.error) return res.status(400).json({ error: loc.error });
-  const em = String(email).toLowerCase().trim();
+  const ph = normalizePhone(phone);
+  if (db.prepare(`SELECT id FROM users WHERE phone=?`).get(ph)) return res.status(409).json({ error: 'That phone number is already in use.' });
+  const em = email ? String(email).toLowerCase().trim() : `p${ph}@staff.phohanoi.local`;
   if (db.prepare(`SELECT id FROM users WHERE email=?`).get(em)) return res.status(409).json({ error: 'That email is already in use.' });
-  const r = db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`)
-    .run(String(name).slice(0, 120), em, bcrypt.hashSync(String(password), 10), role, loc.location_id);
-  auditLog(req, 'staff_create', 'user', r.lastInsertRowid, { name, email: em, role });
+  const r = db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`)
+    .run(String(name).slice(0, 120), em, ph, bcrypt.hashSync(String(password), 10), role, loc.location_id);
+  auditLog(req, 'staff_create', 'user', r.lastInsertRowid, { name, email: em, phone: ph, role });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
@@ -94,6 +101,15 @@ router.put('/staff/:id', requireRole(...ROLES.MANAGE), (req, res) => {
   const fields = [], vals = [];
 
   if (req.body.name !== undefined) { fields.push('name=?'); vals.push(String(req.body.name).slice(0, 120)); }
+
+  // Phone is the login credential — validate, normalize and keep it unique.
+  if (req.body.phone !== undefined) {
+    if (!isValidPhone(req.body.phone)) return res.status(400).json({ error: 'Enter a 10-digit phone number.' });
+    const ph = normalizePhone(req.body.phone);
+    const clash = db.prepare(`SELECT id FROM users WHERE phone=? AND id<>?`).get(ph, u.id);
+    if (clash) return res.status(409).json({ error: 'That phone number is already in use.' });
+    fields.push('phone=?'); vals.push(ph);
+  }
 
   const newRole = req.body.role;
   if (newRole !== undefined) {
@@ -146,7 +162,7 @@ const PROFILE_COLS = [
 
 // View a full profile (owner/admin/manager).
 router.get('/staff/:id/profile', requireRole(...ROLES.MANAGE), (req, res) => {
-  const u = db.prepare(`SELECT u.id, u.name, u.email, u.role, u.location_id, u.hourly_rate, u.is_active, u.created_at,
+  const u = db.prepare(`SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.hourly_rate, u.is_active, u.created_at,
       l.name AS location_name FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found.' });
   const profile = db.prepare(`SELECT * FROM staff_profiles WHERE user_id=?`).get(u.id) || {};

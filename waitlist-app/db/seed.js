@@ -74,11 +74,12 @@ function run() {
     }
   }));
 
+  // Break-glass logins are by phone too — same 10-digit numbers as Management.
   const hash = (p) => bcrypt.hashSync(p, 10);
-  db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run('Harry Nguyen', 'harry@phohanoi.com', hash('Harry123!'), 'owner', null);
+  db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run('Harry Nguyen', 'harry@phohanoi.com', '4084830030', hash('Harry123!'), 'owner', null);
   locIds.forEach((lid, i) => {
-    db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, hash('Manager123!'), 'manager', lid);
-    db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run(`Host ${i + 1}`, `host${i + 1}@phohanoi.com`, hash('Host123!'), 'frontdesk', lid);
+    db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run(`Manager ${i + 1}`, `manager${i + 1}@phohanoi.com`, `40855501${String(i + 1).padStart(2, '0')}`, hash('Manager123!'), 'manager', lid);
+    db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run(`Host ${i + 1}`, `host${i + 1}@phohanoi.com`, `40855502${String(i + 1).padStart(2, '0')}`, hash('Host123!'), 'frontdesk', lid);
   });
 
   // A live queue at Downtown, staggered arrival times.

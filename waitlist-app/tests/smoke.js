@@ -12,11 +12,11 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
   const H = (t) => ({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + t });
   const j = (r) => r.json();
   try {
-    let r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'Harry123!' }) });
-    check('owner login', r.status === 200);
+    let r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4084830030', password: 'Harry123!' }) });
+    check('owner login by phone', r.status === 200);
     const { token } = await j(r);
 
-    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'nope' }) });
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4084830030', password: 'nope' }) });
     check('bad password rejected', r.status === 401);
 
     const locs = await j(await fetch(base + '/api/waitlist/locations', { headers: H(token) }));
@@ -120,7 +120,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('check-in is rate limited (429)', burst.includes(429), 'statuses=' + burst.join(','));
 
     // ── RBAC: host pinned to own location; cannot see owner history/report ──
-    const host = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'host2@phohanoi.com', password: 'Host123!' }) }));
+    const host = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4085550202', password: 'Host123!' }) }));
     const hostQueue = await j(await fetch(base + '/api/waitlist/', { headers: H(host.token) }));
     check('host scoped to own location', Array.isArray(hostQueue), 'not array');
     r = await fetch(base + '/api/waitlist/history/all', { headers: H(host.token) });
@@ -137,7 +137,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('host blocked from activity log (403)', r.status === 403, 'status=' + r.status);
 
     // Manager also blocked (owner-only)
-    const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
+    const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4085550101', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/waitlist/history/all', { headers: H(mgr.token) });
     check('manager BLOCKED from guest history', r.status === 403, 'status=' + r.status);
 
@@ -179,10 +179,10 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('manifest names the Staff app + standalone', mj.name === 'Pho Ha Noi Staff' && mj.display === 'standalone' && Array.isArray(mj.icons) && mj.icons.length >= 2, JSON.stringify({ n: mj.name, d: mj.display }));
     check('service worker served', (await fetch(base + '/sw.js')).status === 200);
     check('PWA icons served', (await fetch(base + '/icon-512.png')).status === 200 && (await fetch(base + '/apple-touch-icon.png')).status === 200);
-    // An email that isn't a local account falls through to the Management directory
+    // A phone that isn't a local account falls through to the Management directory
     // (unreachable during this smoke → a clean 401, proving the fallback path runs).
-    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'not-a-real-staff@example.test', password: 'whatever123' }) });
-    check('non-local email falls back to Management (401 when down)', r.status === 401, 'status=' + r.status);
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '9995550000', password: 'whatever123' }) });
+    check('non-local phone falls back to Management (401 when down)', r.status === 401, 'status=' + r.status);
 
     // ── Messaging proxy: mounted + auth-gated (forwards to Management) ─────
     r = await fetch(base + '/api/messages/inbox');

@@ -9,6 +9,7 @@ function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       email TEXT UNIQUE NOT NULL,
+      phone TEXT,                          -- 10-digit login credential (stored digits only)
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL, -- validated in code against the access-level registry (lib/auth.js)
       location_id INTEGER REFERENCES locations(id),
@@ -704,6 +705,8 @@ function migrate() {
     // Central-Kitchen stock only: whether this raw item is offered to stores for distribution.
     `ALTER TABLE inventory ADD COLUMN distributable INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0`,
+    // Phone is the login credential (10 digits, stored digits-only).
+    `ALTER TABLE users ADD COLUMN phone TEXT`,
     `ALTER TABLE locations ADD COLUMN city TEXT`,
     `ALTER TABLE locations ADD COLUMN state TEXT`,
     `ALTER TABLE locations ADD COLUMN zip TEXT`,
@@ -750,6 +753,31 @@ function migrate() {
     `ALTER TABLE ot_approvals ADD COLUMN escalated_at TEXT`,
     `ALTER TABLE ot_approvals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Phone is now the login credential. Backfill a unique 10-digit login phone for
+  // every account created before this existed, so no one is locked out. The named
+  // demo accounts keep the fixed numbers documented in the handbook (so already-seeded
+  // production matches the docs); everyone else gets a deterministic 408-<id> number
+  // they can change later in the staff editor. A unique index then enforces one
+  // account per phone. All updates are guarded on an empty phone, so a real edit is
+  // never overwritten.
+  try {
+    const setPhone = db.prepare(`UPDATE users SET phone=? WHERE email=? AND (phone IS NULL OR phone='')`);
+    const named = {
+      'harry@phohanoi.com': '4084830030', 'admin@phohanoi.com': '4085550001',
+      'support@phohanoi.com': '4085550002', 'employee@phohanoi.com': '4085550003',
+      'gm@phohanoi.com': '4085550004', 'analyst@phohanoi.com': '4085550005',
+      'driver@phohanoi.com': '4085550006', 'server@phohanoi.com': '4085550007',
+      'server2@phohanoi.com': '4085550008', 'server3@phohanoi.com': '4085550009',
+      'host@phohanoi.com': '4085550010', 'chef@phohanoi.com': '4085550011',
+    };
+    for (let i = 1; i <= 10; i++) named[`manager${i}@phohanoi.com`] = `40855501${String(i).padStart(2, '0')}`;
+    for (let i = 1; i <= 10; i++) named[`host${i}@phohanoi.com`] = `40855502${String(i).padStart(2, '0')}`;
+    for (const [email, phone] of Object.entries(named)) { try { setPhone.run(phone, email); } catch { /* number already taken by a real edit */ } }
+    // Everyone else: a deterministic unique number from their id.
+    db.exec(`UPDATE users SET phone = '408' || substr('0000000' || id, -7) WHERE phone IS NULL OR phone=''`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)`);
+  } catch { /* users table not present yet */ }
 
   // Day-task proof photos: rebuild the old one-per-task table (task_id was the
   // PRIMARY KEY) into a many-per-task table with its own autoincrement id, so

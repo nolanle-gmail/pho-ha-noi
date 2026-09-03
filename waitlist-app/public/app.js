@@ -79,7 +79,8 @@ function waited(createdAt) {
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault(); $('loginErr').textContent = '';
   try {
-    const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ email: $('email').value, password: $('password').value }) });
+    const phone = ($('phone').value || '').replace(/\D+/g, '');
+    const d = await api('/auth/login', { method: 'POST', body: JSON.stringify({ phone, password: $('password').value }) });
     S.token = d.token; S.user = d.user;
     localStorage.setItem('phnw_token', d.token); localStorage.setItem('phnw_user', JSON.stringify(d.user));
     await boot();

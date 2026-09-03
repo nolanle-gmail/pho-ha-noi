@@ -16,16 +16,22 @@ const check = (name, ok, detail = '') => {
   const j = (r) => r.json();
 
   try {
-    // Login
+    // Login — by phone number (formatted input is accepted and normalized).
     let r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'Harry123!' }) });
-    check('owner login', r.status === 200);
+      body: JSON.stringify({ phone: '(408) 483-0030', password: 'Harry123!' }) });
+    check('owner login by phone (formatted)', r.status === 200);
     const { token } = await j(r);
     check('got token', !!token);
 
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'wrong' }) });
+      body: JSON.stringify({ phone: '4084830030', password: 'wrong' }) });
     check('bad password rejected', r.status === 401);
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone: '408', password: 'Harry123!' }) });
+    check('non-10-digit phone rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'Harry123!' }) });
+    check('email login no longer works (400)', r.status === 400, 'status=' + r.status);
 
     // Locations
     const locs = await j(await fetch(base + '/api/inventory/locations', { headers: H(token) }));
@@ -182,13 +188,13 @@ const check = (name, ok, detail = '') => {
 
     // RBAC: employee cannot access menu module (owner/admin/manager only)
     const emp = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'employee@phohanoi.com', password: 'Employee123!' }) }));
+      body: JSON.stringify({ phone: '4085550003', password: 'Employee123!' }) }));
     r = await fetch(base + '/api/menu/items', { headers: H(emp.token) });
     check('employee BLOCKED from menu (403)', r.status === 403, 'status=' + r.status);
 
     // RBAC: manager sees only their location
     const mgr = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: 'manager1@phohanoi.com', password: 'Manager123!' }) }));
+      body: JSON.stringify({ phone: '4085550101', password: 'Manager123!' }) }));
     r = await fetch(base + '/api/inventory/', { headers: H(mgr.token) });
     const mgrStock = await j(r);
     check('manager sees only their location', mgrStock.every(s => s.location_id === loc1), 'mixed locations');
@@ -200,36 +206,54 @@ const check = (name, ok, detail = '') => {
     const staffList = await j(await fetch(base + '/api/staff', { headers: H(token) }));
     check('staff list exposes employee codes', Array.isArray(staffList) && staffList.length > 0 && staffList.every(s => 'employee_code' in s) && staffList.some(s => s.employee_code), JSON.stringify((staffList[0] || {}).employee_code));
     const newStaff = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
-      body: JSON.stringify({ name: 'Test Support', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) }));
-    check('create staff account', newStaff.success === true && !!newStaff.id, JSON.stringify(newStaff));
+      body: JSON.stringify({ name: 'Test Support', phone: '(510) 555-0001', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) }));
+    check('create staff account (phone mandatory)', newStaff.success === true && !!newStaff.id, JSON.stringify(newStaff));
     r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
-      body: JSON.stringify({ name: 'Dup', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'employee', location_id: loc1 }) });
+      body: JSON.stringify({ name: 'NoPhone', email: 'nophone@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) });
+    check('staff without phone rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'BadPhone', phone: '12345', email: 'badphone@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) });
+    check('staff with non-10-digit phone rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'DupPhone', phone: '5105550001', email: 'dupphone@phohanoi.com', password: 'TestPass123!', role: 'support', location_id: loc1 }) });
+    check('duplicate phone rejected (409)', r.status === 409, 'status=' + r.status);
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'Dup', phone: '5105550002', email: 'teststaff@phohanoi.com', password: 'TestPass123!', role: 'employee', location_id: loc1 }) });
     check('duplicate email rejected (409)', r.status === 409, 'status=' + r.status);
     r = await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
-      body: JSON.stringify({ name: 'NoLoc', email: 'noloc@phohanoi.com', password: 'TestPass123!', role: 'employee' }) });
+      body: JSON.stringify({ name: 'NoLoc', phone: '5105550003', email: 'noloc@phohanoi.com', password: 'TestPass123!', role: 'employee' }) });
     check('non-admin role requires location (400)', r.status === 400, 'status=' + r.status);
+    // Email is optional now — creating without one succeeds (placeholder identity generated).
+    const noEmail = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ name: 'No Email', phone: '5105550009', password: 'TestPass123!', role: 'support', location_id: loc1 }) }));
+    check('create staff without email (optional)', noEmail.success === true && !!noEmail.id, JSON.stringify(noEmail));
 
     r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ name: 'Renamed Support', role: 'manager', location_id: loc1 }) });
     check('edit staff (name + role)', r.status === 200, await r.text());
     r = await fetch(base + `/api/staff/${newStaff.id}/reset-password`, { method: 'POST', headers: H(token), body: JSON.stringify({ new_password: 'ResetPass123!' }) });
     check('reset staff password', r.status === 200);
-    const relog = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'teststaff@phohanoi.com', password: 'ResetPass123!' }) }));
-    check('login with reset password', !!relog.token);
+    const relog = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '5105550001', password: 'ResetPass123!' }) }));
+    check('login by phone with reset password', !!relog.token);
 
     r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
     check('deactivate staff', r.status === 200);
-    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'teststaff@phohanoi.com', password: 'ResetPass123!' }) });
+    r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '5105550001', password: 'ResetPass123!' }) });
     check('deactivated account cannot log in (401)', r.status === 401, 'status=' + r.status);
 
     const meId = (await j(await fetch(base + '/api/auth/me', { headers: H(token) }))).id;
     r = await fetch(base + `/api/staff/${meId}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
     check('cannot deactivate self (400)', r.status === 400, 'status=' + r.status);
 
-    const adminTok = (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@phohanoi.com', password: 'Admin123!' }) }))).token;
-    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(adminTok), body: JSON.stringify({ name: 'X', email: 'x@phohanoi.com', password: 'Password123!', role: 'owner' }) });
+    const adminTok = (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4085550001', password: 'Admin123!' }) }))).token;
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(adminTok), body: JSON.stringify({ name: 'X', phone: '5105550005', email: 'x@phohanoi.com', password: 'Password123!', role: 'owner' }) });
     check('admin cannot create owner (403)', r.status === 403, 'status=' + r.status);
-    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Y', email: 'y@phohanoi.com', password: 'Password123!', role: 'employee', location_id: loc1 }) });
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ name: 'Y', phone: '5105550006', email: 'y@phohanoi.com', password: 'Password123!', role: 'employee', location_id: loc1 }) });
     check('manager cannot manage staff (403)', r.status === 403, 'status=' + r.status);
+    // Owner can change a staff member's login phone, and the new number then signs in.
+    r = await fetch(base + `/api/staff/${noEmail.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ phone: '(510) 555-0099' }) });
+    check('owner updates staff login phone', r.status === 200, await r.text());
+    const rephone = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '5105550099', password: 'TestPass123!' }) }));
+    check('login works with updated phone', !!rephone.token);
     r = await fetch(base + '/api/staff', { headers: H(emp.token) });
     check('employee blocked from staff directory (403)', r.status === 403, 'status=' + r.status);
 
@@ -653,27 +677,27 @@ const check = (name, ok, detail = '') => {
     check('service key requires a location (400)', r.status === 400, 'status=' + r.status);
 
     // ── Additional access levels ───────────────────────────────
-    const login = async (email, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) }))).token;
+    const login = async (phone, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));
     check('role registry exposed', Array.isArray(roleReg) && roleReg.length >= 15, 'count=' + (roleReg || []).length);
-    const gmTok = await login('gm@phohanoi.com', 'Gm123456!');
+    const gmTok = await login('4085550004', 'Gm123456!');
     const gmStaff = await j(await fetch(base + '/api/staff', { headers: H(gmTok) }));
     check('GM sees all-location staff', Array.isArray(gmStaff) && gmStaff.length > 20, 'count=' + (gmStaff || []).length);
     r = await fetch(base + '/api/central/summary', { headers: H(gmTok) });
     check('GM can access central kitchen', r.status === 200, 'status=' + r.status);
-    const anTok = await login('analyst@phohanoi.com', 'Analyst123!');
+    const anTok = await login('4085550005', 'Analyst123!');
     r = await fetch(base + '/api/reports/sales', { headers: H(anTok) });
     check('analyst can view reports', r.status === 200, 'status=' + r.status);
     r = await fetch(base + '/api/staff', { headers: H(anTok) });
     check('analyst blocked from staff (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(anTok) });
     check('analyst blocked from inventory (403)', r.status === 403, 'status=' + r.status);
-    const drTok = await login('driver@phohanoi.com', 'Driver123!');
+    const drTok = await login('4085550006', 'Driver123!');
     r = await fetch(base + '/api/central/fulfillment', { headers: H(drTok) });
     check('driver can view fulfillment/deliveries', r.status === 200, 'status=' + r.status);
     r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(drTok) });
     check('driver blocked from inventory (403)', r.status === 403, 'status=' + r.status);
-    const svTok = await login('server@phohanoi.com', 'Server123!');
+    const svTok = await login('4085550007', 'Server123!');
     r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(svTok) });
     check('server (position) blocked from inventory (403)', r.status === 403, 'status=' + r.status);
     const svWk = await j(await fetch(base + '/api/schedule/my-week', { headers: H(svTok) }));
@@ -682,7 +706,7 @@ const check = (name, ok, detail = '') => {
     check('server blocked from menu (403)', r.status === 403, 'status=' + r.status);
 
     // ── Activity log (access trail) ────────────────────────────
-    await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'harry@phohanoi.com', password: 'wrong' }) });
+    await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4084830030', password: 'wrong' }) });
     const acts = await j(await fetch(base + '/api/activity', { headers: H(token) }));
     check('activity log records events', Array.isArray(acts) && acts.length > 0, 'len=' + (acts || []).length);
     check('successful login is logged', acts.some(a => a.path === '/api/auth/login' && a.status === 200), 'no login event');
@@ -921,7 +945,7 @@ const check = (name, ok, detail = '') => {
     check('audit captures the reason/note on an action', !!arAudit && arAudit.detail && arAudit.detail.reason === 'audit-reason-check-42', JSON.stringify(arAudit && arAudit.detail));
 
     // ── Floor alerts (manager → working staff, live pop-up + acknowledge) ────
-    const alsrv = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'server@phohanoi.com', password: 'Server123!' }) }));
+    const alsrv = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '4085550007', password: 'Server123!' }) }));
     r = await fetch(base + '/api/alerts', { method: 'POST', headers: H(alsrv.token), body: JSON.stringify({ target_type: 'all', body: 'nope' }) });
     check('non-manager cannot send floor alerts (403)', r.status === 403, 'status=' + r.status);
     const alStaff = await j(await fetch(base + '/api/alerts/staff', { headers: H(mgr.token) }));

@@ -158,28 +158,30 @@ function run() {
 
   // Users — one account per access level (owner, admin, manager, support, employee).
   const hash = (p) => bcrypt.hashSync(p, 10);
-  const mkUser = (name, email, pw, role, lid) =>
-    db.prepare(`INSERT INTO users (name,email,password_hash,role,location_id) VALUES (?,?,?,?,?)`).run(name, email, hash(pw), role, lid);
-  mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null);           // sees everything
-  mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null);             // sees everything (for now)
+  // Phone is the login credential (10 digits). Named demo accounts get fixed, memorable
+  // numbers; the 150 generated staff are backfilled deterministically below.
+  const mkUser = (name, email, pw, role, lid, phone = null) =>
+    db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run(name, email, phone, hash(pw), role, lid);
+  mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null, '4084830030');   // sees everything
+  mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null, '4085550001');     // sees everything (for now)
   // Ten managers, one per store — real names (login emails stay manager1..10@phohanoi.com).
   const MANAGER_NAMES = [
     'Danh Pham', 'Kim Tran', 'Long Nguyen', 'Mai Vo', 'Quang Bui',
     'Linh Dao', 'Tuan Ho', 'Hoa Ly', 'Bao Phan', 'Anh Truong',
   ];
   const managerIds = locIds.map((lid, i) =>
-    Number(mkUser(MANAGER_NAMES[i], `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid).lastInsertRowid));
-  mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0]);
-  mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0]);
+    Number(mkUser(MANAGER_NAMES[i], `manager${i + 1}@phohanoi.com`, 'Manager123!', 'manager', lid, `40855501${String(i + 1).padStart(2, '0')}`).lastInsertRowid));
+  mkUser('Support Staff', 'support@phohanoi.com', 'Support123!', 'support', locIds[0], '4085550002');
+  mkUser('Employee One', 'employee@phohanoi.com', 'Employee123!', 'employee', locIds[0], '4085550003');
   // Demo accounts for the additional access levels.
-  mkUser('Grace Kim', 'gm@phohanoi.com', 'Gm123456!', 'general_manager', null);
-  mkUser('Aaron Bell', 'analyst@phohanoi.com', 'Analyst123!', 'analyst', null);
-  mkUser('Dean Vo', 'driver@phohanoi.com', 'Driver123!', 'driver', locIds[0]);
-  mkUser('Sara Tran', 'server@phohanoi.com', 'Server123!', 'server', locIds[0]);
-  mkUser('Bao Le', 'server2@phohanoi.com', 'Server123!', 'server', locIds[0]);
-  mkUser('Mai Pham', 'server3@phohanoi.com', 'Server123!', 'server', locIds[0]);
-  mkUser('Holly Vu', 'host@phohanoi.com', 'Host123!', 'host', locIds[0]);
-  mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0]);
+  mkUser('Grace Kim', 'gm@phohanoi.com', 'Gm123456!', 'general_manager', null, '4085550004');
+  mkUser('Aaron Bell', 'analyst@phohanoi.com', 'Analyst123!', 'analyst', null, '4085550005');
+  mkUser('Dean Vo', 'driver@phohanoi.com', 'Driver123!', 'driver', locIds[0], '4085550006');
+  mkUser('Sara Tran', 'server@phohanoi.com', 'Server123!', 'server', locIds[0], '4085550007');
+  mkUser('Bao Le', 'server2@phohanoi.com', 'Server123!', 'server', locIds[0], '4085550008');
+  mkUser('Mai Pham', 'server3@phohanoi.com', 'Server123!', 'server', locIds[0], '4085550009');
+  mkUser('Holly Vu', 'host@phohanoi.com', 'Host123!', 'host', locIds[0], '4085550010');
+  mkUser('Marco Ly', 'chef@phohanoi.com', 'Chef123456!', 'chef', locIds[0], '4085550011');
   // Hourly rates drive labor-cost figures in the Timesheets report.
   db.exec(`UPDATE users SET hourly_rate = CASE role WHEN 'manager' THEN 30 WHEN 'support' THEN 22 WHEN 'employee' THEN 18 ELSE 0 END`);
   const owner = db.prepare(`SELECT id FROM users WHERE role='owner'`).get();
@@ -472,6 +474,11 @@ function run() {
              AND EXISTS (SELECT 1 FROM staff_profiles sp WHERE sp.user_id = users.id AND sp.employee_code IS NOT NULL AND sp.employee_code <> '')`);
   db.exec(`UPDATE users SET employee_code = 'E' || substr('0000' || id, -4) WHERE employee_code IS NULL OR employee_code = ''`);
 
+  // Login phones: every account logs in with a unique 10-digit phone. Named demo
+  // accounts already have fixed numbers; fill the 150 generated staff (and anyone
+  // else still unset) deterministically from their id — (408) <7-digit id>.
+  db.exec(`UPDATE users SET phone = '408' || substr('0000000' || id, -7) WHERE phone IS NULL OR phone = ''`);
+
   // Hourly pay rates by role (for the payroll export). Only fills unset rates.
   const RATE_BY_ROLE = { general_manager: 40, manager: 34, assistant_manager: 30, kitchen_manager: 30, support: 19, driver: 20, server: 18, host: 17, cashier: 17, bartender: 19, barista: 17, busser: 16, chef: 28, line_cook: 22, prep_cook: 19, dishwasher: 16, employee: 18 };
   const setRate = db.prepare(`UPDATE users SET hourly_rate=? WHERE role=? AND (hourly_rate IS NULL OR hourly_rate=0)`);
@@ -494,7 +501,7 @@ function run() {
   if (empU) { teFor(empU.id, -3, 480); teFor(empU.id, -4, 480); }
 
   console.log(`Seeded ${LOCATIONS.length} locations (+ hours, ${equipCount} equipment), ${ITEMS.length} items each, ${VENDORS.length} vendors, ${menuCount} menu items, ${salesRows} sales days, ${tsRows} timesheets, 3 messages.`);
-  console.log('Owner login: harry@phohanoi.com / Harry123!');
+  console.log('Owner login (phone): (408) 483-0030 / Harry123!');
 }
 
 // ── Staff HR profiles + 150 generated staff ──────────────────────────────────
