@@ -2,10 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { migrate } = require('./db/schema');
-const { ensureDirectory } = require('./db/ensure-directory');
 
 migrate();
-ensureDirectory();   // front-desk hosts exist in the directory for messaging
+// Front-desk host accounts are created by the seed only, not auto-provisioned on
+// boot — so a production directory reflects exactly the staff that were added.
+// (SEED_DIRECTORY=1 opts back into auto-creating the host1..10 demo accounts.)
+if (process.env.SEED_DIRECTORY === '1') require('./db/ensure-directory').ensureDirectory();
 
 const app = express();
 // Behind a reverse proxy (Fly/Caddy/nginx), set TRUST_PROXY so req.ip is the real
