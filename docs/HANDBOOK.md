@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 2, 2026_
+_Last updated: September 3, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -926,6 +926,11 @@ video** control (multi-select). Attachments are stored as bytes in `message_atta
 (images up to 10 MB, videos up to 25 MB, 10 per message) and shown inline in the thread —
 images as tap-to-zoom thumbnails, videos as inline players. Only the message's sender can
 attach; every participant can view. A media-only message auto-captions (e.g. "📷 Photo").
+
+**Deleting.** In a thread, a message's own sender — or any **manager** (owner, admin,
+general manager, manager), for moderation — can **delete** a whole message (its 🗑 button)
+or remove a single **attachment** (its ✕). Deleting removes just that message (replies in
+the thread stay); its recipients and attachments go with it.
 
 | Sender | Can message |
 |---|---|

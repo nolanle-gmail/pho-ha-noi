@@ -62,6 +62,10 @@ router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_VID })
   } catch { res.status(502).json({ error: 'Attachment upload is unavailable.' }); }
 });
 
+// Delete a message, or one of its attachments (sender or a manager — enforced by Management).
+router.delete('/:id', (req, res) => fwd(req, res, 'DELETE', `/${encodeURIComponent(req.params.id)}`));
+router.delete('/:id/attachment/:aid', (req, res) => fwd(req, res, 'DELETE', `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}`));
+
 router.get('/:id/attachment/:aid', async (req, res) => {
   const email = (req.user.email || '').toLowerCase();
   if (!email) return res.status(400).json({ error: 'No messaging identity for this account.' });

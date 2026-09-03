@@ -3432,8 +3432,9 @@ async function uploadMsgAttachments(messageId, files) {
   }
   return { ok, err };
 }
-// Load a message's attachments into a container: images (click to zoom) + video players.
-async function loadMsgAttachments(messageId, el) {
+// Load a message's attachments into a container: images (click to zoom) + video
+// players. When canDelete, each carries a ✕ to remove it.
+async function loadMsgAttachments(messageId, el, canDelete) {
   let d;
   try { d = await api(`/messages/${messageId}/attachments`); } catch { return; }
   if (!d.attachments.length) { el.remove(); return; }
@@ -3441,6 +3442,11 @@ async function loadMsgAttachments(messageId, el) {
   for (const a of d.attachments) {
     const wrap = document.createElement('div'); wrap.className = 'msg-att';
     el.appendChild(wrap);
+    if (canDelete) {
+      const x = document.createElement('button'); x.type = 'button'; x.className = 'msg-att-rm'; x.textContent = '✕'; x.title = 'Remove attachment';
+      x.onclick = () => deleteMsgAttachment(messageId, a.id);
+      wrap.appendChild(x);
+    }
     try {
       const res = await fetch(`/api/messages/${messageId}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
       if (!res.ok) continue;
@@ -3454,6 +3460,21 @@ async function loadMsgAttachments(messageId, el) {
       }
     } catch { /* one attachment failing shouldn't break the rest */ }
   }
+}
+async function deleteMsgAttachment(messageId, aid) {
+  if (!confirm('Remove this attachment?')) return;
+  try { await api(`/messages/${messageId}/attachment/${aid}`, { method: 'DELETE' }); toast('Attachment removed'); renderThread(); }
+  catch (e) { toast(e.message, true); }
+}
+// Delete a whole message from the thread (sender or a manager).
+async function deleteMessage(messageId, threadCount) {
+  if (!confirm('Delete this message for everyone? This cannot be undone.')) return;
+  try {
+    await api(`/messages/${messageId}`, { method: 'DELETE' });
+    toast('Message deleted');
+    if (threadCount <= 1) { S.msgThread = null; renderMsgTabs(); renderMessages(); }
+    else renderThread();
+  } catch (e) { toast(e.message, true); }
 }
 // Wire a hidden file input + its label to show the chosen file count.
 function wireAttachInput(inputId, labelId) {
@@ -3479,15 +3500,16 @@ async function renderThread() {
       </div></div>
     <div class="thread">${t.messages.map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
-        <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
+        <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>
-        ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}"></div>` : ''}
+        ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
       <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="thFiles"></label>
       <button class="btn" id="thSend">Reply</button></div>
     <div id="thFileNames" class="msg-attach-names"></div>`;
-  $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el));
+  $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el, el.dataset.candel === '1'));
+  $('view').querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
   wireAttachInput('thFiles', 'thFileNames');
   const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
   $('thBack').onclick = backToList;
@@ -3558,6 +3580,9 @@ async function renderSent() {
 
 const MSG_LEADERSHIP = ['owner', 'admin', 'general_manager'];
 const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
+// Who may delete any message / attachment (matches the server's MODERATOR set).
+const MSG_MODERATOR = ['owner', 'admin', 'general_manager', 'manager'];
+const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MODERATOR.includes(S.user.role);
 
 async function renderCompose() {
   const role = S.user.role;

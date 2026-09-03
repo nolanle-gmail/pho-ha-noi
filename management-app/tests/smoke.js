@@ -1081,6 +1081,21 @@ const check = (name, ok, detail = '') => {
     check('recipient cannot attach — sender only (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(mgr.token) });
     check('non-participant blocked from attachments (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Delete: sender or a manager ────────────────────────────────────────
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment/${alist.attachments[0].id}`, { method: 'DELETE', headers: H(emp.token) });
+    check('recipient cannot delete an attachment (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${attMsg.id}`, { method: 'DELETE', headers: H(emp.token) });
+    check('recipient cannot delete the message (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment/${alist.attachments[0].id}`, { method: 'DELETE', headers: H(token) });
+    const adel = await j(r);
+    check('sender deletes one attachment', r.status === 200 && adel.count === 1, JSON.stringify(adel));
+    r = await fetch(base + `/api/messages/${attMsg.id}`, { method: 'DELETE', headers: H(token) });
+    check('sender deletes the whole message', r.status === 200, await r.text());
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(token) });
+    check('deleted message is gone (404)', r.status === 404, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${gsend.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('a manager can delete any message (moderation)', r.status === 200, await r.text());
     // Archive + mark-unread (recipient state — test as the actual recipient host1).
     const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
     const host1 = mrecips.find(u => u.name === 'Front Desk 1');

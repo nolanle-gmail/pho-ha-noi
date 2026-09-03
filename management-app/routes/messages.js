@@ -323,5 +323,36 @@ router.get('/:id/attachment/:aid', (req, res) => {
   res.end(buf);
 });
 
+// Who may delete a message or its attachments: its sender, or a manager (moderation).
+const MODERATOR = ['owner', 'admin', 'general_manager', 'manager'];
+const canDeleteMessage = (user, msg) => String(msg.sender_id) === String(user.id) || MODERATOR.includes(user.role);
+
+// Delete a whole message (removes its recipients + attachments too). One message,
+// not the thread — replies stay. Sender or a manager.
+router.delete('/:id', (req, res) => {
+  const m = db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (!canDeleteMessage(req.user, m)) return res.status(403).json({ error: 'You can only delete your own message.' });
+  db.exec('BEGIN');
+  try {
+    db.prepare(`DELETE FROM message_attachments WHERE message_id=?`).run(m.id);
+    db.prepare(`DELETE FROM message_recipients WHERE message_id=?`).run(m.id);
+    db.prepare(`DELETE FROM messages WHERE id=?`).run(m.id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  res.json({ success: true, id: Number(m.id) });
+});
+
+// Delete one attachment from a message. Sender of the message or a manager.
+router.delete('/:id/attachment/:aid', (req, res) => {
+  const m = db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (!canDeleteMessage(req.user, m)) return res.status(403).json({ error: 'You can only remove attachments from your own message.' });
+  const info = db.prepare(`DELETE FROM message_attachments WHERE id=? AND message_id=?`).run(req.params.aid, m.id);
+  if (!info.changes) return res.status(404).json({ error: 'No such attachment.' });
+  const count = db.prepare(`SELECT COUNT(*) n FROM message_attachments WHERE message_id=?`).get(m.id).n;
+  res.json({ success: true, id: Number(m.id), count });
+});
+
 module.exports = router;
 module.exports.notify = notify;

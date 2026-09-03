@@ -478,6 +478,10 @@ tr:hover .order-hover { opacity: 1; }
 .msg-atts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 .msg-att-img { max-width: 200px; max-height: 200px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
 .msg-att-video { max-width: 280px; max-height: 220px; border-radius: 10px; border: 1px solid var(--line); background: #000; }
+.msg-att { position: relative; }
+.msg-att-rm { position: absolute; top: -6px; right: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 50%; border: none; background: var(--red, #b3261e); color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.msg-del { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: .82rem; padding: 0 2px; opacity: .6; }
+.msg-del:hover { opacity: 1; }
 /* Top notice banner (e.g. an expired session). Fixed strip above everything. */
 .session-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; gap: .75rem; padding: .7rem 1rem; background: #fef3c7; color: #92400e; border-bottom: 1px solid #f2c98b; font-weight: 700; font-size: .9rem; box-shadow: 0 2px 8px #0002; animation: bannerdrop .25s ease; }
 .session-banner[hidden] { display: none; }

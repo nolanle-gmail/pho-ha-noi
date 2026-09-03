@@ -77,6 +77,10 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .msg-atts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 .msg-att-img { max-width: 180px; max-height: 180px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
 .msg-att-video { max-width: 240px; max-height: 200px; border-radius: 10px; border: 1px solid var(--line); background: #000; }
+.msg-att { position: relative; }
+.msg-att-rm { position: absolute; top: -6px; right: -6px; z-index: 2; width: 20px; height: 20px; border-radius: 50%; border: none; background: #b3261e; color: #fff; font-size: 11px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+.msg-del { border: none; background: transparent; color: #8a8172; cursor: pointer; font-size: .82rem; padding: 0 2px; opacity: .65; }
+.msg-del:hover { opacity: 1; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
