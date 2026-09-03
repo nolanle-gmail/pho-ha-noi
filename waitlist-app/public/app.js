@@ -58,7 +58,7 @@ const isServerRole = (r) => SERVER_ROLES.includes(r);
 const isFrontDeskRole = (r) => FD_ROLES.includes(r);
 const isSelfServiceRole = (r) => SELF_SERVICE_ROLES.includes(r);
 // Who can send floor alerts (mirrors the Management alerts route CAN_SEND).
-const ALERT_SENDERS = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const ALERT_SENDERS = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 // Back-of-house kitchen roles can see the floor but not seat / change tables.
 const KITCHEN_ROLES = ['chef', 'line_cook', 'prep_cook', 'dishwasher'];
 const canEditFloor = (r) => !KITCHEN_ROLES.includes(r);
@@ -276,10 +276,10 @@ function render() {
 }
 
 // ── Messages: team inbox + compose, proxied to the shared Management directory ─
-const MSG_LEADERSHIP = ['owner', 'admin', 'general_manager'];
+const MSG_LEADERSHIP = ['owner', 'admin', 'hr', 'general_manager'];
 const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
 // Who may delete any message / attachment (matches the server's MODERATOR set).
-const MSG_MODERATOR = ['owner', 'admin', 'general_manager', 'manager'];
+const MSG_MODERATOR = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
 const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MODERATOR.includes(S.user.role);
 const roleWord = (r) => ({ owner: 'Owner', admin: 'Admin', general_manager: 'General Manager', regional_manager: 'Regional Manager', manager: 'Manager', assistant_manager: 'Assistant Manager', kitchen_manager: 'Kitchen Manager', frontdesk: 'Front Desk', host: 'Host', server: 'Server', busser: 'Busser', chef: 'Chef', line_cook: 'Line Cook', employee: 'Staff' }[r] || r);
 const msgAgo = (iso) => { const d = new Date((iso || '').replace(' ', 'T') + 'Z'); const m = Math.floor((Date.now() - d.getTime()) / 60000); return m < 60 ? Math.max(0, m) + 'm ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };

@@ -24,6 +24,10 @@ const ROLE_DEFS = {
   // Executive / all-location administration
   owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
+  // HR — full administrative access, mirroring Admin. (Owner/Admin are slated to
+  // keep a few powers to themselves later — archive, delete, activity log & audit —
+  // which HR would then not have; those checks are marked ORG_ADMIN_ONLY.)
+  hr:                { label: 'HR',                scope: 'all',      rank: 90,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   general_manager:   { label: 'General Manager',   scope: 'all',      rank: 85,  caps: ['manage', 'ops', 'reports', 'central'] },
   regional_manager:  { label: 'Regional Manager',  scope: 'all',      rank: 80,  caps: ['manage', 'ops', 'reports'] },
   // Single-location management

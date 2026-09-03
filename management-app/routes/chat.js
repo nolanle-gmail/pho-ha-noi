@@ -18,8 +18,8 @@ const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1
 const MAX_ATTACH = parseInt(process.env.MESSAGE_ATTACH_MAX || '', 10) || 10;
 const OK_IMG = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
 const OK_VID = /^video\/(mp4|quicktime|webm|ogg|3gpp|x-m4v|x-matroska)$/i;
-const AUDIT = ['owner', 'admin', 'general_manager']; // may read/list any group
-const CAN_DELETE = ['owner', 'admin'];                // may deactivate a group
+const AUDIT = ['owner', 'admin', 'hr', 'general_manager']; // may read/list any group — ORG_ADMIN_ONLY (future: drop 'hr')
+const CAN_DELETE = ['owner', 'admin', 'hr'];              // may deactivate a group — ORG_ADMIN_ONLY (future: drop 'hr')
 
 // Auth: a Management JWT, OR the Staff-app service key with ?as=<email>.
 router.use((req, res, next) => {

@@ -181,7 +181,7 @@ router.get('/board', requireRole(...ROLES.MANAGE), (req, res) => {
 // Overtime is derived from clocked hours per California's daily rule:
 //   regular ≤ 8h/day, overtime (1.5×) for 8–12h/day, double-time (2×) beyond 12h/day.
 const OT_AFTER_MIN = 8 * 60, DT_AFTER_MIN = 12 * 60, OT_MULT = 1.5, DT_MULT = 2;
-const OT_EDIT_ROLES = ['owner', 'admin', 'general_manager']; // may change approved OT later
+const OT_EDIT_ROLES = ['owner', 'admin', 'hr', 'general_manager']; // may change approved OT later
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const mondayOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const round2 = (n) => Math.round(n * 100) / 100;
@@ -491,7 +491,7 @@ router.post('/ot-escalate', requireRole(...ROLES.MANAGE), (req, res) => {
   }
   auditLog(req, 'ot_escalate', 'user', userId, { location_id: locId, work_date: date });
   // Notify leadership (owner / admin / general_manager) who can decide.
-  const leaders = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role IN ('owner','admin','general_manager')`).all().map(r => r.id);
+  const leaders = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role IN ('owner','admin','hr','general_manager')`).all().map(r => r.id);
   const loc = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(locId) || {}).name || 'a location';
   leaders.forEach(lid => notify(req.user.id, lid, 'Overtime approval requested',
     `${userName(req.user.id)} is requesting sign-off on ${userName(userId)}'s overtime on ${date} at ${loc}${note ? ` — "${note}"` : ''}. Review it under Time Clock.`));
@@ -499,7 +499,7 @@ router.post('/ot-escalate', requireRole(...ROLES.MANAGE), (req, res) => {
 });
 
 // Leadership: overtime escalated to me for a decision, across my locations.
-router.get('/ot-requests', requireRole('owner', 'admin', 'general_manager'), (req, res) => {
+router.get('/ot-requests', requireRole('owner', 'admin', 'hr', 'general_manager'), (req, res) => {
   const rows = db.prepare(`SELECT oa.location_id, oa.user_id, oa.work_date, oa.ot_minutes, oa.dt_minutes, oa.note, oa.escalated_at,
       u.name AS staff_name, ue.name AS escalated_by, l.name AS location_name
     FROM ot_approvals oa JOIN users u ON u.id=oa.user_id LEFT JOIN users ue ON ue.id=oa.escalated_by LEFT JOIN locations l ON l.id=oa.location_id

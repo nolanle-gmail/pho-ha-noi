@@ -32,7 +32,7 @@ const ACTIVITY = [
   'activity_log', 'audit_log',
 ];
 
-const kept = db.prepare(`SELECT id, name, role FROM users WHERE role IN ('owner','admin') ORDER BY id`).all();
+const kept = db.prepare(`SELECT id, name, role FROM users WHERE role IN ('owner','admin','hr') ORDER BY id`).all();
 const keptIds = kept.map(u => u.id);
 console.log('=== Management DB cleanup:', dbPath, '===');
 console.log('Users before:', count('users'));
@@ -47,7 +47,7 @@ try {
   for (const t of ['staff_profiles', 'staff_locations']) {
     try { const info = db.prepare(`DELETE FROM ${t} WHERE user_id NOT IN (${placeholders})`).run(...keptIds); console.log(`  ${t}: removed ${info.changes} for non-owner/admin`); } catch (e) { console.log(`  skip ${t}: ${e.message}`); }
   }
-  const del = db.prepare(`DELETE FROM users WHERE role NOT IN ('owner','admin')`).run();
+  const del = db.prepare(`DELETE FROM users WHERE role NOT IN ('owner','admin','hr')`).run();
   console.log(`  users: removed ${del.changes}`);
   db.exec('COMMIT');
 } catch (e) { db.exec('ROLLBACK'); console.error('ROLLED BACK:', e.message); process.exit(1); }

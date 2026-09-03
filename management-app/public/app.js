@@ -166,6 +166,10 @@ async function boot() {
 
 // ── Access-level registry (loaded from the API at boot; mirrors lib/auth.js) ──
 let ROLE_DEFS = {};
+// Org administrators — the top-tier access levels with the 'org' capability.
+// HR mirrors Owner/Admin today. (When archive/delete/activity-log/audit become
+// Owner/Admin-only, drop 'hr' from that specific check, not from here.)
+const ORG_ADMIN = ['owner', 'admin', 'hr'];
 const roleDef = (r) => ROLE_DEFS[r] || { label: r, scope: 'self', caps: [] };
 const roleLabel = (r) => roleDef(r).label;
 const roleScopeOf = (r) => roleDef(r).scope;
@@ -1312,7 +1316,7 @@ function renderLocationsSection() {
 
 async function renderLocList() {
   const locs = await api('/locations');
-  const canAdd = ['owner', 'admin'].includes(S.user.role);
+  const canAdd = ORG_ADMIN.includes(S.user.role);
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length}</span></h2>
       ${canAdd ? '<button class="btn" id="addLoc">+ Add location</button>' : ''}</div>
@@ -1358,7 +1362,7 @@ function locationModal(loc) {
 
 const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
-const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'general_manager', 'manager'];
+const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
 const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) => k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role));
 function renderLocDetailTabs() {
   $('tabs').innerHTML = locTabsForMe().map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
@@ -1414,9 +1418,9 @@ async function renderLocActivity() {
 }
 
 async function renderLocInfo(loc) {
-  const canEdit = ['owner', 'admin'].includes(S.user.role);
-  const canEditHours = ['owner', 'admin', 'manager'].includes(S.user.role);
-  const canViewFloor = ['owner', 'admin', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
+  const canEdit = ORG_ADMIN.includes(S.user.role);
+  const canEditHours = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canViewFloor = ['owner', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
   $('locBody').innerHTML = `
@@ -1555,7 +1559,7 @@ const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
 const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.label ? ' ' + b.label : ''}`;
 
 async function renderLocSchedule() {
-  const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
   let data, jobs;
   try {
     [data, jobs] = await Promise.all([
@@ -1813,7 +1817,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
 
 // ── Day Tasks — assign specific tasks to the day's working staff ─────────────
 async function renderLocDayTasks() {
-  const canEdit = ['owner', 'admin'].includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
   let data;
   // No stored date → let the server default to the location's local "today".
   try { data = await api('/schedule/day-tasks?location_id=' + S.locDetailId + (S.dayTaskDate ? '&date=' + S.dayTaskDate : '')); }
@@ -2032,7 +2036,7 @@ async function openLocTaskListModal(locId, locName) {
 
 // ── Time Clock — check-in/out status for the location (manager/GM/owner) ──────
 async function renderLocTimeClock() {
-  const canManage = ['owner', 'admin'].includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
+  const canManage = ORG_ADMIN.includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
   let data, alerts = { alerts: [] }, payroll = null;
   try {
     // No stored date → server defaults to the location's local "today".
@@ -2495,7 +2499,7 @@ const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational']
 function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }
 async function renderLocEquipment() {
   const eq = await api('/locations/' + S.locDetailId + '/equipment');
-  const canManage = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
   $('locBody').innerHTML = `
     <div class="row-between"><h3 style="margin:0">Equipment & assets <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${eq.length}</span></h3>${canManage ? '<button class="btn" id="addEq">+ Add equipment</button>' : ''}</div>
     <div class="table-wrap" style="margin-top:1rem"><table><thead><tr>
@@ -2558,7 +2562,7 @@ const JOB_TITLES = [
 const dlInput = (k, label, val, opts) => `<label class="pfl">${label}<input id="pf_${k}" list="dl_${k}" value="${esc(val == null ? '' : val)}" autocomplete="off" placeholder="Type or pick…" /><datalist id="dl_${k}">${opts.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist></label>`;
 const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels'], ['activity', 'Activity Log']];
 // The Activity Log (access trail) is owner/admin only.
-const staffTabsFor = () => STAFF_TABS.filter(([k]) => k !== 'activity' || ['owner', 'admin'].includes(S.user.role));
+const staffTabsFor = () => STAFF_TABS.filter(([k]) => k !== 'activity' || ORG_ADMIN.includes(S.user.role));
 function renderStaffTabs() {
   const tabs = staffTabsFor();
   if (!S.staffTab || !tabs.some(([k]) => k === S.staffTab)) S.staffTab = 'overview';
@@ -2662,7 +2666,7 @@ async function renderJobsCatalog() {
   let jobs;
   try { jobs = await api('/schedule/jobs'); }
   catch (e) { return renderPlaceholder('Jobs', '🧾', e.message); }
-  const canManage = ['owner', 'admin', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
   const active = jobs.filter(j => j.is_active);
   const byDept = {};
   active.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
@@ -2747,16 +2751,16 @@ const letterOf = (u) => { const L = (u.name.trim()[0] || '#').toUpperCase(); ret
 // owner/admin account. Only owner/admin can Add staff or change access level /
 // home location.
 const MGR_EDIT_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
-const ALL_SCOPE_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager'];
+const ALL_SCOPE_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
 function canEditStaffRow(u) {
   const r = S.user.role;
-  if (['owner', 'admin'].includes(r)) return true;
+  if (ORG_ADMIN.includes(r)) return true;
   if (!MGR_EDIT_ROLES.includes(r)) return false;
-  if (['owner', 'admin'].includes(u.role)) return false;
+  if (ORG_ADMIN.includes(u.role)) return false;
   if (ALL_SCOPE_ROLES.includes(r)) return true;
   return String(u.location_id) === String(S.user.location_id);
 }
-const canEditAccountFields = () => ['owner', 'admin'].includes(S.user.role);
+const canEditAccountFields = () => ORG_ADMIN.includes(S.user.role);
 // Load a person's full record, then open the combined edit form.
 async function openStaffEdit(id) {
   try {
@@ -2773,7 +2777,7 @@ async function renderStaffDirectory() {
   let rows, locations;
   try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations').catch(() => S.locations)]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
-  const canAdd = ['owner', 'admin'].includes(S.user.role);
+  const canAdd = ORG_ADMIN.includes(S.user.role);
   const isManagerish = MGR_EDIT_ROLES.includes(S.user.role);
   const q = staffSearch.trim().toLowerCase();
   const searching = q.length > 0;
@@ -3191,7 +3195,7 @@ function renderReportModule() {
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 function reportFilters(withDates) {
-  const seesAll = ['owner', 'admin'].includes(S.user.role);
+  const seesAll = ORG_ADMIN.includes(S.user.role);
   const loc = seesAll ? `<div class="field"><label>Location</label><select id="rfLoc"><option value="">All 10 locations</option>${S.locations.map(l => `<option value="${l.id}" ${String(reportFilter.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></div>` : '';
   const dates = withDates ? `<div class="field"><label>From</label><input id="rfStart" type="date" value="${reportFilter.start}"></div><div class="field"><label>To</label><input id="rfEnd" type="date" value="${reportFilter.end}"></div>` : '';
   return (loc || dates) ? `<div class="filters">${loc}${dates}</div>` : '';
@@ -3305,7 +3309,7 @@ const ALERT_PRESETS = [
   'Table {n} needs a refill / bus', 'Come to the front desk', 'Check on your section',
 ];
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
-const ALERT_SEES_ALL = ['owner', 'admin', 'general_manager', 'regional_manager'];
+const ALERT_SEES_ALL = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
 
 function alertCue() {
   try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ }
@@ -3589,15 +3593,15 @@ async function renderSent() {
       </div>`).join('')}</div>` : '<div class="empty">You haven’t sent any messages.</div>'}`;
 }
 
-const MSG_LEADERSHIP = ['owner', 'admin', 'general_manager'];
+const MSG_LEADERSHIP = ['owner', 'admin', 'hr', 'general_manager'];
 const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
 // Who may delete any message / attachment (matches the server's MODERATOR set).
-const MSG_MODERATOR = ['owner', 'admin', 'general_manager', 'manager'];
+const MSG_MODERATOR = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
 const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MODERATOR.includes(S.user.role);
 
 async function renderCompose() {
   const role = S.user.role;
-  const canBroadcast = ['owner', 'admin', 'manager'].includes(role);
+  const canBroadcast = ['owner', 'admin', 'hr', 'manager'].includes(role);
   const recips = await api('/messages/recipients');
   const myLoc = String(S.user.location_id || '');
   const inLoc = (u) => String(u.location_id || '') === myLoc;

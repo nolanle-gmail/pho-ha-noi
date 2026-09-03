@@ -10,7 +10,7 @@ router.use(verifyToken);
 // Any front-of-house or management role can view the live floor and help seat /
 // update tables at their location. Pure back-office roles (inventory support,
 // driver, analyst, accountant) are not floor staff and stay out.
-const FLOOR = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager',
+const FLOOR = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager',
   'frontdesk', 'host', 'server', 'busser', 'cashier', 'bartender', 'barista', 'chef', 'line_cook', 'prep_cook', 'dishwasher', 'employee'];
 // Back-of-house kitchen roles may VIEW the floor but not seat guests or change
 // table status — those writes stay with front-of-house + management.

@@ -57,7 +57,7 @@ const WAITLIST_URL = (process.env.WAITLIST_URL || 'http://localhost:4002').repla
 const ACTIVITY_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const activitySince = (range) => { const days = { day: 1, week: 7, month: 30 }[range]; return days ? new Date(Date.now() - days * 86400000).toISOString().replace('T', ' ').slice(0, 19) : null; };
 
-router.get('/:id/activity', requireRole('owner', 'admin', 'general_manager', 'manager'), async (req, res) => {
+router.get('/:id/activity', requireRole('owner', 'admin', 'hr', 'general_manager', 'manager'), async (req, res) => {
   const locId = parseInt(req.params.id, 10);
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const range = ['day', 'week', 'month', 'all'].includes(req.query.range) ? req.query.range : 'day';

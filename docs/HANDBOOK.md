@@ -1095,6 +1095,7 @@ their own store) · `self` (only their own schedule, tasks & messages).
 |---|---|---|---|
 | **Owner** | all | org · manage · ops · reports · central | Everything; only an owner can create owners |
 | **Admin** | all | org · manage · ops · reports · central | Everything; created by an owner |
+| **HR** | all | org · manage · ops · reports · central | Full administrative access, mirroring Admin¹ |
 | **General Manager** | all | manage · ops · reports · central | Operations across every store |
 | **Regional Manager** | all | manage · ops · reports | Multi-store ops, no central kitchen |
 | **Manager** | location | manage · ops · reports | Runs their own store end to end |
@@ -1107,6 +1108,11 @@ their own store) · `self` (only their own schedule, tasks & messages).
 > **Positions share permissions, differ by title.** Server, Host, Busser and the
 > kitchen positions are all `self`-scoped with the same access — the job title just
 > changes what they're called and which Staff-app views appear.
+>
+> ¹ **HR** currently has the same full access as Owner/Admin. Owner and Admin are
+> slated to keep a few powers to themselves later — **archive, delete, view the
+> activity log, and audit information** — which HR would then not have; the checks
+> that will change are marked `ORG_ADMIN_ONLY` in the code.
 
 ---
 

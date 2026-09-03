@@ -164,6 +164,7 @@ function run() {
     db.prepare(`INSERT INTO users (name,email,phone,password_hash,role,location_id) VALUES (?,?,?,?,?,?)`).run(name, email, phone, hash(pw), role, lid);
   mkUser('Harry Nguyen', 'harry@phohanoi.com', 'Harry123!', 'owner', null, '4084830030');   // sees everything
   mkUser('Admin User', 'admin@phohanoi.com', 'Admin123!', 'admin', null, '4085550001');     // sees everything (for now)
+  mkUser('Holly Reyes', 'hr@phohanoi.com', 'Hr123456!', 'hr', null, '4085550009');          // HR — full admin-level access
   // Ten managers, one per store — real names (login emails stay manager1..10@phohanoi.com).
   const MANAGER_NAMES = [
     'Danh Pham', 'Kim Tran', 'Long Nguyen', 'Mai Vo', 'Quang Bui',

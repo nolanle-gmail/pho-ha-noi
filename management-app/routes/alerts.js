@@ -25,8 +25,8 @@ router.use((req, res, next) => {
   return verifyToken(req, res, next);
 });
 
-const CAN_SEND = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
-const SEES_ALL = ['owner', 'admin', 'general_manager', 'regional_manager'];
+const CAN_SEND = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const SEES_ALL = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
 const canSend = (role) => CAN_SEND.includes(role);
 const TARGET_ROLES = ['server', 'host', 'busser', 'support', 'employee', 'chef', 'driver'];
 

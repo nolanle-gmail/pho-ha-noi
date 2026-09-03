@@ -20,7 +20,7 @@ router.get('/staff', requireRole(...ROLES.MANAGE), (req, res) => {
     FROM users u LEFT JOIN locations l ON u.location_id=l.id
     LEFT JOIN staff_profiles sp ON sp.user_id=u.id
     ${where}
-    ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 WHEN 'support' THEN 3 ELSE 4 END, u.name
+    ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'hr' THEN 2 WHEN 'manager' THEN 3 WHEN 'support' THEN 4 ELSE 5 END, u.name
   `).all(...args);
   res.json(rows);
 });
