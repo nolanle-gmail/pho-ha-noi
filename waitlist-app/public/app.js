@@ -1494,13 +1494,13 @@ async function exportHistoryCSV() {
     const rows = await api('/waitlist/history/all?' + p.toString());
 
     const headers = ['Date', 'Guest', 'Party Size', 'Location', 'Status', 'Phone',
-      'Quoted (min)', 'Added At', 'Notified At', 'Seated At', 'Table', 'Notes'];
+      'Quoted (min)', 'Added At', 'Notified At', 'Seated At', 'Table'];
     const lines = [headers.join(',')];
     for (const r of rows) {
       lines.push([
         (r.created_at || '').slice(0, 10), r.guest_name, r.party_size, r.location_name,
         r.status, r.phone || '', r.quoted_minutes == null ? '' : r.quoted_minutes,
-        r.created_at || '', r.notified_at || '', r.seated_at || '', r.table_number || '', r.notes || '',
+        r.created_at || '', r.notified_at || '', r.seated_at || '', r.table_number || '',
       ].map(csvCell).join(','));
     }
     const csv = '﻿' + lines.join('\r\n'); // BOM so Excel reads UTF-8
