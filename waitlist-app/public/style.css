@@ -12,6 +12,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 
 .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--red-dark), var(--red)); padding: 1rem; }
 .login-card { background: #fff; border-radius: 18px; padding: 2.25rem; width: 100%; max-width: 360px; box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center; }
+.login-lbl { display: block; text-align: left; font-size: .8rem; font-weight: 700; color: #8a8172; margin: .7rem 0 .25rem; }
 .brand-logo { background: linear-gradient(135deg, var(--red), var(--red-dark)); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: .3rem; }
 .brand-logo img { height: 52px; width: auto; display: block; margin: 0 auto; }
 .sub { color: var(--muted); font-size: .88rem; margin: .25rem 0 1.4rem; }

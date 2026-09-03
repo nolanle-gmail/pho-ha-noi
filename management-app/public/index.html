@@ -17,11 +17,21 @@
       <div class="brand-logo"><img src="/brand.svg" alt="Phở Hà Nội" /></div>
       <div class="sub" style="margin-top:.6rem">Enterprise Restaurant Management System</div>
       <div class="err" id="loginErr"></div>
-      <input id="phone" type="tel" placeholder="Phone number" autocomplete="username" inputmode="numeric" />
-      <input id="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <label class="login-lbl" for="phone">Phone Number</label>
+      <input id="phone" type="tel" placeholder="Phone number" autocomplete="off" inputmode="numeric" />
+      <label class="login-lbl" for="password">Password</label>
+      <input id="password" type="password" placeholder="Password" autocomplete="off" />
       <button class="btn block" type="submit">Sign in</button>
     </form>
   </div>
+  <script>
+    // Always open the sign-in form empty — ignore any browser/autofill carry-over.
+    (function () {
+      function clr() { var p = document.getElementById('phone'), w = document.getElementById('password'); if (p) p.value = ''; if (w) w.value = ''; }
+      window.addEventListener('DOMContentLoaded', clr);
+      window.addEventListener('load', function () { clr(); setTimeout(clr, 250); });
+    })();
+  </script>
 
   <!-- App shell -->
   <div id="app" class="app-shell hidden">

@@ -35,6 +35,7 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--surface); border-radius: 18px; padding: 2.25rem; width: 100%; max-width: 360px;
   box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center;
 }
+.login-lbl { display: block; text-align: left; font-size: .8rem; font-weight: 700; color: var(--muted); margin: .7rem 0 .25rem; }
 .brand { font-size: 1.8rem; font-weight: 800; color: var(--red); letter-spacing: -.5px; }
 .brand .bowl { font-size: 2.4rem; display: block; }
 .brand-logo { background: linear-gradient(135deg, var(--red), var(--red-dark)); border-radius: 14px; padding: 1rem 1.2rem; }
