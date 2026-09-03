@@ -3407,7 +3407,62 @@ function renderMessages() {
   ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts }[S.msgTab])();
 }
 
+// ── Message attachments (pictures & videos) ──────────────────────────────────
+const _msgAttUrls = [];
+function revokeMsgAtts() { while (_msgAttUrls.length) URL.revokeObjectURL(_msgAttUrls.pop()); }
+// A short caption when the sender attaches media but types no text.
+function msgFilesCaption(files) {
+  const a = [...files]; if (!a.length) return '';
+  if (a.length === 1) return /^video\//.test(a[0].type) ? '🎥 Video' : '📷 Photo';
+  const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
+  return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
+}
+// POST each selected file's bytes to a message. Returns {ok, err}.
+async function uploadMsgAttachments(messageId, files) {
+  const list = [...files].filter(f => /^(image|video)\//.test(f.type));
+  let ok = 0, err = '';
+  for (const f of list) {
+    try {
+      const res = await fetch(`/api/messages/${messageId}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
+        method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
+      ok++;
+    } catch (e) { err = e.message; break; }
+  }
+  return { ok, err };
+}
+// Load a message's attachments into a container: images (click to zoom) + video players.
+async function loadMsgAttachments(messageId, el) {
+  let d;
+  try { d = await api(`/messages/${messageId}/attachments`); } catch { return; }
+  if (!d.attachments.length) { el.remove(); return; }
+  el.innerHTML = '';
+  for (const a of d.attachments) {
+    const wrap = document.createElement('div'); wrap.className = 'msg-att';
+    el.appendChild(wrap);
+    try {
+      const res = await fetch(`/api/messages/${messageId}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+      if (!res.ok) continue;
+      const url = URL.createObjectURL(await res.blob()); _msgAttUrls.push(url);
+      if (a.kind === 'video') {
+        const vid = document.createElement('video'); vid.src = url; vid.controls = true; vid.preload = 'metadata'; vid.className = 'msg-att-video';
+        wrap.appendChild(vid);
+      } else {
+        const img = document.createElement('img'); img.src = url; img.className = 'msg-att-img'; img.alt = a.filename || 'Attachment'; img.onclick = () => pgLightbox(url);
+        wrap.appendChild(img);
+      }
+    } catch { /* one attachment failing shouldn't break the rest */ }
+  }
+}
+// Wire a hidden file input + its label to show the chosen file count.
+function wireAttachInput(inputId, labelId) {
+  const inp = $(inputId), lbl = labelId && $(labelId);
+  if (inp && lbl) inp.onchange = () => { lbl.textContent = inp.files && inp.files.length ? `📎 ${inp.files.length} file${inp.files.length > 1 ? 's' : ''} attached` : ''; };
+}
+
 async function renderThread() {
+  revokeMsgAtts();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   let t;
   try { t = await api(`/messages/thread/${S.msgThread}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
@@ -3426,8 +3481,14 @@ async function renderThread() {
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
         <div class="thread-body">${esc(m.body)}</div>
+        ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}"></div>` : ''}
       </div>`).join('')}</div>
-    <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="thSend">Reply</button></div>`;
+    <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
+      <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="thFiles"></label>
+      <button class="btn" id="thSend">Reply</button></div>
+    <div id="thFileNames" class="msg-attach-names"></div>`;
+  $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el));
+  wireAttachInput('thFiles', 'thFileNames');
   const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
   $('thBack').onclick = backToList;
   const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshUnread(); backToList(); } catch (e) { toast(e.message, true); } };
@@ -3436,11 +3497,15 @@ async function renderThread() {
   if ($('thUnarch')) $('thUnarch').onclick = () => threadAction('unarchive', 'Moved to inbox');
   const last = t.messages[t.messages.length - 1];
   $('thSend').onclick = async () => {
-    const body = $('thBody').value.trim();
+    const files = $('thFiles').files;
+    const body = $('thBody').value.trim() || msgFilesCaption(files);
     if (!body) return;
     $('thSend').disabled = true;
-    try { await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) }); renderThread(); }
-    catch (e) { toast(e.message, true); $('thSend').disabled = false; }
+    try {
+      const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) });
+      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+      renderThread();
+    } catch (e) { toast(e.message, true); $('thSend').disabled = false; }
   };
 }
 function msgTime(iso) {
@@ -3523,23 +3588,32 @@ async function renderCompose() {
       <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
+      <div class="msg-compose-attach">
+        <label class="msg-attach-btn" title="Attach photos or a video">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="cFiles"></label>
+        <span id="cFileNames" class="msg-attach-names"></span>
+      </div>
       <button class="btn" id="cSend">Send message</button>
     </div>`;
   const aud = $('cAud');
   aud.onchange = () => { $('cDirect').classList.toggle('hidden', aud.value !== 'direct'); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); };
+  wireAttachInput('cFiles', 'cFileNames');
   $('cSend').onclick = async () => {
     $('cErr').textContent = '';
     const val = aud.value;
-    const payload = { subject: $('cSubj').value, body: $('cBody').value };
+    const files = $('cFiles').files;
+    const payload = { subject: $('cSubj').value, body: $('cBody').value.trim() || msgFilesCaption(files) };
+    if (!payload.body) { $('cErr').textContent = 'Write a message or attach a photo/video.'; return; }
     if (val.startsWith('g:')) payload.recipient_ids = shown[parseInt(val.slice(2), 10)][1];
     else if (val === 'direct') { payload.audience = 'direct'; payload.recipient_id = $('cRecip').value; }
     else if (val === 'location') { payload.audience = 'location'; payload.location_id = $('cLocSel').value; }
     else payload.audience = 'all';
+    $('cSend').disabled = true;
     try {
       const r = await api('/messages', { method: 'POST', body: JSON.stringify(payload) });
+      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
       toast(`Message sent to ${r.recipients} recipient${r.recipients > 1 ? 's' : ''}`);
       S.msgTab = 'sent'; renderMsgTabs(); renderMessages();
-    } catch (e) { $('cErr').textContent = e.message; }
+    } catch (e) { $('cErr').textContent = e.message; $('cSend').disabled = false; }
   };
 }
 

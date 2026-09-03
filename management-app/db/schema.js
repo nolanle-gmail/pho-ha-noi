@@ -355,6 +355,21 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_msg_recip ON message_recipients(user_id, is_read);
     CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender_id);
+
+    -- Picture / video attachments on a message. Stored as bytes in the DB (like
+    -- day-task proof photos) so they persist on the mounted volume; images and
+    -- videos have their own size caps enforced in the route.
+    CREATE TABLE IF NOT EXISTS message_attachments (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+      kind       TEXT NOT NULL CHECK(kind IN ('image','video')),
+      mime       TEXT NOT NULL,
+      bytes      BLOB NOT NULL,
+      byte_size  INTEGER NOT NULL DEFAULT 0,
+      filename   TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_msg_attach ON message_attachments(message_id);
   `);
 
   // Staff profiles: full HR record per person (1:1 with users). Sensitive

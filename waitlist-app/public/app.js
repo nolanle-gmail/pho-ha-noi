@@ -308,7 +308,54 @@ async function renderMessages() {
   });
 }
 
+// ── Message attachments (pictures & videos) ──────────────────────────────────
+const _msgAttUrls = [];
+function revokeMsgAtts() { while (_msgAttUrls.length) URL.revokeObjectURL(_msgAttUrls.pop()); }
+function msgFilesCaption(files) {
+  const a = [...files]; if (!a.length) return '';
+  if (a.length === 1) return /^video\//.test(a[0].type) ? '🎥 Video' : '📷 Photo';
+  const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
+  return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
+}
+async function uploadMsgAttachments(messageId, files) {
+  const list = [...files].filter(f => /^(image|video)\//.test(f.type));
+  let ok = 0, err = '';
+  for (const f of list) {
+    try {
+      const res = await fetch(`/api/messages/${messageId}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
+        method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
+      ok++;
+    } catch (e) { err = e.message; break; }
+  }
+  return { ok, err };
+}
+async function loadMsgAttachments(messageId, el) {
+  let d;
+  try { d = await api(`/messages/${messageId}/attachments`); } catch { return; }
+  if (!d.attachments.length) { el.remove(); return; }
+  el.innerHTML = '';
+  for (const a of d.attachments) {
+    const wrap = document.createElement('div'); wrap.className = 'msg-att';
+    el.appendChild(wrap);
+    try {
+      const res = await fetch(`/api/messages/${messageId}/attachment/${a.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
+      if (!res.ok) continue;
+      const url = URL.createObjectURL(await res.blob()); _msgAttUrls.push(url);
+      if (a.kind === 'video') {
+        const vid = document.createElement('video'); vid.src = url; vid.controls = true; vid.preload = 'metadata'; vid.className = 'msg-att-video';
+        wrap.appendChild(vid);
+      } else {
+        const img = document.createElement('img'); img.src = url; img.className = 'msg-att-img'; img.alt = a.filename || 'Attachment'; img.onclick = () => mtLightbox(url);
+        wrap.appendChild(img);
+      }
+    } catch { /* one attachment failing shouldn't break the rest */ }
+  }
+}
+
 async function renderThreadView() {
+  revokeMsgAtts();
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
   let t;
@@ -328,8 +375,14 @@ async function renderThreadView() {
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
         <div class="thread-body">${esc(m.body)}</div>
+        ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}"></div>` : ''}
       </div>`).join('')}</div>
-    <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea><button class="btn" id="rSend">Reply</button></div>`;
+    <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea>
+      <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="rFiles"></label>
+      <button class="btn" id="rSend">Reply</button></div>
+    <div id="rFileNames" class="msg-attach-names"></div>`;
+  v.querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments(el.dataset.atts, el));
+  const rFiles = $('rFiles'); if (rFiles) rFiles.onchange = () => { $('rFileNames').textContent = rFiles.files.length ? `📎 ${rFiles.files.length} file${rFiles.files.length > 1 ? 's' : ''} attached` : ''; };
   const backToList = () => { S.msgThread = null; renderMessages(); };
   $('msgBack').onclick = backToList;
   const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshMsgUnread(); backToList(); } catch (e) { toast(e.message, true); } };
@@ -338,11 +391,15 @@ async function renderThreadView() {
   if ($('msgUnarch')) $('msgUnarch').onclick = () => threadAction('unarchive', 'Moved to inbox');
   const last = t.messages[t.messages.length - 1];
   $('rSend').onclick = async () => {
-    const body = $('rBody').value.trim();
+    const files = $('rFiles').files;
+    const body = $('rBody').value.trim() || msgFilesCaption(files);
     if (!body) return;
     $('rSend').disabled = true;
-    try { await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) }); renderThreadView(); }
-    catch (e) { toast(e.message, true); $('rSend').disabled = false; }
+    try {
+      const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) });
+      if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
+      renderThreadView();
+    } catch (e) { toast(e.message, true); $('rSend').disabled = false; }
   };
 }
 
@@ -370,17 +427,22 @@ async function composeModal() {
     <div id="mPersonWrap" class="hidden"><label>Person</label><select id="mPerson">${personOpts}</select></div>
     <label>Subject</label><input id="mSubj" placeholder="Subject (optional)" />
     <label>Message</label><textarea id="mBody" rows="4" placeholder="Write your message…"></textarea>
+    <div class="msg-compose-attach"><label class="msg-attach-btn">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="mFiles"></label><span id="mFileNames" class="msg-attach-names"></span></div>
   `, async () => {
-    const to = $('mTo').value, subject = $('mSubj').value, bodyTxt = $('mBody').value;
-    if (!bodyTxt.trim()) throw new Error('Write a message first.');
+    const to = $('mTo').value, subject = $('mSubj').value;
+    const files = $('mFiles').files;
+    const bodyTxt = $('mBody').value.trim() || msgFilesCaption(files);
+    if (!bodyTxt) throw new Error('Write a message or attach a photo/video.');
     let ids;
     if (to === 'person') ids = [parseInt($('mPerson').value, 10)];
     else ids = shown[parseInt(to.split(':')[1], 10)][1];
     if (!ids.length) throw new Error('No recipients in that group.');
     const r = await api('/messages', { method: 'POST', body: JSON.stringify({ recipient_ids: ids, subject, body: bodyTxt }) });
+    if (files && files.length) { const u = await uploadMsgAttachments(r.id, files); if (u.err) toast(u.err, true); }
     toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
   }, 'Send');
   $('mTo').onchange = () => $('mPersonWrap').classList.toggle('hidden', $('mTo').value !== 'person');
+  $('mFiles').onchange = () => { $('mFileNames').textContent = $('mFiles').files.length ? `📎 ${$('mFiles').files.length} file${$('mFiles').files.length > 1 ? 's' : ''} attached` : ''; };
 }
 
 // ── My Hours: the staff member's own timesheet (proxied to Management) ─────────

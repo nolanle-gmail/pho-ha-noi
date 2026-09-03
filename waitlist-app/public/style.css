@@ -70,6 +70,13 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .thread-body { white-space: pre-wrap; font-size: .95rem; }
 .reply-box { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0; background: var(--bg); padding: .5rem 0; }
 .reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; background: #fff; }
+/* Message attachments (pictures & videos) */
+.msg-attach-btn { display: inline-flex; align-items: center; gap: .3rem; padding: .55rem .7rem; border: 1px dashed #d8ab5e; border-radius: 10px; background: #fff; color: #8a5a12; cursor: pointer; font-size: .85rem; font-weight: 700; white-space: nowrap; }
+.msg-attach-names { font-size: .8rem; color: #8a8172; margin-left: .4rem; }
+.msg-compose-attach { display: flex; align-items: center; margin: .5rem 0; }
+.msg-atts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
+.msg-att-img { max-width: 180px; max-height: 180px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; object-fit: cover; }
+.msg-att-video { max-width: 240px; max-height: 200px; border-radius: 10px; border: 1px solid var(--line); background: #000; }
 .wrap { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
 
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }

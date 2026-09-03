@@ -41,4 +41,37 @@ router.post('/:id/read', (req, res) => fwd(req, res, 'POST', `/${encodeURICompon
 router.post('/:id/reply', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/reply`, req.body));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));
 
+// Attachments (pictures & videos). List is JSON; upload and download stream bytes.
+const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024;
+const asUrl = (email, path) => `${MGMT_URL}/api/messages${path}${path.includes('?') ? '&' : '?'}as=${encodeURIComponent(email)}`;
+
+router.get('/:id/attachments', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.id)}/attachments`));
+
+router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_VID }), async (req, res) => {
+  const email = (req.user.email || '').toLowerCase();
+  if (!email) return res.status(400).json({ error: 'No messaging identity for this account.' });
+  try {
+    const qs = req.query.filename ? `?filename=${encodeURIComponent(req.query.filename)}` : '';
+    const r = await fetch(asUrl(email, `/${encodeURIComponent(req.params.id)}/attachment${qs}`), {
+      method: 'POST',
+      headers: { 'Content-Type': req.headers['content-type'] || 'application/octet-stream', 'X-Service-Key': KEY },
+      body: req.body,
+    });
+    const d = await r.json().catch(() => ({}));
+    res.status(r.status).json(d);
+  } catch { res.status(502).json({ error: 'Attachment upload is unavailable.' }); }
+});
+
+router.get('/:id/attachment/:aid', async (req, res) => {
+  const email = (req.user.email || '').toLowerCase();
+  if (!email) return res.status(400).json({ error: 'No messaging identity for this account.' });
+  try {
+    const r = await fetch(asUrl(email, `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}`), { headers: { 'X-Service-Key': KEY } });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch { res.status(502).json({ error: 'Attachment is unavailable.' }); }
+});
+
 module.exports = router;

@@ -1057,6 +1057,30 @@ const check = (name, ok, detail = '') => {
     check('reply to a message (threaded)', r.status === 200 && (await j(r)).success === true, 'status=' + r.status);
     const thread = await j(await fetch(base + '/api/messages/thread/' + gsend.id, { headers: H(token) }));
     check('thread returns the full conversation', Array.isArray(thread.messages) && thread.messages.length === 2, 'n=' + (thread.messages || []).length);
+
+    // ── Message attachments (pictures & videos) ────────────────────────────
+    const attMsg = await j(await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ audience: 'direct', recipient_id: empMe.id, subject: 'With media', body: 'see attached' }) }));
+    const attHdr = (mime) => ({ Authorization: 'Bearer ' + token, 'Content-Type': mime });
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment?filename=pic.png`, { method: 'POST', headers: attHdr('image/png'), body: Buffer.from('fake-image-bytes') });
+    const a1 = await j(r);
+    check('sender attaches a picture', r.status === 200 && a1.kind === 'image' && a1.count === 1, JSON.stringify(a1));
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment?filename=clip.mp4`, { method: 'POST', headers: attHdr('video/mp4'), body: Buffer.from('fake-video-bytes-payload') });
+    const a2 = await j(r);
+    check('sender attaches a video', r.status === 200 && a2.kind === 'video' && a2.count === 2, JSON.stringify(a2));
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment`, { method: 'POST', headers: attHdr('application/pdf'), body: Buffer.from('nope') });
+    check('non-media attachment rejected (415)', r.status === 415, 'status=' + r.status);
+    const alist = await j(await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(token) }));
+    check('attachments listed with kinds', alist.count === 2 && alist.attachments.some(a => a.kind === 'image') && alist.attachments.some(a => a.kind === 'video'), JSON.stringify(alist.count));
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment/${alist.attachments[0].id}`, { headers: H(token) });
+    check('fetch attachment bytes', r.status === 200 && /^(image|video)\//.test(r.headers.get('content-type') || ''), 'ct=' + r.headers.get('content-type'));
+    const attThread = await j(await fetch(base + `/api/messages/thread/${attMsg.id}`, { headers: H(token) }));
+    check('thread carries attachment_count', (attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count === 2, JSON.stringify((attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count));
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(emp.token) });
+    check('recipient can view attachments', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment`, { method: 'POST', headers: { Authorization: 'Bearer ' + emp.token, 'Content-Type': 'image/png' }, body: Buffer.from('x') });
+    check('recipient cannot attach — sender only (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(mgr.token) });
+    check('non-participant blocked from attachments (403)', r.status === 403, 'status=' + r.status);
     // Archive + mark-unread (recipient state — test as the actual recipient host1).
     const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
     const host1 = mrecips.find(u => u.name === 'Front Desk 1');

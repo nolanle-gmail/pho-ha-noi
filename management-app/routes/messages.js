@@ -11,6 +11,13 @@ const { emitMessages, onMessages, onAlert, onAlertAck } = require('../lib/events
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
+// Message attachments (pictures & videos) — stored as bytes, with per-kind caps.
+const MAX_IMG = parseInt(process.env.MESSAGE_IMG_MAX || '', 10) || 10 * 1024 * 1024; // 10 MB
+const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024; // 25 MB
+const MAX_ATTACH = parseInt(process.env.MESSAGE_ATTACH_MAX || '', 10) || 10;          // per message
+const OK_IMG = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
+const OK_VID = /^video\/(mp4|quicktime|webm|ogg|3gpp|x-m4v|x-matroska)$/i;
+
 // Resolve the acting user from a service key (+ ?as=email) or a query JWT.
 // EventSource can't send headers, so the live stream authenticates this way.
 function streamUser(req) {
@@ -122,7 +129,8 @@ router.get('/thread/:id', (req, res) => {
   if (!tid) return res.status(400).json({ error: 'Bad thread id.' });
   const msgs = db.prepare(`
     SELECT m.id, m.subject, m.body, m.audience, m.created_at, m.sender_id,
-           u.name AS sender_name, u.role AS sender_role
+           u.name AS sender_name, u.role AS sender_role,
+           (SELECT COUNT(*) FROM message_attachments a WHERE a.message_id=m.id) AS attachment_count
     FROM messages m JOIN users u ON m.sender_id=u.id
     WHERE COALESCE(m.thread_id, m.id)=?
       AND (m.sender_id=? OR m.id IN (SELECT message_id FROM message_recipients WHERE user_id=?))
@@ -259,6 +267,60 @@ router.post('/:id/reply', (req, res) => {
   const subject = parent.subject ? (/^re:/i.test(parent.subject) ? parent.subject : `Re: ${parent.subject}`) : null;
   const mid = deliver(req.user.id, 'direct', null, subject, body, recipients, parent.thread_id || parent.id, parent.id);
   res.json({ success: true, id: mid, recipients: recipients.length });
+});
+
+// ── Message attachments (pictures & videos) ──────────────────────────────────
+// May this user see this message (its sender or a recipient)? Returns the message
+// row, false if not a participant, or null if it doesn't exist.
+function canSeeMessage(userId, msgId) {
+  const m = db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(msgId);
+  if (!m) return null;
+  if (String(m.sender_id) === String(userId)) return m;
+  return db.prepare(`SELECT 1 FROM message_recipients WHERE message_id=? AND user_id=?`).get(msgId, userId) ? m : false;
+}
+
+// Attach an image or video to a message you sent (raw bytes; Content-Type = the
+// file's type). Up to MAX_ATTACH per message; images and videos have size caps.
+router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_VID }), (req, res) => {
+  const m = db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  if (String(m.sender_id) !== String(req.user.id)) return res.status(403).json({ error: 'You can only attach to your own message.' });
+  const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const kind = OK_IMG.test(mime) ? 'image' : OK_VID.test(mime) ? 'video' : null;
+  if (!kind) return res.status(415).json({ error: 'Attach an image (JPG, PNG, WEBP, HEIC, GIF) or video (MP4, MOV, WEBM).' });
+  const bytes = req.body;
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return res.status(400).json({ error: 'No file received.' });
+  const cap = kind === 'video' ? MAX_VID : MAX_IMG;
+  if (bytes.length > cap) return res.status(413).json({ error: `${kind === 'video' ? 'Video' : 'Image'} too large (max ${Math.round(cap / 1048576)} MB).` });
+  const count = db.prepare(`SELECT COUNT(*) n FROM message_attachments WHERE message_id=?`).get(m.id).n;
+  if (count >= MAX_ATTACH) return res.status(409).json({ error: `Up to ${MAX_ATTACH} attachments per message.` });
+  const filename = String(req.query.filename || '').slice(0, 200) || null;
+  const info = db.prepare(`INSERT INTO message_attachments (message_id, kind, mime, bytes, byte_size, filename) VALUES (?,?,?,?,?,?)`)
+    .run(m.id, kind, mime, bytes, bytes.length, filename);
+  res.json({ success: true, id: Number(info.lastInsertRowid), kind, count: count + 1, byte_size: bytes.length });
+});
+
+// List a message's attachments (metadata only). Any participant.
+router.get('/:id/attachments', (req, res) => {
+  const m = canSeeMessage(req.user.id, req.params.id);
+  if (m === null) return res.status(404).json({ error: 'Message not found.' });
+  if (!m) return res.status(403).json({ error: 'Not part of this conversation.' });
+  const attachments = db.prepare(`SELECT id, kind, mime, byte_size, filename FROM message_attachments WHERE message_id=? ORDER BY id`).all(m.id);
+  res.json({ id: m.id, count: attachments.length, attachments });
+});
+
+// Stream one attachment's bytes. Any participant.
+router.get('/:id/attachment/:aid', (req, res) => {
+  const m = canSeeMessage(req.user.id, req.params.id);
+  if (m === null) return res.status(404).json({ error: 'Message not found.' });
+  if (!m) return res.status(403).json({ error: 'Not part of this conversation.' });
+  const a = db.prepare(`SELECT mime, bytes FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
+  if (!a) return res.status(404).json({ error: 'No such attachment.' });
+  const buf = Buffer.from(a.bytes);
+  res.setHeader('Content-Type', a.mime);
+  res.setHeader('Content-Length', buf.length);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.end(buf);
 });
 
 module.exports = router;
