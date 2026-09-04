@@ -1361,6 +1361,18 @@ function locationModal(loc) {
   }, isNew ? 'Add location' : 'Save');
 }
 
+// Store-manager control to set just their own location's break-reminder lead.
+function breakLeadModal(loc) {
+  const cur = loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10;
+  modal(`Break reminder lead — ${shortLoc(loc.name)}`, [
+    { key: 'break_reminder_lead_min', label: 'Minutes before break (1–60)', type: 'number', step: '1', placeholder: '10', value: cur },
+  ], async (v) => {
+    await api('/locations/' + loc.id + '/break-lead', { method: 'PUT', body: JSON.stringify(v) });
+    toast('Break reminder lead updated');
+    renderLocDetail();
+  }, 'Save');
+}
+
 const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
 const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
@@ -1421,6 +1433,9 @@ async function renderLocActivity() {
 async function renderLocInfo(loc) {
   const canEdit = ORG_ADMIN.includes(S.user.role);
   const canEditHours = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
+  // A store manager can set their own location's break-reminder lead time even
+  // though they don't get the full (owner/admin) location edit modal.
+  const canEditLead = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'].includes(S.user.role);
   const canViewFloor = ['owner', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
@@ -1434,7 +1449,7 @@ async function renderLocInfo(loc) {
         <div class="profile-row"><span>Seats</span><strong>${loc.seats || '—'}</strong></div>
         <div class="profile-row"><span>Opened</span><strong>${esc(loc.opening_date || '—')}</strong></div>
         <div class="profile-row"><span>Timezone</span><strong>${esc(loc.timezone || '—')}</strong></div>
-        <div class="profile-row"><span>Break reminder lead</span><strong>${loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10} min before break</strong></div>
+        <div class="profile-row"><span>Break reminder lead</span><strong>${loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10} min before break${(canEditLead && !canEdit) ? ' <button class="btn sm ghost" id="editLead" style="margin-left:.5rem">Edit</button>' : ''}</strong></div>
       </div>
       <div class="section"><div class="row-between"><h3>Operating hours</h3>${canEditHours ? '<button class="btn sm ghost" id="editHours">Edit</button>' : ''}</div>
         ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}
@@ -1443,6 +1458,7 @@ async function renderLocInfo(loc) {
     ${canViewFloor ? `<div class="section" id="locFloorSnap" style="margin-top:1rem"><div class="row-between"><h3>Floor status <span style="font-weight:400;color:var(--muted);font-size:.82rem">— live, right now</span></h3><div style="display:flex;gap:.4rem;align-items:center">${guestsToggleBtn('locFloorGuests')}<button class="btn sm ghost" id="locFloorOpen">Open Floor Plan →</button></div></div>
       <div id="locFloorSnapBody"><div class="empty">Loading floor status…</div></div></div>` : ''}`;
   if (canEdit) $('editLoc').onclick = () => locationModal(loc);
+  if (canEditLead && !canEdit) $('editLead').onclick = () => breakLeadModal(loc);
   if (canEditHours) $('editHours').onclick = () => editHoursModal(loc);
   if (canViewFloor) {
     $('locFloorGuests').onclick = () => { toggleGuests(); renderLocDetail(); };

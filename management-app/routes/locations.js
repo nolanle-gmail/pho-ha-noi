@@ -136,6 +136,21 @@ router.put('/:id/hours', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
+// Break-reminder lead time — a manager may set their own location's (minutes
+// before a scheduled break that the reminder fires). Owner/admin can also set
+// it via the full location edit; this is the store-manager-facing control.
+router.put('/:id/break-lead', requireRole(ROLES.MANAGE), (req, res) => {
+  if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(req.params.id);
+  if (!loc) return res.status(404).json({ error: 'Location not found' });
+  const n = parseInt(req.body.break_reminder_lead_min, 10);
+  if (!Number.isFinite(n)) return res.status(400).json({ error: 'Enter a number of minutes.' });
+  const lead = Math.min(60, Math.max(1, n));
+  db.prepare(`UPDATE locations SET break_reminder_lead_min=? WHERE id=?`).run(lead, loc.id);
+  auditLog(req, 'location_break_lead', 'location', loc.id, { break_reminder_lead_min: lead });
+  res.json({ success: true, break_reminder_lead_min: lead });
+});
+
 // ── Equipment ────────────────────────────────────────────────────────────────
 router.get('/:id/equipment', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
