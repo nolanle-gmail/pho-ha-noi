@@ -15,6 +15,7 @@ const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
 const { normSlug } = require('../lib/slug');
+const { emitAlert } = require('../lib/events');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -171,6 +172,35 @@ function sweepMissedClockOuts() {
   } catch (err) { console.error('clock sweep failed:', err.message); }
 }
 
+// Break reminders: ~10 minutes before a scheduled break, pop a live alert to the
+// staff member (they acknowledge it) and archive it in break_reminders for audit.
+function sweepBreakReminders() {
+  try {
+    const rows = db.prepare(`SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone
+      FROM shift_breaks sb
+      JOIN shifts s ON s.id=sb.shift_id AND s.kind='work'
+      JOIN users u ON u.id=s.user_id AND u.is_active=1
+      JOIN locations l ON l.id=s.location_id
+      WHERE sb.reminded_at IS NULL AND sb.start_time IS NOT NULL AND sb.start_time<>''`).all();
+    const now = new Date();
+    for (const r of rows) {
+      const tz = r.timezone || DEFAULT_TZ;
+      if (r.shift_date !== localDate(tz)) continue;                 // only today's breaks
+      const until = hhmmToMin(r.start_time) - localMinutesOfDay(tz, now);
+      if (until == null || until > 10 || until < 0) continue;       // fire inside the 10-min lead
+      const sender = locationLeaders(r.location_id)[0] || r.user_id;
+      const body = `Break reminder: your break is at ${r.start_time} — please take your break in about ${until} minute${until === 1 ? '' : 's'}.`;
+      const ins = db.prepare(`INSERT INTO floor_alerts (location_id, sender_id, target_type, target_user_id, body, priority) VALUES (?,?, 'user', ?, ?, 'normal')`)
+        .run(r.location_id, sender, r.user_id, body);
+      const alertId = Number(ins.lastInsertRowid);
+      try { emitAlert({ id: alertId, location_id: r.location_id, target_type: 'user', target_user_id: r.user_id, target_role: null, body, priority: 'normal', sender_name: 'Break reminder', created_at: new Date().toISOString() }); } catch { /* live push best-effort */ }
+      db.prepare(`INSERT INTO break_reminders (user_id, location_id, shift_break_id, work_date, break_time, alert_id) VALUES (?,?,?,?,?,?)`)
+        .run(r.user_id, r.location_id, r.break_id, r.shift_date, r.start_time, alertId);
+      db.prepare(`UPDATE shift_breaks SET reminded_at=datetime('now') WHERE id=?`).run(r.break_id);
+    }
+  } catch (err) { console.error('break sweep failed:', err.message); }
+}
+
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
@@ -313,6 +343,18 @@ router.post('/overrun/:id/force-out', requireRole(ROLES.MANAGE), (req, res) => {
   auditLog(req, 'overrun_forced_out', 'user', e.user_id, { time_entry_id: e.id, worked_minutes: worked });
   try { notify(req.user.id, e.user_id, 'Clocked out by a manager', `You didn’t clock out after your shift, so a manager clocked you out. Please check with them about the extra time for your timesheet.`); } catch { /* */ }
   res.json({ success: true, worked_minutes: worked });
+});
+
+// Break-reminder audit archive for a location/day (proof staff were reminded).
+router.get('/break-reminders', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const tz = locTz(locId), date = validDate(req.query.date) || localDate(tz);
+  const fmt = (ts) => ts ? localTime(tz, new Date(ts.replace(' ', 'T') + 'Z')) : null;
+  const rows = db.prepare(`SELECT br.id, br.break_time, br.sent_at, br.acknowledged_at, u.name, u.employee_code
+    FROM break_reminders br JOIN users u ON u.id=br.user_id WHERE br.location_id=? AND br.work_date=? ORDER BY br.break_time, u.name`).all(locId, date);
+  res.json({ reminders: rows.map(r => ({ id: r.id, name: r.name, employee_code: r.employee_code, break_time: r.break_time, sent_at: fmt(r.sent_at), acknowledged_at: fmt(r.acknowledged_at) })) });
 });
 
 // ── Manager / GM / Owner: today's clock board for a location ──────────────────
@@ -759,6 +801,13 @@ module.exports = router;
 // Start the missed-clock-out sweep (called by server.js when it's the entry point).
 module.exports.startClockSweep = function startClockSweep() {
   const t = setInterval(sweepMissedClockOuts, 10 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
+// Break reminders need finer granularity to land ~10 min before a break.
+module.exports.startBreakSweep = function startBreakSweep() {
+  sweepBreakReminders();
+  const t = setInterval(sweepBreakReminders, 2 * 60 * 1000);
   if (t.unref) t.unref();
   return t;
 };

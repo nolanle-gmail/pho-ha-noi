@@ -787,6 +787,23 @@ function migrate() {
     );
   `);
 
+  // Break-reminder archive: one row per "your break is in 10 minutes" alert sent
+  // to a staff member, kept for audit (proof staff were reminded of their breaks).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS break_reminders (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id         INTEGER NOT NULL REFERENCES users(id),
+      location_id     INTEGER NOT NULL REFERENCES locations(id),
+      shift_break_id  INTEGER,
+      work_date       TEXT NOT NULL,
+      break_time      TEXT NOT NULL,
+      alert_id        INTEGER,
+      sent_at         TEXT DEFAULT (datetime('now')),
+      acknowledged_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_break_reminders ON break_reminders(location_id, work_date);
+  `);
+
   // Per-staff document holder — signed contracts, certificates, licenses, scans,
   // photos, etc. Files are stored as bytes in the DB, each with an optional note.
   db.exec(`
@@ -864,6 +881,8 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN slug TEXT`,
     // Missed clock-out sweep: set once the person + manager have been reminded.
     `ALTER TABLE time_entries ADD COLUMN overrun_notified INTEGER NOT NULL DEFAULT 0`,
+    // Break reminder: set when the "break in 10 min" alert has been sent for a break.
+    `ALTER TABLE shift_breaks ADD COLUMN reminded_at TEXT`,
     // Manager decision on a missed clock-out: 'approved' (keep working) | 'forced' (clocked out).
     `ALTER TABLE time_entries ADD COLUMN overrun_decision TEXT`,
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_by INTEGER`,

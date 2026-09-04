@@ -2044,6 +2044,7 @@ async function renderLocTimeClock() {
     S.tcDate = data.date;
     if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
     if (data.date === data.today) S.tcOverruns = (await api('/timeclock/overruns?location_id=' + S.locDetailId).catch(() => ({ overruns: [] }))).overruns; else S.tcOverruns = [];
+    S.tcBreaks = (await api('/timeclock/break-reminders?location_id=' + S.locDetailId + '&date=' + data.date).catch(() => ({ reminders: [] }))).reminders;
     if (!S.payPeriod) S.payPeriod = 'weekly';
     if (!S.payAnchor) S.payAnchor = data.today;
     const pRange = payRange(S.payPeriod, S.payAnchor);
@@ -2091,6 +2092,7 @@ async function renderLocTimeClock() {
       ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>
+    ${breakSection(S.tcBreaks)}
     ${payrollSection(payroll)}`;
   const go = (iso) => { S.tcDate = iso; renderLocTimeClock(); };
   $('tcPrev').onclick = () => go(addDaysIso(data.date, -1));
@@ -2170,6 +2172,24 @@ function openOtApproveModal(d, canEdit, locId, rules) {
     await api('/timeclock/ot-approval', { method: 'PUT', body: JSON.stringify(body) });
     toast('Overtime approved'); renderLocTimeClock();
   }, d.approved ? 'Save' : 'Approve');
+}
+
+// Break-reminder audit archive for the day — proof staff were alerted to breaks.
+function breakSection(reminders) {
+  const list = reminders || [];
+  if (!list.length) return '';
+  return `<div class="section" style="margin-top:1rem">
+    <h3 style="margin:0 0 .2rem">☕ Break reminders <span style="font-weight:400;color:var(--muted);font-size:.85rem">— alerts sent to staff 10 min before their break</span></h3>
+    <p class="sub" style="color:var(--muted);margin:0 0 .5rem;font-size:.8rem">Kept for audit — each row is an alert the staff member received; "Acknowledged" means they tapped ✓ On it.</p>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Break at</th><th>Reminder sent</th><th>Acknowledged</th></tr></thead><tbody>
+      ${list.map(r => `<tr>
+        <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
+        <td>${esc(r.break_time)}</td>
+        <td>${esc(r.sent_at || '—')}</td>
+        <td>${r.acknowledged_at ? `<span class="badge ok">✓ ${esc(r.acknowledged_at)}</span>` : '<span class="badge gray">not yet</span>'}</td>
+      </tr>`).join('')}
+    </tbody></table></div>
+  </div>`;
 }
 
 function payrollSection(pr) {

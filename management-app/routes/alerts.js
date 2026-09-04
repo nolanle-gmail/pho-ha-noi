@@ -98,6 +98,8 @@ router.post('/:id/ack', (req, res) => {
   const a = db.prepare(`SELECT * FROM floor_alerts WHERE id=?`).get(req.params.id);
   if (!a) return res.status(404).json({ error: 'Alert not found.' });
   db.prepare(`INSERT OR IGNORE INTO floor_alert_acks (alert_id, user_id) VALUES (?,?)`).run(a.id, req.user.id);
+  // If this was a break reminder, stamp the audit archive with the acknowledgement.
+  try { db.prepare(`UPDATE break_reminders SET acknowledged_at=datetime('now') WHERE alert_id=? AND acknowledged_at IS NULL`).run(a.id); } catch { /* table optional */ }
   try { emitAlertAck({ sender_id: a.sender_id, alert_id: a.id, user_id: req.user.id, user_name: req.user.name }); } catch { /* best-effort */ }
   res.json({ success: true });
 });

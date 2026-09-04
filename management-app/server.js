@@ -51,8 +51,9 @@ app.use('/api/schedule', require('./routes/schedule'));
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {
   app.listen(PORT, () => console.log(`Enterprise Restaurant Management System running on http://localhost:${PORT}`));
-  // Background: remind staff + managers about missed clock-outs (real server only).
+  // Background sweeps (real server only): missed clock-outs + break reminders.
   try { require('./routes/timeclock').startClockSweep(); } catch { /* optional */ }
+  try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
 }
 
 module.exports = app;
