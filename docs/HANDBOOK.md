@@ -822,12 +822,29 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
 
-### Time-clock station (shared terminal)
+### Time-clock kiosk (per location, no login)
 
-A "Check in / Check out" screen (in Management, and reachable from the Staff app)
-where a staff member punches in and out for a shift. Check-in snapshots the day's
-scheduled span; check-out computes worked minutes, lateness and any overtime, and
-can warn if someone's leaving early.
+Each location has its own clock URL — **`/clock/<slug>`** (e.g.
+`pho-ha-noi-management.fly.dev/clock/milpitas`); the bare **`/clock`** lists the
+stores. New locations get a slug automatically, and slugs match case- and
+hyphen-insensitively (`/SanJose` = `/san-jose`). The page needs **no login**: a
+tablet at the store sits ready, and staff clock in/out with just their **employee
+code** (the physical location + code is the trust model).
+
+Entering a code shows a message panel:
+- bad format (too short / wrong characters) → "check your employee code and try again";
+- valid format but unknown → "not found — check again or ask your manager";
+- valid → a time-of-day greeting ("**Good morning Nha Le, welcome to Pho Ha Noi
+  Milpitas**") and **Clock In / Clock Out** buttons (only the applicable one is enabled).
+
+**Clock in** goes straight through when they're within 30 minutes of a shift here.
+Otherwise it warns and asks them to confirm — **not scheduled today**, **scheduled at
+another location**, or **more than 30 minutes early** — and on confirm it clocks them
+in and **messages the location's manager(s)** to review for the timesheet. **Clock out**
+says goodbye on time; **more than 30 minutes early** warns, and on confirm messages the
+manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
+read. A background sweep reminds a staff member (and messages their manager) when they're
+still clocked in **30 minutes past a scheduled end**.
 
 ---
 
