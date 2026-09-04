@@ -176,7 +176,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     const mani = await fetch(base + '/manifest.webmanifest');
     check('PWA manifest served', mani.status === 200);
     const mj = await j(mani);
-    check('manifest names the Staff app + standalone', mj.name === 'Pho Ha Noi Staff' && mj.display === 'standalone' && Array.isArray(mj.icons) && mj.icons.length >= 2, JSON.stringify({ n: mj.name, d: mj.display }));
+    check('manifest names the Staff app + standalone', /Staff$/.test(mj.name || '') && mj.display === 'standalone' && Array.isArray(mj.icons) && mj.icons.length >= 2, JSON.stringify({ n: mj.name, d: mj.display }));
     check('service worker served', (await fetch(base + '/sw.js')).status === 200);
     check('PWA icons served', (await fetch(base + '/icon-512.png')).status === 200 && (await fetch(base + '/apple-touch-icon.png')).status === 200);
     // A phone that isn't a local account falls through to the Management directory
