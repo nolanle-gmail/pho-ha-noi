@@ -6,6 +6,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db/database');
 const { rateLimit } = require('../lib/rateLimit');
+const { notifyGuest } = require('../lib/guest-notify');
 
 const router = express.Router();
 const genRef = () => crypto.randomBytes(4).toString('hex'); // 8-char code
@@ -82,6 +83,12 @@ router.post('/checkin', checkinLimiter, (req, res) => {
       .run(locId, 'party_added', 'waitlist', r.lastInsertRowid, JSON.stringify({ guest: name.slice(0, 120), party_size: size, source: 'self' }));
   } catch { /* audit is best-effort */ }
   try { require('../lib/events').emitWaitlist(locId); } catch { /* live-push best-effort */ }
+  // Text the guest a join confirmation with their spot (best-effort; log-only until a provider is set).
+  if (phone) {
+    const pos = s.parties_ahead + 1;
+    const wait = s.quoted_minutes > 0 ? ` about ${s.quoted_minutes} min` : ' a short wait';
+    notifyGuest(r.lastInsertRowid, phone, `${loc.name}: you're #${pos} on the waitlist, party of ${size} —${wait}. Track your spot and we'll text when your table is ready. Reply STOP to opt out.`, 'joined');
+  }
   res.json({
     success: true, ref, position: s.parties_ahead + 1, quoted_minutes: s.quoted_minutes,
     guest_name: name, party_size: size, location: loc.name,

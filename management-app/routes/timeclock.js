@@ -16,6 +16,7 @@ const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
 const { normSlug } = require('../lib/slug');
 const { emitAlert } = require('../lib/events');
+const { sendSms, smsEnabled } = require('../lib/sms');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -60,7 +61,11 @@ function locationLeaders(locId) {
   return ids;
 }
 function notifyLeaders(locId, staffId, subject, body) {
-  for (const lid of locationLeaders(locId)) if (String(lid) !== String(staffId)) { try { notify(staffId, lid, subject, body); } catch { /* best effort */ } }
+  for (const lid of locationLeaders(locId)) if (String(lid) !== String(staffId)) {
+    try { notify(staffId, lid, subject, body); } catch { /* best effort */ }
+    // Also text the leader's phone (best-effort; log-only until a provider is set).
+    if (smsEnabled()) { try { const l = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (l && l.phone) sendSms(l.phone, `${subject}: ${body}`).catch(() => {}); } catch { /* */ } }
+  }
 }
 // Resolve location + staff + today's schedule + any open entry for a kiosk request.
 function clockContext(slug, code) {
@@ -176,7 +181,7 @@ function sweepMissedClockOuts() {
 // staff member (they acknowledge it) and archive it in break_reminders for audit.
 function sweepBreakReminders() {
   try {
-    const rows = db.prepare(`SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone, l.break_reminder_lead_min AS lead_min
+    const rows = db.prepare(`SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone, l.break_reminder_lead_min AS lead_min, u.phone AS user_phone
       FROM shift_breaks sb
       JOIN shifts s ON s.id=sb.shift_id AND s.kind='work'
       JOIN users u ON u.id=s.user_id AND u.is_active=1
@@ -198,6 +203,8 @@ function sweepBreakReminders() {
       db.prepare(`INSERT INTO break_reminders (user_id, location_id, shift_break_id, work_date, break_time, alert_id) VALUES (?,?,?,?,?,?)`)
         .run(r.user_id, r.location_id, r.break_id, r.shift_date, r.start_time, alertId);
       db.prepare(`UPDATE shift_breaks SET reminded_at=datetime('now') WHERE id=?`).run(r.break_id);
+      // Also text the staff member (best-effort; log-only until a provider is set).
+      if (smsEnabled() && r.user_phone) { try { sendSms(r.user_phone, body).catch(() => {}); } catch { /* */ } }
     }
   } catch (err) { console.error('break sweep failed:', err.message); }
 }

@@ -3654,7 +3654,77 @@ async function renderFloorAlerts() {
   });
 }
 
-const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['chat', '💬 Chat'], ['alerts', '🔔 Floor alerts']];
+// ── SMS blast (Management side): text a person, a role, or everyone ──────────
+const SMS_PRESETS = [
+  'Reminder: please clock in for your shift.', 'Team meeting today before service — please arrive 15 min early.',
+  'Covering needed tonight — reply if you can pick up a shift.', 'Please complete your assigned tasks before end of shift.',
+  'Great work today, team — thank you!',
+];
+async function renderSmsBlast() {
+  const v = $('view');
+  if (!myCap('manage')) { v.innerHTML = '<div class="empty">Text messages are sent by managers and owners.</div>'; return; }
+  const seesAll = ALERT_SEES_ALL.includes(S.user.role);
+  const stores = (S.locations || []).filter(l => l.type !== 'central_kitchen');
+  const locId = seesAll ? (S.loc || (stores[0] && stores[0].id) || '') : S.user.location_id;
+  let status = { enabled: false, provider: 'none' }, data = { staff: [], roles: [], with_phone: 0 }, recent = { messages: [] };
+  try { [status, data, recent] = await Promise.all([api('/sms/status'), api('/sms/staff?location_id=' + encodeURIComponent(locId || '')), api('/sms/recent')]); }
+  catch (e) { /* staff may fail if no location yet */ }
+  const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('');
+  const staffOpts = (data.staff || []).map(s => `<option value="${s.id}" ${s.has_phone ? '' : 'disabled'}>${esc(s.name)} · ${esc(roleLabel(s.role))}${s.has_phone ? '' : ' (no phone)'}</option>`).join('');
+  const chips = SMS_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('');
+  v.innerHTML = `
+    <h2 class="page">📱 Text message <span style="font-weight:400;color:var(--muted);font-size:.9rem">— SMS to staff phones</span></h2>
+    ${status.enabled
+      ? `<div class="callout" style="background:var(--ok-soft,#def0e2);border-left:3px solid var(--ok,#15803d)">Live SMS is on via <b>${esc(status.provider)}</b>. Texts go to real phones.</div>`
+      : `<div class="callout" style="background:var(--gold-soft,#fbe9c7);border-left:3px solid var(--gold-strong,#b45309)"><b>Log-only mode.</b> No SMS provider is configured yet, so messages are recorded for audit but <b>not actually sent</b>. Set an SMS provider to go live.</div>`}
+    <div class="section" style="max-width:640px">
+      <div class="err" id="smErr"></div>
+      ${seesAll ? `<div class="al-field"><label>Store</label><select id="smLoc"><option value="">All locations</option>${stores.map(l => `<option value="${l.id}" ${String(l.id) === String(locId) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>` : ''}
+      <div class="al-field"><label>Who <span style="font-weight:400;color:var(--muted)">· ${data.with_phone || 0} of ${data.staff.length} have a phone</span></label>
+        <div class="seg" id="smTarget">
+          <button type="button" class="seg-btn active" data-t="all">Everyone</button>
+          <button type="button" class="seg-btn" data-t="role" ${data.roles && data.roles.length ? '' : 'disabled'}>A role</button>
+          <button type="button" class="seg-btn" data-t="user" ${data.staff && data.staff.length ? '' : 'disabled'}>A person</button>
+        </div>
+        <select id="smRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
+        <select id="smUser" class="hidden" style="margin-top:.4rem">${staffOpts || '<option>—</option>'}</select>
+      </div>
+      <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div></div>
+      <div class="al-field"><label>Message</label><textarea id="smBody" rows="3" maxlength="600" placeholder="Type your text message"></textarea>
+        <div style="font-size:.8rem;color:var(--muted);margin-top:.2rem"><span id="smCount">0</span>/600 characters</div></div>
+      <button class="btn" id="smSend">📱 Send text</button>
+    </div>
+    <div class="section">
+      <h3>Recent texts <span style="font-weight:400;color:var(--muted);font-size:.85rem">for audit</span></h3>
+      ${recent.messages.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>By</th><th>To</th><th>Message</th><th class="num">Recipients</th><th class="num">Sent</th></tr></thead><tbody>
+        ${recent.messages.map(m => `<tr><td class="mono">${esc((m.created_at || '').slice(0, 16).replace('T', ' '))}</td><td>${esc(m.sender_name || '—')}</td>
+          <td>${m.target_type === 'user' ? 'A person' : m.target_type === 'role' ? esc(roleLabel(m.target_role)) : 'Everyone'}</td>
+          <td>${esc(m.body)}</td><td class="num">${m.recipient_count}</td><td class="num">${m.sent_count}${m.provider === 'none' ? ' <span class="badge gray">log</span>' : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">No texts sent yet.</div>'}
+    </div>`;
+  const cnt = () => $('smCount').textContent = ($('smBody').value || '').length;
+  $('smBody').oninput = cnt;
+  v.querySelectorAll('#smTarget .seg-btn').forEach(b => b.onclick = () => { if (b.disabled) return; v.querySelectorAll('#smTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b)); $('smRole').classList.toggle('hidden', b.dataset.t !== 'role'); $('smUser').classList.toggle('hidden', b.dataset.t !== 'user'); });
+  v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
+  const smLoc = $('smLoc'); if (smLoc) smLoc.onchange = () => { S.loc = smLoc.value; renderMessages(); };
+  $('smSend').onclick = async () => {
+    $('smErr').textContent = '';
+    try {
+      const target = v.querySelector('#smTarget .seg-btn.active').dataset.t;
+      const text = $('smBody').value.trim();
+      if (!text) throw new Error('Type a message.');
+      const payload = { target_type: target, body: text, location_id: (smLoc ? smLoc.value : locId) };
+      if (target === 'role') payload.target_role = $('smRole').value;
+      if (target === 'user') payload.target_user_id = $('smUser').value;
+      const r = await api('/sms/send', { method: 'POST', body: JSON.stringify(payload) });
+      const noPhone = r.no_phone ? `, ${r.no_phone} had no phone` : '';
+      toast(r.logged_only ? `Logged ${r.recipients} (log-only — not sent)${noPhone}` : `Texted ${r.sent}/${r.recipients}${noPhone} 📱`);
+      renderMessages();
+    } catch (e) { $('smErr').textContent = e.message; }
+  };
+}
+
+const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['chat', '💬 Chat'], ['alerts', '🔔 Floor alerts'], ['sms', '📱 Text']];
 function renderMsgTabs() {
   $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}${k === 'chat' && S.chatUnread ? ` <span class="tab-badge">${S.chatUnread}</span>` : ''}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; S.chatGroup = null; renderMsgTabs(); renderMessages(); });
@@ -3663,7 +3733,7 @@ function renderMessages() {
   if (S.msgTab === 'chat') { if (S.chatGroup) return renderChatGroup(); $('view').innerHTML = '<div class="empty">Loading…</div>'; return renderChatList(); }
   if (S.msgThread) return renderThread();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts }[S.msgTab])();
+  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts, sms: renderSmsBlast }[S.msgTab])();
 }
 
 // ── Message attachments (pictures & videos) ──────────────────────────────────

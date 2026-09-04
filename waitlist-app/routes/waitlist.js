@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { notifyGuest } = require('../lib/guest-notify');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -69,6 +70,12 @@ router.post('/', requireRole(...HOST), (req, res) => {
   const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, notes) VALUES (?,?,?,?,?,?)`)
     .run(l, String(guest_name).slice(0, 120), size, phone || null, quote, notes ? String(notes).slice(0, 300) : null);
   auditLog(req, l, 'party_added', r.lastInsertRowid, { guest: String(guest_name).slice(0, 120), party_size: size, quoted_minutes: quote });
+  // Text the guest a join confirmation (best-effort; log-only until a provider is set).
+  if (phone) {
+    const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(l) || {}).name || 'Pho Ha Noi';
+    const wait = quote > 0 ? ` about ${quote} min` : ' a short wait';
+    notifyGuest(r.lastInsertRowid, phone, `${locName}: you're on the waitlist, party of ${size} —${wait}. We'll text when your table is ready. Reply STOP to opt out.`, 'joined');
+  }
   res.json({ success: true, id: r.lastInsertRowid, quoted_minutes: quote });
 });
 
@@ -81,9 +88,8 @@ router.post('/:id/notify', requireRole(...HOST), (req, res) => {
   const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(w.location_id) || {}).name || 'Pho Ha Noi';
   const body = `${locName}: your table is ready! Please see the host. 🍜`;
   db.prepare(`UPDATE waitlist SET notified_at=datetime('now') WHERE id=?`).run(w.id);
-  db.prepare(`INSERT INTO notify_log (waitlist_id, channel, recipient, body) VALUES (?,?,?,?)`)
-    .run(w.id, w.phone ? 'sms' : 'none', w.phone || null, body);
-  auditLog(req, w.location_id, 'party_notified', w.id, { guest: w.guest_name, channel: w.phone ? 'sms' : 'none' });
+  const n = notifyGuest(w.id, w.phone, body, 'ready');
+  auditLog(req, w.location_id, 'party_notified', w.id, { guest: w.guest_name, channel: w.phone ? 'sms' : 'none', status: n.status });
   res.json({ success: true, sent: !!w.phone, message: body });
 });
 

@@ -804,6 +804,35 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_break_reminders ON break_reminders(location_id, work_date);
   `);
 
+  // Outbound SMS blasts a manager/owner/admin composes to staff (one row per
+  // blast + one recipient row per person), kept for audit. Actual delivery is
+  // via lib/sms.js (log-only until an SMS provider is configured).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sms_messages (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id       INTEGER REFERENCES users(id),
+      location_id     INTEGER,
+      target_type     TEXT NOT NULL,           -- 'user' | 'role' | 'all'
+      target_user_id  INTEGER,
+      target_role     TEXT,
+      body            TEXT NOT NULL,
+      recipient_count INTEGER NOT NULL DEFAULT 0,
+      sent_count      INTEGER NOT NULL DEFAULT 0,
+      provider        TEXT,
+      created_at      TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS sms_recipients (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      sms_id   INTEGER NOT NULL REFERENCES sms_messages(id),
+      user_id  INTEGER,
+      name     TEXT,
+      phone    TEXT,
+      status   TEXT,                            -- 'sent' | 'logged' | 'failed' | 'no_phone'
+      error    TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sms_recipients ON sms_recipients(sms_id);
+  `);
+
   // Per-staff document holder — signed contracts, certificates, licenses, scans,
   // photos, etc. Files are stored as bytes in the DB, each with an optional note.
   db.exec(`

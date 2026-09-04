@@ -727,6 +727,8 @@ erDiagram
 | `chat_reads` | Chat | Per-member read cursor for unread counts |
 | `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
 | `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
+| `sms_messages` | Messaging | One row per SMS blast a manager/owner composes (target, body, recipient & sent counts, provider) |
+| `sms_recipients` | Messaging | Per-person delivery record for a blast (phone + status: sent / logged / failed / no_phone) |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -737,7 +739,7 @@ Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 | `locations` | Stores, each with an average table-turn time for quoting waits |
 | `users` | Front-desk accounts (owner / manager / frontdesk) |
 | `waitlist` | Parties in the queue: staff- or self-added, with a live tracking code |
-| `notify_log` | Record of every "your table is ready" page |
+| `notify_log` | Record of every guest text — join confirmation & "your table is ready" page (with SMS status) |
 | `floor_areas` · `restaurant_tables` | Local floor plan for seating |
 | `audit_log` · `activity_log` | Who-did-what and access trails (incl. guest check-ins) |
 
@@ -759,7 +761,7 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
-| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings) | All · alerts sent by managers |
+| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones) | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
@@ -861,6 +863,30 @@ times — a compliance record that staff were reminded of their breaks. For a cr
 audit, **Reports → Breaks** rolls up every reminder over a date range (owner/admin/GM see all
 locations; a single-store manager sees only theirs), with counts of how many were sent and
 acknowledged.
+
+**Text messages (SMS).** The platform can text real mobile phones through a
+provider-agnostic sender (`lib/sms.js`, present in both apps). It is **safe by default**:
+with no provider configured it runs in **log-only** mode — every message is recorded for
+audit but nothing is actually sent (and nothing costs money). Setting `SMS_PROVIDER` +
+credentials (as Fly secrets) switches it live:
+
+- **Twilio** — `SMS_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
+- **TextBelt** — `SMS_PROVIDER=textbelt` with `TEXTBELT_KEY` (the key `textbelt` gives 1 free msg/day, for testing).
+
+What gets texted:
+
+- **Guests** — a **join confirmation** when they're added to the waitlist (self-kiosk or
+  front desk), with their spot and quoted wait, and the **"your table is ready"** page when
+  the host notifies them. Guest texts carry a "Reply STOP to opt out" footer; every page is
+  logged in `notify_log` (with `status` = sent / logged / failed and `kind` = joined / ready).
+- **Staff** — the **break reminder** also goes to the staff member's phone, and **manager
+  alerts** (missed clock-out, early clock-out, clock-in to review) also text the location's
+  leaders.
+- **Blast / compose** — **Messages → 📱 Text** lets an owner/admin/manager text **everyone**,
+  **a role**, or **one person** (e.g. "cover needed tonight", a task reminder). Managers are
+  scoped to their own store; owner/admin/GM can pick any store or all. Every blast is archived
+  in `sms_messages` + `sms_recipients` for audit, and the composer shows a log-only banner
+  until a provider is live.
 
 ---
 

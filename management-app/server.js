@@ -38,6 +38,7 @@ app.use('/api/stafftasks', require('./routes/stafftasks'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/alerts', require('./routes/alerts'));
+app.use('/api/sms', require('./routes/sms'));
 app.use('/api/timeclock', require('./routes/timeclock'));
 app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));

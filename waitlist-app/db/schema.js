@@ -128,6 +128,11 @@ function migrate() {
     `ALTER TABLE audit_log ADD COLUMN user_role TEXT`,
     // Phone is the login credential for the offline break-glass accounts too.
     `ALTER TABLE users ADD COLUMN phone TEXT`,
+    // SMS delivery outcome for a page: 'sent' (provider accepted), 'logged'
+    // (log-only mode, no provider), 'failed', or 'none' (no phone on file).
+    `ALTER TABLE notify_log ADD COLUMN status TEXT`,
+    // Kind of page: 'joined' (confirmation) or 'ready' (table-is-ready).
+    `ALTER TABLE notify_log ADD COLUMN kind TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 
