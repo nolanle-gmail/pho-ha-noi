@@ -883,6 +883,8 @@ function migrate() {
     `ALTER TABLE time_entries ADD COLUMN overrun_notified INTEGER NOT NULL DEFAULT 0`,
     // Break reminder: set when the "break in 10 min" alert has been sent for a break.
     `ALTER TABLE shift_breaks ADD COLUMN reminded_at TEXT`,
+    // How many minutes before a scheduled break the reminder fires (per location).
+    `ALTER TABLE locations ADD COLUMN break_reminder_lead_min INTEGER NOT NULL DEFAULT 10`,
     // Manager decision on a missed clock-out: 'approved' (keep working) | 'forced' (clocked out).
     `ALTER TABLE time_entries ADD COLUMN overrun_decision TEXT`,
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_by INTEGER`,

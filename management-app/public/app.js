@@ -1350,6 +1350,7 @@ function locationModal(loc) {
     { key: 'email', label: 'Email', value: loc ? loc.email : '' },
     { key: 'seats', label: 'Seats', type: 'number', value: loc ? loc.seats : 0 },
     { key: 'opening_date', label: 'Opening date (YYYY-MM-DD)', value: loc ? loc.opening_date : '' },
+    { key: 'break_reminder_lead_min', label: 'Break reminder lead (minutes before break)', type: 'number', step: '1', placeholder: '10', value: loc && loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10 },
     { key: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }, { value: 'closed', label: 'Closed' }], value: loc ? loc.status : 'active' },
   ];
   modal(isNew ? 'Add location' : `Edit — ${shortLoc(loc.name)}`, fields, async (v) => {
@@ -1433,6 +1434,7 @@ async function renderLocInfo(loc) {
         <div class="profile-row"><span>Seats</span><strong>${loc.seats || '—'}</strong></div>
         <div class="profile-row"><span>Opened</span><strong>${esc(loc.opening_date || '—')}</strong></div>
         <div class="profile-row"><span>Timezone</span><strong>${esc(loc.timezone || '—')}</strong></div>
+        <div class="profile-row"><span>Break reminder lead</span><strong>${loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10} min before break</strong></div>
       </div>
       <div class="section"><div class="row-between"><h3>Operating hours</h3>${canEditHours ? '<button class="btn sm ghost" id="editHours">Edit</button>' : ''}</div>
         ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}

@@ -176,7 +176,7 @@ function sweepMissedClockOuts() {
 // staff member (they acknowledge it) and archive it in break_reminders for audit.
 function sweepBreakReminders() {
   try {
-    const rows = db.prepare(`SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone
+    const rows = db.prepare(`SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone, l.break_reminder_lead_min AS lead_min
       FROM shift_breaks sb
       JOIN shifts s ON s.id=sb.shift_id AND s.kind='work'
       JOIN users u ON u.id=s.user_id AND u.is_active=1
@@ -186,8 +186,9 @@ function sweepBreakReminders() {
     for (const r of rows) {
       const tz = r.timezone || DEFAULT_TZ;
       if (r.shift_date !== localDate(tz)) continue;                 // only today's breaks
+      const lead = Number(r.lead_min) > 0 ? Number(r.lead_min) : 10; // per-location lead (default 10)
       const until = hhmmToMin(r.start_time) - localMinutesOfDay(tz, now);
-      if (until == null || until > 10 || until < 0) continue;       // fire inside the 10-min lead
+      if (until == null || until > lead || until < 0) continue;     // fire inside the lead window
       const sender = locationLeaders(r.location_id)[0] || r.user_id;
       const body = `Break reminder: your break is at ${r.start_time} — please take your break in about ${until} minute${until === 1 ? '' : 's'}.`;
       const ins = db.prepare(`INSERT INTO floor_alerts (location_id, sender_id, target_type, target_user_id, body, priority) VALUES (?,?, 'user', ?, ?, 'normal')`)

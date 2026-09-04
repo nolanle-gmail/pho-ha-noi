@@ -850,9 +850,11 @@ still clocked in **30 minutes past a scheduled end**. Those overruns also appear
 **approves the extra hours** (they keep working) or **clocks them out now** — either way
 it's recorded on the entry for the timesheet.
 
-**Break reminders.** A background sweep pops a live alert to a staff member **~10 minutes
-before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes"); they
-acknowledge it like any floor alert. Every reminder is archived in `break_reminders` and
+**Break reminders.** A background sweep pops a live alert to a staff member **a set number of
+minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
+they acknowledge it like any floor alert. The lead time is **per location** — set the
+**Break reminder lead (minutes before break)** on the location's Details settings (default 10,
+1–60), so a store can remind staff earlier or later. Every reminder is archived in `break_reminders` and
 listed on the **Time-Clock board** under "☕ Break reminders" with the sent and acknowledged
 times — a compliance record that staff were reminded of their breaks. For a cross-location
 audit, **Reports → Breaks** rolls up every reminder over a date range (owner/admin/GM see all

@@ -111,6 +111,10 @@ router.put('/:id', requireRole(ROLES.ADMIN), (req, res) => {
   const fields = [], vals = [];
   LOC_FIELDS.forEach(k => { if (req.body[k] !== undefined) { fields.push(`${k}=?`); vals.push(req.body[k] || null); } });
   if (req.body.seats !== undefined) { fields.push('seats=?'); vals.push(parseInt(req.body.seats) || 0); }
+  if (req.body.break_reminder_lead_min !== undefined) {
+    const n = parseInt(req.body.break_reminder_lead_min, 10);
+    fields.push('break_reminder_lead_min=?'); vals.push(Number.isFinite(n) ? Math.min(60, Math.max(1, n)) : 10);
+  }
   if (req.body.status !== undefined && ['active', 'draft', 'closed'].includes(req.body.status)) {
     fields.push('status=?'); vals.push(req.body.status);
     fields.push('is_active=?'); vals.push(req.body.status === 'active' ? 1 : 0);
