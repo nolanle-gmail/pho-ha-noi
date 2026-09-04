@@ -265,6 +265,56 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
     overtime_minutes: Math.max(0, worked - sched), short: isShort });
 });
 
+// ── Missed clock-outs: manager approve (keep working) / force clock-out ───────
+// Staff still on the clock past their scheduled end at this location.
+router.get('/overruns', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const tz = locTz(locId), today = localDate(tz), nowMin = localMinutesOfDay(tz, new Date());
+  const open = db.prepare(`SELECT te.*, u.name, u.employee_code FROM time_entries te JOIN users u ON u.id=te.user_id
+    WHERE te.location_id=? AND te.clock_out IS NULL ORDER BY te.clock_in`).all(locId);
+  const rows = [];
+  for (const e of open) {
+    const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
+    if (!end) continue;
+    const over = (e.work_date < today ? 1440 : 0) + (nowMin - hhmmToMin(end));
+    if (over <= 0) continue; // not past their scheduled end yet
+    rows.push({
+      id: e.id, user_id: e.user_id, name: e.name, employee_code: e.employee_code,
+      clock_in: localTime(tz, new Date(e.clock_in)), scheduled_end: end,
+      worked_minutes: Math.max(0, Math.round((Date.now() - new Date(e.clock_in).getTime()) / 60000)),
+      over_minutes: over, decision: e.overrun_decision || null,
+    });
+  }
+  res.json({ overruns: rows });
+});
+
+// Approve the extra hours — they keep working (recorded for audit/timesheet).
+router.post('/overrun/:id/approve', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  db.prepare(`UPDATE time_entries SET overrun_decision='approved', overrun_decided_by=?, overrun_decided_at=datetime('now') WHERE id=?`).run(req.user.id, e.id);
+  auditLog(req, 'overrun_approved', 'user', e.user_id, { time_entry_id: e.id });
+  try { notify(req.user.id, e.user_id, 'Extra hours approved', `Your manager approved you to keep working past your scheduled end. Please clock out when you finish.`); } catch { /* */ }
+  res.json({ success: true });
+});
+
+// Decline the extra hours — clock them out now (they never clocked out).
+router.post('/overrun/:id/force-out', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  if (e.clock_out) return res.status(409).json({ error: 'This person is already clocked out.' });
+  const now = new Date(), worked = Math.max(0, Math.round((now.getTime() - new Date(e.clock_in).getTime()) / 60000));
+  db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='forced', overrun_decided_by=?, overrun_decided_at=datetime('now') WHERE id=?`)
+    .run(now.toISOString(), worked, req.user.id, e.id);
+  auditLog(req, 'overrun_forced_out', 'user', e.user_id, { time_entry_id: e.id, worked_minutes: worked });
+  try { notify(req.user.id, e.user_id, 'Clocked out by a manager', `You didn’t clock out after your shift, so a manager clocked you out. Please check with them about the extra time for your timesheet.`); } catch { /* */ }
+  res.json({ success: true, worked_minutes: worked });
+});
+
 // ── Manager / GM / Owner: today's clock board for a location ──────────────────
 router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);

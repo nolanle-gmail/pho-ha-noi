@@ -2043,6 +2043,7 @@ async function renderLocTimeClock() {
     data = await api('/timeclock/board?location_id=' + S.locDetailId + (S.tcDate ? '&date=' + S.tcDate : ''));
     S.tcDate = data.date;
     if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
+    if (data.date === data.today) S.tcOverruns = (await api('/timeclock/overruns?location_id=' + S.locDetailId).catch(() => ({ overruns: [] }))).overruns; else S.tcOverruns = [];
     if (!S.payPeriod) S.payPeriod = 'weekly';
     if (!S.payAnchor) S.payAnchor = data.today;
     const pRange = payRange(S.payPeriod, S.payAnchor);
@@ -2064,6 +2065,13 @@ async function renderLocTimeClock() {
     <td><span class="badge low">Not checked in</span></td></tr>`).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
+  const overruns = S.tcOverruns || [];
+  const overrunCards = overruns.length ? `<div class="tc-overruns"><div class="tc-overruns-h">⏰ Still clocked in past their scheduled end</div>${overruns.map(o => `
+    <div class="tc-overrun"><span class="tc-overrun-info"><strong>${esc(o.name)}</strong> — in since ${esc(o.clock_in)}, scheduled to ${esc(o.scheduled_end)} · <strong>${fmtDur(o.over_minutes)}</strong> over · worked ${fmtDur(o.worked_minutes)}</span>
+      ${o.decision === 'approved'
+        ? '<span class="badge ok">Extra hours approved</span>'
+        : `<span class="tc-overrun-acts"><button class="btn sm ok" data-ovapprove="${o.id}">Approve extra hours</button><button class="btn sm ghost" data-ovforce="${o.id}" data-name="${esc(o.name)}">Clock out now</button></span>`}
+    </div>`).join('')}</div>` : '';
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div class="week-nav"><button class="btn sm ghost" id="tcPrev">‹ Prev</button><button class="btn sm ghost" id="tcToday">Today</button><button class="btn sm ghost" id="tcNext">Next ›</button></div>
@@ -2077,6 +2085,7 @@ async function renderLocTimeClock() {
       ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}
       ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
     </div>
+    ${overrunCards}
     ${alertCards}
     <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
       ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
@@ -2089,6 +2098,15 @@ async function renderLocTimeClock() {
   $('tcToday').onclick = () => go(data.today || fmtLocalIso(new Date()));
   $('locBody').querySelectorAll('[data-resolve]').forEach(b => b.onclick = async () => {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $('locBody').querySelectorAll('[data-ovapprove]').forEach(b => b.onclick = async () => {
+    try { await api('/timeclock/overrun/' + b.dataset.ovapprove + '/approve', { method: 'POST' }); toast('Extra hours approved'); renderLocTimeClock(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $('locBody').querySelectorAll('[data-ovforce]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Clock out ${b.dataset.name} now? They didn’t clock out — this ends their shift and is logged for timesheet review.`)) return;
+    try { await api('/timeclock/overrun/' + b.dataset.ovforce + '/force-out', { method: 'POST' }); toast('Clocked out'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
   });
   if (payroll) {

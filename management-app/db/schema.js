@@ -864,6 +864,10 @@ function migrate() {
     `ALTER TABLE locations ADD COLUMN slug TEXT`,
     // Missed clock-out sweep: set once the person + manager have been reminded.
     `ALTER TABLE time_entries ADD COLUMN overrun_notified INTEGER NOT NULL DEFAULT 0`,
+    // Manager decision on a missed clock-out: 'approved' (keep working) | 'forced' (clocked out).
+    `ALTER TABLE time_entries ADD COLUMN overrun_decision TEXT`,
+    `ALTER TABLE time_entries ADD COLUMN overrun_decided_by INTEGER`,
+    `ALTER TABLE time_entries ADD COLUMN overrun_decided_at TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

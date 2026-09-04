@@ -133,6 +133,12 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .tc-summary { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 1rem; }
 .tc-alerts { display: flex; flex-direction: column; gap: .4rem; margin: 0 0 1rem; }
 .tc-alert { display: flex; align-items: center; justify-content: space-between; gap: .8rem; background: #fdf1f1; border: 1px solid #f2c9c9; color: #9e1b2b; border-radius: 9px; padding: .55rem .8rem; font-size: .88rem; }
+.tc-overruns { border: 1px solid var(--low-bg); background: #fffaf0; border-radius: 11px; padding: .7rem .85rem; margin: 0 0 1rem; }
+.tc-overruns-h { font-weight: 700; color: var(--low); font-size: .9rem; margin-bottom: .5rem; }
+.tc-overrun { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; padding: .4rem 0; border-top: 1px solid #f0e4cf; }
+.tc-overrun:first-of-type { border-top: none; }
+.tc-overrun-info { font-size: .86rem; color: var(--ink); flex: 1; min-width: 200px; }
+.tc-overrun-acts { display: flex; gap: .4rem; flex-shrink: 0; }
 .sched-cell.cell-over { background: #fdf1f1; }
 .hours-none { color: var(--muted); }
 .ot-banner { background: #fdecea; border: 1px solid #f3b7b0; color: #a12a1c; border-radius: 10px; padding: .55rem .7rem; margin: .3rem 0 .6rem; font-size: .84rem; line-height: 1.4; }
