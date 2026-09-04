@@ -1,5 +1,6 @@
 {
-  "name": "Pho Ha Noi Staff",
+  "id": "/",
+  "name": "Phở Hà Nội Staff",
   "short_name": "PHN Staff",
   "description": "Restaurant staff app — my tasks, tables, and service.",
   "start_url": "/",
