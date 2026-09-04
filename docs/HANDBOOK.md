@@ -844,7 +844,10 @@ in and **messages the location's manager(s)** to review for the timesheet. **Clo
 says goodbye on time; **more than 30 minutes early** warns, and on confirm messages the
 manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
 read. A background sweep reminds a staff member (and messages their manager) when they're
-still clocked in **30 minutes past a scheduled end**.
+still clocked in **30 minutes past a scheduled end**. Those overruns also appear on the
+**Time-Clock board** under "Still clocked in past their scheduled end," where a manager
+**approves the extra hours** (they keep working) or **clocks them out now** — either way
+it's recorded on the entry for the timesheet.
 
 ---
 
