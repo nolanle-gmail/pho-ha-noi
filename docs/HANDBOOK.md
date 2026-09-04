@@ -697,6 +697,7 @@ erDiagram
 | `time_adjustments` | Time | Manager rounding of a day's worked minutes |
 | `timesheet_approvals` | Time | Sign-off on a period's total hours |
 | `staff_alerts` | Time | Alerts to a manager (e.g. left early) |
+| `break_reminders` | Time | Audit archive of "your break is in 10 min" alerts sent to staff (sent + acknowledged times) |
 | `inventory` | Inventory | Stock per item per location with min/par/cost |
 | `inventory_transactions` | Inventory | Immutable in/out/transfer movement ledger |
 | `inventory_lots` | Inventory | Received batches with expiry, drawn FIFO |
@@ -848,6 +849,12 @@ still clocked in **30 minutes past a scheduled end**. Those overruns also appear
 **Time-Clock board** under "Still clocked in past their scheduled end," where a manager
 **approves the extra hours** (they keep working) or **clocks them out now** — either way
 it's recorded on the entry for the timesheet.
+
+**Break reminders.** A background sweep pops a live alert to a staff member **~10 minutes
+before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes"); they
+acknowledge it like any floor alert. Every reminder is archived in `break_reminders` and
+listed on the **Time-Clock board** under "☕ Break reminders" with the sent and acknowledged
+times — a compliance record that staff were reminded of their breaks.
 
 ---
 
