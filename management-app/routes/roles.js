@@ -63,7 +63,7 @@ router.delete('/:key', requireRole(ROLES.ADMIN), (req, res) => {
   const r = db.prepare(`SELECT * FROM roles WHERE key=?`).get(key);
   if (!r) return res.status(404).json({ error: 'Role not found.' });
   const inUse = usersWith(key);
-  if (inUse) return res.status(409).json({ error: `${inUse} staff member${inUse > 1 ? 's' : ''} still use this role — reassign them first.` });
+  if (inUse) return res.status(409).json({ error: `${inUse} staff member${inUse > 1 ? 's' : ''} still ${inUse > 1 ? 'use' : 'uses'} this role — reassign ${inUse > 1 ? 'them' : 'that person'} first.` });
   db.prepare(`DELETE FROM roles WHERE key=?`).run(key);
   reloadRoles();
   auditLog(req, 'role_delete', 'role', key, { label: r.label });
