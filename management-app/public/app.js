@@ -2908,7 +2908,7 @@ function staffProfileEdit(d, locations, staff) {
           ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
           : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
-      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code', p.employee_code)}</div>
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
@@ -2959,6 +2959,9 @@ function toggleStaff(u) {
   }, u.is_active ? 'Deactivate' : 'Activate');
 }
 
+// Employee code derived from a date of birth (YYYY-MM-DD) as MMDDYY.
+const mmddyyFromDob = (dob) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob || ''); return m ? m[2] + m[3] + m[1].slice(2) : ''; };
+
 // Full add-staff form (account + complete profile in one go).
 function renderStaffAdd(locations) {
   const inp = (k, label, val, type = 'text') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" /></label>`;
@@ -2972,7 +2975,7 @@ function renderStaffAdd(locations) {
     <div class="err" id="addErr"></div>
     <div class="prof-cols">
       <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Role', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
-      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code', '')}</div>
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth (required)', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code (6 digits — leave blank to use date of birth)', '')}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', '')}${inp('emergency_relation', 'Relationship', '')}${inp('emergency_phone', 'Phone', '')}</div>
@@ -2990,6 +2993,18 @@ function renderStaffAdd(locations) {
     if (!name || !phone || !password) { $('addErr').textContent = 'Name, phone number and temporary password are required.'; return; }
     if (phoneDigits.length !== 10) { $('addErr').textContent = 'Phone number must be exactly 10 digits.'; return; }
     if (password.length < 8) { $('addErr').textContent = 'Password must be at least 8 characters.'; return; }
+    // Date of birth is required; the employee code is either a manually entered
+    // 6-digit number or derived from the date of birth as MMDDYY.
+    const dob = get('dob');
+    if (!dob) { $('addErr').textContent = 'Date of birth is required.'; return; }
+    let empCode = get('employee_code').trim();
+    if (empCode) {
+      if (!/^\d{6}$/.test(empCode)) { $('addErr').textContent = 'Employee code must be exactly 6 digits.'; return; }
+    } else {
+      empCode = mmddyyFromDob(dob);
+      if (!empCode) { $('addErr').textContent = 'Enter a valid date of birth to generate the employee code.'; return; }
+      $('pf_employee_code').value = empCode; // flows into the profile body below
+    }
     try {
       const created = await api('/staff', { method: 'POST', body: JSON.stringify({ name, phone: phoneDigits, email: email || undefined, password, role, location_id: location_id || undefined }) });
       const accountKeys = new Set(['name', 'acct_phone', 'email', 'password', 'role', 'location_id']);

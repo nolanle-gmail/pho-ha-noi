@@ -151,6 +151,19 @@ router.post('/staff/:id/reset-password', requireRole(ROLES.MANAGE), (req, res) =
 });
 
 // ── Staff profile (full HR record) ───────────────────────────────────────────
+const SIX_DIGITS = /^\d{6}$/;
+// Derive an employee code from a date of birth (YYYY-MM-DD) as MMDDYY.
+// e.g. 2010-01-01 → "010110".
+function codeFromDob(dob) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dob || '').trim());
+  return m ? m[2] + m[3] + m[1].slice(2) : '';
+}
+// Is this 6-digit employee code already taken by someone else?
+function employeeCodeClash(code, exceptUserId) {
+  return !!(db.prepare(`SELECT id FROM users WHERE employee_code=? AND id<>?`).get(code, exceptUserId)
+    || db.prepare(`SELECT user_id FROM staff_profiles WHERE employee_code=? AND user_id<>?`).get(code, exceptUserId));
+}
+
 const PROFILE_COLS = [
   'preferred_name', 'legal_first_name', 'legal_last_name', 'dob', 'gender',
   'personal_email', 'phone', 'alt_phone', 'address_line1', 'address_line2',
@@ -189,12 +202,37 @@ router.put('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   }
   if (merged.supervisor_id != null && merged.supervisor_id !== '') merged.supervisor_id = parseInt(merged.supervisor_id, 10) || null;
 
+  // Employee code. A manually entered code must be exactly 6 digits; a blank code
+  // is derived from the date of birth (MMDDYY). Only touched when the request
+  // actually changes it (so legacy non-6-digit codes survive an unrelated edit),
+  // or when it's blank and none is set yet. Kept unique and synced to users so the
+  // time-clock (which logs in by code) matches.
+  let codeToSync;
+  if (b.employee_code !== undefined) {
+    const requested = String(b.employee_code || '').trim();
+    const current = String(existing.employee_code || '');
+    if (requested !== current || (!requested && !current)) {
+      let code = requested || codeFromDob(b.dob !== undefined ? b.dob : existing.dob);
+      if (code) {
+        if (!SIX_DIGITS.test(code)) return res.status(400).json({ error: 'Employee code must be exactly 6 digits.' });
+        if (employeeCodeClash(code, u.id)) return res.status(409).json({ error: `Employee code ${code} is already in use.` });
+        merged.employee_code = code;
+        codeToSync = code;
+      } else if (requested !== current) {
+        return res.status(400).json({ error: 'Enter a 6-digit employee code, or add a date of birth to generate one.' });
+      }
+    }
+  }
+
   const placeholders = PROFILE_COLS.map(() => '?').join(',');
   const updates = PROFILE_COLS.map(c => `${c}=excluded.${c}`).join(', ');
   db.prepare(`INSERT INTO staff_profiles (user_id, ${PROFILE_COLS.join(',')}, updated_at)
      VALUES (?, ${placeholders}, datetime('now'))
      ON CONFLICT(user_id) DO UPDATE SET ${updates}, updated_at=datetime('now')`)
     .run(u.id, ...PROFILE_COLS.map(c => merged[c]));
+
+  // Keep users.employee_code (used by the time-clock login) in sync.
+  if (codeToSync !== undefined) db.prepare(`UPDATE users SET employee_code=? WHERE id=?`).run(codeToSync, u.id);
 
   // Assigned (additional) locations.
   if (Array.isArray(b.assigned_location_ids)) {
