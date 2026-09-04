@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 3, 2026_
+_Last updated: September 4, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -143,7 +143,15 @@ erDiagram
   roles ||--o{ users : "role"
   users ||--o| staff_profiles : "HR record"
   users ||--o{ staff_locations : "also works at"
+  users ||--o{ staff_documents : "documents"
   locations ||--o{ staff_locations : "covered by"
+  staff_documents {
+    int id PK
+    int user_id FK
+    text filename
+    text note
+    blob bytes
+  }
   roles {
     text key PK
     text label
@@ -667,7 +675,8 @@ erDiagram
 |---|---|---|
 | `users` | People | Staff accounts: name, **phone (10-digit login)**, email, role, home location, hourly rate |
 | `roles` | People | Access-level registry (Roles): label, access level (scope) & capabilities; Owner/Admin-managed |
-| `staff_profiles` | People | Full HR record, 1:1 with users (no SSN / bank data) |
+| `staff_profiles` | People | Full HR record, 1:1 with users — incl. a transformed 9-digit **Personal ID** (no SSN / bank data) |
+| `staff_documents` | People | Per-staff document holder — contracts, certificates, licenses, scans (bytes in the DB, each with a note) |
 | `staff_locations` | People | Additional stores a person can work at |
 | `locations` | Org | Restaurants + the central kitchen |
 | `location_hours` | Org | Per-day opening / closing times |
@@ -767,6 +776,16 @@ a location dashboard; self-service staff land on a personal home screen.
 > edited by anyone who can edit the account; email is an optional internal identity and
 > is read-only here. Change **role** or location to move someone between roles or
 > stores (owner/admin).
+>
+> **Adding staff** also requires a **date of birth**, and takes an **Employee code**
+> (exactly 6 digits — left blank, it's generated from the DOB as MMDDYY) and an optional
+> **Personal ID** (entered as 9 digits, stored in a transformed form). The Employment
+> section has a **Terminated date** for when someone permanently leaves.
+>
+> **Documents.** Each staff profile has a **document holder** — upload signed contracts,
+> certificates, licenses and scans (images, PDF, Word/Excel/PowerPoint or text, 25 MB
+> each), each with a note; open, re-note or remove them later. Files are stored in
+> `staff_documents`; the same people who can edit a person can manage their documents.
 
 ### Front Desk / Waitlist app (port 4002)
 
