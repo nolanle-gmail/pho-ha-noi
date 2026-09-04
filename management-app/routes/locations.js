@@ -5,6 +5,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
+const { slugify } = require('../lib/slug');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -89,11 +90,14 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Location name is required.' });
   const status = ['active', 'draft', 'closed'].includes(req.body.status) ? req.body.status : 'active';
-  const r = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  // Unique URL slug for the clock kiosk (/clock/<slug>) — new locations get one automatically.
+  let base = slugify(name) || 'location', slug = base, n = 2;
+  while (db.prepare(`SELECT 1 FROM locations WHERE lower(slug)=?`).get(slug.toLowerCase())) slug = `${base}-${n++}`;
+  const r = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active,slug)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     name, req.body.address || null, req.body.city || null, req.body.state || null, req.body.zip || null,
     req.body.phone || null, req.body.email || null, req.body.timezone || 'America/Los_Angeles',
-    req.body.opening_date || null, parseInt(req.body.seats) || 0, status, status === 'active' ? 1 : 0);
+    req.body.opening_date || null, parseInt(req.body.seats) || 0, status, status === 'active' ? 1 : 0, slug);
   // Default operating hours: 10:00–22:00 every day.
   const ih = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);
   for (let d = 0; d < 7; d++) ih.run(r.lastInsertRowid, d, '10:00', '22:00');

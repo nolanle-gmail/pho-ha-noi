@@ -14,6 +14,7 @@ const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('.
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
+const { normSlug } = require('../lib/slug');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -35,6 +36,140 @@ router.get('/my-hours', (req, res) => {
   const range = periodRange(kind, validDate(req.query.anchor) || today);
   res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
 });
+
+// ── Public per-location clock kiosk (/clock/<slug>) — no login ────────────────
+// A tablet at a store opens its own URL; staff clock in/out with just an employee
+// code. The physical location + code is the trust model (like the guest kiosk).
+const clockRate = new Map(); // ip -> { n, t } — light abuse guard
+function kioskThrottle(req, res, next) {
+  const ip = req.ip || 'x', now = Date.now(), e = clockRate.get(ip);
+  if (!e || now - e.t > 60000) { clockRate.set(ip, { n: 1, t: now }); return next(); }
+  if (e.n >= 60) return res.status(429).json({ error: 'Too many attempts — please wait a moment.' });
+  e.n++; next();
+}
+const locDisplay = (name) => String(name || '').replace(/\s*[—–-]\s*/, ' ');
+const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone FROM locations WHERE is_active=1`).all()
+  .find(l => normSlug(l.slug || '') === normSlug(slug) || normSlug(l.name) === normSlug(slug));
+function greetingWord(tz) { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
+const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(c);
+const hhmmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+function locationLeaders(locId) {
+  let ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND location_id=? AND role IN ('manager','assistant_manager','kitchen_manager')`).all(locId).map(r => r.id);
+  if (!ids.length) ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role IN ('owner','admin','general_manager')`).all().map(r => r.id);
+  return ids;
+}
+function notifyLeaders(locId, staffId, subject, body) {
+  for (const lid of locationLeaders(locId)) if (String(lid) !== String(staffId)) { try { notify(staffId, lid, subject, body); } catch { /* best effort */ } }
+}
+// Resolve location + staff + today's schedule + any open entry for a kiosk request.
+function clockContext(slug, code) {
+  const loc = locBySlug(slug); if (!loc) return { err: 404, msg: 'Unknown location.' };
+  const c = String(code || '').trim();
+  if (!validCode(c)) return { loc, err: 'format' };
+  const staff = db.prepare(`SELECT id, name, role, location_id FROM users WHERE employee_code=? AND is_active=1`).get(c);
+  if (!staff) return { loc, err: 'notfound' };
+  const tz = loc.timezone || DEFAULT_TZ, date = localDate(tz);
+  const rows = db.prepare(`SELECT location_id, start_time, end_time FROM shifts WHERE user_id=? AND shift_date=? AND kind='work'`).all(staff.id, date);
+  const here = rows.filter(r => String(r.location_id) === String(loc.id));
+  const elsewhere = rows.filter(r => String(r.location_id) !== String(loc.id));
+  const open = db.prepare(`SELECT * FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NULL ORDER BY id DESC LIMIT 1`).get(staff.id, loc.id, date);
+  return {
+    loc, staff, tz, date, open,
+    here: here.length > 0, elsewhere: elsewhere.length > 0,
+    isHome: String(staff.location_id) === String(loc.id),
+    startHere: here.map(r => r.start_time).filter(Boolean).sort()[0] || null,
+    endHere: here.map(r => r.end_time).filter(Boolean).sort().slice(-1)[0] || null,
+  };
+}
+
+// Active locations for the bare /clock location picker (public).
+router.get('/kiosk-locations', (req, res) => {
+  const locs = db.prepare(`SELECT id, name, slug FROM locations WHERE is_active=1 AND type<>'central_kitchen' ORDER BY name`).all();
+  res.json(locs.map(l => ({ slug: l.slug || normSlug(l.name), display: locDisplay(l.name) })));
+});
+
+// Location header for the kiosk page.
+router.get('/kiosk/:slug', (req, res) => {
+  const loc = locBySlug(req.params.slug);
+  if (!loc) return res.status(404).json({ error: 'Unknown location.' });
+  res.json({ id: loc.id, name: loc.name, display: locDisplay(loc.name) });
+});
+
+// Enter an employee code → greeting + current clock state (button setup).
+router.post('/kiosk/:slug/state', kioskThrottle, (req, res) => {
+  const ctx = clockContext(req.params.slug, req.body && req.body.employee_code);
+  if (ctx.err === 404) return res.status(404).json({ error: ctx.msg });
+  if (ctx.err === 'format') return res.json({ ok: false, kind: 'format', message: 'That employee code doesn’t look right — please check it and try again.' });
+  if (ctx.err === 'notfound') return res.json({ ok: false, kind: 'notfound', message: 'Employee code not found. Please check again, or ask your manager for the correct one.' });
+  const clockedIn = !!ctx.open;
+  res.json({
+    ok: true, name: ctx.staff.name,
+    greeting: `${greetingWord(ctx.tz)} ${ctx.staff.name}, welcome to ${locDisplay(ctx.loc.name)}`,
+    clocked_in: clockedIn, since: clockedIn ? localTime(ctx.tz, new Date(ctx.open.clock_in)) : null,
+    can_in: !clockedIn, can_out: clockedIn,
+  });
+});
+
+// Clock in / out (send {action:'in'|'out', confirm:true} to accept a warning).
+router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
+  const ctx = clockContext(req.params.slug, req.body && req.body.employee_code);
+  if (ctx.err === 404) return res.status(404).json({ error: ctx.msg });
+  if (ctx.err === 'format') return res.status(400).json({ error: 'That employee code doesn’t look right — please check it and try again.' });
+  if (ctx.err === 'notfound') return res.status(404).json({ error: 'Employee code not found. Please check again, or ask your manager.' });
+  const { loc, staff, tz, date } = ctx, confirm = !!(req.body && req.body.confirm), now = new Date();
+
+  if ((req.body && req.body.action) === 'in') {
+    if (ctx.open) return res.status(409).json({ error: `You’re already clocked in (since ${localTime(tz, new Date(ctx.open.clock_in))}).` });
+    let reason = null, warn = null;
+    if (ctx.here) {
+      if (ctx.startHere) { const early = hhmmToMin(ctx.startHere) - localMinutesOfDay(tz, now); if (early > 30) { reason = 'early'; warn = `You’re clocking in more than 30 minutes before your ${ctx.startHere} shift. Clock in anyway?`; } }
+    } else if (ctx.elsewhere) { reason = 'wrong_location'; warn = `You’re scheduled at another location today, not ${locDisplay(loc.name)}. Clock in here anyway?`; }
+    else if (ctx.isHome) { reason = 'no_schedule'; warn = `You aren’t scheduled to work today. Clock in anyway?`; }
+    else { reason = 'no_schedule_wrong_location'; warn = `You aren’t scheduled to work today, and this isn’t your usual location. Clock in here anyway?`; }
+    if (reason && !confirm) return res.json({ confirm: true, reason, message: warn });
+    const sched = scheduledMinutes(staff.id, loc.id, date), late = lateMinutesFor(staff.id, loc.id, date, tz, now);
+    const info = db.prepare(`INSERT INTO time_entries (user_id, location_id, work_date, clock_in, scheduled_minutes, late_minutes, opened_by) VALUES (?,?,?,?,?,?,?)`)
+      .run(staff.id, loc.id, date, now.toISOString(), sched, late, staff.id);
+    if (late > 0) db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(loc.id, staff.id, 'late', `${staff.name} checked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
+    if (reason) {
+      const why = { early: 'more than 30 minutes early', wrong_location: 'at a location they’re not scheduled at today', no_schedule: 'without being scheduled today', no_schedule_wrong_location: 'without being scheduled today, and at an unusual location' }[reason];
+      notifyLeaders(loc.id, staff.id, 'Clock-in to review', `${staff.name} clocked in at ${locDisplay(loc.name)} ${why} (${localTime(tz, now)}). Please review it for their timesheet.`);
+    }
+    return res.json({ success: true, action: 'in', message: `You’re clocked in — have a great shift, ${staff.name}!`, at: localTime(tz, now) });
+  }
+
+  if ((req.body && req.body.action) === 'out') {
+    if (!ctx.open) return res.status(409).json({ error: 'You’re not clocked in here.' });
+    let reason = null;
+    if (ctx.endHere) { const early = hhmmToMin(ctx.endHere) - localMinutesOfDay(tz, now); if (early > 30) reason = 'out_early'; }
+    if (reason && !confirm) return res.json({ confirm: true, reason, message: `You’re clocking out more than 30 minutes before your ${ctx.endHere} end time. Clock out anyway?` });
+    const worked = Math.max(0, Math.round((now.getTime() - new Date(ctx.open.clock_in).getTime()) / 60000));
+    db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=? WHERE id=?`).run(now.toISOString(), worked, ctx.open.id);
+    if (reason) notifyLeaders(loc.id, staff.id, 'Early clock-out', `${staff.name} clocked out early at ${locDisplay(loc.name)} (${localTime(tz, now)}, worked ${fmtDurMin(worked)}). Please review it for their timesheet.`);
+    return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.`, at: localTime(tz, now) });
+  }
+  return res.status(400).json({ error: 'Unknown action.' });
+});
+
+// Missed clock-out sweep: 30 min past a scheduled end and still clocked in →
+// remind the staff member and message the location leaders (once per entry).
+function sweepMissedClockOuts() {
+  try {
+    const open = db.prepare(`SELECT te.id, te.user_id, te.location_id, te.work_date, te.clock_in, u.name
+      FROM time_entries te JOIN users u ON u.id=te.user_id WHERE te.clock_out IS NULL AND COALESCE(te.overrun_notified,0)=0`).all();
+    for (const e of open) {
+      const tz = locTz(e.location_id);
+      const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
+      if (!end) continue;
+      const todayLocal = localDate(tz), overBy = localMinutesOfDay(tz, new Date()) - hhmmToMin(end);
+      if (e.work_date >= todayLocal && overBy < 30) continue; // not yet 30 min past today's end
+      const disp = locDisplay((db.prepare(`SELECT name FROM locations WHERE id=?`).get(e.location_id) || {}).name);
+      try { notify(e.user_id, e.user_id, 'Don’t forget to clock out', `Your shift at ${disp} ended around ${end} and you’re still clocked in. Please clock out — otherwise a manager will review your extra hours.`); } catch { /* */ }
+      notifyLeaders(e.location_id, e.user_id, 'Missed clock-out', `${e.name} is still clocked in at ${disp} past their ${end} end time. Confirm whether they should keep working; otherwise clock them out from the Time Clock board.`);
+      db.prepare(`UPDATE time_entries SET overrun_notified=1 WHERE id=?`).run(e.id);
+    }
+  } catch (err) { console.error('clock sweep failed:', err.message); }
+}
 
 router.use(verifyToken);
 
@@ -571,3 +706,9 @@ router.post('/alerts/:id/resolve', requireRole(ROLES.MANAGE), (req, res) => {
 });
 
 module.exports = router;
+// Start the missed-clock-out sweep (called by server.js when it's the entry point).
+module.exports.startClockSweep = function startClockSweep() {
+  const t = setInterval(sweepMissedClockOuts, 10 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};

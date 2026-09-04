@@ -860,7 +860,27 @@ function migrate() {
     `ALTER TABLE ot_approvals ADD COLUMN escalated_by INTEGER`,
     `ALTER TABLE ot_approvals ADD COLUMN escalated_at TEXT`,
     `ALTER TABLE ot_approvals ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0`,
+    // Per-location clock kiosk URL slug (/clock/<slug>).
+    `ALTER TABLE locations ADD COLUMN slug TEXT`,
+    // Missed clock-out sweep: set once the person + manager have been reminded.
+    `ALTER TABLE time_entries ADD COLUMN overrun_notified INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Backfill a URL slug for every location that doesn't have one (used by the
+  // per-location clock kiosk). Slugs are derived from the name and kept unique.
+  try {
+    const { slugify } = require('../lib/slug');
+    const locs = db.prepare(`SELECT id, name, slug FROM locations`).all();
+    const taken = new Set(locs.map(l => (l.slug || '').toLowerCase()).filter(Boolean));
+    const setSlug = db.prepare(`UPDATE locations SET slug=? WHERE id=?`);
+    for (const l of locs) {
+      if (l.slug) continue;
+      let base = slugify(l.name) || ('loc-' + l.id), s = base, n = 2;
+      while (taken.has(s.toLowerCase())) s = `${base}-${n++}`;
+      taken.add(s.toLowerCase());
+      setSlug.run(s, l.id);
+    }
+  } catch { /* locations table not ready */ }
 
   // Phone is now the login credential. Backfill a unique 10-digit login phone for
   // every account created before this existed, so no one is locked out. The named

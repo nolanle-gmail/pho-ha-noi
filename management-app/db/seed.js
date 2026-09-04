@@ -125,11 +125,12 @@ function run() {
   try { db.exec(`DELETE FROM sqlite_sequence`); } catch { /* no AUTOINCREMENT tables yet */ }
   db.exec('PRAGMA foreign_keys = ON');
 
-  const insLoc = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active) VALUES (?,?,?,?,?,?,?,?,?,?, 'active',1)`);
+  const { slugify } = require('../lib/slug');
+  const insLoc = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active,slug) VALUES (?,?,?,?,?,?,?,?,?,?, 'active',1,?)`);
   const insHours = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);
   const locIds = LOCATIONS.map(([name, addr, city, state, zip, phone, seats, opening]) => {
     const email = city.toLowerCase().replace(/[^a-z]/g, '') + '@phohanoi.com';
-    const id = insLoc.run(name, addr, city, state, zip, phone, email, 'America/Los_Angeles', opening, seats).lastInsertRowid;
+    const id = insLoc.run(name, addr, city, state, zip, phone, email, 'America/Los_Angeles', opening, seats, slugify(name)).lastInsertRowid;
     HOURS.forEach((h, d) => insHours.run(id, d, h[0], h[1]));
     return id;
   });

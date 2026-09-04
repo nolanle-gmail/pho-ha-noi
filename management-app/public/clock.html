@@ -3,201 +3,150 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Staff Clock — Pho Ha Noi</title>
+<title>Pho Ha Noi — Clock In / Out</title>
 <style>
-  :root { --red:#7a1420; --red2:#9e1b2b; --ink:#1f2430; --muted:#6b7280; --line:#e6e6e9; --ok:#1e7e34; --okbg:#e6f4ea; --warn:#b4630b; --warnbg:#fdf1e3; --err:#b3261e; --errbg:#fdecea; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:#f4f4f6; color:var(--ink); }
-  .bar { background:var(--red); color:#fff; padding:.9rem 1.2rem; display:flex; align-items:center; justify-content:space-between; gap:1rem; }
-  .bar .title { font-weight:800; letter-spacing:.02em; }
-  .bar .loc { font-size:.9rem; opacity:.95; }
-  .bar button { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:8px; padding:.4rem .7rem; font-size:.85rem; cursor:pointer; }
-  .wrap { max-width:520px; margin:2.2rem auto; padding:0 1rem; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:1.4rem 1.4rem 1.6rem; box-shadow:0 8px 30px rgba(0,0,0,.06); }
-  h1 { font-size:1.25rem; margin:.2rem 0 1rem; }
-  h2 { font-size:1rem; margin:0 0 .2rem; }
-  .sub { color:var(--muted); font-size:.85rem; margin:.1rem 0 1.1rem; }
-  label { display:block; font-size:.8rem; font-weight:600; color:#374151; margin:.7rem 0 .25rem; }
-  input, select { width:100%; padding:.85rem .8rem; font-size:1.05rem; border:1px solid #cfd3da; border-radius:10px; }
-  input:focus, select:focus { outline:2px solid var(--red2); border-color:var(--red2); }
-  .btn { width:100%; padding:.9rem; font-size:1.05rem; font-weight:700; border:none; border-radius:11px; cursor:pointer; background:var(--red); color:#fff; margin-top:1rem; }
-  .btn:active { transform:translateY(1px); }
-  .punch { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; margin-top:1.1rem; }
-  .punch button { padding:1.15rem; font-size:1.15rem; font-weight:800; border:none; border-radius:14px; cursor:pointer; color:#fff; }
-  .in { background:var(--ok); } .out { background:#334155; }
-  .msg { margin-top:1rem; padding:.8rem .9rem; border-radius:10px; font-size:.95rem; display:none; }
-  .msg.ok { background:var(--okbg); color:var(--ok); display:block; }
-  .msg.warn { background:var(--warnbg); color:var(--warn); display:block; }
-  .msg.err { background:var(--errbg); color:var(--err); display:block; }
-  .onclock { margin-top:1.4rem; }
-  .onclock h2 { font-size:.85rem; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-  .chip { display:inline-flex; gap:.4rem; align-items:center; background:#eef2ff; color:#3949ab; border-radius:999px; padding:.25rem .7rem; font-size:.85rem; margin:.2rem .3rem .2rem 0; }
-  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:1rem; }
-  .modal { background:#fff; border-radius:14px; padding:1.3rem; max-width:420px; width:100%; }
-  .modal h3 { margin:.1rem 0 .5rem; }
-  .modal .row { display:flex; gap:.6rem; margin-top:1.1rem; }
-  .modal .row button { flex:1; padding:.8rem; border-radius:10px; font-weight:700; border:none; cursor:pointer; }
-  .modal .cancel { background:#eee; color:#333; } .modal .confirm { background:var(--warn); color:#fff; }
-  .hide { display:none !important; }
-  .foot { text-align:center; color:var(--muted); font-size:.75rem; margin-top:1.4rem; }
+  :root{ --red:#930B19; --red-dark:#62070e; --gold:#cfa941; --bg:#f7f3ec; --surface:#fff;
+    --ink:#2a2320; --muted:#6b6058; --line:#e7dece; --ok:#16a34a; --ok-bg:#dcfce7;
+    --warn:#b45309; --warn-bg:#fef3c7; --err:#b42318; --err-bg:#fee2e2; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; }
+  body{ background:linear-gradient(160deg,var(--red) 0%, var(--red-dark) 100%); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; align-items:flex-start; justify-content:center; padding:4vh 16px; min-height:100%; }
+  .card{ background:var(--surface); border-radius:22px; width:100%; max-width:460px; padding:2rem 1.75rem 2.25rem;
+    box-shadow:0 24px 60px rgba(0,0,0,.28); }
+  .brand{ text-align:center; margin-bottom:.4rem; }
+  .brand .mark{ width:64px; height:64px; border-radius:16px; background:var(--red); color:#fff; display:inline-grid;
+    place-items:center; font-size:2rem; box-shadow:0 3px 0 var(--red-dark); }
+  h1{ text-align:center; font-size:1.5rem; margin:.7rem 0 .1rem; color:var(--red-dark); }
+  .loc{ text-align:center; color:var(--muted); font-size:1rem; margin:0 0 1.3rem; font-weight:600; }
+  label{ display:block; font-size:.85rem; color:var(--muted); font-weight:600; margin:.2rem 0 .35rem; }
+  #code{ width:100%; padding:1rem 1rem; font-size:1.6rem; letter-spacing:.28em; text-align:center;
+    border:2px solid var(--line); border-radius:14px; font-family:inherit; }
+  #code:focus{ outline:none; border-color:var(--gold); }
+  .btn{ display:block; width:100%; border:none; border-radius:14px; padding:1rem; font-size:1.15rem; font-weight:700;
+    cursor:pointer; margin-top:.9rem; font-family:inherit; }
+  .btn.primary{ background:var(--red); color:#fff; }
+  .btn.primary:hover{ background:var(--red-dark); }
+  .btn.ok{ background:var(--ok); color:#fff; }
+  .btn.ghost{ background:#efe7d9; color:var(--ink); }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .row{ display:flex; gap:.8rem; }
+  .row .btn{ flex:1; }
+  .panel{ margin-top:1.1rem; border-radius:14px; padding:1rem 1.1rem; font-size:1.05rem; line-height:1.45;
+    text-align:center; display:none; }
+  .panel.show{ display:block; }
+  .panel.info{ background:var(--ok-bg); color:#14532d; }
+  .panel.err{ background:var(--err-bg); color:var(--err); }
+  .panel.warn{ background:var(--warn-bg); color:var(--warn); }
+  .panel .big{ font-size:1.25rem; font-weight:700; display:block; margin-bottom:.2rem; }
+  .picker a{ display:block; text-align:center; padding:1rem; margin-top:.6rem; border:1px solid var(--line);
+    border-radius:14px; text-decoration:none; color:var(--red-dark); font-weight:700; font-size:1.15rem; }
+  .picker a:hover{ background:var(--bg); }
+  .hint{ text-align:center; color:var(--muted); font-size:.82rem; margin-top:1rem; }
+  .clock{ text-align:center; color:var(--muted); font-variant-numeric:tabular-nums; font-size:.95rem; margin-top:.3rem; }
+  [hidden]{ display:none !important; }
 </style>
 </head>
 <body>
-  <div class="bar">
-    <span class="title">⏱ Pho Ha Noi — Staff Clock</span>
-    <span id="barRight"></span>
-  </div>
+  <div class="card">
+    <div class="brand"><span class="mark">🍜</span></div>
+    <h1 id="title">Clock In / Out</h1>
+    <div class="loc" id="loc"></div>
+    <div class="clock" id="now"></div>
 
-  <div class="wrap">
-    <!-- Station not opened -->
-    <div id="openCard" class="card">
-      <h1>Open the clock station</h1>
-      <p class="sub">A manager or opener signs in to start the working day. Staff then check in and out on this tablet.</p>
-      <label>Manager email</label>
-      <input id="oEmail" type="email" autocomplete="username" placeholder="you@phohanoi.com" />
-      <label>Password</label>
-      <input id="oPass" type="password" autocomplete="current-password" />
-      <div id="oLocWrap" class="hide">
-        <label>Location this tablet is at</label>
-        <select id="oLoc"></select>
-      </div>
-      <div id="oErr" class="msg"></div>
-      <button class="btn" id="oBtn">Open station</button>
-    </div>
+    <!-- Location picker (bare /clock) -->
+    <div class="picker" id="picker" hidden></div>
 
-    <!-- Station opened: staff punch -->
-    <div id="punchCard" class="card hide">
-      <h1>Check in / Check out</h1>
-      <p class="sub">Enter your employee code and password.</p>
-      <label>Employee code</label>
-      <input id="sCode" autocomplete="off" autocapitalize="characters" placeholder="e.g. E0018" />
-      <label>Password</label>
-      <input id="sPass" type="password" autocomplete="off" />
-      <div class="punch">
-        <button class="in" data-action="in">✓ Check In</button>
-        <button class="out" data-action="out">◱ Check Out</button>
-      </div>
-      <div id="pMsg" class="msg"></div>
-      <div class="onclock">
-        <h2>On the clock now</h2>
-        <div id="onclockList"><span class="sub">—</span></div>
+    <!-- Code entry + actions (/clock/<slug>) -->
+    <div id="kiosk" hidden>
+      <label for="code">Enter your employee code</label>
+      <input id="code" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="######" aria-label="Employee code" />
+      <button class="btn primary" id="go">Continue</button>
+
+      <div class="panel" id="panel"></div>
+
+      <div id="actions" hidden>
+        <div class="row">
+          <button class="btn ok" id="clockIn">Clock In</button>
+          <button class="btn ghost" id="clockOut">Clock Out</button>
+        </div>
       </div>
     </div>
-
-    <div class="foot">This station is bound to one location. Staff can only clock in where they are scheduled.</div>
-  </div>
-
-  <!-- Short-shift confirm -->
-  <div id="confirmBg" class="modal-bg hide">
-    <div class="modal">
-      <h3>⚠ Leaving early</h3>
-      <p id="confirmMsg"></p>
-      <p class="sub">Confirming will notify the manager for follow-up.</p>
-      <div class="row">
-        <button class="cancel" id="cCancel">Cancel</button>
-        <button class="confirm" id="cConfirm">Check out anyway</button>
-      </div>
-    </div>
+    <div class="hint" id="hint"></div>
   </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const KEY = 'phn_clock_station';
-let station = JSON.parse(localStorage.getItem(KEY) || 'null'); // { token, location_id, location_name, opener }
-let pending = null; // for the short-shift confirm
-
-async function api(path, opts = {}) {
-  const r = await fetch(path, { headers: { 'Content-Type': 'application/json', ...(station ? { Authorization: 'Bearer ' + station.token } : {}) }, ...opts });
+const api = async (path, opts) => {
+  const r = await fetch('/api/timeclock' + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-  return d;
-}
-function showMsg(el, text, kind) { el.className = 'msg ' + kind; el.textContent = text; }
-
-// ── Open station ──────────────────────────────────────────────────────────
-const ALL_SCOPE = ['owner', 'admin', 'general_manager', 'regional_manager', 'analyst', 'accountant'];
-$('oEmail').addEventListener('input', () => $('oErr').className = 'msg');
-$('oBtn').onclick = async () => {
-  $('oErr').className = 'msg';
-  const email = $('oEmail').value.trim(), password = $('oPass').value;
-  if (!email || !password) return showMsg($('oErr'), 'Email and password are required.', 'err');
-  try {
-    const d = await (async () => {
-      const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Login failed.'); return j;
-    })();
-    const scopeAll = ALL_SCOPE.includes(d.user.role);
-    if (scopeAll && !$('oLoc').value) {
-      // Need to pick which location this tablet serves.
-      const locs = await (await fetch('/api/inventory/locations', { headers: { Authorization: 'Bearer ' + d.token } })).json();
-      $('oLoc').innerHTML = locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
-      $('oLocWrap').classList.remove('hide');
-      station = { token: d.token, opener: d.user.name, _pickLoc: true };
-      return showMsg($('oErr'), 'Choose the location for this tablet, then Open station again.', 'warn');
-    }
-    const location_id = scopeAll ? Number($('oLoc').value) : d.user.location_id;
-    let location_name = d.user.location_name || '';
-    if (!location_name) {
-      const locs = await (await fetch('/api/inventory/locations', { headers: { Authorization: 'Bearer ' + d.token } })).json();
-      location_name = (locs.find(l => String(l.id) === String(location_id)) || {}).name || 'This location';
-    }
-    station = { token: d.token, location_id, location_name, opener: d.user.name };
-    localStorage.setItem(KEY, JSON.stringify(station));
-    render();
-  } catch (e) { showMsg($('oErr'), e.message, 'err'); }
+  return { ok: r.ok, status: r.status, d };
 };
+// Slug from the path: /clock or /clock/<slug>
+const slug = decodeURIComponent(location.pathname.replace(/^\/clock\/?/, '')).trim();
 
-function closeStation() { localStorage.removeItem(KEY); station = null; render(); }
+function tick(){ const n=new Date(); $('now').textContent = n.toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'}) + ' · ' + n.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
+setInterval(tick, 1000); tick();
 
-// ── Staff punch ───────────────────────────────────────────────────────────
-document.querySelectorAll('.punch button').forEach(b => b.onclick = () => punch(b.dataset.action));
-async function punch(action, confirm_short) {
-  const employee_code = $('sCode').value.trim(), password = $('sPass').value;
-  if (!employee_code || !password) return showMsg($('pMsg'), 'Enter your employee code and password.', 'err');
-  try {
-    const d = await api('/api/timeclock/punch', { method: 'POST', body: JSON.stringify({ location_id: station.location_id, employee_code, password, action, confirm_short }) });
-    if (d.warning === 'short_shift') { pending = { action, employee_code, password }; $('confirmMsg').textContent = d.message; $('confirmBg').classList.remove('hide'); return; }
-    if (d.action === 'in') showMsg($('pMsg'), `✓ ${d.staff} checked in at ${d.at}.`, 'ok');
-    else showMsg($('pMsg'), `◱ ${d.staff} checked out at ${d.at} — worked ${fmtMin(d.worked_minutes)}${d.overtime_minutes ? ` (${fmtMin(d.overtime_minutes)} overtime)` : ''}${d.short ? ' — flagged short' : ''}.`, d.short ? 'warn' : 'ok');
-    $('sCode').value = ''; $('sPass').value = ''; $('sCode').focus();
-    refreshOnClock();
-    clearTimeout(window._mt); window._mt = setTimeout(() => $('pMsg').className = 'msg', 6000);
-  } catch (e) {
-    if (e.message === 'Invalid or expired session') { showMsg($('pMsg'), 'Station session expired — a manager must open it again.', 'err'); return setTimeout(closeStation, 1500); }
-    showMsg($('pMsg'), e.message, 'err');
+function showPanel(kind, html){ const p=$('panel'); p.className='panel show '+kind; p.innerHTML=html; }
+function hidePanel(){ $('panel').className='panel'; }
+
+let staffName = '';
+function resetSoon(ms){ clearTimeout(resetSoon._t); resetSoon._t=setTimeout(resetForm, ms||7000); }
+function resetForm(){ $('code').value=''; $('actions').hidden=true; hidePanel(); staffName=''; $('code').focus(); }
+
+async function lookup(){
+  const code = $('code').value.trim();
+  if (!code){ $('code').focus(); return; }
+  const { d } = await api(`/kiosk/${encodeURIComponent(slug)}/state`, { method:'POST', body: JSON.stringify({ employee_code: code }) });
+  if (!d.ok){ $('actions').hidden = true; showPanel('err', d.message || 'Please check your employee code.'); return; }
+  staffName = d.name;
+  showPanel('info', `<span class="big">${escapeHtml(d.greeting)}</span>${d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.'}`);
+  $('actions').hidden = false;
+  $('clockIn').disabled = !d.can_in;
+  $('clockOut').disabled = !d.can_out;
+  resetSoon(30000); // idle reset
+}
+
+async function punch(action){
+  const code = $('code').value.trim(); if (!code) return;
+  let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action }) });
+  if (res.d && res.d.confirm){
+    if (!confirm(res.d.message)) return;   // staff must accept the warning
+    res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, confirm: true }) });
   }
+  if (!res.ok){ showPanel('err', (res.d && res.d.error) || 'Something went wrong — please try again.'); return; }
+  $('actions').hidden = true;
+  showPanel(action === 'out' ? 'warn' : 'info', `<span class="big">${escapeHtml(res.d.message)}</span>${res.d.at ? 'at ' + escapeHtml(res.d.at) : ''}`);
+  resetSoon(7000);
 }
-$('cCancel').onclick = () => { $('confirmBg').classList.add('hide'); pending = null; };
-$('cConfirm').onclick = () => { $('confirmBg').classList.add('hide'); if (pending) punch(pending.action, true); pending = null; };
-$('sPass').addEventListener('keydown', e => { if (e.key === 'Enter') punch('in'); });
 
-async function refreshOnClock() {
-  try {
-    const b = await api('/api/timeclock/board?location_id=' + station.location_id);
-    const on = b.entries.filter(e => e.status === 'in');
-    $('onclockList').innerHTML = on.length ? on.map(e => `<span class="chip">🟢 ${esc(e.name)} · in ${e.clock_in}</span>`).join('') : '<span class="sub">Nobody checked in yet.</span>';
-  } catch { /* ignore */ }
-}
-const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const fmtMin = (m) => { m = Math.max(0, Math.round(m || 0)); return m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`; };
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
-// ── Render ────────────────────────────────────────────────────────────────
-function render() {
-  const opened = station && station.location_id && !station._pickLoc;
-  $('openCard').classList.toggle('hide', opened);
-  $('punchCard').classList.toggle('hide', !opened);
-  if (opened) {
-    $('barRight').innerHTML = `<span class="loc">${esc(station.location_name)} · opened by ${esc(station.opener)}</span> <button id="closeBtn">Close station</button>`;
-    $('closeBtn').onclick = closeStation;
-    $('sCode').focus();
-    refreshOnClock();
-    clearInterval(window._ri); window._ri = setInterval(refreshOnClock, 30000);
-  } else {
-    $('barRight').innerHTML = '';
-    clearInterval(window._ri);
+async function start(){
+  if (!slug){
+    // Bare /clock — show a location picker.
+    $('title').textContent = 'Choose your location';
+    const { d } = await api('/kiosk-locations');
+    const wrap = $('picker'); wrap.hidden = false;
+    wrap.innerHTML = (Array.isArray(d) ? d : []).map(l => `<a href="/clock/${encodeURIComponent(l.slug)}">${escapeHtml(l.display)}</a>`).join('') || '<p class="hint">No locations available.</p>';
+    return;
   }
+  const { ok, d } = await api(`/kiosk/${encodeURIComponent(slug)}`);
+  if (!ok){ $('title').textContent = 'Location not found'; $('loc').textContent = 'Check the address and try again.'; return; }
+  document.title = `Clock — ${d.display}`;
+  $('loc').textContent = d.display;
+  $('kiosk').hidden = false;
+  $('hint').textContent = 'Enter your 6-digit employee code to clock in or out.';
+  $('go').onclick = lookup;
+  $('code').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+  $('clockIn').onclick = () => punch('in');
+  $('clockOut').onclick = () => punch('out');
+  $('code').focus();
 }
-render();
+start();
 </script>
 </body>
 </html>

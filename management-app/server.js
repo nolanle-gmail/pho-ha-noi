@@ -18,8 +18,11 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Enterprise Restaurant Management System' }));
-// Front-Desk time-clock kiosk (staff check-in / check-out tablet).
+// Per-location time-clock kiosk (staff clock in / out tablet, no login).
+// Each location has its own URL: /clock/<slug> (e.g. /clock/milpitas). The bare
+// /clock shows a location picker. The page reads the slug from its own path.
 app.get('/clock', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clock.html')));
+app.get('/clock/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clock.html')));
 
 // Activity trail — records logins, writes, and denied attempts across the API.
 app.use(require('./lib/activity').activityLogger);
@@ -48,6 +51,8 @@ app.use('/api/schedule', require('./routes/schedule'));
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {
   app.listen(PORT, () => console.log(`Enterprise Restaurant Management System running on http://localhost:${PORT}`));
+  // Background: remind staff + managers about missed clock-outs (real server only).
+  try { require('./routes/timeclock').startClockSweep(); } catch { /* optional */ }
 }
 
 module.exports = app;
