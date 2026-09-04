@@ -3379,7 +3379,7 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -3389,7 +3389,7 @@ function renderReportTabs() {
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 function reportFilters(withDates) {
@@ -3497,6 +3497,31 @@ async function renderRepPayments() {
       <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Cash</th><th class="num">Card</th><th class="num">Online</th><th class="num">Total</th></tr></thead><tbody>
         ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location))}</td><td class="num">${money(l.cash)}</td><td class="num">${money(l.card)}</td><td class="num">${money(l.online)}</td><td class="num"><strong>${money(l.total)}</strong></td></tr>`).join('')}
       </tbody></table></div></div>` : ''}`;
+  wireReportFilters(true);
+}
+
+// ── Break reminders (compliance archive across all locations) ────────────────
+async function renderRepBreaks() {
+  const d = await api('/reports/break-reminders' + reportQuery(true));
+  const ackPct = d.total ? Math.round(d.acknowledged / d.total * 100) : 0;
+  $('view').innerHTML = `${reportFilters(true)}
+    <p class="sub" style="margin:0 0 .8rem;color:var(--muted)">Audit trail of break reminders staff were sent (~10&nbsp;min before each scheduled break). Kept as proof that every staff member was reminded to take their breaks.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Reminders sent</div><div class="value">${d.total}</div></div>
+      <div class="card"><div class="label">Acknowledged</div><div class="value">${d.acknowledged} · ${ackPct}%</div></div>
+      <div class="card"><div class="label">Not acknowledged</div><div class="value ${d.pending ? 'warn' : ''}">${d.pending}</div></div>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Location</th><th>Staff</th><th>Code</th><th class="num">Break</th><th class="num">Reminded</th><th class="num">Acknowledged</th></tr></thead><tbody>
+      ${d.reminders.length ? d.reminders.map(r => `<tr>
+        <td>${esc(r.work_date)}</td>
+        <td>${esc(shortLoc(r.location))}</td>
+        <td><strong>${esc(r.name)}</strong></td>
+        <td>${esc(r.employee_code || '—')}</td>
+        <td class="num">${esc(r.break_time)}</td>
+        <td class="num">${esc(r.sent_at || '—')}</td>
+        <td class="num">${r.acknowledged_at ? `<span class="badge green">${esc(r.acknowledged_at)}</span>` : '<span class="badge gray">—</span>'}</td>
+      </tr>`).join('') : '<tr><td colspan="7" class="empty">No break reminders in range.</td></tr>'}
+    </tbody></table></div>`;
   wireReportFilters(true);
 }
 

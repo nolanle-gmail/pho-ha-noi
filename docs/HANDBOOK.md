@@ -854,7 +854,10 @@ it's recorded on the entry for the timesheet.
 before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes"); they
 acknowledge it like any floor alert. Every reminder is archived in `break_reminders` and
 listed on the **Time-Clock board** under "☕ Break reminders" with the sent and acknowledged
-times — a compliance record that staff were reminded of their breaks.
+times — a compliance record that staff were reminded of their breaks. For a cross-location
+audit, **Reports → Breaks** rolls up every reminder over a date range (owner/admin/GM see all
+locations; a single-store manager sees only theirs), with counts of how many were sent and
+acknowledged.
 
 ---
 

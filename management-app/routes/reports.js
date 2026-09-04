@@ -1,8 +1,9 @@
-// Reports module — inventory, sales, analytics, timesheets, payments.
+// Reports module — inventory, sales, analytics, timesheets, payments, breaks.
 // Owner/admin can report on any/all locations; managers are scoped to theirs.
 const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { localTime, DEFAULT_TZ } = require('../lib/tz');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -123,6 +124,33 @@ router.get('/analytics', requireRole(ROLES.REPORTS), (req, res) => {
     labor_cost: labor, labor_cost_pct: revenue ? Math.round(labor / revenue * 1000) / 10 : null,
     food_cost_pct: foodPct, inventory_value: invVal,
     revenue_trend: trend, by_location: byLocation,
+  });
+});
+
+// ── Break-reminders report (compliance archive across locations) ────────────
+// A cross-location roll-up of the break reminders staff were sent — proof, for
+// audit, that everyone was reminded to take their breaks. Owner/admin/GM see
+// every location; a single-store manager sees only their own.
+router.get('/break-reminders', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req); const { start, end } = dateRange(req);
+  const conds = ['br.work_date>=?', 'br.work_date<=?'], args = [start, end];
+  if (locId) { conds.push('br.location_id=?'); args.push(locId); }
+  const rows = db.prepare(`SELECT br.id, br.work_date, br.break_time, br.sent_at, br.acknowledged_at,
+    u.name, u.employee_code, l.name location, l.timezone
+    FROM break_reminders br JOIN users u ON u.id=br.user_id JOIN locations l ON l.id=br.location_id
+    WHERE ${conds.join(' AND ')} ORDER BY br.work_date DESC, l.name, br.break_time, u.name`).all(...args);
+  const fmt = (tz, ts) => ts ? localTime(tz || DEFAULT_TZ, new Date(ts.replace(' ', 'T') + 'Z')) : null;
+  const reminders = rows.map(r => ({
+    id: r.id, work_date: r.work_date, location: r.location, name: r.name,
+    employee_code: r.employee_code, break_time: r.break_time,
+    sent_at: fmt(r.timezone, r.sent_at), acknowledged_at: fmt(r.timezone, r.acknowledged_at),
+  }));
+  res.json({
+    start, end,
+    total: reminders.length,
+    acknowledged: reminders.filter(r => r.acknowledged_at).length,
+    pending: reminders.filter(r => !r.acknowledged_at).length,
+    reminders,
   });
 });
 
