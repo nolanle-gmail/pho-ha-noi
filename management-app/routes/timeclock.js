@@ -84,7 +84,7 @@ function clockContext(slug, code) {
 
 // Active locations for the bare /clock location picker (public).
 router.get('/kiosk-locations', (req, res) => {
-  const locs = db.prepare(`SELECT id, name, slug FROM locations WHERE is_active=1 AND type<>'central_kitchen' ORDER BY name`).all();
+  const locs = db.prepare(`SELECT id, name, slug FROM locations WHERE is_active=1 ORDER BY name`).all();
   res.json(locs.map(l => ({ slug: l.slug || normSlug(l.name), display: locDisplay(l.name) })));
 });
 
