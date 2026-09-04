@@ -2869,15 +2869,26 @@ async function renderStaffProfile(id) {
     <h2 class="page" style="margin-top:.6rem">${esc(d.name)} <span class="badge ${ROLE_CHIP[d.role] || 'gray'}">${esc(roleLabel(d.role))}</span> ${d.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</h2>
     <p class="sub" style="color:var(--muted);margin-top:0">${p.job_title ? '<strong>' + esc(p.job_title) + '</strong> · ' : ''}${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
     <div class="prof-cols">
-      <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Employee code', p.employee_code)}</div>
+      <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Personal ID', p.personal_id)}${F('Employee code', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${F('Work email', d.email)}${F('Personal email', p.personal_email)}${F('Mobile', p.phone)}${F('Alt phone', p.alt_phone)}${F('Preferred contact', p.preferred_contact)}</div>
       <div class="section"><h3>Mailing address</h3>${F('Address', [p.address_line1, p.address_line2].filter(Boolean).join(', '))}${F('City', p.city)}${F('State', p.state)}${F('Postal code', p.postal_code)}${F('Country', p.country)}</div>
       <div class="section"><h3>Emergency contact</h3>${F('Name', p.emergency_name)}${F('Relationship', p.emergency_relation)}${F('Phone', p.emergency_phone)}</div>
       <div class="section"><h3>Employment</h3>${F('Job title', p.job_title)}${F('Department', p.department)}${F('Type', p.employment_type)}${F('Hire date', p.hire_date)}${F('Termination date', p.termination_date)}${F('Supervisor', d.supervisor ? d.supervisor.name : '')}${F('Home location', shortLoc(d.location_name) || 'All locations')}${F('Also works at', assigned)}</div>
       <div class="section"><h3>Payroll</h3>${F('Pay type', p.pay_type)}${F('Pay rate', d.hourly_rate ? ('$' + d.hourly_rate + '/hr') : '')}${F('Payroll ref', p.payroll_ref)}<p class="sub" style="color:var(--muted);font-size:.76rem;margin:.5rem 0 0">SSN &amp; bank details are intentionally not stored here — keep those in your payroll provider.</p></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${F('Skills / roles', p.skills)}${F('Notes', p.notes)}</div>
+      ${canEdit ? `<div class="section" style="grid-column:1/-1"><h3>Documents</h3>
+        <p class="sub" style="color:var(--muted);font-size:.78rem;margin:0 0 .5rem">Signed contracts, certificates, licenses, scans — images, PDF, Word/Excel or text (max 25&nbsp;MB each).</p>
+        <div class="doc-upload">
+          <label class="msg-attach-btn" title="Choose a file">📎 <span id="docFileName">Choose file…</span><input type="file" id="docFile" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" hidden></label>
+          <input id="docNote" class="fld" placeholder="Note (e.g. Signed contract 2026)" style="flex:1;min-width:160px" />
+          <button class="btn sm" id="docUpload">Upload</button>
+        </div>
+        <div class="doc-err err" id="docErr"></div>
+        <div id="docList" class="doc-list"><div class="sub" style="color:var(--muted)">Loading…</div></div>
+      </div>` : ''}
     </div>`;
   $('backDir').onclick = () => renderStaffModule();
+  if (canEdit) wireStaffDocs(d.id);
   if (canEdit) {
     $('editProf').onclick = () => staffProfileEdit(d, locations, staff);
     $('profPw').onclick = () => resetStaffPassword({ id: d.id, name: d.name });
@@ -2888,6 +2899,73 @@ async function renderStaffProfile(id) {
       }, d.is_active ? 'Deactivate' : 'Activate');
     };
   }
+}
+
+// ── Staff document holder ────────────────────────────────────────────────────
+const fmtBytes = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' KB' : (n || 0) + ' B';
+const docIcon = (m) => /^image\//.test(m || '') ? '🖼️' : /pdf/.test(m) ? '📕' : /word|wordprocessing|msword/.test(m) ? '📘' : /sheet|excel/.test(m) ? '📗' : /presentation|powerpoint/.test(m) ? '📙' : '📄';
+
+async function wireStaffDocs(userId) {
+  const fileInp = $('docFile'), nameSpan = $('docFileName');
+  if (fileInp) fileInp.onchange = () => { nameSpan.textContent = fileInp.files[0] ? fileInp.files[0].name : 'Choose file…'; };
+  if ($('docUpload')) $('docUpload').onclick = () => uploadStaffDoc(userId);
+  await loadStaffDocs(userId);
+}
+
+async function loadStaffDocs(userId) {
+  const el = $('docList'); if (!el) return;
+  let d;
+  try { d = await api(`/staff/${userId}/documents`); }
+  catch (e) { el.innerHTML = `<div class="sub" style="color:var(--muted)">${esc(e.message)}</div>`; return; }
+  if (!d.documents.length) { el.innerHTML = '<div class="sub" style="color:var(--muted)">No documents yet.</div>'; return; }
+  el.innerHTML = d.documents.map(x => `<div class="doc-item">
+    <button class="doc-open" data-open="${x.id}" title="View / download">${docIcon(x.mime)} ${esc(x.filename || 'document')}</button>
+    <div class="doc-info">${x.note ? `<span class="doc-note">${esc(x.note)}</span>` : '<span class="doc-note" style="color:var(--muted)">— no note —</span>'}
+      <span class="doc-sub">${fmtBytes(x.byte_size)}${x.uploaded_by_name ? ' · ' + esc(x.uploaded_by_name) : ''} · ${esc((x.created_at || '').slice(0, 10))}</span></div>
+    <div class="doc-actions"><button class="btn sm ghost" data-editnote="${x.id}" data-note="${esc(x.note || '')}">Note</button><button class="btn sm ghost" data-deldoc="${x.id}" title="Remove">✕</button></div>
+  </div>`).join('');
+  el.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openStaffDoc(userId, b.dataset.open));
+  el.querySelectorAll('[data-deldoc]').forEach(b => b.onclick = () => deleteStaffDoc(userId, b.dataset.deldoc));
+  el.querySelectorAll('[data-editnote]').forEach(b => b.onclick = () => editDocNote(userId, b.dataset.editnote, b.dataset.note));
+}
+
+async function uploadStaffDoc(userId) {
+  const f = $('docFile').files[0], note = $('docNote').value.trim();
+  const err = $('docErr'); err.textContent = '';
+  if (!f) { err.textContent = 'Choose a file to upload.'; return; }
+  $('docUpload').disabled = true;
+  try {
+    const qs = `?filename=${encodeURIComponent(f.name || '')}${note ? '&note=' + encodeURIComponent(note) : ''}`;
+    const res = await fetch(`/api/staff/${userId}/documents${qs}`, {
+      method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f });
+    if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || 'Upload failed'); }
+    $('docFile').value = ''; $('docFileName').textContent = 'Choose file…'; $('docNote').value = '';
+    toast('Document uploaded'); loadStaffDocs(userId);
+  } catch (e) { err.textContent = e.message; }
+  finally { $('docUpload').disabled = false; }
+}
+
+async function openStaffDoc(userId, docId) {
+  try {
+    const res = await fetch(`/api/staff/${userId}/documents/${docId}`, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) { toast('Could not open document', true); return; }
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch { toast('Could not open document', true); }
+}
+
+async function deleteStaffDoc(userId, docId) {
+  if (!confirm('Remove this document? This cannot be undone.')) return;
+  try { await api(`/staff/${userId}/documents/${docId}`, { method: 'DELETE' }); toast('Document removed'); loadStaffDocs(userId); }
+  catch (e) { toast(e.message, true); }
+}
+
+function editDocNote(userId, docId, current) {
+  modal('Document note', [{ key: 'note', label: 'Note', value: current, placeholder: 'e.g. Signed contract 2026' }], async (v) => {
+    await api(`/staff/${userId}/documents/${docId}`, { method: 'PUT', body: JSON.stringify({ note: v.note }) });
+    toast('Note updated'); loadStaffDocs(userId);
+  }, 'Save');
 }
 
 function staffProfileEdit(d, locations, staff) {
@@ -2908,13 +2986,13 @@ function staffProfileEdit(d, locations, staff) {
           ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
           : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
-      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('personal_id', 'Personal ID (enter 9 digits to change)', p.personal_id)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', p.emergency_name)}${inp('emergency_relation', 'Relationship', p.emergency_relation)}${inp('emergency_phone', 'Phone', p.emergency_phone)}</div>
       <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', p.job_title, JOB_TITLES)}${inp('department', 'Department', p.department)}${selS('employment_type', 'Type', p.employment_type, ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', p.status || 'active', ['active', 'vacation', 'sick', 'on_leave', 'inactive'])}${inp('hire_date', 'Hire date', p.hire_date, 'date')}${inp('termination_date', 'Termination date', p.termination_date, 'date')}${selRaw('supervisor_id', 'Supervisor', p.supervisor_id, supOpts)}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', p.pay_type, ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', d.hourly_rate, 'number')}${inp('payroll_ref', 'Payroll reference', p.payroll_ref)}</div>
-      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
+      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" ${assigned.has(String(l.id)) ? 'checked' : ''} /> <span>${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</span></label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', p.skills)}<label class="pfl">Notes<textarea id="pf_notes" rows="3">${esc(p.notes || '')}</textarea></label></div>
     </div>`;
   $('cancelProf').onclick = () => renderStaffProfile(d.id);
@@ -2975,13 +3053,13 @@ function renderStaffAdd(locations) {
     <div class="err" id="addErr"></div>
     <div class="prof-cols">
       <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Role', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
-      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth (required)', '', 'date')}${inp('gender', 'Gender', '')}${inp('employee_code', 'Employee code (6 digits — leave blank to use date of birth)', '')}</div>
+      <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth (required)', '', 'date')}${inp('gender', 'Gender', '')}${inp('personal_id', 'Personal ID (9 digits)', '')}${inp('employee_code', 'Employee code (6 digits — leave blank to use date of birth)', '')}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
       <div class="section"><h3>Emergency contact</h3>${inp('emergency_name', 'Name', '')}${inp('emergency_relation', 'Relationship', '')}${inp('emergency_phone', 'Phone', '')}</div>
-      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', '', JOB_TITLES)}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'on_leave', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}</div>
+      <div class="section"><h3>Employment</h3>${dlInput('job_title', 'Job title', '', JOB_TITLES)}${inp('department', 'Department', '')}${selS('employment_type', 'Type', '', ['', 'full_time', 'part_time', 'seasonal', 'contract'])}${selS('status', 'Status', 'active', ['active', 'vacation', 'sick', 'on_leave', 'inactive'])}${inp('hire_date', 'Hire date', '', 'date')}${inp('termination_date', 'Terminated date', '', 'date')}</div>
       <div class="section"><h3>Payroll</h3>${selS('pay_type', 'Pay type', '', ['', 'hourly', 'salary'])}${inp('hourly_rate', 'Pay rate ($/hr)', '', 'number')}${inp('payroll_ref', 'Payroll reference', '')}</div>
-      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> ${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</label>`).join('')}</div></div>
+      <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> <span>${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</span></label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', '')}<label class="pfl">Notes<textarea id="pf_notes" rows="3"></textarea></label></div>
     </div>`;
   $('cancelAdd').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
@@ -3005,6 +3083,8 @@ function renderStaffAdd(locations) {
       if (!empCode) { $('addErr').textContent = 'Enter a valid date of birth to generate the employee code.'; return; }
       $('pf_employee_code').value = empCode; // flows into the profile body below
     }
+    const personalId = get('personal_id').trim();
+    if (personalId && !/^\d{9}$/.test(personalId)) { $('addErr').textContent = 'Personal ID must be exactly 9 digits.'; return; }
     try {
       const created = await api('/staff', { method: 'POST', body: JSON.stringify({ name, phone: phoneDigits, email: email || undefined, password, role, location_id: location_id || undefined }) });
       const accountKeys = new Set(['name', 'acct_phone', 'email', 'password', 'role', 'location_id']);

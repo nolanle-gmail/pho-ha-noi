@@ -445,6 +445,7 @@ function migrate() {
       legal_last_name   TEXT,
       dob               TEXT,
       gender            TEXT,
+      personal_id       TEXT,   -- 9-char stored form of a 9-digit personal ID (transformed)
       personal_email    TEXT,
       phone             TEXT,
       alt_phone         TEXT,
@@ -786,8 +787,26 @@ function migrate() {
     );
   `);
 
+  // Per-staff document holder — signed contracts, certificates, licenses, scans,
+  // photos, etc. Files are stored as bytes in the DB, each with an optional note.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff_documents (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      filename    TEXT,
+      mime        TEXT NOT NULL,
+      byte_size   INTEGER NOT NULL DEFAULT 0,
+      note        TEXT,
+      bytes       BLOB NOT NULL,
+      uploaded_by INTEGER REFERENCES users(id),
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_staff_docs ON staff_documents(user_id, id);
+  `);
+
   // Migrations for databases created before these columns existed.
   for (const stmt of [
+    `ALTER TABLE staff_profiles ADD COLUMN personal_id TEXT`,
     `ALTER TABLE inventory ADD COLUMN description TEXT`,
     `ALTER TABLE inventory ADD COLUMN notes TEXT`,
     `ALTER TABLE inventory ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,

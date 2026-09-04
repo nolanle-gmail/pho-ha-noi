@@ -164,8 +164,20 @@ function employeeCodeClash(code, exceptUserId) {
     || db.prepare(`SELECT user_id FROM staff_profiles WHERE employee_code=? AND user_id<>?`).get(code, exceptUserId));
 }
 
+// Transform a 9-digit personal ID into its stored form:
+//   first 5 digits: d<9 → d+1, 9 → 'B';  last 4 digits: d≠0 → d−1, 0 → 'A'.
+// e.g. 012495930 → 1235B482A.
+function transformPersonalId(digits) {
+  const s = String(digits);
+  if (!/^\d{9}$/.test(s)) return null;
+  let out = '';
+  for (let i = 0; i < 5; i++) { const d = +s[i]; out += d === 9 ? 'B' : String(d + 1); }
+  for (let i = 5; i < 9; i++) { const d = +s[i]; out += d === 0 ? 'A' : String(d - 1); }
+  return out;
+}
+
 const PROFILE_COLS = [
-  'preferred_name', 'legal_first_name', 'legal_last_name', 'dob', 'gender',
+  'preferred_name', 'legal_first_name', 'legal_last_name', 'dob', 'gender', 'personal_id',
   'personal_email', 'phone', 'alt_phone', 'address_line1', 'address_line2',
   'city', 'state', 'postal_code', 'country', 'emergency_name', 'emergency_relation',
   'emergency_phone', 'employee_code', 'job_title', 'department', 'employment_type',
@@ -224,6 +236,19 @@ router.put('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
     }
   }
 
+  // Personal ID: entered as 9 digits, stored in its transformed form. Only
+  // (re)transform when the value actually changes, so the already-transformed
+  // stored value survives an unrelated edit (never double-encoded).
+  if (b.personal_id !== undefined) {
+    const requested = String(b.personal_id || '').trim();
+    const current = String(existing.personal_id || '');
+    if (requested !== current) {
+      if (!requested) merged.personal_id = null;
+      else if (/^\d{9}$/.test(requested)) merged.personal_id = transformPersonalId(requested);
+      else return res.status(400).json({ error: 'Personal ID must be exactly 9 digits.' });
+    }
+  }
+
   const placeholders = PROFILE_COLS.map(() => '?').join(',');
   const updates = PROFILE_COLS.map(c => `${c}=excluded.${c}`).join(', ');
   db.prepare(`INSERT INTO staff_profiles (user_id, ${PROFILE_COLS.join(',')}, updated_at)
@@ -242,6 +267,75 @@ router.put('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   }
 
   auditLog(req, 'staff_profile_update', 'user', u.id, { fields: Object.keys(b) });
+  res.json({ success: true });
+});
+
+// ── Staff document holder (contracts, certificates, licenses, scans…) ────────
+// Files are stored as bytes with an optional note. Same access as editing the
+// person's profile: owner/admin any staff, a manager their own store's staff.
+const DOC_MAX = parseInt(process.env.STAFF_DOC_MAX || '', 10) || 25 * 1024 * 1024;
+const OK_DOC = /^(image\/(jpeg|png|webp|heic|heif|gif|tiff|bmp)|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.(wordprocessingml|spreadsheetml|presentationml)\.[a-z]+|application\/vnd\.ms-(excel|powerpoint)|text\/(plain|csv))$/i;
+
+// Resolve the staff member and confirm the caller may manage their documents.
+function docAccess(req, res) {
+  const u = db.prepare(`SELECT id, role, location_id, name FROM users WHERE id=?`).get(req.params.id);
+  if (!u) { res.status(404).json({ error: 'Staff member not found.' }); return null; }
+  if (!canEditStaff(req, u)) { res.status(403).json({ error: 'You can only manage documents for staff at your own location.' }); return null; }
+  return u;
+}
+
+// List a staff member's documents (metadata only).
+router.get('/staff/:id/documents', requireRole(ROLES.MANAGE), (req, res) => {
+  const u = docAccess(req, res); if (!u) return;
+  const docs = db.prepare(`SELECT d.id, d.filename, d.mime, d.byte_size, d.note, d.created_at, up.name AS uploaded_by_name
+    FROM staff_documents d LEFT JOIN users up ON up.id=d.uploaded_by WHERE d.user_id=? ORDER BY d.id DESC`).all(u.id);
+  res.json({ documents: docs });
+});
+
+// Upload a document (raw bytes; ?filename= & ?note= in the query).
+router.post('/staff/:id/documents', express.raw({ type: () => true, limit: DOC_MAX }), (req, res) => {
+  const u = docAccess(req, res); if (!u) return;
+  const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (!OK_DOC.test(mime)) return res.status(415).json({ error: 'Unsupported file type. Upload an image, PDF, Word/Excel/PowerPoint, or text file.' });
+  const bytes = req.body;
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return res.status(400).json({ error: 'No file received.' });
+  if (bytes.length > DOC_MAX) return res.status(413).json({ error: `File too large (max ${Math.round(DOC_MAX / 1048576)} MB).` });
+  const filename = String(req.query.filename || '').slice(0, 200) || null;
+  const note = String(req.query.note || '').slice(0, 500) || null;
+  const info = db.prepare(`INSERT INTO staff_documents (user_id, filename, mime, byte_size, note, bytes, uploaded_by) VALUES (?,?,?,?,?,?,?)`)
+    .run(u.id, filename, mime, bytes.length, note, bytes, req.user.id);
+  auditLog(req, 'staff_document_add', 'user', u.id, { document_id: Number(info.lastInsertRowid), filename, note });
+  res.json({ success: true, id: Number(info.lastInsertRowid) });
+});
+
+// Update a document's note.
+router.put('/staff/:id/documents/:docId', requireRole(ROLES.MANAGE), (req, res) => {
+  const u = docAccess(req, res); if (!u) return;
+  const doc = db.prepare(`SELECT id FROM staff_documents WHERE id=? AND user_id=?`).get(req.params.docId, u.id);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  db.prepare(`UPDATE staff_documents SET note=? WHERE id=?`).run(String(req.body && req.body.note || '').slice(0, 500) || null, doc.id);
+  res.json({ success: true });
+});
+
+// Stream a document's bytes (download / inline view).
+router.get('/staff/:id/documents/:docId', requireRole(ROLES.MANAGE), (req, res) => {
+  const u = docAccess(req, res); if (!u) return;
+  const doc = db.prepare(`SELECT filename, mime, bytes FROM staff_documents WHERE id=? AND user_id=?`).get(req.params.docId, u.id);
+  if (!doc) return res.status(404).json({ error: 'Document not found.' });
+  const buf = Buffer.from(doc.bytes);
+  res.setHeader('Content-Type', doc.mime);
+  res.setHeader('Content-Length', buf.length);
+  res.setHeader('Content-Disposition', `inline; filename="${(doc.filename || 'document').replace(/[^\w.\-]+/g, '_')}"`);
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  res.end(buf);
+});
+
+// Remove a document.
+router.delete('/staff/:id/documents/:docId', requireRole(ROLES.MANAGE), (req, res) => {
+  const u = docAccess(req, res); if (!u) return;
+  const info = db.prepare(`DELETE FROM staff_documents WHERE id=? AND user_id=?`).run(req.params.docId, u.id);
+  if (!info.changes) return res.status(404).json({ error: 'Document not found.' });
+  auditLog(req, 'staff_document_delete', 'user', u.id, { document_id: Number(req.params.docId) });
   res.json({ success: true });
 });
 
