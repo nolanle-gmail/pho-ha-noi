@@ -1612,12 +1612,8 @@ async function renderLocSchedule() {
         <div class="shift-time">${to12h(s.start_time)}–${to12h(s.end_time)}</div>
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
-    const dayBreak = sumBreakMinutes(dayShifts);
-    const load = taskLoad(dayShifts);
-    const taskChip = load.min ? ` <span class="day-tasks-sum${load.heavy ? ' heavy' : ''}" title="${load.heavy ? '⚠ Heavy task load: ' : 'Est. day-task time: '}${fmtDur(load.min)} of tasks on ${fmtH(dayTotal)}h (${load.pct}% of the shift)">${load.heavy ? '⚠ ' : ''}📋 ${fmtDur(load.min)}</span>` : '';
-    const total = dayShifts.length ? `<div class="day-total${dayTotal > DAILY_MAX ? ' over' : ''}">${dayTotal > DAILY_MAX ? '⚠ ' : ''}Σ ${fmtH(dayTotal)}h${dayBreak ? ` <span class="day-break">☕ ${dayBreak}m</span>` : ''}${taskChip}</div>` : '';
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
-    return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${leaveCards}${awayCards}${total}${add}</td>`;
+    return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${leaveCards}${awayCards}${add}</td>`;
   };
   const weekBadge = (st) => {
     const h = sumHours(st.shifts);
