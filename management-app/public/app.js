@@ -1521,7 +1521,8 @@ async function renderLocStaff() {
 // ── Weekly schedule (per location) ───────────────────────────────────────────
 // Local-date ISO — toISOString() would shift the date west of UTC (e.g. Pacific).
 function fmtLocalIso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-function mondayOf(dateStr) { const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date(); const day = (d.getDay() + 6) % 7; d.setDate(d.getDate() - day); return fmtLocalIso(d); }
+// Start of the pay/work week (Saturday) containing `dateStr` (default today). Work week: Saturday → Friday.
+function weekStartOf(dateStr) { const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date(); const day = (d.getDay() + 1) % 7; d.setDate(d.getDate() - day); return fmtLocalIso(d); }
 function addDaysIso(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocalIso(d); }
 const WD = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -2168,7 +2169,7 @@ function payRange(period, anchor) {
     const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}`, label: `${MON[d.getMonth()]} ${d.getFullYear()}` };
   }
-  const start = mondayOf(anchor), end = addDaysIso(start, 6);
+  const start = weekStartOf(anchor), end = addDaysIso(start, 6);
   return { start, end, label: `${fmtDay(start)} – ${fmtDay(end)}, ${end.slice(0, 4)}` };
 }
 function payNav(dir) {

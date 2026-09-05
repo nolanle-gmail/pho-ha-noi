@@ -418,7 +418,8 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
 const OT_AFTER_MIN = 8 * 60, DT_AFTER_MIN = 12 * 60, OT_MULT = 1.5, DT_MULT = 2;
 const OT_EDIT_ROLES = ['owner', 'admin', 'hr', 'general_manager']; // may change approved OT later
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const mondayOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// Start of the pay/work week (Saturday) containing `iso`. The work week runs Saturday → Friday.
+const weekStartOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const round2 = (n) => Math.round(n * 100) / 100;
 // California daily split of a day's clocked minutes.
 const daySplit = (m) => ({ reg: Math.min(m, OT_AFTER_MIN), ot: Math.min(Math.max(m - OT_AFTER_MIN, 0), DT_AFTER_MIN - OT_AFTER_MIN), dt: Math.max(m - DT_AFTER_MIN, 0) });
@@ -435,7 +436,7 @@ function periodRange(kind, anchor) {
   const p2 = (n) => String(n).padStart(2, '0');
   if (kind === 'daily') return { start: anchor, end: anchor };
   if (kind === 'monthly') { const d = new Date(anchor + 'T00:00:00'); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0); return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}` }; }
-  const start = mondayOf(anchor); return { start, end: addDaysIso(start, 6) };
+  const start = weekStartOf(anchor); return { start, end: addDaysIso(start, 6) };
 }
 
 const FULL_DAY_HOURS = 8; // an "all day" leave entry counts as a standard workday
@@ -489,7 +490,7 @@ router.get('/payroll', requireRole(ROLES.MANAGE), (req, res) => {
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const tz = loc.timezone || DEFAULT_TZ;
   const today = localDate(tz);
-  const start = validDate(req.query.start) || mondayOf(today);
+  const start = validDate(req.query.start) || weekStartOf(today);
   const end = validDate(req.query.end) || addDaysIso(start, 6);
   const kind = ['daily', 'weekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
 
