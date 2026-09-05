@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'weekly', hoursAnchor: null };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -659,19 +659,20 @@ async function composeModal() {
 
 // ── My Hours: the staff member's own timesheet (proxied to Management) ─────────
 const fmtHrs = (min) => { min = Math.max(0, Math.round(min)); const hh = Math.floor(min / 60), mm = min % 60; return mm ? `${hh}h ${mm}m` : `${hh}h`; };
-function hoursRangeLabel(kind, anchor) {
-  const d = new Date(anchor + 'T00:00:00');
-  if (kind === 'daily') return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  if (kind === 'monthly') return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+// Label the period from the start/end the server actually used, so it always
+// matches the data (the work week runs Saturday → Friday; bi-weekly = 14 days).
+function hoursRangeLabel(resp) {
+  const s = new Date(resp.start + 'T00:00:00'), e = new Date(resp.end + 'T00:00:00');
+  if (resp.kind === 'daily') return s.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  if (resp.kind === 'monthly') return s.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
   const f = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${f(mon)} – ${f(sun)}`;
+  return `${f(s)} – ${f(e)}`;
 }
 function hoursNav(dir) {
   const d = new Date(S.hoursAnchor + 'T00:00:00');
   if (S.hoursKind === 'daily') d.setDate(d.getDate() + dir);
   else if (S.hoursKind === 'monthly') d.setMonth(d.getMonth() + dir);
-  else d.setDate(d.getDate() + dir * 7);
+  else d.setDate(d.getDate() + dir * (S.hoursKind === 'biweekly' ? 14 : 7));
   S.hoursAnchor = d.toISOString().slice(0, 10); renderMyHours();
 }
 async function renderMyHours() {
@@ -691,8 +692,8 @@ async function renderMyHours() {
   }).join('');
   v.innerHTML = `
     <div class="section-head"><h2>My Hours</h2>
-      <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-hnav="-1">‹</button><span style="font-weight:700">${esc(hoursRangeLabel(S.hoursKind, S.hoursAnchor))}</span><button class="btn ghost" data-hnav="1">›</button></div></div>
-    <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('monthly', 'Month')}</div>
+      <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-hnav="-1">‹</button><span style="font-weight:700">${esc(hoursRangeLabel(d))}</span><button class="btn ghost" data-hnav="1">›</button></div></div>
+    <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Month')}</div>
     <div class="stats">
       <div class="stat"><div class="label">Scheduled</div><div class="value">${t.scheduled_hours}h</div></div>
       <div class="stat"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>

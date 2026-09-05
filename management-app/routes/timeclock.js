@@ -33,7 +33,7 @@ router.get('/my-hours', (req, res) => {
   } else {
     try { u = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); } catch { return res.status(401).json({ error: 'Authentication required' }); }
   }
-  const kind = ['daily', 'weekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
+  const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'biweekly';
   const tz = DEFAULT_TZ, today = localDate(tz);
   const range = periodRange(kind, validDate(req.query.anchor) || today);
   res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
@@ -420,6 +420,7 @@ const OT_EDIT_ROLES = ['owner', 'admin', 'hr', 'general_manager']; // may change
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 // Start of the pay/work week (Saturday) containing `iso`. The work week runs Saturday → Friday.
 const weekStartOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const BIWEEKLY_EPOCH = '2024-01-06'; // a Saturday — fixes the 14-day bi-weekly pay cycle (matches the frontend)
 const round2 = (n) => Math.round(n * 100) / 100;
 // California daily split of a day's clocked minutes.
 const daySplit = (m) => ({ reg: Math.min(m, OT_AFTER_MIN), ot: Math.min(Math.max(m - OT_AFTER_MIN, 0), DT_AFTER_MIN - OT_AFTER_MIN), dt: Math.max(m - DT_AFTER_MIN, 0) });
@@ -436,6 +437,14 @@ function periodRange(kind, anchor) {
   const p2 = (n) => String(n).padStart(2, '0');
   if (kind === 'daily') return { start: anchor, end: anchor };
   if (kind === 'monthly') { const d = new Date(anchor + 'T00:00:00'); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0); return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}` }; }
+  if (kind === 'biweekly') {
+    // Two Sat–Fri weeks, anchored to a fixed Saturday epoch so the 14-day cycle
+    // is stable. Must match the frontend (biweeklyRange in public/app.js).
+    const ws = weekStartOf(anchor);
+    const weeks = Math.round((new Date(ws + 'T00:00:00') - new Date(BIWEEKLY_EPOCH + 'T00:00:00')) / (7 * 86400000));
+    const start = (weeks % 2 === 0) ? ws : addDaysIso(ws, -7);
+    return { start, end: addDaysIso(start, 13) };
+  }
   const start = weekStartOf(anchor); return { start, end: addDaysIso(start, 6) };
 }
 
@@ -490,9 +499,12 @@ router.get('/payroll', requireRole(ROLES.MANAGE), (req, res) => {
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const tz = loc.timezone || DEFAULT_TZ;
   const today = localDate(tz);
-  const start = validDate(req.query.start) || weekStartOf(today);
-  const end = validDate(req.query.end) || addDaysIso(start, 6);
-  const kind = ['daily', 'weekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
+  const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'biweekly';
+  // The client normally passes an explicit start/end (from payRange); otherwise
+  // derive the default window from the pay-period kind.
+  const def = periodRange(kind, today);
+  const start = validDate(req.query.start) || def.start;
+  const end = validDate(req.query.end) || def.end;
 
   // Clocked minutes + late per person per day (completed punches — the time clock).
   const rows = db.prepare(`SELECT te.user_id, u.name, u.employee_code, u.role, u.hourly_rate,
@@ -678,7 +690,7 @@ router.put('/adjust', requireRole(ROLES.MANAGE), (req, res) => {
 router.post('/approve-total', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
   const userId = parseInt(req.body.user_id, 10);
-  const kind = ['daily', 'weekly', 'monthly'].includes(req.body.period_kind) ? req.body.period_kind : null;
+  const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.body.period_kind) ? req.body.period_kind : null;
   const start = validDate(req.body.period_start), end = validDate(req.body.period_end);
   if (!locId || !userId || !kind || !start || !end) return res.status(400).json({ error: 'location_id, user_id, period_kind, period_start and period_end are required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });

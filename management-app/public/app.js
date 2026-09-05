@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'weekly', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Display a stored 10-digit login phone as (xxx) xxx-xxxx; pass anything else through.
@@ -2064,7 +2064,7 @@ async function renderLocTimeClock() {
     if (data.date === data.today) alerts = await api('/timeclock/alerts?location_id=' + S.locDetailId).catch(() => ({ alerts: [] }));
     if (data.date === data.today) S.tcOverruns = (await api('/timeclock/overruns?location_id=' + S.locDetailId).catch(() => ({ overruns: [] }))).overruns; else S.tcOverruns = [];
     S.tcBreaks = (await api('/timeclock/break-reminders?location_id=' + S.locDetailId + '&date=' + data.date).catch(() => ({ reminders: [] }))).reminders;
-    if (!S.payPeriod) S.payPeriod = 'weekly';
+    if (!S.payPeriod) S.payPeriod = 'biweekly';
     if (!S.payAnchor) S.payAnchor = data.today;
     const pRange = payRange(S.payPeriod, S.payAnchor);
     payroll = await api(`/timeclock/payroll?location_id=${S.locDetailId}&start=${pRange.start}&end=${pRange.end}&kind=${S.payPeriod}`).catch(() => null);
@@ -2158,7 +2158,17 @@ async function renderLocTimeClock() {
   }
 }
 
-// Daily / weekly / monthly period → { start, end, label }.
+// Bi-weekly pay periods are two Sat–Fri weeks, anchored to a fixed Saturday
+// epoch so the same 14-day cycle always groups together (doesn't drift with the
+// viewing date). Must match the backend (periodRange in routes/timeclock.js).
+const BIWEEKLY_EPOCH = '2024-01-06'; // a Saturday
+function biweeklyRange(anchor) {
+  const ws = weekStartOf(anchor);
+  const weeks = Math.round((new Date(ws + 'T00:00:00') - new Date(BIWEEKLY_EPOCH + 'T00:00:00')) / (7 * 86400000));
+  const start = (weeks % 2 === 0) ? ws : addDaysIso(ws, -7);
+  return { start, end: addDaysIso(start, 13) };
+}
+// Daily / weekly / bi-weekly / monthly period → { start, end, label }.
 function payRange(period, anchor) {
   const p2 = (n) => String(n).padStart(2, '0');
   if (period === 'daily') {
@@ -2169,13 +2179,17 @@ function payRange(period, anchor) {
     const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
     return { start: `${d.getFullYear()}-${p2(d.getMonth() + 1)}-01`, end: `${last.getFullYear()}-${p2(last.getMonth() + 1)}-${p2(last.getDate())}`, label: `${MON[d.getMonth()]} ${d.getFullYear()}` };
   }
+  if (period === 'biweekly') {
+    const { start, end } = biweeklyRange(anchor);
+    return { start, end, label: `${fmtDay(start)} – ${fmtDay(end)}, ${end.slice(0, 4)}` };
+  }
   const start = weekStartOf(anchor), end = addDaysIso(start, 6);
   return { start, end, label: `${fmtDay(start)} – ${fmtDay(end)}, ${end.slice(0, 4)}` };
 }
 function payNav(dir) {
   if (S.payPeriod === 'daily') S.payAnchor = addDaysIso(S.payAnchor, dir);
   else if (S.payPeriod === 'monthly') { const d = new Date(S.payAnchor + 'T00:00:00'); d.setMonth(d.getMonth() + dir); S.payAnchor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; }
-  else S.payAnchor = addDaysIso(S.payAnchor, dir * 7);
+  else S.payAnchor = addDaysIso(S.payAnchor, dir * (S.payPeriod === 'biweekly' ? 14 : 7));
   renderLocTimeClock();
 }
 function openOtApproveModal(d, canEdit, locId, rules) {
@@ -2214,7 +2228,7 @@ function breakSection(reminders) {
 function payrollSection(pr) {
   if (!pr) return '';
   const R = pr.rules, t = pr.totals;
-  const period = S.payPeriod || 'weekly';
+  const period = S.payPeriod || 'biweekly';
   const pill = (k, l) => `<button class="btn sm ${period === k ? '' : 'ghost'}" data-payperiod="${k}">${l}</button>`;
   const otc = (h, pend) => `${h ? `<strong style="color:#b4630b">${h}</strong>` : '0'}${pend ? ` <span class="badge out" title="pending approval">+${pend}?</span>` : ''}`;
   const lateCell = (s) => s.late_days ? `<span class="badge low" title="${fmtDur(s.late_minutes)} late total">${s.late_days}d</span>` : '—';
@@ -2265,7 +2279,7 @@ function payrollSection(pr) {
   return `<div class="section" style="margin-top:1.5rem">
     <div class="row-between"><h3 style="margin:0">Timesheet</h3>${pr.staff.length ? '<button class="btn sm" id="prCsv">⬇ CSV</button>' : ''}</div>
     <div class="row-between" style="margin:.5rem 0 .3rem;flex-wrap:wrap;gap:.5rem">
-      <div style="display:flex;gap:.35rem">${pill('daily', 'Daily')}${pill('weekly', 'Weekly')}${pill('monthly', 'Monthly')}</div>
+      <div style="display:flex;gap:.35rem">${pill('daily', 'Daily')}${pill('weekly', 'Weekly')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Monthly')}</div>
       <div class="week-nav"><button class="btn sm ghost" data-paynav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${payRange(period, S.payAnchor).label}</span><button class="btn sm ghost" data-paynav="1">Next ›</button></div>
     </div>
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem;font-size:.8rem">Scheduled vs clocked. <span class="badge low">late</span> &gt;${R.late_grace_min}m past start · <span class="badge out">short</span> under scheduled · <span class="badge blue">OT</span> ${R.ot_mult}× after ${R.ot_after_h}h/day (counts on pay once approved). “Round” a day up; “✓ Approve” signs off the ${period} total.</p>
@@ -2319,7 +2333,7 @@ function hoursNavMgmt(dir) {
   const d = new Date(S.hoursAnchor + 'T00:00:00');
   if (S.hoursKind === 'daily') d.setDate(d.getDate() + dir);
   else if (S.hoursKind === 'monthly') d.setMonth(d.getMonth() + dir);
-  else d.setDate(d.getDate() + dir * 7);
+  else d.setDate(d.getDate() + dir * (S.hoursKind === 'biweekly' ? 14 : 7));
   S.hoursAnchor = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   renderMyHoursMgmt();
 }
@@ -2340,7 +2354,7 @@ async function renderMyHoursMgmt() {
   $('view').innerHTML = `
     <div class="overview-hero"><h2>My Hours</h2><p>Your clocked hours, overtime and any late starts.</p></div>
     <div class="row-between" style="margin:.2rem 0 .6rem;flex-wrap:wrap;gap:.5rem">
-      <div style="display:flex;gap:.35rem">${pill('daily', 'Daily')}${pill('weekly', 'Weekly')}${pill('monthly', 'Monthly')}</div>
+      <div style="display:flex;gap:.35rem">${pill('daily', 'Daily')}${pill('weekly', 'Weekly')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Monthly')}</div>
       <div class="week-nav"><button class="btn sm ghost" data-hnav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${esc(payRange(S.hoursKind, S.hoursAnchor).label)}</span><button class="btn sm ghost" data-hnav="1">Next ›</button></div>
     </div>
     <div class="kpis">
