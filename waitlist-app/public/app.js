@@ -1151,25 +1151,31 @@ const ALERT_PRESETS = [
 ];
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
 
-// Per-device alert cue preferences (Settings). Default on; stored locally so each
-// person's phone can be silent/loud independently.
+// Per-device cue preferences (Settings). Default on; stored locally so each
+// person's phone can be silent/loud independently. Floor alerts and message /
+// chat notifications each have their own sound + vibration switches.
 const alertSoundOn = () => localStorage.getItem('phnw_alert_sound') !== '0';
 const alertVibrateOn = () => localStorage.getItem('phnw_alert_vibrate') !== '0';
+const msgSoundOn = () => localStorage.getItem('phnw_msg_sound') !== '0';
+const msgVibrateOn = () => localStorage.getItem('phnw_msg_vibrate') !== '0';
 
-// A short attention cue: a soft beep (if allowed) and a device vibration — each
-// gated by the staff member's Settings toggles.
-function alertCue() {
-  if (alertVibrateOn()) { try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ } }
-  if (!alertSoundOn()) return;
+// A short attention cue: a soft beep (if allowed) and a device vibration, each
+// gated by the caller's Settings toggles. `freq` distinguishes the tone —
+// alerts ring higher/urgent, message notifications a touch softer.
+function playCue(sound, vibrate, freq) {
+  if (vibrate) { try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ } }
+  if (!sound) return;
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
     const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
-    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+    o.type = 'sine'; o.frequency.value = freq || 880; o.connect(g); g.connect(ac.destination);
     g.gain.setValueAtTime(0.001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
     o.start(); o.stop(ac.currentTime + 0.5); setTimeout(() => { try { ac.close(); } catch {} }, 800);
   } catch { /* audio blocked until a user gesture — the visual pop-up still shows */ }
 }
+const alertCue = () => playCue(alertSoundOn(), alertVibrateOn(), 880);   // urgent alert ring
+const msgCue = () => playCue(msgSoundOn(), msgVibrateOn(), 620);         // softer message chime
 
 const _shownAlerts = new Set();   // don't double-pop the same alert (SSE + active-poll)
 function showAlertPopup(a) {
@@ -1219,7 +1225,7 @@ function goMessages(sub) {
 // A small top-of-screen pop-up (non-blocking). Plays the alert cue (sound /
 // vibration, gated by Settings), auto-closes after 5s, or on tap / ✕.
 function showNotifyToast({ icon, title, body, onClick }) {
-  alertCue();
+  msgCue();
   let wrap = document.getElementById('notifyWrap');
   if (!wrap) { wrap = document.createElement('div'); wrap.id = 'notifyWrap'; wrap.className = 'notify-wrap'; document.body.appendChild(wrap); }
   const el = document.createElement('div');
@@ -1270,14 +1276,16 @@ function renderSettings() {
     <div class="section-head"><h2>⚙️ Settings</h2></div>
     <p class="sub" style="margin-top:-.6rem;color:var(--muted)">Saved on <strong>this device</strong> only — set your phone loud on the floor, silent at the pass.</p>
     <div class="set-card">
-      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Sound &amp; vibration</h3>
-      ${row('phnw_alert_sound', 'Alert sound', 'Play a chime for alerts and new messages.', alertSoundOn())}
-      ${row('phnw_alert_vibrate', 'Vibration', 'Vibrate the device (phones & tablets) for alerts and new messages.', alertVibrateOn())}
+      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Floor alerts</h3>
+      ${row('phnw_alert_sound', 'Alert sound', 'Play a chime when an urgent alert pops up.', alertSoundOn())}
+      ${row('phnw_alert_vibrate', 'Alert vibration', 'Vibrate the device (phones & tablets) on an alert.', alertVibrateOn())}
       <button class="btn ghost" id="setTest" style="margin-top:.9rem">🔔 Preview alert</button>
     </div>
     <div class="set-card">
       <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Messages &amp; chat</h3>
-      ${row('phnw_msg_notify', 'New message pop-ups', 'Pop up (with sound/vibration) when a new message or team chat arrives.', msgNotifyOn())}
+      ${row('phnw_msg_notify', 'New message pop-ups', 'Show a pop-up when a new message or team chat arrives.', msgNotifyOn())}
+      ${row('phnw_msg_sound', 'Message sound', 'Play a chime for a new message or chat.', msgSoundOn())}
+      ${row('phnw_msg_vibrate', 'Message vibration', 'Vibrate the device for a new message or chat.', msgVibrateOn())}
       ${row('phnw_renag', 'Repeat reminder', 'If a message, chat, or alert is still unread after 10 minutes, remind me again.', renagOn())}
       <button class="btn ghost" id="setTestMsg" style="margin-top:.9rem">✉️ Preview notification</button>
     </div>`;

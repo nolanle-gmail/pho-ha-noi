@@ -821,7 +821,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration) | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
-| ⚙️ Settings | Per-device preferences — alert & message **sound / vibration**, **new-message pop-ups**, and a **10-min repeat reminder** for anything left unread | Everyone |
+| ⚙️ Settings | Per-device preferences — **separate sound / vibration** for floor alerts and for messages, **new-message pop-ups**, and a **10-min repeat reminder** for anything left unread | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
 
