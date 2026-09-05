@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 4, 2026_
+_Last updated: September 5, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -819,9 +819,9 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
-| ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups | Everyone |
-| ⏱ My Hours | Own timesheet — day / week / month, OT & late | Everyone |
-| ⚙️ Settings | Per-device preferences — floor-alert sound & vibration | Everyone |
+| ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration) | Everyone |
+| ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
+| ⚙️ Settings | Per-device preferences — alert & message **sound / vibration**, **new-message pop-ups**, and a **10-min repeat reminder** for anything left unread | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
 

@@ -156,6 +156,8 @@ async function boot() {
   render();
   setupStaffStream();   // sub-second push (SSE) for live views
   refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
+  refreshChatUnread();   // seed the chat unread count for pop-up comparisons
+  startRenag();          // 10-min re-nag for anything left unreviewed
   // Floor alerts: managers get a Send button; everyone gets any pending alert on load.
   const ab = $('alertBtn');
   ab.classList.toggle('hidden', !ALERT_SENDERS.includes(S.user.role));
@@ -203,18 +205,33 @@ function setupStaffStream() {
     setStaffLive('live');   // any event means the pipe is healthy
     let d = null; try { d = JSON.parse(e.data); } catch { /* comment/heartbeat */ }
     const type = d && d.type;
-    if (type === 'alert') { showAlertPopup(d.alert); return; }              // urgent floor ping → pop up
+    if (type === 'alert') { NAG.alert = Date.now(); showAlertPopup(d.alert); return; }        // urgent floor ping → pop up
     if (type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); return; }  // recipient acknowledged (I'm the sender)
-    if (type === 'message') {   // a message arrived for me → update badge + open inbox
-      refreshMsgUnread();
+    if (type === 'message') {   // a message arrived for me → badge + pop-up notification
+      const prev = S.unread || 0;
+      const viewingInbox = S.view === 'messages' && (S.msgView || 'inbox') !== 'chat' && !S.msgThread;
+      refreshMsgUnread().then(() => {
+        if (msgNotifyOn() && (S.unread || 0) > prev && !viewingInbox) {
+          NAG.msg = Date.now();
+          showNotifyToast({ icon: '✉️', title: 'New message', body: `You have ${S.unread} unread message${S.unread === 1 ? '' : 's'}.`, onClick: () => goMessages('inbox') });
+        }
+      });
       if (S.view === 'messages' && !S.msgThread && !$('modalHost').innerHTML) renderMessages();
       return;
     }
-    if (type === 'chat') {   // a chat-group message → refresh the chat list / open group
+    if (type === 'chat') {   // a chat-group message → badge + pop-up notification
+      const prev = S.chatUnread || 0;
+      const inGroup = S.view === 'messages' && S.chatGroup && String(S.chatGroup) === String(d.group_id);
+      const viewingChat = S.view === 'messages' && S.msgView === 'chat';
+      refreshChatUnread().then(() => {
+        if (msgNotifyOn() && (S.chatUnread || 0) > prev && !inGroup && !viewingChat) {
+          NAG.chat = Date.now();
+          showNotifyToast({ icon: '💬', title: 'New team chat', body: `You have ${S.chatUnread} unread chat message${S.chatUnread === 1 ? '' : 's'}.`, onClick: () => goMessages('chat') });
+        }
+      });
       if (S.view === 'messages') {
-        if (S.chatGroup && String(S.chatGroup) === String(d.group_id)) renderChatGroupView(true);
-        else if (S.msgView === 'chat' && !S.chatGroup) renderChatListView();
-        else refreshChatUnread();
+        if (inGroup) renderChatGroupView(true);
+        else if (viewingChat && !S.chatGroup) renderChatListView();
       }
       return;
     }
@@ -1184,6 +1201,64 @@ async function checkPendingAlerts() {
   catch { /* alerts optional — never block the app */ }
 }
 
+// ── New message / chat pop-up notifications + a 10-minute re-nag ───────────────
+// On by default; each is a per-device Settings toggle (like the alert cue).
+const msgNotifyOn = () => localStorage.getItem('phnw_msg_notify') !== '0';   // pop up on new message/chat
+const renagOn = () => localStorage.getItem('phnw_renag') !== '0';            // remind again after 10 min
+const NAG = { msg: 0, chat: 0, alert: 0 };   // when each category last notified (0 = nothing pending)
+const RENAG_MS = 10 * 60 * 1000;
+let RENAG_T = null;
+
+// Jump to the Messages view (inbox or chat) — used by a notification's tap.
+function goMessages(sub) {
+  S.view = 'messages'; S.msgThread = null; S.msgArchived = false; S.chatGroup = null; S.msgView = sub || 'inbox';
+  const nav = $('subnav'); if (nav) nav.classList.remove('open');
+  renderNav(); render();
+}
+
+// A small top-of-screen pop-up (non-blocking). Plays the alert cue (sound /
+// vibration, gated by Settings), auto-closes after 5s, or on tap / ✕.
+function showNotifyToast({ icon, title, body, onClick }) {
+  alertCue();
+  let wrap = document.getElementById('notifyWrap');
+  if (!wrap) { wrap = document.createElement('div'); wrap.id = 'notifyWrap'; wrap.className = 'notify-wrap'; document.body.appendChild(wrap); }
+  const el = document.createElement('div');
+  el.className = 'notify-toast';
+  el.innerHTML = `<div class="nt-icon">${icon || '🔔'}</div><div class="nt-text"><div class="nt-title">${esc(title || '')}</div><div class="nt-body">${esc(body || '')}</div></div><button class="nt-close" aria-label="Close">✕</button>`;
+  wrap.appendChild(el);
+  const remove = () => { clearTimeout(t); el.classList.add('leaving'); setTimeout(() => el.remove(), 200); };
+  const t = setTimeout(remove, 5000);
+  el.querySelector('.nt-close').onclick = (e) => { e.stopPropagation(); remove(); };
+  el.onclick = () => { remove(); if (onClick) { try { onClick(); } catch { /* */ } } };
+}
+
+// Every minute (and on returning to the app), re-surface anything left unreviewed
+// for 10+ minutes: unread messages, unread chat, or an unacknowledged alert.
+async function renagSweep() {
+  if (!S.user || !renagOn()) return;
+  const now = Date.now();
+  try { await refreshMsgUnread(); } catch { /* offline */ }
+  if ((S.unread || 0) > 0) {
+    if (!NAG.msg) NAG.msg = now;
+    else if (now - NAG.msg >= RENAG_MS && msgNotifyOn()) { NAG.msg = now; showNotifyToast({ icon: '✉️', title: 'Unread messages', body: `You still have ${S.unread} unread message${S.unread === 1 ? '' : 's'}.`, onClick: () => goMessages('inbox') }); }
+  } else NAG.msg = 0;
+  try { await refreshChatUnread(); } catch { /* offline */ }
+  if ((S.chatUnread || 0) > 0) {
+    if (!NAG.chat) NAG.chat = now;
+    else if (now - NAG.chat >= RENAG_MS && msgNotifyOn()) { NAG.chat = now; showNotifyToast({ icon: '💬', title: 'Unread team chat', body: `You still have ${S.chatUnread} unread chat message${S.chatUnread === 1 ? '' : 's'}.`, onClick: () => goMessages('chat') }); }
+  } else NAG.chat = 0;
+  try {
+    const active = (await api('/alerts/active')).alerts || [];
+    if (active.length) {
+      if (!NAG.alert) NAG.alert = now;
+      else if (now - NAG.alert >= RENAG_MS) { NAG.alert = now; active.forEach(a => { _shownAlerts.delete(a.id); showAlertPopup(a); }); }
+    } else NAG.alert = 0;
+  } catch { /* alerts optional */ }
+}
+function startRenag() { clearInterval(RENAG_T); RENAG_T = setInterval(renagSweep, 60000); }
+// Coming back to the app (unlock / tab focus) re-checks pending items right away.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user) renagSweep(); });
+
 // ── Settings: per-device preferences (currently the alert sound / vibration) ───
 function renderSettings() {
   const v = $('view');
@@ -1195,10 +1270,16 @@ function renderSettings() {
     <div class="section-head"><h2>⚙️ Settings</h2></div>
     <p class="sub" style="margin-top:-.6rem;color:var(--muted)">Saved on <strong>this device</strong> only — set your phone loud on the floor, silent at the pass.</p>
     <div class="set-card">
-      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Floor alerts</h3>
-      ${row('phnw_alert_sound', 'Alert sound', 'Play a chime when an urgent alert pops up.', alertSoundOn())}
-      ${row('phnw_alert_vibrate', 'Vibration', 'Vibrate the device (phones & tablets) on an alert.', alertVibrateOn())}
+      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Sound &amp; vibration</h3>
+      ${row('phnw_alert_sound', 'Alert sound', 'Play a chime for alerts and new messages.', alertSoundOn())}
+      ${row('phnw_alert_vibrate', 'Vibration', 'Vibrate the device (phones & tablets) for alerts and new messages.', alertVibrateOn())}
       <button class="btn ghost" id="setTest" style="margin-top:.9rem">🔔 Preview alert</button>
+    </div>
+    <div class="set-card">
+      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">Messages &amp; chat</h3>
+      ${row('phnw_msg_notify', 'New message pop-ups', 'Pop up (with sound/vibration) when a new message or team chat arrives.', msgNotifyOn())}
+      ${row('phnw_renag', 'Repeat reminder', 'If a message, chat, or alert is still unread after 10 minutes, remind me again.', renagOn())}
+      <button class="btn ghost" id="setTestMsg" style="margin-top:.9rem">✉️ Preview notification</button>
     </div>`;
   v.querySelectorAll('[data-tgl]').forEach(b => b.onclick = () => {
     const k = b.dataset.tgl, on = localStorage.getItem(k) !== '0';
@@ -1207,6 +1288,7 @@ function renderSettings() {
     toast(!on ? 'On' : 'Off');
   });
   $('setTest').onclick = () => showAlertPopup({ id: 'preview-' + Date.now(), preview: true, body: 'This is a preview alert', sender_name: 'You', priority: 'urgent' });
+  $('setTestMsg').onclick = () => showNotifyToast({ icon: '✉️', title: 'New message', body: 'This is a preview notification.' });
 }
 
 // Manager composer: pick who, pick a preset or type a message, choose priority, send.
