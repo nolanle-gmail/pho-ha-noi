@@ -133,6 +133,11 @@ function migrate() {
     `ALTER TABLE notify_log ADD COLUMN status TEXT`,
     // Kind of page: 'joined' (confirmation) or 'ready' (table-is-ready).
     `ALTER TABLE notify_log ADD COLUMN kind TEXT`,
+    // SMS opt-in: did the guest agree to receive texts at the number they gave?
+    // We only text a guest when this is 1. consent_at records when they agreed
+    // (an audit trail for the messaging opt-in).
+    `ALTER TABLE waitlist ADD COLUMN sms_consent INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE waitlist ADD COLUMN consent_at TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 }
 

@@ -64,8 +64,12 @@ async function renderForm() {
       <input id="kName" class="k-input" placeholder="e.g. Kim" autocomplete="name" />
       <label class="k-label">Party size</label>
       <div class="k-stepper"><button type="button" id="kMinus">−</button><span id="kSize">${K.size}</span><button type="button" id="kPlus">+</button></div>
-      <label class="k-label">Mobile number <span class="k-opt">(so we can text you)</span></label>
+      <label class="k-label">Mobile number <span class="k-opt">(optional)</span></label>
       <input id="kPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="tel" />
+      <label class="k-consent" style="display:flex;gap:.6rem;align-items:flex-start;margin:.5rem 0 0;font-size:.82rem;line-height:1.4;color:#555;cursor:pointer">
+        <input type="checkbox" id="kConsent" style="margin-top:.15rem;flex:0 0 auto;width:1.1rem;height:1.1rem" />
+        <span>Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</span>
+      </label>
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>
     </div>`;
@@ -106,7 +110,8 @@ async function join() {
   $('kJoin').disabled = true;
   try {
     const r = await api('/checkin', { method: 'POST', body: JSON.stringify({
-      location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null, notes: null }) });
+      location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null,
+      sms_consent: !!($('kConsent') && $('kConsent').checked), notes: null }) });
     sessionStorage.setItem('phnw_ref', r.ref);
     renderConfirm(r.ref, r);
     // Hand the kiosk back to the next guest after a short confirmation.

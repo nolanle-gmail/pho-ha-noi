@@ -60,6 +60,8 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   const size = Math.max(1, Math.min(50, parseInt(req.body.party_size, 10) || 2));
   const phone = (req.body.phone || '').toString().trim().slice(0, 40) || null;
+  // SMS opt-in: only true when the guest ticked the consent box AND gave a phone.
+  const smsConsent = phone && (req.body.sms_consent === true || req.body.sms_consent === 1 || req.body.sms_consent === 'true') ? 1 : 0;
   const notes = (req.body.notes || '').toString().trim().slice(0, 300) || null; // special requests
   // Duplicate-submit guard: if an identical party is already waiting here (double
   // tap, page reload, back button), return that entry instead of a second one.
@@ -75,16 +77,16 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   }
   const s = statusFor(locId);
   const ref = genRef();
-  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, notes, quoted_minutes, source, public_ref)
-    VALUES (?,?,?,?,?,?, 'self', ?)`).run(locId, name.slice(0, 120), size, phone, notes, s.quoted_minutes, ref);
+  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, notes, quoted_minutes, source, public_ref, sms_consent, consent_at)
+    VALUES (?,?,?,?,?,?, 'self', ?,?,?)`).run(locId, name.slice(0, 120), size, phone, notes, s.quoted_minutes, ref, smsConsent, smsConsent ? new Date().toISOString() : null);
   // Audit as a self check-in (no staff user).
   try {
     db.prepare(`INSERT INTO audit_log (user_id, location_id, action, entity, entity_id, detail) VALUES (NULL,?,?,?,?,?)`)
       .run(locId, 'party_added', 'waitlist', r.lastInsertRowid, JSON.stringify({ guest: name.slice(0, 120), party_size: size, source: 'self' }));
   } catch { /* audit is best-effort */ }
   try { require('../lib/events').emitWaitlist(locId); } catch { /* live-push best-effort */ }
-  // Text the guest a join confirmation with their spot (best-effort; log-only until a provider is set).
-  if (phone) {
+  // Text the guest a join confirmation with their spot — only if they opted in.
+  if (phone && smsConsent) {
     const pos = s.parties_ahead + 1;
     const wait = s.quoted_minutes > 0 ? ` about ${s.quoted_minutes} min` : ' a short wait';
     notifyGuest(r.lastInsertRowid, phone, `${loc.name}: you're #${pos} on the waitlist, party of ${size} —${wait}. Track your spot and we'll text when your table is ready. Reply STOP to opt out.`, 'joined');

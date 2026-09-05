@@ -30,14 +30,19 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     const quote = await j(await fetch(base + `/api/waitlist/quote?location_id=${loc}`, { headers: H(token) }));
     check('quote scales with queue', quote.suggested_minutes === quote.parties_ahead * 8, JSON.stringify(quote));
 
-    r = await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'Smoke, Test', party_size: 3, phone: '+14085559999' }) });
+    r = await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'Smoke, Test', party_size: 3, phone: '+14085559999', sms_consent: true }) });
     const added = await j(r);
     check('add party (auto quote)', r.status === 200 && added.quoted_minutes >= 0, JSON.stringify(added));
     const id = added.id;
 
     r = await fetch(base + `/api/waitlist/${id}/notify`, { method: 'POST', headers: H(token) });
     const notified = await j(r);
-    check('notify (SMS stub)', r.status === 200 && notified.sent === true, JSON.stringify(notified));
+    check('notify texts a consented guest', r.status === 200 && notified.sent === true, JSON.stringify(notified));
+
+    // A guest with a phone but no SMS opt-in must NOT be texted on notify.
+    const nc = await j(await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'No Consent', party_size: 2, phone: '+14085550000' }) }));
+    const ncNotify = await j(await fetch(base + `/api/waitlist/${nc.id}/notify`, { method: 'POST', headers: H(token) }));
+    check('no-consent guest is NOT texted', ncNotify.sent === false && ncNotify.has_phone === true && ncNotify.sms_consent === false, JSON.stringify(ncNotify));
 
     r = await fetch(base + `/api/waitlist/${id}/notify`, { method: 'POST', headers: H(token) });
     check('notify allowed while waiting', r.status === 200);

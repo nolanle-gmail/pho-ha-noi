@@ -61,17 +61,19 @@ router.post('/', requireRole(...HOST), (req, res) => {
   const { guest_name, party_size, phone, quoted_minutes, notes } = req.body;
   if (!guest_name || !String(guest_name).trim()) return res.status(400).json({ error: 'Guest name is required.' });
   const size = Math.max(1, Math.min(50, parseInt(party_size) || 2));
+  // SMS opt-in: the host confirms the guest agreed to receive texts. Only text when true AND a phone was given.
+  const smsConsent = phone && (req.body.sms_consent === true || req.body.sms_consent === 1 || req.body.sms_consent === 'true') ? 1 : 0;
   let quote = parseInt(quoted_minutes);
   if (!Number.isFinite(quote)) {
     const location = db.prepare(`SELECT avg_turn_minutes FROM locations WHERE id=?`).get(l);
     const ahead = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND status='waiting'`).get(l).c;
     quote = ahead * (location ? location.avg_turn_minutes : 8);
   }
-  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, notes) VALUES (?,?,?,?,?,?)`)
-    .run(l, String(guest_name).slice(0, 120), size, phone || null, quote, notes ? String(notes).slice(0, 300) : null);
-  auditLog(req, l, 'party_added', r.lastInsertRowid, { guest: String(guest_name).slice(0, 120), party_size: size, quoted_minutes: quote });
-  // Text the guest a join confirmation (best-effort; log-only until a provider is set).
-  if (phone) {
+  const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, notes, sms_consent, consent_at) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(l, String(guest_name).slice(0, 120), size, phone || null, quote, notes ? String(notes).slice(0, 300) : null, smsConsent, smsConsent ? new Date().toISOString() : null);
+  auditLog(req, l, 'party_added', r.lastInsertRowid, { guest: String(guest_name).slice(0, 120), party_size: size, quoted_minutes: quote, sms_consent: !!smsConsent });
+  // Text the guest a join confirmation — only if they opted in to SMS.
+  if (phone && smsConsent) {
     const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(l) || {}).name || 'Pho Ha Noi';
     const wait = quote > 0 ? ` about ${quote} min` : ' a short wait';
     notifyGuest(r.lastInsertRowid, phone, `${locName}: you're on the waitlist, party of ${size} —${wait}. We'll text when your table is ready. Reply STOP to opt out.`, 'joined');
@@ -88,9 +90,11 @@ router.post('/:id/notify', requireRole(...HOST), (req, res) => {
   const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(w.location_id) || {}).name || 'Pho Ha Noi';
   const body = `${locName}: your table is ready! Please see the host. 🍜`;
   db.prepare(`UPDATE waitlist SET notified_at=datetime('now') WHERE id=?`).run(w.id);
-  const n = notifyGuest(w.id, w.phone, body, 'ready');
-  auditLog(req, w.location_id, 'party_notified', w.id, { guest: w.guest_name, channel: w.phone ? 'sms' : 'none', status: n.status });
-  res.json({ success: true, sent: !!w.phone, message: body });
+  // Only text the guest if they opted in; otherwise record the page with no SMS.
+  const canText = !!(w.phone && w.sms_consent);
+  const n = notifyGuest(w.id, canText ? w.phone : null, body, 'ready');
+  auditLog(req, w.location_id, 'party_notified', w.id, { guest: w.guest_name, channel: canText ? 'sms' : 'none', status: n.status });
+  res.json({ success: true, sent: canText, has_phone: !!w.phone, sms_consent: !!w.sms_consent, message: body });
 });
 
 // Seat a party.

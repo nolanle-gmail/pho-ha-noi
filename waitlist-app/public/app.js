@@ -1410,6 +1410,10 @@ async function openAdd() {
   modal('Add party', `
     <label>Guest name</label><input id="fName" placeholder="e.g. Nguyen, Kim" />
     <label>Phone (for SMS page)</label><input id="fPhone" inputmode="tel" placeholder="+1 408 555 0100" />
+    <label style="display:flex;gap:.5rem;align-items:flex-start;font-weight:400;font-size:.85rem;line-height:1.4;margin:.2rem 0 .4rem;cursor:pointer">
+      <input type="checkbox" id="fConsent" style="margin-top:.15rem;flex:0 0 auto" />
+      <span>Guest agreed to receive text updates at this number (message &amp; data rates may apply; reply STOP to opt out). Only text guests who said yes.</span>
+    </label>
     <label>Party size</label>
     <div class="stepper"><button type="button" id="minus">−</button><span class="n" id="sizeN">2</span><button type="button" id="plus">+</button></div>
   `, async () => {
@@ -1417,7 +1421,7 @@ async function openAdd() {
     if (!name) throw new Error('Guest name is required.');
     await api('/waitlist/', { method: 'POST', body: JSON.stringify({
       location_id: S.loc, guest_name: name, party_size: size, phone: $('fPhone').value.trim() || null,
-      notes: null }) });
+      sms_consent: !!($('fConsent') && $('fConsent').checked), notes: null }) });
     toast('Party added to waitlist'); render();
   });
   const setN = () => $('sizeN').textContent = size;
@@ -1429,7 +1433,9 @@ async function act(action, id, name) {
   try {
     if (action === 'notify') {
       const r = await api(`/waitlist/${id}/notify`, { method: 'POST' });
-      toast(r.sent ? `Paged ${name} by SMS 🔔` : `Marked notified (no phone on file)`);
+      toast(r.sent ? `Paged ${name} by SMS 🔔`
+        : (r.has_phone && !r.sms_consent) ? `Marked ready — ${name} didn't opt in to texts, please call them`
+          : `Marked notified (no phone on file)`);
     } else if (action === 'seat') {
       return seatModal(id, name);
     } else if (action === 'leave') {

@@ -879,6 +879,11 @@ What gets texted:
   front desk), with their spot and quoted wait, and the **"your table is ready"** page when
   the host notifies them. Guest texts carry a "Reply STOP to opt out" footer; every page is
   logged in `notify_log` (with `status` = sent / logged / failed and `kind` = joined / ready).
+  **Opt-in required (TCPA/CTIA):** a guest is only ever texted if they **agreed** — the
+  self-kiosk shows a consent checkbox with the SMS disclosure next to the phone field, and the
+  front-desk "Add party" form has a "guest agreed to texts" checkbox the host ticks. The
+  agreement is stored on the waitlist row (`sms_consent` + `consent_at`); with no opt-in the
+  guest still joins and tracks their spot on-screen, and the host pages them in person.
 - **Staff** — the **break reminder** also goes to the staff member's phone, and **manager
   alerts** (missed clock-out, early clock-out, clock-in to review) also text the location's
   leaders.
