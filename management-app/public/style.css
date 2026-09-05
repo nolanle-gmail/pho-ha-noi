@@ -14,6 +14,8 @@
   --low-bg: #fef3c7;
   --out: #dc2626;
   --out-bg: #fee2e2;
+  --blue: #2b5bd7;
+  --blue-soft: #e7eefc;
 }
 * { box-sizing: border-box; }
 body {
@@ -99,9 +101,9 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sched-name { width: 12rem; text-align: left !important; background: #fff; }
 td.sched-name { font-size: .86rem; }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
-.shift-card { background: var(--gold-soft); border: 1px solid var(--line); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
+.shift-card { background: var(--blue-soft); border: 1px solid var(--line); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }
-.shift-card.editable:hover { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold-soft); }
+.shift-card.editable:hover { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
 .shift-card.away { background: repeating-linear-gradient(45deg, #f4f4f4, #f4f4f4 6px, #eee 6px, #eee 12px); opacity: .8; }
 /* Leave entries (sick / vacation / on-leave) on the schedule grid */
 .leave-card { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; border: 1px solid; border-radius: 8px; padding: .3rem .45rem; margin-bottom: .3rem; font-size: .78rem; }
@@ -113,7 +115,7 @@ td.sched-name { font-size: .86rem; }
 .leave-card.gold { background: #fbeed3; border-color: #e6c98a; color: #8a5a12; }
 .shift-time { font-weight: 700; font-size: .78rem; color: var(--ink); }
 .shift-away-loc { font-size: .72rem; color: var(--muted); }
-.shift-jobs { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .25rem; }
+.shift-jobs { font-size: .74rem; font-weight: 600; color: var(--ink); margin-top: .15rem; line-height: 1.25; }
 .jchip { display: inline-block; font-size: .68rem; padding: .05rem .35rem; border-radius: 6px; font-weight: 700; border: 1px solid transparent; }
 .jchip.ok { background: #e6f4ea; color: #1e7e34; } .jchip.blue { background: #e7eefc; color: #2b5bd7; }
 .jchip.low { background: #fdecd8; color: #b4630b; } .jchip.gray { background: #eee; color: var(--muted); }
@@ -169,7 +171,7 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .myday-date { color: var(--muted); font-weight: 400; font-size: .76rem; }
 .myday-h { font-size: .74rem; color: #1e7e34; font-weight: 700; }
 .myday-h.over { color: var(--red); }
-.myshift { background: var(--gold-soft); border-radius: 8px; padding: .35rem .45rem; margin-bottom: .4rem; }
+.myshift { background: var(--blue-soft); border-radius: 8px; padding: .35rem .45rem; margin-bottom: .4rem; }
 .myshift-top { font-size: .78rem; display: flex; flex-wrap: wrap; gap: .3rem; align-items: baseline; }
 .myshift-loc { color: var(--muted); font-size: .72rem; }
 .myshift-note { font-size: .72rem; color: var(--muted); margin-top: .25rem; }

@@ -1214,7 +1214,6 @@ async function renderMySchedule() {
   const days = data.days;
   const weekH = sumHours(data.shifts);
   const overWeek = weekH > WEEKLY_MAX;
-  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" data-tip="${esc(chipTip(j))}">${esc(j.code || j.name)}</span>`;
   const byDay = {}; data.shifts.forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
   const overDays = days.filter(iso => sumHours(byDay[iso] || []) > DAILY_MAX).map(iso => WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]);
 
@@ -1229,9 +1228,9 @@ async function renderMySchedule() {
       ${dayBreak ? `<div class="myday-break">☕ ${dayBreak} min break${dayBreak > 10 ? 's' : ''}</div>` : ''}
       ${load.min ? `<div class="myday-tasks${load.heavy ? ' heavy' : ''}" title="${fmtDur(load.min)} of tasks on a ${fmtH(dayH)}h shift (${load.pct}%)">${load.heavy ? '⚠ ' : '📋 '}${fmtDur(load.min)} of tasks${load.heavy ? ' — heavy load' : ''}</div>` : ''}
       ${ss.length ? ss.map(s => `<div class="myshift">
-        <div class="myshift-top"><strong>${s.start_time || '—'}–${s.end_time || '—'}</strong> <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
-        <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
-        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? `<strong>${esc(t.task_time)}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
+        <div class="myshift-top"><strong>${to12h(s.start_time)}–${to12h(s.end_time)}</strong> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
+        <div class="shift-jobs">${s.jobs.length ? s.jobs.map(j => esc(j.name)).join(', ') : 'no jobs'}</div>
+        ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? `<strong>${esc(to12h(t.task_time))}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
         ${(s.breaks && s.breaks.length) ? `<div class="myshift-breaks">${s.breaks.map(b => `<span class="brk-chip">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : ''}
         ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
       </div>`).join('') : '<div class="myday-off">Day off</div>'}
@@ -1575,6 +1574,8 @@ const sumTaskMinutes = (shifts) => {
 };
 const fmtDur = (m) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`;
 const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
+// "17:30" -> "5:30pm", "23:00" -> "11pm" — the shift-card time format.
+const to12h = (hhmm) => { if (!hhmm) return '—'; const [H, M] = String(hhmm).split(':').map(Number); if (isNaN(H)) return hhmm; const ap = H < 12 ? 'am' : 'pm'; const h = (H % 12) || 12; return M ? `${h}:${String(M).padStart(2, '0')}${ap}` : `${h}${ap}`; };
 const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.label ? ' ' + b.label : ''}`;
 
 async function renderLocSchedule() {
@@ -1588,8 +1589,6 @@ async function renderLocSchedule() {
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.schedWeek = data.week_start;
   const days = data.days;
-  const jobChip = (j) => `<span class="jchip ${COMPLEXITY_CHIP[j.complexity] || 'gray'}" data-tip="${esc(chipTip(j))}">${esc(j.code || j.name)}</span>`;
-
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -1598,10 +1597,10 @@ async function renderLocSchedule() {
     const brkLine = (s) => (s.breaks && s.breaks.length)
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
     const taskLine = (s) => (s.tasks && s.tasks.length)
-      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? esc(t.task_time) + ' ' : ''}${esc(t.code || t.name)}</span>`).join('')}</div>` : '';
+      ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? esc(to12h(t.task_time)) + ' ' : ''}${esc(t.name)}</span>`).join('')}</div>` : '';
     const hereCards = here.filter(s => !isLeaveShift(s)).map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
-        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
-        <div class="shift-jobs">${s.jobs.map(jobChip).join('') || '<span class="jchip gray">no jobs</span>'}</div>
+        <div class="shift-time">${to12h(s.start_time)}–${to12h(s.end_time)}</div>
+        <div class="shift-jobs">${s.jobs.length ? s.jobs.map(j => esc(j.name)).join(', ') : 'no jobs'}</div>
         ${taskLine(s)}${brkLine(s)}
       </div>`).join('');
     const leaveCards = here.filter(isLeaveShift).map(s => {
@@ -1610,7 +1609,7 @@ async function renderLocSchedule() {
       return `<div class="leave-card ${m.chip}${canEdit ? ' editable' : ''}" data-shift="${s.id}" title="${esc(m.label)} — ${dur}">${m.icon} <b>${esc(m.label)}</b> <span class="leave-dur">${dur}</span></div>`;
     }).join('');
     const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
-        <div class="shift-time">${s.start_time || '—'}–${s.end_time || '—'} <span class="shift-h">${fmtH(shiftWorkedHours(s))}h</span></div>
+        <div class="shift-time">${to12h(s.start_time)}–${to12h(s.end_time)}</div>
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
     const dayBreak = sumBreakMinutes(dayShifts);
