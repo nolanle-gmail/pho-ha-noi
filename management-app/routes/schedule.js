@@ -18,11 +18,12 @@ const COMPLEXITY = ['low', 'medium', 'high'];
 // Local-date ISO (YYYY-MM-DD) — avoids the UTC shift that toISOString() causes
 // in negative-offset timezones (e.g. US Pacific).
 function fmtLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
-// Monday (ISO) of the week containing `dateStr` (defaults to today).
+// Saturday (ISO) of the work week containing `dateStr` (defaults to today).
+// The work week runs Saturday → Friday.
 function weekStart(dateStr) {
   const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
   if (isNaN(d)) return weekStart(null);
-  const day = (d.getDay() + 6) % 7; // 0 = Monday
+  const day = (d.getDay() + 1) % 7; // 0 = Saturday (getDay: Sun=0..Sat=6)
   d.setDate(d.getDate() - day);
   return fmtLocal(d);
 }

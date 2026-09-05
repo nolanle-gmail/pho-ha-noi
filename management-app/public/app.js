@@ -1225,7 +1225,7 @@ async function renderMySchedule() {
     const load = taskLoad(ss);
     const over = dayH > DAILY_MAX;
     return `<div class="myday${iso === todayIso() ? ' today' : ''}">
-      <div class="myday-head"><span>${WD[i]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
+      <div class="myday-head"><span>${WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
       ${dayBreak ? `<div class="myday-break">☕ ${dayBreak} min break${dayBreak > 10 ? 's' : ''}</div>` : ''}
       ${load.min ? `<div class="myday-tasks${load.heavy ? ' heavy' : ''}" title="${fmtDur(load.min)} of tasks on a ${fmtH(dayH)}h shift (${load.pct}%)">${load.heavy ? '⚠ ' : '📋 '}${fmtDur(load.min)} of tasks${load.heavy ? ' — heavy load' : ''}</div>` : ''}
       ${ss.length ? ss.map(s => `<div class="myshift">
@@ -1261,7 +1261,7 @@ async function renderMySchedule() {
 
   $('wkPrev').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, -7); renderMySchedule(); };
   $('wkNext').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, 7); renderMySchedule(); };
-  $('wkToday').onclick = () => { S.mySchedWeek = mondayOf(null); renderMySchedule(); };
+  $('wkToday').onclick = () => { S.mySchedWeek = null; renderMySchedule(); };
 }
 
 // ── Self-service landing (Server, Busser, Chef, Front Desk, …) ───────────────
@@ -1638,7 +1638,7 @@ async function renderLocSchedule() {
     </div>
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
-      ${days.map((d, i) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[i]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
+      ${days.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
       <th class="sched-week">Week<div class="sched-date">/ ${WEEKLY_MAX}h</div></th>
     </tr></thead><tbody>
       ${data.staff.length ? data.staff.map(st => `<tr>
@@ -1652,7 +1652,7 @@ async function renderLocSchedule() {
 
   $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
   $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
-  $('wkToday').onclick = () => { S.schedWeek = mondayOf(null); renderLocSchedule(); };
+  $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
   if (canEdit) {
     $('locBody').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
       const st = data.staff.find(x => x.id == b.dataset.add);
