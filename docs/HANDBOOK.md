@@ -761,7 +761,7 @@ a location dashboard; self-service staff land on a personal home screen.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
-| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones) | All · alerts & texts sent by managers |
+| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change

@@ -3818,6 +3818,51 @@ function wireAttachInput(inputId, labelId) {
   if (inp && lbl) inp.onchange = () => { lbl.textContent = inp.files && inp.files.length ? `📎 ${inp.files.length} file${inp.files.length > 1 ? 's' : ''} attached` : ''; };
 }
 
+// ── Message / chat translator (English / Spanish / Vietnamese) ─────────────────
+const TR_LANGS = { en: 'English', es: 'Spanish', vi: 'Vietnamese' };
+const TR_CYCLE = ['en', 'es', 'vi'];   // EN → ES → VI → EN — sets the two-button order
+function trTargets(src) { const i = Math.max(0, TR_CYCLE.indexOf(src)); return [TR_CYCLE[(i + 1) % 3], TR_CYCLE[(i + 2) % 3]]; }
+// Heuristic guess of a message's language — just enough to label the two buttons.
+function detectLang(text) {
+  const t = String(text || '');
+  // Vietnamese-exclusive letters/tone marks (plain à á è é ì í ò ó ù ú are shared with Spanish).
+  if (/[ăâđêôơưảãạằắẳẵặầấẩẫậẻẽẹềếểễệỉĩịỏõọồốổỗộờớởỡợủũụừứửữựỳýỷỹỵ]/i.test(t)) return 'vi';
+  if (/[ñ¿¡]/i.test(t)) return 'es';
+  const low = ' ' + t.toLowerCase() + ' ';
+  const esWords = (low.match(/ (el|la|los|las|un|una|unos|unas|que|de|del|por|para|con|sin|está|estoy|estamos|gracias|hola|adiós|mañana|señor|señora|trabajo|cocina|mesa|favor|buenos|días|noches|tarde|ahora|hoy|jefe|comida|limpiar|necesito|puedo|ayuda|listo) /g) || []).length;
+  if (/[áéíóúü]/i.test(t) || esWords >= 2) return 'es';
+  return 'en';
+}
+function b64EncodeUnicode(s) { try { return btoa(unescape(encodeURIComponent(s))); } catch { return ''; } }
+function b64DecodeUnicode(s) { try { return decodeURIComponent(escape(atob(s))); } catch { return ''; } }
+function transRow(text) {
+  const s = String(text || '').trim();
+  if (s.length < 2) return '';
+  const src = detectLang(s);
+  const [a, b] = trTargets(src);
+  return `<div class="tr-row" data-src="${src}" data-txt="${b64EncodeUnicode(s)}">
+    <button type="button" class="tr-btn" data-to="${a}">🌐 To ${TR_LANGS[a]}</button>
+    <button type="button" class="tr-btn" data-to="${b}">🌐 To ${TR_LANGS[b]}</button>
+    <span class="tr-out" hidden></span>
+  </div>`;
+}
+document.addEventListener('click', async (e) => {
+  const hide = e.target.closest && e.target.closest('.tr-hide');
+  if (hide) { const o = hide.closest('.tr-out'); if (o) { o.hidden = true; o.innerHTML = ''; } return; }
+  const btn = e.target.closest && e.target.closest('.tr-btn');
+  if (!btn) return;
+  const row = btn.closest('.tr-row'); if (!row) return;
+  const src = row.dataset.src || 'en';
+  const to = btn.dataset.to;
+  const text = b64DecodeUnicode(row.dataset.txt || '');
+  const out = row.querySelector('.tr-out');
+  out.hidden = false; out.textContent = 'Translating…';
+  try {
+    const d = await api(`/translate?q=${encodeURIComponent(text)}&from=${src}&to=${to}`);
+    out.innerHTML = `<span class="tr-lang">${TR_LANGS[to]}</span> ${esc(d.text)} <button type="button" class="tr-hide" title="Hide">✕</button>`;
+  } catch (err) { out.textContent = (err && err.message) || 'Translation unavailable.'; }
+});
+
 async function renderThread() {
   revokeMsgAtts();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
@@ -3837,7 +3882,7 @@ async function renderThread() {
     <div class="thread">${t.messages.map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
-        <div class="thread-body">${esc(m.body)}</div>
+        <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
@@ -4016,7 +4061,7 @@ async function renderChatGroup(silent) {
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
-      ${m.body ? `<div class="thread-body">${esc(m.body)}</div>` : ''}
+      ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   $('view').innerHTML = `
