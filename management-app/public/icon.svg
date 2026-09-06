@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#b91c1c"/>
+  <circle cx="256" cy="256" r="176" fill="#ffffff"/>
+  <circle cx="256" cy="256" r="166" fill="#f2c14e"/>
+  <text x="256" y="312" font-family="Georgia, 'Times New Roman', serif" font-size="168" font-weight="700" font-style="italic" fill="#7a1010" text-anchor="middle">Phở</text>
+</svg>
