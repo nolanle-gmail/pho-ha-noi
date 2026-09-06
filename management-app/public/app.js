@@ -3980,6 +3980,8 @@ async function renderCompose() {
   if (!isLead) groups.push(['My manager', recips.filter(u => MSG_MANAGERS.includes(u.role) && (inLoc(u) || u.role === 'general_manager')).map(u => u.id)]);
   groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
   const shown = groups.filter(g => g[1].length);
+  const recipOpt = (u) => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`;
+  const recipOpts = (list) => list.map(recipOpt).join('');
   $('view').innerHTML = `
     <h2 class="page">New message</h2>
     <div class="section" style="max-width:640px">
@@ -3990,7 +3992,10 @@ async function renderCompose() {
         <option value="direct">A specific person…</option>
         ${canBroadcast ? '<option value="all">📣 All staff (broadcast)</option><option value="location">A whole location…</option>' : ''}
       </select>
-      <div id="cDirect" class="hidden"><label class="fld-label">Recipient</label><select id="cRecip" class="fld">${recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`).join('')}</select></div>
+      <div id="cDirect" class="hidden"><label class="fld-label">Recipient</label>
+        <input id="cRecipSearch" class="fld" placeholder="🔍 Search by name…" autocomplete="off" />
+        <select id="cRecip" class="fld" size="6">${recipOpts(recips)}</select>
+        <div id="cRecipNone" class="hidden" style="color:var(--muted);font-size:.85rem;padding:.3rem 0">No one matches that name.</div></div>
       <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
@@ -4001,7 +4006,15 @@ async function renderCompose() {
       <button class="btn" id="cSend">Send message</button>
     </div>`;
   const aud = $('cAud');
-  aud.onchange = () => { $('cDirect').classList.toggle('hidden', aud.value !== 'direct'); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); };
+  aud.onchange = () => { const direct = aud.value === 'direct'; $('cDirect').classList.toggle('hidden', !direct); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); if (direct && $('cRecipSearch')) $('cRecipSearch').focus(); };
+  const rSearch = $('cRecipSearch');
+  if (rSearch) rSearch.oninput = () => {
+    const q = rSearch.value.trim().toLowerCase();
+    const list = q ? recips.filter(u => (u.name || '').toLowerCase().includes(q)) : recips;
+    $('cRecip').innerHTML = recipOpts(list);
+    $('cRecipNone').classList.toggle('hidden', list.length > 0);
+    if (list.length) $('cRecip').value = String(list[0].id);
+  };
   wireAttachInput('cFiles', 'cFileNames');
   $('cSend').onclick = async () => {
     $('cErr').textContent = '';

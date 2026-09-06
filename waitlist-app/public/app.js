@@ -699,11 +699,15 @@ async function composeModal() {
   groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
   const shown = groups.filter(g => g[1].length);
   const groupOpts = shown.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[1].length})</option>`).join('');
-  const personOpts = recips.map(u => `<option value="${u.id}">${esc(u.name)} — ${esc(roleWord(u.role))}${u.location ? ' · ' + esc(u.location.replace('Pho Ha Noi — ', '')) : ''}</option>`).join('');
+  const personOpt = (u) => `<option value="${u.id}">${esc(u.name)} — ${esc(roleWord(u.role))}${u.location ? ' · ' + esc(u.location.replace('Pho Ha Noi — ', '')) : ''}</option>`;
+  const personOptsHtml = (list) => list.map(personOpt).join('');
   modal('New message', `
     <label>Send to</label>
     <select id="mTo">${groupOpts}<option value="person">A specific person…</option></select>
-    <div id="mPersonWrap" class="hidden"><label>Person</label><select id="mPerson">${personOpts}</select></div>
+    <div id="mPersonWrap" class="hidden"><label>Person</label>
+      <input id="mPersonSearch" placeholder="🔍 Search by name…" autocomplete="off" />
+      <select id="mPerson" size="6">${personOptsHtml(recips)}</select>
+      <div id="mPersonNone" class="hidden" style="color:var(--muted);font-size:.85rem;padding:.3rem 0">No one matches that name.</div></div>
     <label>Subject</label><input id="mSubj" placeholder="Subject (optional)" />
     <label>Message</label><textarea id="mBody" rows="4" placeholder="Write your message…"></textarea>
     <div class="msg-compose-attach"><label class="msg-attach-btn">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="mFiles"></label><span id="mFileNames" class="msg-attach-names"></span></div>
@@ -720,7 +724,14 @@ async function composeModal() {
     if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
     toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
   }, 'Send');
-  $('mTo').onchange = () => $('mPersonWrap').classList.toggle('hidden', $('mTo').value !== 'person');
+  $('mTo').onchange = () => { const person = $('mTo').value === 'person'; $('mPersonWrap').classList.toggle('hidden', !person); if (person) $('mPersonSearch').focus(); };
+  $('mPersonSearch').oninput = () => {
+    const q = $('mPersonSearch').value.trim().toLowerCase();
+    const list = q ? recips.filter(u => (u.name || '').toLowerCase().includes(q)) : recips;
+    $('mPerson').innerHTML = personOptsHtml(list);
+    $('mPersonNone').classList.toggle('hidden', list.length > 0);
+    if (list.length) $('mPerson').value = String(list[0].id);
+  };
   $('mFiles').onchange = () => { $('mFileNames').textContent = $('mFiles').files.length ? `📎 ${$('mFiles').files.length} file${$('mFiles').files.length > 1 ? 's' : ''} attached` : ''; };
 }
 
