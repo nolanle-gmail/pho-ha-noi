@@ -9,7 +9,7 @@ router.use(verifyToken);
 // Roles that run a store's front desk: hosts, front-desk staff, and the
 // location's managers. ('host' and 'frontdesk' are distinct position roles — both
 // work the desk.) Owner may switch stores; the rest are pinned to their location.
-const HOST = ['owner', 'manager', 'assistant_manager', 'kitchen_manager', 'frontdesk', 'host'];
+const HOST = ['owner', 'manager', 'assistant_manager', 'kitchen_manager', 'frontdesk', 'host', 'server'];
 
 // Resolve which location a request targets (owner may choose; others are pinned).
 function loc(req, fromQuery) {
