@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Phở Hà Nội Management",
-  "short_name": "PHN Manager",
+  "name": "Phở Hà Nội — ERMS",
+  "short_name": "PHN - ERMS",
   "description": "Restaurant management console — staff, inventory, schedule, reports.",
   "start_url": "/",
   "scope": "/",
