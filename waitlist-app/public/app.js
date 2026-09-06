@@ -699,15 +699,15 @@ async function composeModal() {
   groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
   const shown = groups.filter(g => g[1].length);
   const groupOpts = shown.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[1].length})</option>`).join('');
-  const personOpt = (u) => `<option value="${u.id}">${esc(u.name)} — ${esc(roleWord(u.role))}${u.location ? ' · ' + esc(u.location.replace('Pho Ha Noi — ', '')) : ''}</option>`;
-  const personOptsHtml = (list) => list.map(personOpt).join('');
+  const picked = new Map();   // multi-recipient selection
+  const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
   modal('New message', `
     <label>Send to</label>
     <select id="mTo">${groupOpts}<option value="person">A specific person…</option></select>
-    <div id="mPersonWrap" class="hidden"><label>Person</label>
-      <input id="mPersonSearch" placeholder="🔍 Search by name…" autocomplete="off" />
-      <select id="mPerson" size="6">${personOptsHtml(recips)}</select>
-      <div id="mPersonNone" class="hidden" style="color:var(--muted);font-size:.85rem;padding:.3rem 0">No one matches that name.</div></div>
+    <div id="mPersonWrap" class="hidden"><label>Recipients</label>
+      <div id="mRecipChips" class="recip-chips"></div>
+      <input id="mPersonSearch" placeholder="🔍 Type a name to add…" autocomplete="off" />
+      <div id="mRecipList" class="recip-list hidden"></div></div>
     <label>Subject</label><input id="mSubj" placeholder="Subject (optional)" />
     <label>Message</label><textarea id="mBody" rows="4" placeholder="Write your message…"></textarea>
     <div class="msg-compose-attach"><label class="msg-attach-btn">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="mFiles"></label><span id="mFileNames" class="msg-attach-names"></span></div>
@@ -717,7 +717,7 @@ async function composeModal() {
     const bodyTxt = $('mBody').value.trim() || msgFilesCaption(files);
     if (!bodyTxt) throw new Error('Write a message or attach a photo/video.');
     let ids;
-    if (to === 'person') ids = [parseInt($('mPerson').value, 10)];
+    if (to === 'person') { ids = [...picked.keys()]; if (!ids.length) throw new Error('Pick at least one recipient.'); }
     else ids = shown[parseInt(to.split(':')[1], 10)][1];
     if (!ids.length) throw new Error('No recipients in that group.');
     const r = await api('/messages', { method: 'POST', body: JSON.stringify({ recipient_ids: ids, subject, body: bodyTxt }) });
@@ -725,13 +725,20 @@ async function composeModal() {
     toast(`Sent to ${r.recipients} ${r.recipients === 1 ? 'person' : 'people'}`);
   }, 'Send');
   $('mTo').onchange = () => { const person = $('mTo').value === 'person'; $('mPersonWrap').classList.toggle('hidden', !person); if (person) $('mPersonSearch').focus(); };
-  $('mPersonSearch').oninput = () => {
-    const q = $('mPersonSearch').value.trim().toLowerCase();
-    const list = q ? recips.filter(u => (u.name || '').toLowerCase().includes(q)) : recips;
-    $('mPerson').innerHTML = personOptsHtml(list);
-    $('mPersonNone').classList.toggle('hidden', list.length > 0);
-    if (list.length) $('mPerson').value = String(list[0].id);
+  const drawChips = () => {
+    $('mRecipChips').innerHTML = picked.size ? [...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('') : '<span class="recip-empty">No one selected yet — type a name below.</span>';
+    $('mRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
   };
+  const drawList = (q) => {
+    const list = $('mRecipList');
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = recips.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleWord(u.role))}${u.location ? ' · ' + esc(u.location.replace('Pho Ha Noi — ', '')) : ''}</span></button>`).join('') : '<div class="recip-none">No one matches that name.</div>';
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = recips.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('mPersonSearch').value = ''; drawList(''); $('mPersonSearch').focus(); });
+  };
+  $('mPersonSearch').oninput = () => drawList($('mPersonSearch').value.trim().toLowerCase());
+  drawChips();
   $('mFiles').onchange = () => { $('mFileNames').textContent = $('mFiles').files.length ? `📎 ${$('mFiles').files.length} file${$('mFiles').files.length > 1 ? 's' : ''} attached` : ''; };
 }
 

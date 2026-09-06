@@ -3980,8 +3980,6 @@ async function renderCompose() {
   if (!isLead) groups.push(['My manager', recips.filter(u => MSG_MANAGERS.includes(u.role) && (inLoc(u) || u.role === 'general_manager')).map(u => u.id)]);
   groups.push(['My peers (same role)', recips.filter(u => u.role === role && u.id !== S.user.id).map(u => u.id)]);
   const shown = groups.filter(g => g[1].length);
-  const recipOpt = (u) => `<option value="${u.id}">${esc(u.name)} — ${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</option>`;
-  const recipOpts = (list) => list.map(recipOpt).join('');
   $('view').innerHTML = `
     <h2 class="page">New message</h2>
     <div class="section" style="max-width:640px">
@@ -3992,10 +3990,10 @@ async function renderCompose() {
         <option value="direct">A specific person…</option>
         ${canBroadcast ? '<option value="all">📣 All staff (broadcast)</option><option value="location">A whole location…</option>' : ''}
       </select>
-      <div id="cDirect" class="hidden"><label class="fld-label">Recipient</label>
-        <input id="cRecipSearch" class="fld" placeholder="🔍 Search by name…" autocomplete="off" />
-        <select id="cRecip" class="fld" size="6">${recipOpts(recips)}</select>
-        <div id="cRecipNone" class="hidden" style="color:var(--muted);font-size:.85rem;padding:.3rem 0">No one matches that name.</div></div>
+      <div id="cDirect" class="hidden"><label class="fld-label">Recipients</label>
+        <div id="cRecipChips" class="recip-chips"></div>
+        <input id="cRecipSearch" class="fld" placeholder="🔍 Type a name to add…" autocomplete="off" />
+        <div id="cRecipList" class="recip-list hidden"></div></div>
       <div id="cLoc" class="hidden"><label class="fld-label">Location</label><select id="cLocSel" class="fld">${S.locations.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
@@ -4006,15 +4004,25 @@ async function renderCompose() {
       <button class="btn" id="cSend">Send message</button>
     </div>`;
   const aud = $('cAud');
-  aud.onchange = () => { const direct = aud.value === 'direct'; $('cDirect').classList.toggle('hidden', !direct); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); if (direct && $('cRecipSearch')) $('cRecipSearch').focus(); };
-  const rSearch = $('cRecipSearch');
-  if (rSearch) rSearch.oninput = () => {
-    const q = rSearch.value.trim().toLowerCase();
-    const list = q ? recips.filter(u => (u.name || '').toLowerCase().includes(q)) : recips;
-    $('cRecip').innerHTML = recipOpts(list);
-    $('cRecipNone').classList.toggle('hidden', list.length > 0);
-    if (list.length) $('cRecip').value = String(list[0].id);
+  aud.onchange = () => { const direct = aud.value === 'direct'; $('cDirect').classList.toggle('hidden', !direct); $('cLoc').classList.toggle('hidden', aud.value !== 'location'); if (direct) $('cRecipSearch').focus(); };
+  // Multi-recipient picker with type-ahead (prefix) search — matches a name that
+  // starts with what's typed, or whose first/last word starts with it.
+  const picked = new Map();
+  const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
+  const drawChips = () => {
+    $('cRecipChips').innerHTML = picked.size ? [...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('') : '<span class="recip-empty">No one selected yet — type a name below.</span>';
+    $('cRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
   };
+  const drawList = (q) => {
+    const list = $('cRecipList');
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = recips.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</span></button>`).join('') : '<div class="recip-none">No one matches that name.</div>';
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = recips.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('cRecipSearch').value = ''; drawList(''); $('cRecipSearch').focus(); });
+  };
+  $('cRecipSearch').oninput = () => drawList($('cRecipSearch').value.trim().toLowerCase());
+  drawChips();
   wireAttachInput('cFiles', 'cFileNames');
   $('cSend').onclick = async () => {
     $('cErr').textContent = '';
@@ -4023,7 +4031,7 @@ async function renderCompose() {
     const payload = { subject: $('cSubj').value, body: $('cBody').value.trim() || msgFilesCaption(files) };
     if (!payload.body) { $('cErr').textContent = 'Write a message or attach a photo/video.'; return; }
     if (val.startsWith('g:')) payload.recipient_ids = shown[parseInt(val.slice(2), 10)][1];
-    else if (val === 'direct') { payload.audience = 'direct'; payload.recipient_id = $('cRecip').value; }
+    else if (val === 'direct') { payload.recipient_ids = [...picked.keys()]; if (!payload.recipient_ids.length) { $('cErr').textContent = 'Pick at least one recipient.'; return; } }
     else if (val === 'location') { payload.audience = 'location'; payload.location_id = $('cLocSel').value; }
     else payload.audience = 'all';
     $('cSend').disabled = true;
