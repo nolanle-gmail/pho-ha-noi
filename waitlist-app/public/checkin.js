@@ -52,8 +52,7 @@ async function renderForm() {
   KV().innerHTML = `
     <div class="k-card">
       ${K.fixed
-        ? `<div class="k-loc-fixed">${esc((locName || '').replace('Pho Ha Noi — ', '')) || 'Select a location'}</div>
-           <div class="k-change"><a href="#" id="kChange">Not this location? Change</a></div>`
+        ? `<div class="k-loc-fixed">${esc((locName || '').replace('Pho Ha Noi — ', '')) || 'Select a location'}</div>`
         : `<label class="k-label">Location</label>
            <select id="kLoc" class="k-input">
              <option value="">Choose your location…</option>
@@ -80,11 +79,6 @@ async function renderForm() {
     K.loc = $('kLoc').value || null;
     if (K.loc) { try { localStorage.setItem(SAVED_LOC, K.loc); } catch { /* private mode */ } } // remember this store on the device
     refreshWait();
-  };
-  if ($('kChange')) $('kChange').onclick = (e) => {
-    e.preventDefault();
-    try { localStorage.removeItem(SAVED_LOC); } catch { /* private mode */ }
-    K.fixed = false; renderForm();
   };
   $('kJoin').onclick = join;
   refreshWait();

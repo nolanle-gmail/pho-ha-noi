@@ -12,7 +12,7 @@
   html,body{ margin:0; height:100%; }
   body{ background:linear-gradient(160deg,var(--red) 0%, var(--red-dark) 100%); color:var(--ink);
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    display:flex; align-items:flex-start; justify-content:center; padding:4vh 16px; min-height:100%; }
+    display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:4vh 16px; min-height:100%; }
   .card{ background:var(--surface); border-radius:22px; width:100%; max-width:460px; padding:2rem 1.75rem 2.25rem;
     box-shadow:0 24px 60px rgba(0,0,0,.28); }
   .brand{ text-align:center; margin-bottom:.5rem; }
@@ -75,7 +75,7 @@
     </div>
     <div class="hint" id="hint"></div>
   </div>
-  <footer style="text-align:center;color:#9a8f80;font-size:.72rem;margin-top:1.2rem">© 2026 Phở Hà Nội. All rights reserved.</footer>
+  <footer style="text-align:center;color:rgba(255,255,255,.6);font-size:.72rem;margin-top:1.4rem">© 2026 Phở Hà Nội. All rights reserved.</footer>
 
 <script>
 const $ = (id) => document.getElementById(id);
