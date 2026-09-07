@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 5, 2026_
+_Last updated: September 7, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -817,7 +817,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 |---|---|---|
 | 📋 My Tasks | Assigned day-tasks — Start, Done, optional proof photos (multi-upload) and comments / feedback | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
-| 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / managers |
+| 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
@@ -1268,6 +1268,11 @@ Hand each tester the section that matches their job.
    When a table frees, Notify the guest, then Seat them onto a table.
 3. **Or use the Staff app** — front-desk staff also get the 🍜 Front Desk board and
    🍽️ Floor in the Staff app on their phone.
+
+> **Who has Front Desk access.** The Owner, Managers (incl. Assistant/GM/Regional),
+> Front Desk, and Host roles run the Front Desk, plus the **Server** and **Cashier**
+> roles — so front-of-house floor staff can add, notify and seat parties from the
+> Staff app. (Editing the floor **plan** stays limited to Owner / Manager / Front Desk.)
 
 ### Server / Busser
 
