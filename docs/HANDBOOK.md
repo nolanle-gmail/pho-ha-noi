@@ -819,7 +819,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
-| ✉️ Messages | Team inbox with unread badge; send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
+| ✉️ Messages | Team inbox with unread badge (**counts direct messages + 💬 Chat together**); send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
 | ⚙️ Settings | Per-device preferences — **separate sound / vibration** for floor alerts and for messages, **new-message pop-ups**, and a **10-min repeat reminder** for anything left unread | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
@@ -1043,8 +1043,9 @@ and the person who did it.
 
 Everyone can send **direct** messages; managers and above can **broadcast** to all
 staff or a whole location. Assigning a task notifies the assignee. Threads support
-replies, mark-unread and archive, and unread counts push to the sidebar/nav badge in
-real time.
+replies, mark-unread and archive. The **Messages menu badge counts unread direct
+messages and team chat together** (on both apps), so a badge shows whenever either is
+waiting; it updates in real time as messages or chat arrive.
 
 **Pictures & videos.** Both the composer and the reply box carry a **📎 Add photos /
 video** control (multi-select). Attachments are stored as bytes in `message_attachments`
@@ -1111,8 +1112,10 @@ flowchart LR
    feedback** box lets staff add notes (e.g. "walk-in was warm, flagged maintenance").
    Each comment is stored in `task_comments` with its author and time, and the whole
    thread is shared: a manager can **reply with feedback** from the Day Tasks board and
-   the staff member sees it in My Tasks. You can delete your own comment; a manager can
-   delete any.
+   it appears in the staff member's **Comments & feedback** box **live — pushed over the
+   SSE stream, no refresh needed** (a brief "💬 New feedback from management" note flags
+   it, and any reply they're mid-typing is preserved). You can delete your own comment; a
+   manager can delete any.
 4. **Done** — tapping Done stamps `done_at`. The manager's Day Tasks board sees the
    Start/Done times and can view every proof photo and comment.
 
