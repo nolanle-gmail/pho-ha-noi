@@ -161,6 +161,7 @@ async function boot() {
   const start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
   showSection(start);
   refreshUnread();
+  refreshChatUnread();    // seed the chat badge so the sidebar count includes chat from load
   setupMessageStream();   // live badge/inbox the moment a message arrives
 }
 
@@ -204,17 +205,20 @@ const allowedSections = () => SECTIONS.filter(s => myCap(s[3]));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
-    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}${k === 'messages' && S.unread ? `<span class="nav-badge">${S.unread}</span>` : ''}</button>`
+    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}${k === 'messages' && navUnread() ? `<span class="nav-badge">${navUnread()}</span>` : ''}</button>`
   ).join('');
   $('sidebarNav').querySelectorAll('button').forEach(b => b.onclick = () => showSection(b.dataset.section));
 }
+// Total unread across direct messages + team chat — the Messages sidebar badge shows both.
+const navUnread = () => (S.unread || 0) + (S.chatUnread || 0);
 async function refreshUnread() {
   try { S.unread = (await api('/messages/unread-count')).count; } catch { S.unread = 0; }
   renderSidebar();
 }
-// Chat unread drives the 💬 Chat tab badge (separate from the message inbox badge).
+// Chat unread drives the 💬 Chat tab badge and folds into the Messages sidebar badge.
 async function refreshChatUnread() {
   try { S.chatUnread = (await api('/chat/unread-count')).count || 0; } catch { S.chatUnread = 0; }
+  renderSidebar();
   if (S.section === 'messages') renderMsgTabs();
 }
 
@@ -231,11 +235,9 @@ function setupMessageStream() {
     if (d && d.type === 'alert') { showAlertPopup(d.alert); return; }               // urgent floor ping → pop up
     if (d && d.type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); if (S.section === 'messages' && S.msgTab === 'alerts') renderMessages(); return; }
     if (d && d.type === 'chat') {                                                    // new chat-group message
-      if (S.section === 'messages') {
-        if (S.msgTab === 'chat' && S.chatGroup && String(S.chatGroup) === String(d.group_id)) renderChatGroup(true);
-        else if (S.msgTab === 'chat' && !S.chatGroup) renderChatList();
-        else refreshChatUnread();
-      }
+      if (S.section === 'messages' && S.msgTab === 'chat' && S.chatGroup && String(S.chatGroup) === String(d.group_id)) renderChatGroup(true);
+      else if (S.section === 'messages' && S.msgTab === 'chat' && !S.chatGroup) renderChatList();
+      else refreshChatUnread();   // any other view: keep the sidebar badge live
       return;
     }
     refreshUnread();

@@ -6,6 +6,7 @@
 const express = require('express');
 const db = require('../db/database');
 const { SECRET, ROLES } = require('../lib/auth');
+const { emitTaskComment } = require('../lib/events');
 const jwt = require('jsonwebtoken');
 
 const router = express.Router();
@@ -181,6 +182,11 @@ router.post('/:id/comment', (req, res) => {
   const count = db.prepare(`SELECT COUNT(*) AS n FROM task_comments WHERE task_id=?`).get(ta.id).n;
   const c = db.prepare(`SELECT c.id, c.body, c.author_id, c.created_at, u.name AS author_name, u.role AS author_role
     FROM task_comments c LEFT JOIN users u ON u.id=c.author_id WHERE c.id=?`).get(Number(info.lastInsertRowid));
+  // Push to the assignee's Staff app so their "Comments & feedback" updates live —
+  // but not when they wrote it themselves (their own view already re-rendered).
+  if (ta.user_id && String(ta.user_id) !== String(authorId)) {
+    emitTaskComment({ assignee_id: Number(ta.user_id), task_id: ta.id });
+  }
   res.json({ success: true, id: ta.id, count, comment: c });
 });
 

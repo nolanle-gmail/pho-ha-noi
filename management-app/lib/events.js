@@ -25,4 +25,8 @@ module.exports = {
   // A new chat-group message — delivered live to the group's members.
   emitChat: (payload) => { bus.emit('chat', payload); },
   onChat: (handler) => { bus.on('chat', handler); return () => bus.off('chat', handler); },
+  // A comment/feedback was added to a day task — pushed live to the assignee so
+  // their My Tasks "Comments & feedback" updates without a refresh.
+  emitTaskComment: (payload) => { bus.emit('task_comment', payload); },
+  onTaskComment: (handler) => { bus.on('task_comment', handler); return () => bus.off('task_comment', handler); },
 };

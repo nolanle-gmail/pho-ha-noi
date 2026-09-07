@@ -156,7 +156,7 @@ async function boot() {
   render();
   setupStaffStream();   // sub-second push (SSE) for live views
   refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
-  refreshChatUnread();   // seed the chat unread count for pop-up comparisons
+  refreshChatUnread(); setInterval(refreshChatUnread, 30000); // chat badge (+ pop-up comparisons)
   startRenag();          // 10-min re-nag for anything left unreviewed
   // Floor alerts: managers get a Send button; everyone gets any pending alert on load.
   const ab = $('alertBtn');
@@ -235,6 +235,13 @@ function setupStaffStream() {
       }
       return;
     }
+    if (type === 'task_comment') {   // a manager left feedback on my task → live update
+      if (S.view === 'mytasks' && !$('modalHost').innerHTML) {
+        const shown = refreshTaskComments(d.task_id);
+        if (shown && msgNotifyOn()) toast('💬 New feedback from management');
+      }
+      return;
+    }
     clearTimeout(STAFF_PUSH_T);
     STAFF_PUSH_T = setTimeout(() => {
       if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
@@ -259,10 +266,10 @@ function renderNav() {
   nav.classList.remove('hidden');
   const cur = items.find(([k]) => k === S.view) || items[0];
   const open = nav.classList.contains('open');
-  const btns = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && S.unread ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button>`).join('');
+  const btns = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && navUnread() ? ` <span class="nav-badge">${navUnread()}</span>` : ''}</button>`).join('');
   // Desktop/tablet keep the horizontal strip; mobile (CSS ≤560px) collapses these into a
   // hamburger that drops the same items down as a left-anchored menu.
-  nav.innerHTML = `<button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="${open}"><span class="nav-burger">${open ? '✕' : '☰'}</span><span class="nav-cur">${cur[1]}</span>${S.unread && S.view !== 'messages' ? ` <span class="nav-badge">${S.unread}</span>` : ''}</button><div class="nav-items" id="navItems">${btns}</div>`;
+  nav.innerHTML = `<button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="${open}"><span class="nav-burger">${open ? '✕' : '☰'}</span><span class="nav-cur">${cur[1]}</span>${navUnread() && S.view !== 'messages' ? ` <span class="nav-badge">${navUnread()}</span>` : ''}</button><div class="nav-items" id="navItems">${btns}</div>`;
   const toggle = $('navToggle'), burger = nav.querySelector('.nav-burger');
   toggle.onclick = (e) => { e.stopPropagation(); const o = nav.classList.toggle('open'); toggle.setAttribute('aria-expanded', o); burger.textContent = o ? '✕' : '☰'; };
   nav.querySelectorAll('.navbtn').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; S.msgArchived = false; nav.classList.remove('open'); renderNav(); render(); });
@@ -301,13 +308,16 @@ const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MO
 const roleWord = (r) => ({ owner: 'Owner', admin: 'Admin', general_manager: 'General Manager', regional_manager: 'Regional Manager', manager: 'Manager', assistant_manager: 'Assistant Manager', kitchen_manager: 'Kitchen Manager', frontdesk: 'Front Desk', host: 'Host', server: 'Server', busser: 'Busser', chef: 'Chef', line_cook: 'Line Cook', employee: 'Staff' }[r] || r);
 const msgAgo = (iso) => { const d = new Date((iso || '').replace(' ', 'T') + 'Z'); const m = Math.floor((Date.now() - d.getTime()) / 60000); return m < 60 ? Math.max(0, m) + 'm ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
 
-// Poll the unread count and refresh the nav badge (no full re-render).
+// Total unread across direct messages + team chat — the Messages nav badge shows both.
+const navUnread = () => (S.unread || 0) + (S.chatUnread || 0);
+// Poll the unread counts and refresh the nav badge (no full re-render).
 async function refreshMsgUnread() {
   try { S.unread = (await api('/messages/unread-count')).count || 0; } catch { /* offline */ return; }
   if (S.user) renderNav();
 }
 async function refreshChatUnread() {
   try { S.chatUnread = (await api('/chat/unread-count')).count || 0; } catch { S.chatUnread = 0; }
+  if (S.user) renderNav();
 }
 // Inbox / Chat switch shown at the top of the Messages view.
 function msgSegment(active) {
@@ -967,6 +977,22 @@ async function loadTaskComments(id, el, editable) {
     send.onclick = () => mtAddComment(id, input);
     input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); mtAddComment(id, input); } };
   }
+}
+// A manager's feedback arrived on this task — refresh just its Comments & feedback
+// block in place, keeping any reply the staff member is mid-typing. If the block
+// isn't on screen yet (e.g. a finished task that had no comments), re-render the
+// list so it appears. Returns true when something was shown.
+function refreshTaskComments(taskId) {
+  const el = document.querySelector(`[data-comments="${taskId}"]`);
+  if (!el) { if (S.view === 'mytasks') renderMyTasks(); return true; }
+  const draft = el.querySelector('[data-cin]');
+  const keep = draft ? draft.value : '';
+  const wasFocused = draft && document.activeElement === draft;
+  Promise.resolve(loadTaskComments(taskId, el, el.dataset.editable === '1')).then(() => {
+    const ni = document.querySelector(`[data-comments="${taskId}"] [data-cin]`);
+    if (ni && keep) { ni.value = keep; if (wasFocused) { ni.focus(); try { ni.setSelectionRange(keep.length, keep.length); } catch { /* not text-selectable */ } } }
+  });
+  return true;
 }
 function mtCommentTime(iso) { if (!iso) return ''; const d = new Date(iso.replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
 async function mtAddComment(id, input) {

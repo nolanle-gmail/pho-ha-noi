@@ -6,7 +6,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
-const { emitMessages, onMessages, onAlert, onAlertAck, onChat } = require('../lib/events');
+const { emitMessages, onMessages, onAlert, onAlertAck, onChat, onTaskComment } = require('../lib/events');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -62,8 +62,14 @@ router.get('/stream', (req, res) => {
       try { res.write(`data: ${JSON.stringify({ type: 'chat', group_id: c.group_id })}\n\n`); } catch { /* closed */ }
     }
   });
+  // A manager's comment/feedback on one of my day tasks → live "Comments & feedback".
+  const unsubTaskComment = onTaskComment((t) => {
+    if (Number(t.assignee_id) === Number(user.id)) {
+      try { res.write(`data: ${JSON.stringify({ type: 'task_comment', task_id: t.task_id })}\n\n`); } catch { /* closed */ }
+    }
+  });
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
-  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); });
+  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); unsubTaskComment(); });
 });
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>
