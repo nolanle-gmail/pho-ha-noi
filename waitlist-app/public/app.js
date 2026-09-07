@@ -50,7 +50,7 @@ const q = (p) => `${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S
 // Everyone gets My Tasks; roles then add their own tools. Servers/bussers land on
 // My Tables, front-desk roles on the Front Desk, everyone else on My Tasks.
 const SERVER_ROLES = ['server', 'busser'];
-const FD_ROLES = ['owner', 'manager', 'assistant_manager', 'general_manager', 'regional_manager', 'frontdesk', 'host', 'server'];
+const FD_ROLES = ['owner', 'manager', 'assistant_manager', 'general_manager', 'regional_manager', 'frontdesk', 'host', 'server', 'cashier'];
 // Self-service / position roles (front & back of house). Every one of these gets
 // their own tables view + the live floor; managers/owner keep the Front Desk board.
 const SELF_SERVICE_ROLES = ['server', 'busser', 'host', 'frontdesk', 'cashier', 'bartender', 'barista', 'chef', 'line_cook', 'prep_cook', 'dishwasher', 'employee'];
