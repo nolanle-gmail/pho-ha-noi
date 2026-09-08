@@ -163,6 +163,14 @@ async function boot() {
   refreshUnread();
   refreshChatUnread();    // seed the chat badge so the sidebar count includes chat from load
   setupMessageStream();   // live badge/inbox the moment a message arrives
+  // Keep this device's push subscription fresh when notifications are already on.
+  if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
+  // Deep-link from a tapped push notification → open Messages.
+  try {
+    const n = new URLSearchParams(location.search).get('n');
+    if (n && allowedSections().some(s => s[0] === 'messages')) showSection('messages');
+    if (n) history.replaceState(null, '', location.pathname);
+  } catch { /* no-op */ }
 }
 
 // ── Access-level registry (loaded from the API at boot; mirrors lib/auth.js) ──
@@ -220,6 +228,58 @@ async function refreshChatUnread() {
   try { S.chatUnread = (await api('/chat/unread-count')).count || 0; } catch { S.chatUnread = 0; }
   renderSidebar();
   if (S.section === 'messages') renderMsgTabs();
+}
+
+// ── Web Push: real OS notifications (work when the console is closed / on silent) ──
+const pushSupported = () => ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
+const pushPermission = () => (('Notification' in window) ? Notification.permission : 'unsupported');
+function urlB64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+async function subscribePush() {
+  if (!pushSupported() || Notification.permission !== 'granted') return false;
+  let cfg; try { cfg = await api('/push/key'); } catch { return false; }
+  if (!cfg || !cfg.enabled || !cfg.key) return false;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(cfg.key) });
+  try { await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) }); }
+  catch { return false; }
+  try { localStorage.setItem('phn_push_on', '1'); } catch { /* private mode */ }
+  return true;
+}
+async function enablePush() {
+  if (!pushSupported()) { toast('This device doesn’t support push. On iPhone, add the app to your Home Screen first, then try again.', true); return; }
+  let perm = Notification.permission;
+  if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; } }
+  if (perm !== 'granted') { toast('Notifications are blocked — turn them on for this app in your device settings.', true); if (S.section === 'account') openAccount(); return; }
+  const ok = await subscribePush();
+  toast(ok ? '🔔 Notifications enabled on this device' : 'Couldn’t enable push right now.', !ok);
+  if (S.section === 'account') openAccount();
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { try { await api('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch { /* offline */ } await sub.unsubscribe(); }
+  } catch { /* nothing to remove */ }
+  try { localStorage.setItem('phn_push_on', '0'); } catch { /* private mode */ }
+  toast('Notifications turned off on this device');
+  if (S.section === 'account') openAccount();
+}
+// The enable/disable control shown in Account Settings, per this device's state.
+function pushSettingsHtml() {
+  if (!pushSupported()) return `<p class="muted" style="font-size:.9rem">Not available in this browser. On <b>iPhone/iPad</b>, tap <b>Share → Add to Home Screen</b>, open the app from your Home Screen, then turn this on.</p>`;
+  const perm = pushPermission();
+  const on = (() => { try { return localStorage.getItem('phn_push_on') !== '0'; } catch { return true; } })();
+  if (perm === 'denied') return `<p class="muted" style="font-size:.9rem">Notifications are <b>blocked</b> for this app. Turn them on in your device or browser settings, then reopen the app.</p>`;
+  if (perm === 'granted' && on) return `<div style="color:var(--ok,#15803d);font-weight:600;margin-bottom:.5rem">🔔 On for this device.</div><button class="btn ghost" id="pushDisable">Turn off</button>`;
+  return `<button class="btn" id="pushEnable">🔔 Enable notifications</button>`;
 }
 
 // App-wide live push for messages: the badge (and an open inbox) update the
@@ -4581,7 +4641,13 @@ async function openAccount() {
         <label class="fld-label">Confirm new password</label><input id="pwCon" type="password" class="fld" />
         <button class="btn" id="pwSave" style="margin-top:.5rem">Update password</button>
       </div>
+      <div class="section"><h3>📲 Device notifications</h3>
+        <p class="muted" style="margin:.1rem 0 .7rem;font-size:.9rem">Get a real notification — with sound &amp; vibration — for new messages, chats and floor alerts, <b>even when the console is closed or your phone is on silent</b>. Set this up once on each device.</p>
+        ${pushSettingsHtml()}
+      </div>
     </div>`;
+  if ($('pushEnable')) $('pushEnable').onclick = enablePush;
+  if ($('pushDisable')) $('pushDisable').onclick = disablePush;
   $('pwSave').onclick = async () => {
     $('pwErr').textContent = '';
     const cur = $('pwCur').value, nw = $('pwNew').value, con = $('pwCon').value;

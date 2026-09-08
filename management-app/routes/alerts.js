@@ -8,6 +8,7 @@ const db = require('../db/database');
 const { verifyToken } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { emitAlert, emitAlertAck } = require('../lib/events');
+const { pushToUsers } = require('../lib/push');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -73,6 +74,21 @@ router.post('/', (req, res) => {
     target_role: targetRole, body, priority, sender_name: req.user.name, created_at: new Date().toISOString(),
   };
   try { emitAlert(alert); } catch { /* live push is best-effort */ }
+  // Real OS push to the alert's audience (same targeting as the in-app pop-up), so
+  // it reaches phones even when the app is closed. Never to the sender.
+  try {
+    let ids = [];
+    if (targetType === 'user') ids = [targetUserId];
+    else if (targetType === 'role') ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role=? AND location_id=?`).all(targetRole, locId).map(x => x.id);
+    else ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND location_id=?`).all(locId).map(x => x.id);
+    ids = ids.filter(id => String(id) !== String(req.user.id));
+    pushToUsers(ids, {
+      title: priority === 'urgent' ? '🔔 Urgent floor alert' : '🔔 Floor alert',
+      body: `${body} — from ${req.user.name}`,
+      tag: 'alert-' + r.lastInsertRowid,
+      url: '/?n=alert',
+    });
+  } catch { /* OS push is best-effort */ }
   auditLog(req, 'floor_alert', 'floor_alert', r.lastInsertRowid, { target: targetType === 'user' ? `user:${targetUserId}` : targetType === 'role' ? `role:${targetRole}` : 'everyone', priority, body });
   res.json({ success: true, id: r.lastInsertRowid });
 });
