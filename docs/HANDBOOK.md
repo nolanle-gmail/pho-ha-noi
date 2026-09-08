@@ -669,7 +669,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 50 tables
+### Management database — 51 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -729,6 +729,7 @@ erDiagram
 | `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
 | `sms_messages` | Messaging | One row per SMS blast a manager/owner composes (target, body, recipient & sent counts, provider) |
 | `sms_recipients` | Messaging | Per-person delivery record for a blast (phone + status: sent / logged / failed / no_phone) |
+| `push_subscriptions` | Messaging | Web Push subscriptions — one row per device a user enabled notifications on (endpoint + keys); dead endpoints auto-pruned |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -821,7 +822,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
 | ✉️ Messages | Team inbox with unread badge (**counts direct messages + 💬 Chat together**); send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
-| ⚙️ Settings | Per-device preferences — **separate sound / vibration** for floor alerts and for messages, **new-message pop-ups**, and a **10-min repeat reminder** for anything left unread | Everyone |
+| ⚙️ Settings | Per-device preferences — **separate sound / vibration** for floor alerts and for messages, **new-message pop-ups**, a **10-min repeat reminder** for anything left unread, and **📲 device notifications** (Web Push — real OS alerts when the app is closed or the phone is on silent) | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
 | 📜 📊 🧾 History / Report / Activity | Cross-store oversight | Owner |
 
@@ -1097,6 +1098,26 @@ without reloading. Attachments are retained with their message for audit.
 > - **Vibration is Android-Chrome only** — iPhone/iPad and desktops can't vibrate from the
 >   web, but the **chime still plays** there. Sound needs one tap on the app first (any
 >   sign-in or tap unlocks audio; the browser blocks sound until then).
+
+The chime above only fires while the app is **open in the foreground**. For alerts that
+reach a phone that's **locked, backgrounded, or on silent**, turn on **device
+notifications (Web Push)** — a real OS notification, with the system's own sound and
+vibration, for new **direct messages**, **team chat**, and **floor alerts**. Tapping it
+opens the app to the right screen.
+
+> **Turning on device notifications.** Each person enables it **once per device**:
+> - **Staff app** → **⚙️ Settings → 📲 Device notifications → Enable notifications**.
+> - **Management console** → **Account Settings → 📲 Device notifications → Enable notifications**.
+>
+> **On iPhone/iPad you must first add the app to your Home Screen** (Safari **Share → Add
+> to Home Screen**) and open it from that icon — iOS only allows web notifications for an
+> installed app (iOS 16.4+), never in a plain Safari tab. Android/desktop Chrome can enable
+> it straight away. Notifications keep coming with the app closed or the phone on silent;
+> a person can turn them off again from the same screen, or in their device settings.
+>
+> Under the hood this is VAPID Web Push: the Management app signs and sends each
+> notification (`push_subscriptions` holds each device's subscription; dead ones are
+> pruned automatically), and both PWAs' service workers show it.
 
 ### 6.6 Daily tasks: start, done, proof photos & comments
 
