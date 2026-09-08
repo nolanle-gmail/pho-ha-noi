@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 7, 2026_
+_Last updated: September 8, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1115,9 +1115,16 @@ opens the app to the right screen.
 > it straight away. Notifications keep coming with the app closed or the phone on silent;
 > a person can turn them off again from the same screen, or in their device settings.
 >
+> **Step-by-step guide for staff.** A shareable, illustrated walk-through (iPhone &
+> Android, in **English / Español / Tiếng Việt**) is hosted on each app's own domain,
+> no login required: **`pho-ha-noi-waitlist.fly.dev/setup`** (staff) and
+> **`pho-ha-noi-management.fly.dev/setup`** (managers). Both apps also link it in-app as
+> **"📖 How to set this up"** right under the Device-notifications control.
+>
 > Under the hood this is VAPID Web Push: the Management app signs and sends each
 > notification (`push_subscriptions` holds each device's subscription; dead ones are
-> pruned automatically), and both PWAs' service workers show it.
+> pruned automatically), and both PWAs' service workers show it. The `/setup` page is a
+> static how-to (`public/setup.html` in each app) — public and safe to hand out.
 
 ### 6.6 Daily tasks: start, done, proof photos & comments
 
