@@ -14,6 +14,8 @@ app.use(express.json({ limit: '16kb' })); // small bodies only — this is a wai
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Pho Ha Noi — Waitlist' }));
+// Notification setup guide (public, no login) — a shareable how-to for staff.
+app.get('/setup', (req, res) => res.sendFile(path.join(__dirname, 'public', 'setup.html')));
 // Customer self-check-in kiosk (public, no login). /checkin/<slug> pins a store.
 app.get(['/checkin', '/checkin/*'], (req, res) => res.sendFile(path.join(__dirname, 'public', 'checkin.html')));
 // Activity trail — logins, writes (incl. self check-ins), and denied attempts.

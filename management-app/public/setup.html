@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notification Setup</title>
+<meta name="description" content="How Phở Hà Nội staff turn on message, chat & alert notifications — iPhone & Android, Staff and Management apps. English / Español / Tiếng Việt." />
+
+<style>
+:root{
+  --paper:#FBF7F0; --surface:#FFFFFF; --surface-2:#F5EEE2;
+  --ink:#2A1E17; --ink-soft:#6E5F51; --ink-faint:#95877A;
+  --line:#E7DCCC; --line-soft:#F0E8DA;
+  --brand:#B91C1C; --brand-deep:#7F1414; --brand-soft:#FBE3E1;
+  --gold:#B45309; --gold-soft:#FBE9C7;
+  --ok:#15803D; --ok-soft:#DEF0E2;
+  --screen-1:#3A2417; --screen-2:#6E1E1A;
+  --font-display:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+  --font-body:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#17110D; --surface:#1F1813; --surface-2:#271E16;
+    --ink:#F2E7D7; --ink-soft:#BCAD9A; --ink-faint:#8C7D6C;
+    --line:#392C21; --line-soft:#2C2119;
+    --brand:#F0705F; --brand-deep:#C64434; --brand-soft:#3A1E1A;
+    --gold:#E7B461; --gold-soft:#3A2B13;
+    --ok:#69C98A; --ok-soft:#17301F;
+    --screen-1:#241019; --screen-2:#4A1512;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#17110D; --surface:#1F1813; --surface-2:#271E16;
+  --ink:#F2E7D7; --ink-soft:#BCAD9A; --ink-faint:#8C7D6C;
+  --line:#392C21; --line-soft:#2C2119;
+  --brand:#F0705F; --brand-deep:#C64434; --brand-soft:#3A1E1A;
+  --gold:#E7B461; --gold-soft:#3A2B13;
+  --ok:#69C98A; --ok-soft:#17301F;
+  --screen-1:#241019; --screen-2:#4A1512;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+[hidden]{display:none!important}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:760px; margin:0 auto; padding:0 1.25rem 4rem}
+
+/* ── Switchers ─────────────────────────────── */
+.switchers{display:flex; flex-direction:column; align-items:center; gap:.5rem; padding:1rem 1.25rem 0}
+.seg{display:inline-flex; background:var(--surface-2); border:1px solid var(--line);
+  border-radius:999px; padding:.22rem; gap:.15rem}
+.seg button{font-family:var(--font-body); font-size:.82rem; font-weight:600; cursor:pointer;
+  border:0; background:transparent; color:var(--ink-soft); padding:.42rem .85rem; border-radius:999px; line-height:1}
+.seg button[aria-pressed="true"]{background:var(--brand); color:#fff}
+.seg button:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
+.seg.lang button{font-size:.78rem; padding:.4rem .75rem}
+
+/* ── Masthead ─────────────────────────────── */
+.masthead{text-align:center; padding:1.4rem 1.25rem 1.4rem; max-width:760px; margin:0 auto}
+.brandmark{
+  width:52px; height:52px; border-radius:14px; margin:0 auto .9rem;
+  background:var(--brand); color:#fff; display:grid; place-items:center;
+  font-size:1.7rem; box-shadow:0 2px 0 var(--brand-deep);
+}
+.kicker{font-family:var(--font-mono); font-size:.7rem; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--gold); font-weight:600; margin:0 0 .5rem}
+h1{font-family:var(--font-display); font-weight:600; font-size:clamp(2rem,5.5vw,2.8rem);
+  line-height:1.05; margin:.1rem 0 .5rem; letter-spacing:-.01em; text-wrap:balance}
+.lede{color:var(--ink-soft); font-size:1.05rem; max-width:54ch; margin:0 auto 1.2rem; text-wrap:balance}
+.chips{display:flex; flex-wrap:wrap; gap:.45rem; justify-content:center}
+.chip{font-family:var(--font-mono); font-size:.68rem; letter-spacing:.02em;
+  padding:.32rem .6rem; border:1px solid var(--line); border-radius:999px;
+  background:var(--surface); color:var(--ink-soft)}
+.chip b{color:var(--ink); font-weight:600}
+
+/* ── Phone mockup ──────────────────────────── */
+.showcase{display:flex; justify-content:center; margin:1.8rem auto 2.4rem}
+.phone{
+  width:270px; border-radius:40px; padding:12px;
+  background:linear-gradient(160deg,#2a2a2e,#0e0e10);
+  box-shadow:0 24px 50px -18px rgba(60,20,10,.55), 0 3px 0 rgba(0,0,0,.3);
+}
+.screen{
+  position:relative; border-radius:30px; overflow:hidden; padding:1.1rem .8rem 1.4rem;
+  min-height:430px; background:linear-gradient(165deg,var(--screen-1),var(--screen-2));
+  display:flex; flex-direction:column; gap:.7rem;
+}
+.notch{position:absolute; top:9px; left:50%; transform:translateX(-50%);
+  width:96px; height:20px; background:#0b0b0c; border-radius:0 0 14px 14px}
+.lock-time{color:#fff; text-align:center; font-family:var(--font-display); font-weight:600;
+  font-size:2.9rem; letter-spacing:-.02em; margin:1.5rem 0 .1rem; text-shadow:0 1px 8px rgba(0,0,0,.3)}
+.lock-date{color:rgba(255,255,255,.85); text-align:center; font-size:.82rem; margin-bottom:.5rem;
+  text-shadow:0 1px 6px rgba(0,0,0,.3)}
+.noti{
+  background:rgba(255,255,255,.92); border-radius:16px; padding:.6rem .7rem;
+  display:flex; gap:.6rem; align-items:flex-start;
+  backdrop-filter:blur(8px); box-shadow:0 4px 14px rgba(0,0,0,.18);
+}
+.noti-ic{flex:0 0 auto; width:30px; height:30px; border-radius:8px; background:var(--brand);
+  color:#fff; display:grid; place-items:center; font-size:1rem}
+.noti-main{min-width:0; flex:1}
+.noti-top{display:flex; justify-content:space-between; gap:.5rem; align-items:baseline}
+.noti-app{font-size:.66rem; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#3a2a20}
+.noti-when{font-size:.66rem; color:#8a7a6c; white-space:nowrap}
+.noti-title{font-size:.82rem; font-weight:700; color:#1c140e; margin:.05rem 0 0}
+.noti-body{font-size:.8rem; color:#3a2c22; line-height:1.35}
+.noti.alert .noti-ic{background:var(--brand-deep)}
+
+/* ── Steps ─────────────────────────────────── */
+.panel{background:var(--surface); border:1px solid var(--line); border-radius:18px;
+  padding:1.4rem 1.4rem 1.5rem; margin:1.1rem 0}
+.panel-head{display:flex; align-items:center; gap:.7rem; margin:0 0 .2rem}
+.panel-emoji{font-size:1.5rem; line-height:1}
+.panel h2{font-family:var(--font-display); font-weight:600; font-size:1.4rem; margin:0; letter-spacing:-.01em}
+.panel .url{font-family:var(--font-mono); font-size:.78rem; color:var(--brand); word-break:break-all; margin:.15rem 0 0}
+.panel .who{font-size:.85rem; color:var(--ink-faint); margin:.15rem 0 0}
+
+ol.steps{list-style:none; padding:0; margin:1.2rem 0 0; counter-reset:s}
+ol.steps>li{counter-increment:s; position:relative; padding:.1rem 0 1.15rem 2.9rem; margin:0}
+ol.steps>li:last-child{padding-bottom:0}
+ol.steps>li::before{content:counter(s); position:absolute; left:0; top:-.1rem;
+  width:2rem; height:2rem; border-radius:50%; background:var(--brand); color:#fff;
+  display:grid; place-items:center; font-family:var(--font-mono); font-size:.82rem; font-weight:700}
+ol.steps>li:not(:last-child)::after{content:""; position:absolute; left:1rem; top:2rem; bottom:.15rem;
+  width:2px; background:var(--line)}
+ol.steps b{color:var(--ink)}
+ol.steps .sub{display:block; color:var(--ink-soft); font-size:.9rem; margin-top:.12rem}
+kbd{font-family:var(--font-body); font-weight:600; background:var(--surface-2); color:var(--ink);
+  border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:.05em .45em; font-size:.85em;
+  white-space:nowrap}
+.done-chip{display:inline-flex; align-items:center; gap:.5rem; margin-top:.9rem;
+  background:var(--ok-soft); color:var(--ok); border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);
+  border-radius:12px; padding:.55rem .8rem; font-weight:600; font-size:.9rem}
+.done-chip .sw{width:34px; height:20px; border-radius:999px; background:var(--ok); position:relative; flex:0 0 auto}
+.done-chip .sw::after{content:""; position:absolute; top:2px; right:2px; width:16px; height:16px;
+  border-radius:50%; background:#fff}
+
+/* ── Callout ───────────────────────────────── */
+.callout{border:1px solid var(--line); border-left:3px solid var(--gold); background:var(--surface);
+  border-radius:0 14px 14px 0; padding:1.1rem 1.3rem; margin:1.6rem 0 0}
+.callout h3{font-family:var(--font-display); font-size:1.1rem; margin:0 0 .6rem}
+.callout ul{margin:0; padding-left:1.1rem}
+.callout li{margin:.4rem 0; color:var(--ink-soft); font-size:.92rem}
+.callout li b{color:var(--ink)}
+
+.foot{text-align:center; color:var(--ink-faint); font-size:.78rem; margin-top:2.4rem;
+  padding-top:1.4rem; border-top:1px solid var(--line-soft)}
+
+@media (max-width:520px){
+  .panel{padding:1.15rem 1rem 1.25rem}
+  ol.steps>li{padding-left:2.6rem}
+}
+</style>
+</head>
+<body>
+
+
+<div class="switchers">
+  <div class="seg plat" role="group" aria-label="Phone type">
+    <button type="button" data-plat="ios" aria-pressed="true">📱 iPhone</button>
+    <button type="button" data-plat="android" aria-pressed="false">🤖 Android</button>
+  </div>
+  <div class="seg lang" role="group" aria-label="Language">
+    <button type="button" data-lang="en" aria-pressed="true">English</button>
+    <button type="button" data-lang="es" aria-pressed="false">Español</button>
+    <button type="button" data-lang="vi" aria-pressed="false">Tiếng Việt</button>
+  </div>
+</div>
+
+<header class="masthead">
+  <div class="brandmark" aria-hidden="true">🍜</div>
+  <p class="kicker" data-i18n="kicker">Phở Hà Nội · Staff Guide</p>
+  <h1 data-i18n="h1">Turn on notifications</h1>
+  <p class="lede" data-i18n="lede">Get <b>message</b>, <b>team chat</b>, and <b>floor alert</b> notifications on your phone —
+    even when the app is closed or the screen is off. It takes about a minute, once per device.</p>
+  <div class="chips">
+    <span class="chip" data-i18n="chip1"><b>Once</b> per device</span>
+    <span class="chip" id="reqChip">iPhone needs <b>iOS 16.4+</b></span>
+    <span class="chip" data-i18n="chip3">Works <b>screen-off</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="showcase">
+    <div class="phone">
+      <div class="screen">
+        <div class="notch" aria-hidden="true"></div>
+        <div class="lock-time">7:45</div>
+        <div class="lock-date">Monday, September 7</div>
+        <div class="noti alert">
+          <div class="noti-ic" aria-hidden="true">🔔</div>
+          <div class="noti-main">
+            <div class="noti-top"><span class="noti-app">Phở Hà Nội</span><span class="noti-when" data-i18n="nowlbl">now</span></div>
+            <p class="noti-title" data-i18n="n1t">Urgent floor alert</p>
+            <p class="noti-body" data-i18n="n1b">Help at the front desk now — from Harry</p>
+          </div>
+        </div>
+        <div class="noti">
+          <div class="noti-ic" aria-hidden="true">✉️</div>
+          <div class="noti-main">
+            <div class="noti-top"><span class="noti-app">Phở Hà Nội</span><span class="noti-when">2m</span></div>
+            <p class="noti-title" data-i18n="n2t">New message from Linh</p>
+            <p class="noti-body" data-i18n="n2b">Can you cover the Saturday dinner shift?</p>
+          </div>
+        </div>
+        <div class="noti">
+          <div class="noti-ic" aria-hidden="true">💬</div>
+          <div class="noti-main">
+            <div class="noti-top"><span class="noti-app">Phở Hà Nội</span><span class="noti-when">5m</span></div>
+            <p class="noti-title" data-i18n="n3t">Milpitas — Front of House</p>
+            <p class="noti-body" data-i18n="n3b">Tài: prep list is on the board tonight 👍</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- iPhone steps -->
+  <div data-platform="ios">
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-emoji" aria-hidden="true">📱</span>
+        <div><h2 data-i18n="staffH">Staff app</h2><p class="url">pho-ha-noi-waitlist.fly.dev</p></div>
+      </div>
+      <p class="who" data-i18n="staffWho">For servers, hosts, bussers, kitchen — everyone on the floor.</p>
+      <ol class="steps">
+        <li data-i18n="s1"><b>Open the link in Safari</b> on your iPhone.<span class="sub">Type <kbd>pho-ha-noi-waitlist.fly.dev</kbd> in Safari — not Chrome.</span></li>
+        <li data-i18n="s2"><b>Add it to your Home Screen.</b><span class="sub">Tap <kbd>Share</kbd> (the box with an ↑) → <kbd>Add to Home Screen</kbd> → <kbd>Add</kbd>.</span></li>
+        <li data-i18n="s3"><b>Open the app from the new Home Screen icon</b> named <b>PHN - Staff</b>.<span class="sub">This is the important part — notifications only work from the installed icon, never a Safari tab.</span></li>
+        <li data-i18n="s4"><b>Sign in</b> with your 10-digit phone number and password.</li>
+        <li data-i18n="s5"><b>Go to <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b> and tap <kbd>Enable notifications</kbd>.<span class="sub">The app's buttons are in English.</span></li>
+        <li data-i18n="s6"><b>Tap <kbd>Allow</kbd></b> on the iPhone pop-up.<span class="done-chip"><span class="sw" aria-hidden="true"></span>🔔 On for this device</span></li>
+      </ol>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-emoji" aria-hidden="true">🖥️</span>
+        <div><h2 data-i18n="mgmtH">Management app</h2><p class="url">pho-ha-noi-management.fly.dev</p></div>
+      </div>
+      <p class="who" data-i18n="mgmtWho">For managers, general managers, admins and the owner.</p>
+      <ol class="steps">
+        <li data-i18n="m1"><b>On a phone:</b> open the link in Safari, then <kbd>Share</kbd> → <kbd>Add to Home Screen</kbd> and open it from the icon.<span class="sub">On a computer you can skip this — just use it in your browser.</span></li>
+        <li data-i18n="m2"><b>Sign in</b> to the console.</li>
+        <li data-i18n="m3"><b>Open <kbd>Account Settings</kbd></b> from your name at the top-right.</li>
+        <li data-i18n="m4"><b>Under <kbd>📲 Device notifications</kbd>, tap <kbd>Enable notifications</kbd></b> → <kbd>Allow</kbd>.<span class="sub">You'll get messages, chat, and any floor alerts sent to you.</span></li>
+      </ol>
+    </section>
+  </div>
+
+  <!-- Android steps -->
+  <div data-platform="android" hidden>
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-emoji" aria-hidden="true">📱</span>
+        <div><h2 data-i18n="staffH">Staff app</h2><p class="url">pho-ha-noi-waitlist.fly.dev</p></div>
+      </div>
+      <p class="who" data-i18n="staffWho">For servers, hosts, bussers, kitchen — everyone on the floor.</p>
+      <ol class="steps">
+        <li data-i18n="a1"><b>Open the link in Chrome</b> on your Android phone.<span class="sub">Go to <kbd>pho-ha-noi-waitlist.fly.dev</kbd>.</span></li>
+        <li data-i18n="a2"><b>Install the app.</b><span class="sub">Tap the <kbd>⋮</kbd> menu (top-right) → <kbd>Add to Home screen</kbd> (or <kbd>Install app</kbd>) → <kbd>Install</kbd>. If a banner offers to install, tap that.</span></li>
+        <li data-i18n="a3"><b>Open the app from the new icon</b> named <b>PHN - Staff</b>.<span class="sub">On Android notifications also work in Chrome, but the installed icon is cleaner.</span></li>
+        <li data-i18n="a4"><b>Sign in</b> with your 10-digit phone number and password.</li>
+        <li data-i18n="a5"><b>Go to <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b>, tap <kbd>Enable notifications</kbd> → <kbd>Allow</kbd>.<span class="done-chip"><span class="sw" aria-hidden="true"></span>🔔 On for this device</span></li>
+      </ol>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <span class="panel-emoji" aria-hidden="true">🖥️</span>
+        <div><h2 data-i18n="mgmtH">Management app</h2><p class="url">pho-ha-noi-management.fly.dev</p></div>
+      </div>
+      <p class="who" data-i18n="mgmtWho">For managers, general managers, admins and the owner.</p>
+      <ol class="steps">
+        <li data-i18n="am1"><b>On a phone:</b> open the link in Chrome, then <kbd>⋮</kbd> → <kbd>Add to Home screen</kbd> → <kbd>Install</kbd>, and open it from the icon.<span class="sub">On a computer, just use it in Chrome — no install needed.</span></li>
+        <li data-i18n="am2"><b>Sign in</b> to the console.</li>
+        <li data-i18n="am3"><b>Open <kbd>Account Settings</kbd></b> from your name at the top-right.</li>
+        <li data-i18n="am4"><b>Under <kbd>📲 Device notifications</kbd>, tap <kbd>Enable notifications</kbd></b> → <kbd>Allow</kbd>.<span class="sub">You'll get messages, chat, and any floor alerts sent to you.</span></li>
+      </ol>
+    </section>
+  </div>
+
+  <div class="callout">
+    <h3 data-i18n="coH">Good to know</h3>
+    <ul>
+      <li data-i18n="c1"><b>Set it up on each device</b> you use — your phone, and your tablet or computer are separate.</li>
+      <li data-i18n="c2"><b>Already had the app installed from before?</b> Delete that icon and add it again, so it loads the latest version with the notifications setting.</li>
+      <li data-i18n="c3"><b>Sound &amp; vibration</b> follow your phone's own notification settings for the app (on iPhone, also the silent switch).</li>
+      <li data-i18n="c4"><b>Tapping a notification</b> opens the app straight to the message, chat, or alert.</li>
+      <li data-i18n="c5"><b>To turn it off:</b> same screen → <kbd>Turn off</kbd>, or in your phone's notification settings for the app.</li>
+    </ul>
+  </div>
+
+  <p class="foot" data-i18n="foot">© 2026 Phở Hà Nội · Staff notification setup</p>
+</div>
+
+<script>
+// The app's own on-screen buttons are English for everyone, so those labels stay
+// English in every language; the phone's own items (Safari/Chrome menus, Allow) are
+// localized by the OS, so we localize those to match what the person sees.
+const I18N = {
+  es: {
+    kicker:"Phở Hà Nội · Guía del personal",
+    h1:"Activa las notificaciones",
+    lede:"Recibe notificaciones de <b>mensajes</b>, <b>chat del equipo</b> y <b>alertas del salón</b> en tu teléfono, incluso cuando la app está cerrada o la pantalla apagada. Toma un minuto, una sola vez por dispositivo.",
+    chip1:"<b>Una vez</b> por dispositivo",
+    chip3:"Funciona con <b>pantalla apagada</b>",
+    nowlbl:"ahora",
+    n1t:"Alerta urgente del salón",
+    n1b:"Ayuda en la recepción ahora — de Harry",
+    n2t:"Nuevo mensaje de Linh",
+    n2b:"¿Puedes cubrir el turno de la cena del sábado?",
+    n3t:"Milpitas — Salón",
+    n3b:"Tài: la lista de preparación está en el tablero esta noche 👍",
+    staffH:"App del personal",
+    staffWho:"Para meseros, anfitriones, ayudantes y cocina — todo el personal del salón.",
+    mgmtH:"App de gestión",
+    mgmtWho:"Para gerentes, gerentes generales, administradores y el propietario.",
+    coH:"Cosas que debes saber",
+    c1:"<b>Configúralo en cada dispositivo</b> que uses — tu teléfono, tu tableta y tu computadora son independientes.",
+    c2:"<b>¿Ya tenías la app instalada?</b> Elimina ese ícono y agrégalo de nuevo, para que cargue la versión más reciente con la opción de notificaciones.",
+    c3:"<b>Sonido y vibración</b> siguen los ajustes de notificaciones de tu teléfono para la app (en iPhone, también el interruptor de silencio).",
+    c4:"<b>Tocar una notificación</b> abre la app directamente en el mensaje, chat o alerta.",
+    c5:"<b>Para desactivarlo:</b> misma pantalla → <kbd>Turn off</kbd>, o en los ajustes de notificaciones de tu teléfono para la app.",
+    foot:"© 2026 Phở Hà Nội · Configuración de notificaciones",
+    // iPhone
+    s1:"<b>Abre el enlace en Safari</b> en tu iPhone.<span class=\"sub\">Escribe <kbd>pho-ha-noi-waitlist.fly.dev</kbd> en Safari — no en Chrome.</span>",
+    s2:"<b>Agrégalo a tu pantalla de inicio.</b><span class=\"sub\">Toca <kbd>Compartir</kbd> (el cuadro con una ↑) → <kbd>Agregar a inicio</kbd> → <kbd>Agregar</kbd>.</span>",
+    s3:"<b>Abre la app desde el nuevo ícono</b> llamado <b>PHN - Staff</b>.<span class=\"sub\">Esta es la parte importante: las notificaciones solo funcionan desde el ícono instalado, nunca desde una pestaña de Safari.</span>",
+    s4:"<b>Inicia sesión</b> con tu número de teléfono de 10 dígitos y tu contraseña.",
+    s5:"<b>Ve a <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b> y toca <kbd>Enable notifications</kbd>.<span class=\"sub\">Los botones de la app están en inglés.</span>",
+    s6:"<b>Toca <kbd>Permitir</kbd></b> en la ventana del iPhone.<span class=\"done-chip\"><span class=\"sw\" aria-hidden=\"true\"></span>🔔 On for this device</span>",
+    m1:"<b>En un teléfono:</b> abre el enlace en Safari, luego <kbd>Compartir</kbd> → <kbd>Agregar a inicio</kbd> y ábrelo desde el ícono.<span class=\"sub\">En una computadora puedes omitir esto — úsalo en tu navegador.</span>",
+    m2:"<b>Inicia sesión</b> en la consola.",
+    m3:"<b>Abre <kbd>Account Settings</kbd></b> desde tu nombre en la parte superior derecha.",
+    m4:"<b>En <kbd>📲 Device notifications</kbd>, toca <kbd>Enable notifications</kbd></b> → <kbd>Permitir</kbd>.<span class=\"sub\">Recibirás mensajes, chat y las alertas del salón que te envíen.</span>",
+    // Android
+    a1:"<b>Abre el enlace en Chrome</b> en tu teléfono Android.<span class=\"sub\">Ve a <kbd>pho-ha-noi-waitlist.fly.dev</kbd>.</span>",
+    a2:"<b>Instala la app.</b><span class=\"sub\">Toca el menú <kbd>⋮</kbd> (arriba a la derecha) → <kbd>Añadir a pantalla principal</kbd> (o <kbd>Instalar aplicación</kbd>) → <kbd>Instalar</kbd>. Si aparece un aviso para instalar, tócalo.</span>",
+    a3:"<b>Abre la app desde el nuevo ícono</b> llamado <b>PHN - Staff</b>.<span class=\"sub\">En Android las notificaciones también funcionan en Chrome, pero el ícono instalado es más cómodo.</span>",
+    a4:"<b>Inicia sesión</b> con tu número de teléfono de 10 dígitos y tu contraseña.",
+    a5:"<b>Ve a <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b>, toca <kbd>Enable notifications</kbd> → <kbd>Permitir</kbd>.<span class=\"done-chip\"><span class=\"sw\" aria-hidden=\"true\"></span>🔔 On for this device</span>",
+    am1:"<b>En un teléfono:</b> abre el enlace en Chrome, luego <kbd>⋮</kbd> → <kbd>Añadir a pantalla principal</kbd> → <kbd>Instalar</kbd>, y ábrelo desde el ícono.<span class=\"sub\">En una computadora, solo úsalo en Chrome — sin instalar.</span>",
+    am2:"<b>Inicia sesión</b> en la consola.",
+    am3:"<b>Abre <kbd>Account Settings</kbd></b> desde tu nombre arriba a la derecha.",
+    am4:"<b>En <kbd>📲 Device notifications</kbd>, toca <kbd>Enable notifications</kbd></b> → <kbd>Permitir</kbd>.<span class=\"sub\">Recibirás mensajes, chat y las alertas del salón que te envíen.</span>",
+  },
+  vi: {
+    kicker:"Phở Hà Nội · Hướng dẫn nhân viên",
+    h1:"Bật thông báo",
+    lede:"Nhận thông báo <b>tin nhắn</b>, <b>trò chuyện nhóm</b> và <b>cảnh báo tại nhà hàng</b> ngay trên điện thoại — kể cả khi ứng dụng đã đóng hoặc màn hình đã tắt. Chỉ mất khoảng một phút, làm một lần cho mỗi thiết bị.",
+    chip1:"<b>Một lần</b> mỗi thiết bị",
+    chip3:"Hoạt động khi <b>tắt màn hình</b>",
+    nowlbl:"bây giờ",
+    n1t:"Cảnh báo khẩn tại nhà hàng",
+    n1b:"Cần hỗ trợ ở quầy tiếp tân ngay — từ Harry",
+    n2t:"Tin nhắn mới từ Linh",
+    n2b:"Bạn làm thay ca tối thứ Bảy được không?",
+    n3t:"Milpitas — Khu phục vụ",
+    n3b:"Tài: danh sách chuẩn bị có trên bảng tối nay 👍",
+    staffH:"Ứng dụng Nhân viên",
+    staffWho:"Dành cho phục vụ, tiếp tân, phụ bàn, bếp — tất cả nhân viên.",
+    mgmtH:"Ứng dụng Quản lý",
+    mgmtWho:"Dành cho quản lý, tổng quản lý, quản trị viên và chủ.",
+    coH:"Những điều cần biết",
+    c1:"<b>Thiết lập trên từng thiết bị</b> bạn dùng — điện thoại, máy tính bảng và máy tính là riêng biệt.",
+    c2:"<b>Đã cài ứng dụng từ trước?</b> Xóa biểu tượng đó và thêm lại, để tải phiên bản mới nhất có tùy chọn thông báo.",
+    c3:"<b>Âm thanh và rung</b> theo cài đặt thông báo của điện thoại cho ứng dụng (trên iPhone còn có nút gạt im lặng).",
+    c4:"<b>Chạm vào thông báo</b> sẽ mở ứng dụng ngay tại tin nhắn, cuộc trò chuyện hoặc cảnh báo.",
+    c5:"<b>Để tắt:</b> cùng màn hình đó → <kbd>Turn off</kbd>, hoặc trong cài đặt thông báo của điện thoại cho ứng dụng.",
+    foot:"© 2026 Phở Hà Nội · Cài đặt thông báo cho nhân viên",
+    // iPhone
+    s1:"<b>Mở liên kết bằng Safari</b> trên iPhone.<span class=\"sub\">Nhập <kbd>pho-ha-noi-waitlist.fly.dev</kbd> vào Safari — không phải Chrome.</span>",
+    s2:"<b>Thêm vào Màn hình chính.</b><span class=\"sub\">Chạm <kbd>Chia sẻ</kbd> (ô có mũi tên ↑) → <kbd>Thêm vào MH chính</kbd> → <kbd>Thêm</kbd>.</span>",
+    s3:"<b>Mở ứng dụng từ biểu tượng mới</b> tên <b>PHN - Staff</b>.<span class=\"sub\">Đây là bước quan trọng — thông báo chỉ hoạt động từ biểu tượng đã cài, không phải từ tab Safari.</span>",
+    s4:"<b>Đăng nhập</b> bằng số điện thoại 10 chữ số và mật khẩu của bạn.",
+    s5:"<b>Vào <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b> rồi chạm <kbd>Enable notifications</kbd>.<span class=\"sub\">Các nút trong ứng dụng hiển thị bằng tiếng Anh.</span>",
+    s6:"<b>Chạm <kbd>Cho phép</kbd></b> trên cửa sổ iPhone.<span class=\"done-chip\"><span class=\"sw\" aria-hidden=\"true\"></span>🔔 On for this device</span>",
+    m1:"<b>Trên điện thoại:</b> mở liên kết bằng Safari, rồi <kbd>Chia sẻ</kbd> → <kbd>Thêm vào MH chính</kbd> và mở từ biểu tượng.<span class=\"sub\">Trên máy tính có thể bỏ qua bước này — chỉ cần dùng trên trình duyệt.</span>",
+    m2:"<b>Đăng nhập</b> vào bảng điều khiển.",
+    m3:"<b>Mở <kbd>Account Settings</kbd></b> từ tên của bạn ở góc trên bên phải.",
+    m4:"<b>Trong <kbd>📲 Device notifications</kbd>, chạm <kbd>Enable notifications</kbd></b> → <kbd>Cho phép</kbd>.<span class=\"sub\">Bạn sẽ nhận tin nhắn, trò chuyện và các cảnh báo gửi cho bạn.</span>",
+    // Android
+    a1:"<b>Mở liên kết bằng Chrome</b> trên điện thoại Android.<span class=\"sub\">Vào <kbd>pho-ha-noi-waitlist.fly.dev</kbd>.</span>",
+    a2:"<b>Cài đặt ứng dụng.</b><span class=\"sub\">Chạm menu <kbd>⋮</kbd> (góc trên bên phải) → <kbd>Thêm vào Màn hình chính</kbd> (hoặc <kbd>Cài đặt ứng dụng</kbd>) → <kbd>Cài đặt</kbd>. Nếu có thanh gợi ý cài đặt hiện ra, hãy chạm vào đó.</span>",
+    a3:"<b>Mở ứng dụng từ biểu tượng mới</b> tên <b>PHN - Staff</b>.<span class=\"sub\">Trên Android thông báo cũng hoạt động trong Chrome, nhưng biểu tượng đã cài gọn hơn.</span>",
+    a4:"<b>Đăng nhập</b> bằng số điện thoại 10 chữ số và mật khẩu của bạn.",
+    a5:"<b>Vào <kbd>⚙️ Settings</kbd> → <kbd>📲 Device notifications</kbd></b>, chạm <kbd>Enable notifications</kbd> → <kbd>Cho phép</kbd>.<span class=\"done-chip\"><span class=\"sw\" aria-hidden=\"true\"></span>🔔 On for this device</span>",
+    am1:"<b>Trên điện thoại:</b> mở liên kết bằng Chrome, rồi <kbd>⋮</kbd> → <kbd>Thêm vào Màn hình chính</kbd> → <kbd>Cài đặt</kbd>, và mở từ biểu tượng.<span class=\"sub\">Trên máy tính, chỉ cần dùng trong Chrome — không cần cài.</span>",
+    am2:"<b>Đăng nhập</b> vào bảng điều khiển.",
+    am3:"<b>Mở <kbd>Account Settings</kbd></b> từ tên của bạn ở góc trên bên phải.",
+    am4:"<b>Trong <kbd>📲 Device notifications</kbd>, chạm <kbd>Enable notifications</kbd></b> → <kbd>Cho phép</kbd>.<span class=\"sub\">Bạn sẽ nhận tin nhắn, trò chuyện và các cảnh báo gửi cho bạn.</span>",
+  },
+};
+
+// Requirement chip — depends on both platform and language.
+const REQ = {
+  en:{ios:"iPhone needs <b>iOS 16.4+</b>", android:"Android + <b>Chrome</b>"},
+  es:{ios:"iPhone requiere <b>iOS 16.4+</b>", android:"Android + <b>Chrome</b>"},
+  vi:{ios:"iPhone cần <b>iOS 16.4+</b>", android:"Android + <b>Chrome</b>"},
+};
+
+// Snapshot the page's built-in English so switching back is lossless.
+const EN = {};
+document.querySelectorAll("[data-i18n]").forEach((el) => { EN[el.dataset.i18n] = el.innerHTML; });
+const LANGS = { en: EN, es: I18N.es, vi: I18N.vi };
+
+const LKEY = "phn_setup_lang", PKEY = "phn_setup_plat";
+let curLang = "en", curPlat = "ios";
+
+function applyState() {
+  const dict = LANGS[curLang] || EN;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const v = dict[el.dataset.i18n];
+    if (v != null) el.innerHTML = v;
+  });
+  const rc = document.getElementById("reqChip");
+  if (rc) rc.innerHTML = (REQ[curLang] || REQ.en)[curPlat];
+  document.querySelectorAll("[data-platform]").forEach((el) => { el.hidden = el.dataset.platform !== curPlat; });
+  document.documentElement.lang = curLang;
+  document.querySelectorAll(".seg.lang [data-lang]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === curLang)));
+  document.querySelectorAll(".seg.plat [data-plat]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.plat === curPlat)));
+  try { localStorage.setItem(LKEY, curLang); localStorage.setItem(PKEY, curPlat); } catch (e) { /* private mode */ }
+}
+
+document.querySelectorAll(".seg.lang [data-lang]").forEach((b) => b.addEventListener("click", () => { curLang = b.dataset.lang; applyState(); }));
+document.querySelectorAll(".seg.plat [data-plat]").forEach((b) => b.addEventListener("click", () => { curPlat = b.dataset.plat; applyState(); }));
+
+// First load: remembered choices, else detect from the device.
+(function () {
+  try { curLang = localStorage.getItem(LKEY) || ""; } catch (e) { curLang = ""; }
+  if (!curLang) {
+    const n = (navigator.language || "en").toLowerCase();
+    curLang = n.startsWith("es") ? "es" : n.startsWith("vi") ? "vi" : "en";
+  }
+  let p = "";
+  try { p = localStorage.getItem(PKEY) || ""; } catch (e) { p = ""; }
+  curPlat = p || (/Android/i.test(navigator.userAgent || "") ? "android" : "ios");
+  applyState();
+})();
+</script>
+
+</body>
+</html>

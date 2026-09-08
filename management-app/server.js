@@ -21,6 +21,8 @@ app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Enterprise Resta
 // Per-location time-clock kiosk (staff clock in / out tablet, no login).
 // Each location has its own URL: /clock/<slug> (e.g. /clock/milpitas). The bare
 // /clock shows a location picker. The page reads the slug from its own path.
+// Notification setup guide (public, no login) — a shareable how-to for staff.
+app.get('/setup', (req, res) => res.sendFile(path.join(__dirname, 'public', 'setup.html')));
 app.get('/clock', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clock.html')));
 app.get('/clock/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'clock.html')));
 

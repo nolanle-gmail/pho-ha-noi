@@ -273,7 +273,7 @@ async function disablePush() {
   if (S.section === 'account') openAccount();
 }
 // Shareable step-by-step setup guide (iPhone & Android, EN/ES/VI).
-const SETUP_GUIDE_URL = 'https://claude.ai/code/artifact/5b74398d-daf7-4059-96b3-2f159b06ab60';
+const SETUP_GUIDE_URL = '/setup';
 // The enable/disable control shown in Account Settings, per this device's state.
 function pushSettingsHtml() {
   const link = `<div style="margin-top:.9rem"><a href="${SETUP_GUIDE_URL}" target="_blank" rel="noopener" class="setup-link">📖 How to set this up (iPhone &amp; Android)</a></div>`;
