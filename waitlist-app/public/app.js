@@ -1253,6 +1253,24 @@ const alertVibrateOn = () => localStorage.getItem('phnw_alert_vibrate') !== '0';
 const msgSoundOn = () => localStorage.getItem('phnw_msg_sound') !== '0';
 const msgVibrateOn = () => localStorage.getItem('phnw_msg_vibrate') !== '0';
 
+// One shared AudioContext, kept alive for the session. A context created inside
+// an SSE callback (not a user gesture) starts *suspended* and stays silent, so we
+// create it lazily and resume it on every user gesture — once the person has
+// signed in / tapped anything, later notification chimes can actually sound.
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return null;
+    try { _audioCtx = new Ctx(); } catch { return null; }
+  }
+  if (_audioCtx.state === 'suspended') { try { _audioCtx.resume(); } catch { /* will retry on next gesture */ } }
+  return _audioCtx;
+}
+// Prime/unlock audio on any interaction (and when the tab returns to the front,
+// since a backgrounded context can be suspended by the browser).
+['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, getAudioCtx, { passive: true }));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) getAudioCtx(); });
+
 // A short attention cue: a soft beep (if allowed) and a device vibration, each
 // gated by the caller's Settings toggles. `freq` distinguishes the tone —
 // alerts ring higher/urgent, message notifications a touch softer.
@@ -1260,12 +1278,19 @@ function playCue(sound, vibrate, freq) {
   if (vibrate) { try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ } }
   if (!sound) return;
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
-    const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
-    o.type = 'sine'; o.frequency.value = freq || 880; o.connect(g); g.connect(ac.destination);
-    g.gain.setValueAtTime(0.001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
-    o.start(); o.stop(ac.currentTime + 0.5); setTimeout(() => { try { ac.close(); } catch {} }, 800);
+    const ac = getAudioCtx(); if (!ac) return;
+    const beep = () => {
+      try {
+        const o = ac.createOscillator(); const g = ac.createGain();
+        o.type = 'sine'; o.frequency.value = freq || 880; o.connect(g); g.connect(ac.destination);
+        const t = ac.currentTime;
+        g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.start(t); o.stop(t + 0.5);
+      } catch { /* context died — ignore */ }
+    };
+    // Resume first if the context is suspended, then play once it's running.
+    if (ac.state === 'suspended') { ac.resume().then(beep).catch(() => {}); } else { beep(); }
   } catch { /* audio blocked until a user gesture — the visual pop-up still shows */ }
 }
 const alertCue = () => playCue(alertSoundOn(), alertVibrateOn(), 880);   // urgent alert ring

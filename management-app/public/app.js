@@ -3564,15 +3564,36 @@ const ALERT_PRESETS = [
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
 const ALERT_SEES_ALL = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
 
+// One shared AudioContext, unlocked on any user gesture. A context created inside
+// an SSE callback (not a gesture) starts *suspended* and stays silent, so we reuse
+// one and resume it on every interaction / when the tab returns to the front.
+let _audioCtx = null;
+function getAudioCtx() {
+  if (!_audioCtx) {
+    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return null;
+    try { _audioCtx = new Ctx(); } catch { return null; }
+  }
+  if (_audioCtx.state === 'suspended') { try { _audioCtx.resume(); } catch { /* retry next gesture */ } }
+  return _audioCtx;
+}
+['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, getAudioCtx, { passive: true }));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) getAudioCtx(); });
+
 function alertCue() {
   try { if (navigator.vibrate) navigator.vibrate([120, 60, 120]); } catch { /* unsupported */ }
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
-    const ac = new Ctx(); const o = ac.createOscillator(); const g = ac.createGain();
-    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
-    g.gain.setValueAtTime(0.001, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.25, ac.currentTime + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.5);
-    o.start(); o.stop(ac.currentTime + 0.5); setTimeout(() => { try { ac.close(); } catch {} }, 800);
+    const ac = getAudioCtx(); if (!ac) return;
+    const beep = () => {
+      try {
+        const o = ac.createOscillator(); const g = ac.createGain();
+        o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+        const t = ac.currentTime;
+        g.gain.setValueAtTime(0.001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+        o.start(t); o.stop(t + 0.5);
+      } catch { /* context died — ignore */ }
+    };
+    if (ac.state === 'suspended') { ac.resume().then(beep).catch(() => {}); } else { beep(); }
   } catch { /* audio blocked until a gesture — the visual pop-up still shows */ }
 }
 const _shownAlerts = new Set();
