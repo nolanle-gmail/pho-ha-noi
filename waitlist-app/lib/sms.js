@@ -4,7 +4,9 @@
 // secrets) to send for real. sendSms never throws; it returns a normalized
 // result the caller can record. Uses the global fetch (Node 18+).
 //
-//   Twilio   → TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM (an SMS number)
+//   Twilio   → TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and either
+//              TWILIO_MESSAGING_SERVICE_SID (MG…, preferred for toll-free A2P) or
+//              TWILIO_FROM (a raw SMS number). If both are set the Service wins.
 //   TextBelt → TEXTBELT_KEY (default 'textbelt' = 1 free msg/day, testing only)
 const PROVIDER = (process.env.SMS_PROVIDER || 'none').toLowerCase();
 
@@ -22,10 +24,14 @@ function toE164(v) {
 }
 
 async function viaTwilio(to, body) {
-  const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN, from = process.env.TWILIO_FROM;
-  if (!sid || !token || !from) return { sent: false, error: 'twilio_not_configured' };
+  const sid = process.env.TWILIO_ACCOUNT_SID, token = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_FROM, msgSvc = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  if (!sid || !token || (!msgSvc && !from)) return { sent: false, error: 'twilio_not_configured' };
   const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
-  const params = new URLSearchParams({ To: to, From: from, Body: body });
+  // Prefer a Messaging Service (the compliant path for toll-free A2P — it owns the
+  // sender pool); otherwise fall back to a single raw From number.
+  const params = new URLSearchParams(Object.assign({ To: to, Body: body },
+    msgSvc ? { MessagingServiceSid: msgSvc } : { From: from }));
   const auth = Buffer.from(`${sid}:${token}`).toString('base64');
   const r = await fetch(url, { method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: params });
   const j = await r.json().catch(() => ({}));
