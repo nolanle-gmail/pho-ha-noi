@@ -1267,8 +1267,23 @@ function getAudioCtx() {
   return _audioCtx;
 }
 // Prime/unlock audio on any interaction (and when the tab returns to the front,
-// since a backgrounded context can be suspended by the browser).
-['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, getAudioCtx, { passive: true }));
+// since a backgrounded context can be suspended by the browser). iOS is strict:
+// resuming isn't enough — it fully unlocks only when an actual sound is played
+// inside a real touch, so on the first gesture we also play a 1-sample silent
+// buffer. (Nothing overrides the iPhone silent/ring switch — that mutes web audio
+// regardless.)
+let _audioUnlocked = false;
+function unlockAudio() {
+  const ac = getAudioCtx(); if (!ac) return;
+  if (ac.state === 'suspended') { try { ac.resume(); } catch { /* retry next gesture */ } }
+  if (_audioUnlocked) return;
+  try {
+    const b = ac.createBuffer(1, 1, 22050);
+    const s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0);
+    _audioUnlocked = true;
+  } catch { /* retry on the next gesture */ }
+}
+['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, { passive: true }));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) getAudioCtx(); });
 
 // A short attention cue: a soft beep (if allowed) and a device vibration, each

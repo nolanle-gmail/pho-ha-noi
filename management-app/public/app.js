@@ -3576,7 +3576,21 @@ function getAudioCtx() {
   if (_audioCtx.state === 'suspended') { try { _audioCtx.resume(); } catch { /* retry next gesture */ } }
   return _audioCtx;
 }
-['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, getAudioCtx, { passive: true }));
+// iOS fully unlocks web audio only when a sound plays inside a real touch, so on
+// the first gesture we also play a 1-sample silent buffer. (The iPhone silent/ring
+// switch still mutes web audio — no web app can override it.)
+let _audioUnlocked = false;
+function unlockAudio() {
+  const ac = getAudioCtx(); if (!ac) return;
+  if (ac.state === 'suspended') { try { ac.resume(); } catch { /* retry next gesture */ } }
+  if (_audioUnlocked) return;
+  try {
+    const b = ac.createBuffer(1, 1, 22050);
+    const s = ac.createBufferSource(); s.buffer = b; s.connect(ac.destination); s.start(0);
+    _audioUnlocked = true;
+  } catch { /* retry on the next gesture */ }
+}
+['pointerdown', 'touchend', 'keydown'].forEach(ev => window.addEventListener(ev, unlockAudio, { passive: true }));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) getAudioCtx(); });
 
 function alertCue() {
