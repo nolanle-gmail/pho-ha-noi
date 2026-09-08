@@ -1491,6 +1491,9 @@ function renderSettings() {
   if ($('pushDisable')) $('pushDisable').onclick = disablePush;
 }
 
+// Shareable step-by-step setup guide (iPhone & Android, EN/ES/VI).
+const SETUP_GUIDE_URL = 'https://claude.ai/code/artifact/5b74398d-daf7-4059-96b3-2f159b06ab60';
+
 // The "Device notifications" settings card — its content depends on whether this
 // browser supports push and the current permission state.
 function pushCardHtml() {
@@ -1512,6 +1515,7 @@ function pushCardHtml() {
       <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">📲 Device notifications</h3>
       <p class="set-desc" style="margin:.1rem 0 .6rem">Get a real notification — with sound &amp; vibration — for new messages, chats and alerts, <b>even when the app is closed or your phone is on silent</b>. Set this up once on each device.</p>
       ${inner}
+      <div style="margin-top:.9rem"><a href="${SETUP_GUIDE_URL}" target="_blank" rel="noopener" class="setup-link">📖 How to set this up (iPhone &amp; Android)</a></div>
     </div>`;
 }
 

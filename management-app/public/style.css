@@ -251,6 +251,8 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sidebar-footer { border-top: 1px solid rgba(255,255,255,.1); padding: .4rem 0; }
 .nav-item.logout { color: rgba(255,255,255,.6); }
 .app-copyright { text-align: center; font-size: .72rem; color: var(--muted); padding: .7rem .5rem .2rem; }
+.setup-link { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; font-weight: 600; color: var(--red, #930B19); text-decoration: none; }
+.setup-link:hover { text-decoration: underline; }
 .sidebar-footer .app-copyright { color: rgba(255,255,255,.4); padding: .55rem .5rem .2rem; }
 
 .sidebar-overlay { display: none; }

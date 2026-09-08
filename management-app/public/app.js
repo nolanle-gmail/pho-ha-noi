@@ -272,14 +272,22 @@ async function disablePush() {
   toast('Notifications turned off on this device');
   if (S.section === 'account') openAccount();
 }
+// Shareable step-by-step setup guide (iPhone & Android, EN/ES/VI).
+const SETUP_GUIDE_URL = 'https://claude.ai/code/artifact/5b74398d-daf7-4059-96b3-2f159b06ab60';
 // The enable/disable control shown in Account Settings, per this device's state.
 function pushSettingsHtml() {
-  if (!pushSupported()) return `<p class="muted" style="font-size:.9rem">Not available in this browser. On <b>iPhone/iPad</b>, tap <b>Share → Add to Home Screen</b>, open the app from your Home Screen, then turn this on.</p>`;
-  const perm = pushPermission();
-  const on = (() => { try { return localStorage.getItem('phn_push_on') !== '0'; } catch { return true; } })();
-  if (perm === 'denied') return `<p class="muted" style="font-size:.9rem">Notifications are <b>blocked</b> for this app. Turn them on in your device or browser settings, then reopen the app.</p>`;
-  if (perm === 'granted' && on) return `<div style="color:var(--ok,#15803d);font-weight:600;margin-bottom:.5rem">🔔 On for this device.</div><button class="btn ghost" id="pushDisable">Turn off</button>`;
-  return `<button class="btn" id="pushEnable">🔔 Enable notifications</button>`;
+  const link = `<div style="margin-top:.9rem"><a href="${SETUP_GUIDE_URL}" target="_blank" rel="noopener" class="setup-link">📖 How to set this up (iPhone &amp; Android)</a></div>`;
+  let body;
+  if (!pushSupported()) {
+    body = `<p class="muted" style="font-size:.9rem">Not available in this browser. On <b>iPhone/iPad</b>, tap <b>Share → Add to Home Screen</b>, open the app from your Home Screen, then turn this on.</p>`;
+  } else {
+    const perm = pushPermission();
+    const on = (() => { try { return localStorage.getItem('phn_push_on') !== '0'; } catch { return true; } })();
+    if (perm === 'denied') body = `<p class="muted" style="font-size:.9rem">Notifications are <b>blocked</b> for this app. Turn them on in your device or browser settings, then reopen the app.</p>`;
+    else if (perm === 'granted' && on) body = `<div style="color:var(--ok,#15803d);font-weight:600;margin-bottom:.5rem">🔔 On for this device.</div><button class="btn ghost" id="pushDisable">Turn off</button>`;
+    else body = `<button class="btn" id="pushEnable">🔔 Enable notifications</button>`;
+  }
+  return body + link;
 }
 
 // App-wide live push for messages: the badge (and an open inbox) update the
