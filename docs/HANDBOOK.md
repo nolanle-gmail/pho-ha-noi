@@ -1085,6 +1085,19 @@ inline players). Only the message's sender can attach to it; **members and audit
 leadership** can view. New media is pushed live over the SSE stream so the group sees it
 without reloading. Attachments are retained with their message for audit.
 
+> **Pop-up alerts, chime & vibration (Staff app).** A new direct message or team chat
+> raises a small on-screen pop-up with a **chime and a vibration**, each toggled in
+> **⚙️ Settings** (Message sound / Message vibration / New-message pop-ups — all on by
+> default; a **Test** button previews the chime). Two things to expect:
+> - **It notifies the _recipient_, not the sender.** Sending a message or chat doesn't
+>   chime your own device — send it to someone else (or use the Test button) to hear it.
+> - **It only pops when you're not already on that screen** (no chime for the inbox/chat
+>   you're currently looking at), and a **10-min repeat reminder** re-nags anything left
+>   unread.
+> - **Vibration is Android-Chrome only** — iPhone/iPad and desktops can't vibrate from the
+>   web, but the **chime still plays** there. Sound needs one tap on the app first (any
+>   sign-in or tap unlocks audio; the browser blocks sound until then).
+
 ### 6.6 Daily tasks: start, done, proof photos & comments
 
 Managers assign specific day tasks on the Management **Day Tasks** board. Each
