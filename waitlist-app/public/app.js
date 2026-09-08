@@ -164,6 +164,15 @@ async function boot() {
   ab.onclick = openAlertComposer;
   checkPendingAlerts();
   showInstallBanner();   // offer "add to home screen" once signed in (if not already installed)
+  // Keep this device's push subscription fresh when notifications are already on.
+  if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
+  // Deep-link from a tapped push notification → open the right screen.
+  try {
+    const n = new URLSearchParams(location.search).get('n');
+    if (n === 'messages') goMessages('inbox');
+    else if (n === 'chat') goMessages('chat');
+    if (n) history.replaceState(null, '', location.pathname);
+  } catch { /* no-op */ }
   // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
   // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
@@ -1372,6 +1381,52 @@ function showNotifyToast({ icon, title, body, onClick }) {
   el.onclick = () => { remove(); if (onClick) { try { onClick(); } catch { /* */ } } };
 }
 
+// ── Web Push: real OS notifications (work when the app is closed / phone silent) ──
+const pushSupported = () => ('serviceWorker' in navigator) && ('PushManager' in window) && ('Notification' in window);
+const pushPermission = () => (('Notification' in window) ? Notification.permission : 'unsupported');
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+// Ensure this device has a live push subscription registered with the server.
+// Called silently on boot when permission is already granted, and by enablePush().
+async function subscribePush() {
+  if (!pushSupported() || Notification.permission !== 'granted') return false;
+  let cfg; try { cfg = await api('/push/key'); } catch { return false; }
+  if (!cfg || !cfg.enabled || !cfg.key) return false;
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(cfg.key) });
+  try { await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) }); }
+  catch { return false; }
+  try { localStorage.setItem('phnw_push_on', '1'); } catch { /* private mode */ }
+  return true;
+}
+// Turn on push — must run from a user tap so iOS lets us request permission.
+async function enablePush() {
+  if (!pushSupported()) { toast('This device doesn’t support push. On iPhone, add the app to your Home Screen first, then try again.', true); return; }
+  let perm = Notification.permission;
+  if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; } }
+  if (perm !== 'granted') { toast('Notifications are blocked — turn them on for this app in your device settings.', true); if (S.view === 'settings') renderSettings(); return; }
+  const ok = await subscribePush();
+  toast(ok ? '🔔 Notifications enabled on this device' : 'Couldn’t enable push right now.', !ok);
+  if (S.view === 'settings') renderSettings();
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) { try { await api('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }); } catch { /* offline */ } await sub.unsubscribe(); }
+  } catch { /* nothing to remove */ }
+  try { localStorage.setItem('phnw_push_on', '0'); } catch { /* private mode */ }
+  toast('Notifications turned off on this device');
+  if (S.view === 'settings') renderSettings();
+}
+
 // Every minute (and on returning to the app), re-surface anything left unreviewed
 // for 10+ minutes: unread messages, unread chat, or an unacknowledged alert.
 async function renagSweep() {
@@ -1422,7 +1477,8 @@ function renderSettings() {
       ${row('phnw_msg_vibrate', 'Message vibration', 'Vibrate the device for a new message or chat.', msgVibrateOn())}
       ${row('phnw_renag', 'Repeat reminder', 'If a message, chat, or alert is still unread after 10 minutes, remind me again.', renagOn())}
       <button class="btn ghost" id="setTestMsg" style="margin-top:.9rem">✉️ Preview notification</button>
-    </div>`;
+    </div>
+    ${pushCardHtml()}`;
   v.querySelectorAll('[data-tgl]').forEach(b => b.onclick = () => {
     const k = b.dataset.tgl, on = localStorage.getItem(k) !== '0';
     try { localStorage.setItem(k, on ? '0' : '1'); } catch { /* private mode */ }
@@ -1431,6 +1487,32 @@ function renderSettings() {
   });
   $('setTest').onclick = () => showAlertPopup({ id: 'preview-' + Date.now(), preview: true, body: 'This is a preview alert', sender_name: 'You', priority: 'urgent' });
   $('setTestMsg').onclick = () => showNotifyToast({ icon: '✉️', title: 'New message', body: 'This is a preview notification.' });
+  if ($('pushEnable')) $('pushEnable').onclick = enablePush;
+  if ($('pushDisable')) $('pushDisable').onclick = disablePush;
+}
+
+// The "Device notifications" settings card — its content depends on whether this
+// browser supports push and the current permission state.
+function pushCardHtml() {
+  const supported = pushSupported();
+  const perm = pushPermission();
+  const pOn = (() => { try { return localStorage.getItem('phnw_push_on') !== '0'; } catch { return true; } })();
+  let inner;
+  if (!supported) {
+    inner = `<p class="set-desc">Not available in this browser. On <b>iPhone/iPad</b>, tap <b>Share → Add to Home Screen</b>, open the app from your Home Screen, then turn this on.</p>`;
+  } else if (perm === 'denied') {
+    inner = `<p class="set-desc">Notifications are <b>blocked</b> for this app. Turn them on in your device or browser settings, then reopen the app.</p>`;
+  } else if (perm === 'granted' && pOn) {
+    inner = `<div class="set-desc" style="color:var(--ok);font-weight:600">🔔 On for this device.</div>
+      <button class="btn ghost" id="pushDisable" style="margin-top:.6rem">Turn off</button>`;
+  } else {
+    inner = `<button class="btn" id="pushEnable">🔔 Enable notifications</button>`;
+  }
+  return `<div class="set-card">
+      <h3 style="margin:.1rem 0 .2rem;font-size:1.05rem">📲 Device notifications</h3>
+      <p class="set-desc" style="margin:.1rem 0 .6rem">Get a real notification — with sound &amp; vibration — for new messages, chats and alerts, <b>even when the app is closed or your phone is on silent</b>. Set this up once on each device.</p>
+      ${inner}
+    </div>`;
 }
 
 // Manager composer: pick who, pick a preset or type a message, choose priority, send.

@@ -1,7 +1,7 @@
 // Pho Ha Noi Staff — service worker. Network-first for the app shell so staff
 // always get the latest code online, with a cached fallback for offline. Live
 // data (/api/*) and the Management app (cross-origin) always go to the network.
-const CACHE = 'phn-staff-v8';
+const CACHE = 'phn-staff-v9';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/brand.svg', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -21,4 +21,35 @@ self.addEventListener('fetch', (e) => {
       .then((res) => { const clone = res.clone(); caches.open(CACHE).then((c) => c.put(req, clone)); return res; })
       .catch(() => caches.match(req).then((c) => c || caches.match('/')))
   );
+});
+
+// ── Web Push: a real OS notification, even when the app is closed / phone silent ──
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch { d = {}; }
+  const title = d.title || 'Phở Hà Nội';
+  const opts = {
+    body: d.body || 'You have a new notification.',
+    tag: d.tag || 'phn',
+    renotify: true,
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    vibrate: [120, 60, 120],
+    data: { url: d.url || '/' },
+  };
+  e.waitUntil(self.registration.showNotification(title, opts));
+});
+
+// Tapping a notification focuses an open app window (deep-linking to the right
+// view) or opens a new one.
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of wins) {
+      if ('focus' in c) { try { if (c.navigate) await c.navigate(target); } catch { /* cross-scope */ } return c.focus(); }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(target);
+  })());
 });

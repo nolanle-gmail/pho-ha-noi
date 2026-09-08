@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
 const { emitChat } = require('../lib/events');
+const { pushToUsers } = require('../lib/push');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -135,6 +136,16 @@ router.post('/groups/:id/messages', (req, res) => {
   markRead(g.id, req.user.id, mid);
   const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
   try { emitChat({ group_id: g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* live push best-effort */ }
+  try {
+    const from = db.prepare(`SELECT name FROM users WHERE id=?`).get(req.user.id);
+    const preview = body.replace(/\s+/g, ' ').trim().slice(0, 140);
+    pushToUsers(memberIds.filter(uid => String(uid) !== String(req.user.id)), {
+      title: `💬 ${g.name}`,
+      body: `${(from && from.name) || 'Someone'}: ${preview}`,
+      tag: 'chat-' + g.id,
+      url: '/?n=chat',
+    });
+  } catch { /* OS push is best-effort */ }
   res.json({ success: true, id: mid });
 });
 

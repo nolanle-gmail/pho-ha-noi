@@ -37,6 +37,7 @@ app.use('/api/visits', require('./routes/visits'));
 app.use('/api/stafftasks', require('./routes/stafftasks'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/chat', require('./routes/chat'));
+app.use('/api/push', require('./routes/push'));
 app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/translate', require('./routes/translate'));

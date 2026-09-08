@@ -787,6 +787,22 @@ function migrate() {
     );
   `);
 
+  // Web Push subscriptions — one row per device/browser a user has enabled push
+  // on. Endpoint is unique (the browser's push endpoint); keys encrypt the payload.
+  // Dead endpoints are pruned on a 404/410 from the push service.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint   TEXT NOT NULL UNIQUE,
+      p256dh     TEXT NOT NULL,
+      auth       TEXT NOT NULL,
+      ua         TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_sub_user ON push_subscriptions(user_id);
+  `);
+
   // Break-reminder archive: one row per "your break is in 10 minutes" alert sent
   // to a staff member, kept for audit (proof staff were reminded of their breaks).
   db.exec(`

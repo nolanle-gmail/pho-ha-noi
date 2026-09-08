@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
 const { emitMessages, onMessages, onAlert, onAlertAck, onChat, onTaskComment } = require('../lib/events');
+const { pushToUsers } = require('../lib/push');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -206,6 +207,17 @@ function deliver(senderId, audience, locId, subject, body, recipientIds, threadI
   const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
   recips.forEach(uid => ins.run(mid, uid));
   try { emitMessages(recips); } catch { /* live push is best-effort */ }
+  try {
+    const from = db.prepare(`SELECT name FROM users WHERE id=?`).get(senderId);
+    const senderName = (from && from.name) || 'Someone';
+    const preview = String(body).replace(/\s+/g, ' ').trim().slice(0, 140);
+    pushToUsers(recips, {
+      title: `New message from ${senderName}`,
+      body: preview || 'Tap to read.',
+      tag: 'msg-' + mid,
+      url: '/?n=messages',
+    });
+  } catch { /* OS push is best-effort */ }
   return mid;
 }
 
