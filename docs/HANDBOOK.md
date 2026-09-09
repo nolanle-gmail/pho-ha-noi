@@ -816,7 +816,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
-| 📅 My Schedule | The staff member's own manager-set shifts, in **Day / Week / Bi-weekly / Month** views — each day shows the hours, job(s), breaks and location, plus shift count & scheduled hours for the period. Sits at the **top** of the menu, above My Tasks | Shift-scheduled staff (store managers + floor/kitchen roles); **hidden for all-location leadership** (owner / admin / HR / GM / regional), who aren't shift-scheduled |
+| 📅 My Schedule | The staff member's own manager-set shifts, in **Day / Week / Bi-weekly / Month** views — each day shows the hours, job(s), breaks and location, plus shift count & scheduled hours for the period. Sits at the **top** of the menu, above My Tasks. **Leads & managers** (any role with the **`manage`** capability — e.g. Shift Lead, Kitchen Lead, store managers) also get a **Mine / Team** toggle: **Team** shows the **whole location's schedule** for the period, grouped by day with each person's name, hours, jobs and breaks (read-only — building shifts stays in the console; scoped to their own store) | Shift-scheduled staff (store managers + floor/kitchen roles); **hidden for all-location leadership** (owner / admin / HR / GM / regional), who aren't shift-scheduled |
 | 📋 My Tasks | Assigned day-tasks — Start, Done, optional proof photos (multi-upload) and comments / feedback | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
