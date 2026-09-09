@@ -301,7 +301,7 @@ function setupMessageStream() {
   MSG_ES.onmessage = (e) => {
     let d = null; try { d = JSON.parse(e.data); } catch { /* heartbeat */ }
     if (d && d.type === 'alert') { showAlertPopup(d.alert); return; }               // urgent floor ping → pop up
-    if (d && d.type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); if (S.section === 'messages' && S.msgTab === 'alerts') renderMessages(); return; }
+    if (d && d.type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} ${d.completed ? 'marked it done' : 'is on it'}`); if (S.section === 'messages' && S.msgTab === 'alerts') renderMessages(); return; }
     if (d && d.type === 'chat') {                                                    // new chat-group message
       if (S.section === 'messages' && S.msgTab === 'chat' && S.chatGroup && String(S.chatGroup) === String(d.group_id)) renderChatGroup(true);
       else if (S.section === 'messages' && S.msgTab === 'chat' && !S.chatGroup) renderChatList();
@@ -3687,15 +3687,30 @@ function showAlertPopup(a) {
     <div class="alert-pop-top">🔔 ${a.priority === 'urgent' ? 'URGENT ALERT' : 'Alert'}</div>
     <div class="alert-pop-body">${esc(a.body)}</div>
     <div class="alert-pop-from">from ${esc(a.sender_name || 'Management')}</div>
-    <div class="alert-pop-actions"><button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button></div>
+    <div class="alert-pop-note" data-note></div>
+    <div class="alert-pop-actions" data-actions></div>
   </div>`;
   document.body.appendChild(host);
   const close = () => host.remove();
-  host.querySelector('[data-dismiss]').onclick = close;
-  host.querySelector('[data-ack]').onclick = async () => {
-    try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged'); } catch (e) { toast(e.message, true); }
-    close();
+  const note = host.querySelector('[data-note]'), actions = host.querySelector('[data-actions]');
+  const renderDone = () => {
+    note.textContent = 'You’re on it — tap Done when the task is finished.';
+    actions.innerHTML = `<button class="btn ghost" data-later>Later</button><button class="btn" data-done>✓ Mark done</button>`;
+    actions.querySelector('[data-later]').onclick = close;
+    actions.querySelector('[data-done]').onclick = async () => {
+      try { await api(`/alerts/${a.id}/complete`, { method: 'POST', body: '{}' }); toast('Marked done'); _shownAlerts.delete(a.id); } catch (e) { toast(e.message, true); }
+      close();
+    };
   };
+  const renderAck = () => {
+    note.textContent = '';
+    actions.innerHTML = `<button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button>`;
+    actions.querySelector('[data-dismiss]').onclick = close;
+    actions.querySelector('[data-ack]').onclick = async () => {
+      try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged — tap Done when finished.'); a.mine_ack = true; renderDone(); } catch (e) { toast(e.message, true); close(); }
+    };
+  };
+  if (a.mine_ack) renderDone(); else renderAck();
 }
 
 async function renderFloorAlerts() {
@@ -3736,8 +3751,8 @@ async function renderFloorAlerts() {
     </div>
     <div class="section">
       <h3>Recent sent alerts <span style="font-weight:400;color:var(--muted);font-size:.85rem">last 24h · live acknowledgements</span></h3>
-      ${sent.alerts.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Message</th><th class="num">Acked</th><th></th></tr></thead><tbody>
-        ${sent.alerts.map(a => `<tr><td class="mono">${esc((a.created_at || '').slice(0, 16).replace('T', ' '))}</td><td>${targetDesc(a)}</td><td>${esc(a.body)} ${a.priority === 'urgent' ? '<span class="badge out">urgent</span>' : ''}</td><td class="num"><strong>${a.ack_count}</strong></td>
+      ${sent.alerts.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>To</th><th>Message</th><th class="num">Acked</th><th class="num">Done</th><th></th></tr></thead><tbody>
+        ${sent.alerts.map(a => `<tr><td class="mono">${esc((a.created_at || '').slice(0, 16).replace('T', ' '))}</td><td>${targetDesc(a)}</td><td>${esc(a.body)} ${a.priority === 'urgent' ? '<span class="badge out">urgent</span>' : ''}</td><td class="num"><strong>${a.ack_count}</strong></td><td class="num"><strong>${a.done_count || 0}</strong></td>
           <td><div class="actions-cell"><button class="btn sm ghost" data-acks="${a.id}">Who</button>${a.active ? `<button class="btn sm ghost" data-close="${a.id}">Close</button>` : '<span class="badge gray">closed</span>'}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No alerts sent recently.</div>'}
     </div>`;
@@ -3764,7 +3779,7 @@ async function renderFloorAlerts() {
   };
   v.querySelectorAll('[data-close]').forEach(b => b.onclick = async () => { try { await api(`/alerts/${b.dataset.close}/close`, { method: 'POST', body: '{}' }); toast('Alert closed'); renderMessages(); } catch (e) { toast(e.message, true); } });
   v.querySelectorAll('[data-acks]').forEach(b => b.onclick = async () => {
-    try { const d = await api(`/alerts/${b.dataset.acks}/acks`); toast(d.acks.length ? '✓ ' + d.acks.map(a => a.name).join(', ') : 'No one has acknowledged yet'); }
+    try { const d = await api(`/alerts/${b.dataset.acks}/acks`); toast(d.acks.length ? d.acks.map(a => a.completed_at ? `✓✓ ${a.name} (done)` : `✓ ${a.name} (on it)`).join(', ') : 'No one has acknowledged yet'); }
     catch (e) { toast(e.message, true); }
   });
 }

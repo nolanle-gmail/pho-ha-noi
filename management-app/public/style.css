@@ -595,6 +595,7 @@ tr:hover .order-hover { opacity: 1; }
 .alert-pop-card:not(.urgent) .alert-pop-top { color: var(--muted); }
 .alert-pop-body { font-size: 1.5rem; font-weight: 800; line-height: 1.2; margin: .7rem 0 .5rem; color: #2a1e17; }
 .alert-pop-from { font-size: .85rem; color: var(--muted); margin-bottom: 1.1rem; }
+.alert-pop-note:not(:empty) { font-size: .82rem; color: var(--ok, #16a34a); font-weight: 600; margin: -.4rem 0 .9rem; }
 .alert-pop-actions { display: flex; gap: .6rem; justify-content: center; }
 .alert-pop-actions .btn { padding: .7rem 1.4rem; font-size: 1rem; }
 .alert-pop-actions .btn:not(.ghost) { background: #16a34a; color: #fff; }

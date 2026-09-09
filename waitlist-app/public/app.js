@@ -215,7 +215,7 @@ function setupStaffStream() {
     let d = null; try { d = JSON.parse(e.data); } catch { /* comment/heartbeat */ }
     const type = d && d.type;
     if (type === 'alert') { NAG.alert = Date.now(); showAlertPopup(d.alert); return; }        // urgent floor ping → pop up
-    if (type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} is on it`); return; }  // recipient acknowledged (I'm the sender)
+    if (type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} ${d.completed ? 'marked it done' : 'is on it'}`); return; }  // recipient acked/completed (I'm the sender)
     if (type === 'message') {   // a message arrived for me → badge + pop-up notification
       const prev = S.unread || 0;
       const viewingInbox = S.view === 'messages' && (S.msgView || 'inbox') !== 'chat' && !S.msgThread;
@@ -1331,17 +1331,39 @@ function showAlertPopup(a) {
     <div class="alert-pop-top">🔔 ${a.priority === 'urgent' ? 'URGENT ALERT' : 'Alert'}</div>
     <div class="alert-pop-body">${esc(a.body)}</div>
     <div class="alert-pop-from">from ${esc(a.sender_name || 'Management')}</div>
-    <div class="alert-pop-actions"><button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button></div>
+    <div class="alert-pop-note" data-note></div>
+    <div class="alert-pop-actions" data-actions></div>
   </div>`;
   document.body.appendChild(host);
   const close = () => host.remove();
-  host.querySelector('[data-dismiss]').onclick = close;
-  host.querySelector('[data-ack]').onclick = async () => {
-    if (a.preview) { close(); return; }   // Settings preview — nothing to acknowledge
-    try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged — thanks!'); }
-    catch (e) { toast(e.message, true); }
-    close();
+  const note = host.querySelector('[data-note]');
+  const actions = host.querySelector('[data-actions]');
+
+  // Stage 2 — "On it" recorded; now the staff member must confirm the task is
+  // finished by tapping Done (which closes it for the sender).
+  const renderDone = () => {
+    note.textContent = 'You’re on it — tap Done when the task is finished.';
+    actions.innerHTML = `<button class="btn ghost" data-later>Later</button><button class="btn" data-done>✓ Mark done</button>`;
+    actions.querySelector('[data-later]').onclick = close;   // stays open until done; re-surfaces on the 10-min re-nag
+    actions.querySelector('[data-done]').onclick = async () => {
+      try { await api(`/alerts/${a.id}/complete`, { method: 'POST', body: '{}' }); toast('Marked done — thanks!'); _shownAlerts.delete(a.id); }
+      catch (e) { toast(e.message, true); }
+      close();
+    };
   };
+  // Stage 1 — acknowledge ("On it").
+  const renderAck = () => {
+    note.textContent = '';
+    actions.innerHTML = `<button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-ack>✓ On it</button>`;
+    actions.querySelector('[data-dismiss]').onclick = close;
+    actions.querySelector('[data-ack]').onclick = async () => {
+      if (a.preview) { close(); return; }   // Settings preview — nothing to acknowledge
+      try { await api(`/alerts/${a.id}/ack`, { method: 'POST', body: '{}' }); toast('Acknowledged — tap Done when finished.'); a.mine_ack = true; renderDone(); }
+      catch (e) { toast(e.message, true); close(); }
+    };
+  };
+
+  if (a.mine_ack && !a.preview) renderDone(); else renderAck();
 }
 
 // On load / reconnect, surface anything still pending for me.

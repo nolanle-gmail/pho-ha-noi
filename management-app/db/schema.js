@@ -934,6 +934,8 @@ function migrate() {
     `ALTER TABLE time_entries ADD COLUMN overrun_decision TEXT`,
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_by INTEGER`,
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_at TEXT`,
+    // Floor alert: staff mark a task done (not just acknowledged) — stamps when.
+    `ALTER TABLE floor_alert_acks ADD COLUMN completed_at TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

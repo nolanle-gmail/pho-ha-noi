@@ -55,7 +55,7 @@ router.get('/stream', (req, res) => {
     if (alertHitsUser(a, user)) { try { res.write(`data: ${JSON.stringify({ type: 'alert', alert: a })}\n\n`); } catch { /* closed */ } }
   });
   const unsubAck = onAlertAck((k) => {
-    if (Number(k.sender_id) === Number(user.id)) { try { res.write(`data: ${JSON.stringify({ type: 'alert_ack', alert_id: k.alert_id, user_id: k.user_id, user_name: k.user_name })}\n\n`); } catch { /* closed */ } }
+    if (Number(k.sender_id) === Number(user.id)) { try { res.write(`data: ${JSON.stringify({ type: 'alert_ack', alert_id: k.alert_id, user_id: k.user_id, user_name: k.user_name, completed: !!k.completed })}\n\n`); } catch { /* closed */ } }
   });
   // A new chat-group message reaches the group's members (live list/thread refresh).
   const unsubChat = onChat((c) => {

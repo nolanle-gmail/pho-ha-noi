@@ -34,6 +34,7 @@ router.get('/sent', (req, res) => fwd(req, res, 'GET', '/sent'));
 router.get('/:id/acks', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.id)}/acks`));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));
 router.post('/:id/ack', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/ack`, {}));
+router.post('/:id/complete', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/complete`, {}));
 router.post('/:id/close', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/close`, {}));
 
 module.exports = router;

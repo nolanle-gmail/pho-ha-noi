@@ -97,16 +97,19 @@ router.post('/', (req, res) => {
 // staff member who (re)opens the app immediately sees anything pending.
 router.get('/active', (req, res) => {
   const u = req.user;
+  // Still-open alerts for me that I haven't marked DONE yet. An alert I've only
+  // acknowledged keeps coming back (with mine_ack=1) so I remember to close it.
   const rows = db.prepare(`
-    SELECT a.id, a.body, a.priority, a.target_type, a.created_at, s.name AS sender_name
+    SELECT a.id, a.body, a.priority, a.target_type, a.created_at, s.name AS sender_name,
+           EXISTS (SELECT 1 FROM floor_alert_acks k WHERE k.alert_id=a.id AND k.user_id=?) AS mine_ack
     FROM floor_alerts a JOIN users s ON s.id = a.sender_id
     WHERE a.active=1 AND a.created_at >= datetime('now','-30 minutes')
       AND ( (a.target_type='user' AND a.target_user_id=?)
          OR (a.target_type='role' AND a.target_role=? AND a.location_id=?)
          OR (a.target_type='all' AND a.location_id=?) )
-      AND NOT EXISTS (SELECT 1 FROM floor_alert_acks k WHERE k.alert_id=a.id AND k.user_id=?)
-    ORDER BY a.created_at DESC`).all(u.id, u.role, u.location_id, u.location_id, u.id);
-  res.json({ alerts: rows });
+      AND NOT EXISTS (SELECT 1 FROM floor_alert_acks k WHERE k.alert_id=a.id AND k.user_id=? AND k.completed_at IS NOT NULL)
+    ORDER BY a.created_at DESC`).all(u.id, u.id, u.role, u.location_id, u.location_id, u.id);
+  res.json({ alerts: rows.map(r => ({ ...r, mine_ack: !!r.mine_ack })) });
 });
 
 // Acknowledge ("On it") — records me and pings the sender live.
@@ -120,10 +123,25 @@ router.post('/:id/ack', (req, res) => {
   res.json({ success: true });
 });
 
+// Mark done ("Closed") — the recipient confirms they FINISHED the task, not just
+// that they're on it. Stamps completion (acknowledging first if they hadn't), and
+// closes the whole alert when it targeted a single person (that task is now done).
+router.post('/:id/complete', (req, res) => {
+  const a = db.prepare(`SELECT * FROM floor_alerts WHERE id=?`).get(req.params.id);
+  if (!a) return res.status(404).json({ error: 'Alert not found.' });
+  db.prepare(`INSERT OR IGNORE INTO floor_alert_acks (alert_id, user_id) VALUES (?,?)`).run(a.id, req.user.id);
+  db.prepare(`UPDATE floor_alert_acks SET completed_at=datetime('now')
+              WHERE alert_id=? AND user_id=? AND completed_at IS NULL`).run(a.id, req.user.id);
+  if (a.target_type === 'user') db.prepare(`UPDATE floor_alerts SET active=0 WHERE id=?`).run(a.id);
+  try { emitAlertAck({ sender_id: a.sender_id, alert_id: a.id, user_id: req.user.id, user_name: req.user.name, completed: true }); } catch { /* best-effort */ }
+  res.json({ success: true });
+});
+
 // The sender's recent alerts with acknowledgement counts.
 router.get('/sent', (req, res) => {
   const rows = db.prepare(`
     SELECT a.*, (SELECT COUNT(*) FROM floor_alert_acks k WHERE k.alert_id=a.id) AS ack_count,
+           (SELECT COUNT(*) FROM floor_alert_acks k WHERE k.alert_id=a.id AND k.completed_at IS NOT NULL) AS done_count,
            tu.name AS target_user_name
     FROM floor_alerts a LEFT JOIN users tu ON tu.id = a.target_user_id
     WHERE a.sender_id=? AND a.created_at >= datetime('now','-1 day')
@@ -138,7 +156,7 @@ router.get('/:id/acks', (req, res) => {
   if (Number(a.sender_id) !== Number(req.user.id) && !SEES_ALL.includes(req.user.role)) {
     return res.status(403).json({ error: 'Not your alert.' });
   }
-  const acks = db.prepare(`SELECT u.name, k.ack_at FROM floor_alert_acks k JOIN users u ON u.id=k.user_id
+  const acks = db.prepare(`SELECT u.name, k.ack_at, k.completed_at FROM floor_alert_acks k JOIN users u ON u.id=k.user_id
     WHERE k.alert_id=? ORDER BY k.ack_at`).all(req.params.id);
   res.json({ acks });
 });
