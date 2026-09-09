@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null, schedKind: 'weekly', schedAnchor: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -264,7 +264,7 @@ function setupStaffStream() {
 function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
-  const items = [['mytasks', '📋 My Tasks']];   // every staff member has tasks
+  const items = [['myschedule', '📅 My Schedule'], ['mytasks', '📋 My Tasks']];   // schedule on top, then tasks
   if (isSelfServiceRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isSelfServiceRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
@@ -297,6 +297,7 @@ function renderNav() {
 function render() {
   setStaffLive(STAFF_LIVE);   // keep the live pill in sync with the current view
   if (S.view === 'messages') return renderMessages();
+  if (S.view === 'myschedule') return renderMySchedule();
   if (S.view === 'myhours') return renderMyHours();
   if (S.view === 'mytasks') return renderMyTasks();
   if (S.view === 'server') return renderServer();
@@ -811,6 +812,56 @@ async function renderMyHours() {
     <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th></tr></thead><tbody>${dayRows || '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
   v.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHours(); });
   v.querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNav(+b.dataset.hnav));
+}
+
+// ── My Schedule: the staff member's own shifts (set by managers), by period ───
+const schedTo12h = (t) => { if (!t || !/^\d{2}:\d{2}$/.test(t)) return ''; let [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12; return `${h}:${String(m).padStart(2, '0')} ${ap}`; };
+function schedSpanH(a, b) { if (!a || !b) return 0; const toM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; }; let s = toM(a), e = toM(b); if (e <= s) e += 1440; return (e - s) / 60; }
+function schedRangeLabel(resp) {
+  const s = new Date(resp.start + 'T00:00:00'), e = new Date(resp.end + 'T00:00:00');
+  if (resp.kind === 'daily') return s.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+  if (resp.kind === 'monthly') return s.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const f = (x) => x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${f(s)} – ${f(e)}`;
+}
+function schedNav(dir) {
+  const d = new Date(S.schedAnchor + 'T00:00:00');
+  if (S.schedKind === 'daily') d.setDate(d.getDate() + dir);
+  else if (S.schedKind === 'monthly') d.setMonth(d.getMonth() + dir);
+  else d.setDate(d.getDate() + dir * (S.schedKind === 'biweekly' ? 14 : 7));
+  S.schedAnchor = d.toISOString().slice(0, 10); renderMySchedule();
+}
+async function renderMySchedule() {
+  if (!S.schedAnchor) S.schedAnchor = new Date().toISOString().slice(0, 10);
+  const v = $('view'); v.innerHTML = '<div class="empty">Loading…</div>';
+  let d;
+  try { d = await api(`/myschedule?kind=${S.schedKind}&anchor=${S.schedAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const pill = (k, l) => `<button class="navbtn ${S.schedKind === k ? 'active' : ''}" data-sk="${k}">${l}</button>`;
+  const byDay = {}; (d.shifts || []).forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
+  const work = (d.shifts || []).filter(s => s.kind === 'work');
+  const totalMin = Math.round(work.reduce((n, s) => n + schedSpanH(s.start_time, s.end_time), 0) * 60);
+  const kindLabel = (k) => ({ sick: '🤒 Sick', vacation: '🏖 Vacation', leave: '📋 On leave' }[k] || k);
+  const dayCard = (iso) => {
+    const dd = new Date(iso + 'T00:00:00');
+    const label = dd.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const list = byDay[iso] || [];
+    const body = list.length ? list.map(s => {
+      if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift"><span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
+      const jobs = (s.jobs || []).map(j => esc(j.name)).join(', ');
+      const brk = (s.breaks || []).length ? ` · <span class="sched-brk">${s.breaks.length} break${s.breaks.length > 1 ? 's' : ''}</span>` : '';
+      const loc = s.location_name ? ` <span class="sched-loc">${esc(s.location_name.replace('Pho Ha Noi — ', ''))}</span>` : '';
+      return `<div class="sched-shift"><span class="sched-time">${schedTo12h(s.start_time)} – ${schedTo12h(s.end_time)}</span>${jobs ? ` <span class="sched-jobs">${jobs}</span>` : ''}${brk}${loc}</div>`;
+    }).join('') : '<span class="sched-off">Off</span>';
+    return `<div class="sched-day${iso === d.today ? ' today' : ''}${list.length ? '' : ' isoff'}"><div class="sched-date">${label}${iso === d.today ? ' <span class="sched-todaytag">Today</span>' : ''}</div><div class="sched-body">${body}</div></div>`;
+  };
+  v.innerHTML = `
+    <div class="section-head"><h2>My Schedule</h2>
+      <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-snav="-1">‹</button><span style="font-weight:700">${esc(schedRangeLabel(d))}</span><button class="btn ghost" data-snav="1">›</button></div></div>
+    <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Month')}</div>
+    <div class="stats"><div class="stat"><div class="label">Shifts</div><div class="value">${work.length}</div></div><div class="stat"><div class="label">Scheduled</div><div class="value">${fmtHrs(totalMin)}</div></div></div>
+    <div class="sched-list">${(d.days || []).map(dayCard).join('') || '<div class="empty">No schedule for this period.</div>'}</div>`;
+  v.querySelectorAll('[data-sk]').forEach(b => b.onclick = () => { S.schedKind = b.dataset.sk; renderMySchedule(); });
+  v.querySelectorAll('[data-snav]').forEach(b => b.onclick = () => schedNav(+b.dataset.snav));
 }
 
 // ── My Tasks: the staff member's day-task assignments (any role) ──────────────

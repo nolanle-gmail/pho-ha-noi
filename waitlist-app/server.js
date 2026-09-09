@@ -28,6 +28,7 @@ app.use('/api/waitlist', require('./routes/waitlist'));
 app.use('/api/floormap', require('./routes/floormap'));
 app.use('/api/service', require('./routes/service'));
 app.use('/api/mytasks', require('./routes/mytasks'));
+app.use('/api/myschedule', require('./routes/schedule'));
 app.use('/api/activity-feed', require('./routes/activityfeed'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/chat', require('./routes/chat'));

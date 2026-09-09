@@ -10,6 +10,46 @@ const { localDate, DEFAULT_TZ } = require('../lib/tz');
 const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 
 const router = express.Router();
+
+// ── Staff self-schedule (Staff app) ──────────────────────────────────────────
+// A signed-in staff member's own schedule for a period (day / week / bi-weekly /
+// month), with the same shift detail managers see (hours, jobs, breaks). Defined
+// BEFORE the JWT gate below so the Waitlist Staff app can reach it with the shared
+// service key acting "as" the signed-in staff email; a Management JWT also works.
+const SCHED_SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+const SCHED_BIWEEKLY_EPOCH = '2024-01-06'; // a Saturday — matches My Hours / payroll
+function schedPeriod(kind, anchor) {
+  const a = /^\d{4}-\d{2}-\d{2}$/.test(anchor || '') ? anchor : fmtLocal(new Date());
+  if (kind === 'daily') return { start: a, end: a };
+  if (kind === 'monthly') { const d = new Date(a + 'T00:00:00'); const first = new Date(d.getFullYear(), d.getMonth(), 1); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0); return { start: fmtLocal(first), end: fmtLocal(last) }; }
+  if (kind === 'biweekly') { const ws = weekStart(a); const weeks = Math.round((new Date(ws + 'T00:00:00') - new Date(SCHED_BIWEEKLY_EPOCH + 'T00:00:00')) / (7 * 86400000)); const start = (weeks % 2 === 0) ? ws : addDays(ws, -7); return { start, end: addDays(start, 13) }; }
+  const ws = weekStart(a); return { start: ws, end: addDays(ws, 6) };
+}
+router.get('/mine',
+  (req, res, next) => { const key = req.headers['x-service-key'] || req.query.key; if (key && key === SCHED_SERVICE_KEY) return next(); return verifyToken(req, res, next); },
+  (req, res) => {
+    let user;
+    const key = req.headers['x-service-key'] || req.query.key;
+    if (key && key === SCHED_SERVICE_KEY) {
+      const email = String(req.query.as || '').toLowerCase().trim();
+      user = email && db.prepare(`SELECT id, name, role, location_id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    } else if (req.user) {
+      user = db.prepare(`SELECT id, name, role, location_id FROM users WHERE id=?`).get(req.user.id);
+    }
+    if (!user) return res.status(401).json({ error: 'Unknown staff member.' });
+    const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
+    const { start, end } = schedPeriod(kind, req.query.anchor);
+    const rows = db.prepare(`SELECT s.id, s.shift_date, s.start_time, s.end_time, s.kind, s.all_day, s.leave_hours, l.name AS location_name
+      FROM shifts s JOIN locations l ON l.id = s.location_id
+      WHERE s.user_id=? AND s.shift_date BETWEEN ? AND ? ORDER BY s.shift_date, s.start_time IS NULL, s.start_time`).all(user.id, start, end);
+    const jobsBy = db.prepare(`SELECT j.name, j.code, j.department FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id=? ORDER BY j.name`);
+    const breaksBy = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
+    const shifts = rows.map(s => ({ ...s, jobs: jobsBy.all(s.id), breaks: breaksBy.all(s.id) }));
+    const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
+    const tz = (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(user.location_id) || {}).timezone || DEFAULT_TZ;
+    res.json({ kind, start, end, days, today: localDate(tz), shifts });
+  });
+
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
