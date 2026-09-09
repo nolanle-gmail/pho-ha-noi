@@ -3,7 +3,7 @@
 // owner/admin can schedule any location and curate the job catalog.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, DEFAULT_TZ } = require('../lib/tz');
@@ -48,6 +48,38 @@ router.get('/mine',
     const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
     const tz = (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(user.location_id) || {}).timezone || DEFAULT_TZ;
     res.json({ kind, start, end, days, today: localDate(tz), shifts });
+  });
+
+// The whole LOCATION's schedule for a period — for shift/kitchen leads and managers
+// (any role with the 'manage' cap) to see who's on. Read-only; scoped to their own
+// store (all-location roles may pass ?location_id). Same auth as /mine.
+router.get('/location',
+  (req, res, next) => { const key = req.headers['x-service-key'] || req.query.key; if (key && key === SCHED_SERVICE_KEY) return next(); return verifyToken(req, res, next); },
+  (req, res) => {
+    let user;
+    const key = req.headers['x-service-key'] || req.query.key;
+    if (key && key === SCHED_SERVICE_KEY) {
+      const email = String(req.query.as || '').toLowerCase().trim();
+      user = email && db.prepare(`SELECT id, name, role, location_id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+    } else if (req.user) {
+      user = db.prepare(`SELECT id, name, role, location_id FROM users WHERE id=?`).get(req.user.id);
+    }
+    if (!user) return res.status(401).json({ error: 'Unknown staff member.' });
+    if (!roleHasCap(user.role, 'manage')) return res.status(403).json({ error: 'Not allowed to view the team schedule.' });
+    const locId = (seesAllLocations(user.role) && parseInt(req.query.location_id, 10)) || user.location_id;
+    if (!locId) return res.status(400).json({ error: 'No location for this account.' });
+    const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+    if (!loc) return res.status(404).json({ error: 'Location not found.' });
+    const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
+    const { start, end } = schedPeriod(kind, req.query.anchor);
+    const rows = db.prepare(`SELECT s.id, s.user_id, u.name AS user_name, u.role AS user_role, s.shift_date, s.start_time, s.end_time, s.kind, s.all_day, s.leave_hours
+      FROM shifts s JOIN users u ON u.id = s.user_id
+      WHERE s.location_id=? AND s.shift_date BETWEEN ? AND ? ORDER BY s.shift_date, s.start_time IS NULL, s.start_time, u.name`).all(locId, start, end);
+    const jobsBy = db.prepare(`SELECT j.name FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id=? ORDER BY j.name`);
+    const breaksBy = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
+    const shifts = rows.map(s => ({ ...s, jobs: jobsBy.all(s.id), breaks: breaksBy.all(s.id) }));
+    const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
+    res.json({ kind, start, end, days, today: localDate(loc.timezone || DEFAULT_TZ), location: { id: loc.id, name: loc.name }, shifts });
   });
 
 router.use(verifyToken);

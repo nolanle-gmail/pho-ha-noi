@@ -28,7 +28,7 @@ router.post('/login', async (req, res) => {
       const d = await r.json();
       // Carry the account's email as the cross-app identity for `as=<email>` calls.
       const em = (d.user.email || '').toLowerCase();
-      const mu = { id: d.user.id, name: d.user.name, email: em, role: d.user.role, location_id: d.user.location_id, src: 'mgmt' };
+      const mu = { id: d.user.id, name: d.user.name, email: em, role: d.user.role, location_id: d.user.location_id, caps: Array.isArray(d.user.caps) ? d.user.caps : [], src: 'mgmt' };
       logLogin(req, { user: mu, email: em, success: true });
       return res.json({ token: signToken(mu), user: mu });
     }

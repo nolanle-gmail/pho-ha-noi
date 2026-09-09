@@ -1,5 +1,5 @@
 // Pho Ha Noi — Host Check-in / Waitlist
-const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null, schedKind: 'weekly', schedAnchor: null };
+const S = { token: null, user: null, locations: [], loc: null, view: 'board', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null, schedKind: 'weekly', schedAnchor: null, schedScope: 'mine' };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Stored timestamps are UTC (SQLite datetime('now')); show them in the viewer's local time.
@@ -836,37 +836,50 @@ function schedNav(dir) {
   else d.setDate(d.getDate() + dir * (S.schedKind === 'biweekly' ? 14 : 7));
   S.schedAnchor = d.toISOString().slice(0, 10); renderMySchedule();
 }
+// Leads/managers (roles with the 'manage' cap) can switch to the whole location.
+const canViewTeam = () => !!(S.user && Array.isArray(S.user.caps) && S.user.caps.includes('manage'));
 async function renderMySchedule() {
   if (!S.schedAnchor) S.schedAnchor = new Date().toISOString().slice(0, 10);
+  if (!canViewTeam()) S.schedScope = 'mine';
+  const team = S.schedScope === 'team';
   const v = $('view'); v.innerHTML = '<div class="empty">Loading…</div>';
   let d;
-  try { d = await api(`/myschedule?kind=${S.schedKind}&anchor=${S.schedAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  try { d = await api(`/myschedule${team ? '/team' : ''}?kind=${S.schedKind}&anchor=${S.schedAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const pill = (k, l) => `<button class="navbtn ${S.schedKind === k ? 'active' : ''}" data-sk="${k}">${l}</button>`;
   const byDay = {}; (d.shifts || []).forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
   const work = (d.shifts || []).filter(s => s.kind === 'work');
   const totalMin = Math.round(work.reduce((n, s) => n + schedSpanH(s.start_time, s.end_time), 0) * 60);
   const kindLabel = (k) => ({ sick: '🤒 Sick', vacation: '🏖 Vacation', leave: '📋 On leave' }[k] || k);
+  const shiftLine = (s) => {
+    const who = team ? `<span class="sched-who">${esc(s.user_name)}</span> ` : '';
+    if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift">${who}<span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
+    const jobs = (s.jobs || []).map(j => esc(j.name)).join(', ');
+    const brk = (s.breaks || []).length ? ` · <span class="sched-brk">${s.breaks.length} break${s.breaks.length > 1 ? 's' : ''}</span>` : '';
+    const loc = (!team && s.location_name) ? ` <span class="sched-loc">${esc(s.location_name.replace('Pho Ha Noi — ', ''))}</span>` : '';
+    return `<div class="sched-shift">${who}<span class="sched-time">${schedTo12h(s.start_time)} – ${schedTo12h(s.end_time)}</span>${jobs ? ` <span class="sched-jobs">${jobs}</span>` : ''}${brk}${loc}</div>`;
+  };
   const dayCard = (iso) => {
     const dd = new Date(iso + 'T00:00:00');
     const label = dd.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
     const list = byDay[iso] || [];
-    const body = list.length ? list.map(s => {
-      if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift"><span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
-      const jobs = (s.jobs || []).map(j => esc(j.name)).join(', ');
-      const brk = (s.breaks || []).length ? ` · <span class="sched-brk">${s.breaks.length} break${s.breaks.length > 1 ? 's' : ''}</span>` : '';
-      const loc = s.location_name ? ` <span class="sched-loc">${esc(s.location_name.replace('Pho Ha Noi — ', ''))}</span>` : '';
-      return `<div class="sched-shift"><span class="sched-time">${schedTo12h(s.start_time)} – ${schedTo12h(s.end_time)}</span>${jobs ? ` <span class="sched-jobs">${jobs}</span>` : ''}${brk}${loc}</div>`;
-    }).join('') : '<span class="sched-off">Off</span>';
+    const body = list.length ? list.map(shiftLine).join('') : `<span class="sched-off">${team ? 'No one scheduled' : 'Off'}</span>`;
     return `<div class="sched-day${iso === d.today ? ' today' : ''}${list.length ? '' : ' isoff'}"><div class="sched-date">${label}${iso === d.today ? ' <span class="sched-todaytag">Today</span>' : ''}</div><div class="sched-body">${body}</div></div>`;
   };
+  const locName = d.location ? esc((d.location.name || '').replace('Pho Ha Noi — ', '')) : '';
+  const scopeToggle = canViewTeam() ? `<div class="seg" style="margin:0 0 .8rem;display:inline-flex">
+      <button class="seg-btn ${!team ? 'active' : ''}" data-scope="mine">Mine</button>
+      <button class="seg-btn ${team ? 'active' : ''}" data-scope="team">Team${team && locName ? ' · ' + locName : ''}</button>
+    </div>` : '';
   v.innerHTML = `
-    <div class="section-head"><h2>My Schedule</h2>
+    <div class="section-head"><h2>${team ? 'Team Schedule' : 'My Schedule'}</h2>
       <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-snav="-1">‹</button><span style="font-weight:700">${esc(schedRangeLabel(d))}</span><button class="btn ghost" data-snav="1">›</button></div></div>
+    ${scopeToggle}
     <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Month')}</div>
-    <div class="stats"><div class="stat"><div class="label">Shifts</div><div class="value">${work.length}</div></div><div class="stat"><div class="label">Scheduled</div><div class="value">${fmtHrs(totalMin)}</div></div></div>
+    <div class="stats"><div class="stat"><div class="label">${team ? 'Shifts (team)' : 'Shifts'}</div><div class="value">${work.length}</div></div><div class="stat"><div class="label">${team ? 'Hours (team)' : 'Scheduled'}</div><div class="value">${fmtHrs(totalMin)}</div></div></div>
     <div class="sched-list">${(d.days || []).map(dayCard).join('') || '<div class="empty">No schedule for this period.</div>'}</div>`;
   v.querySelectorAll('[data-sk]').forEach(b => b.onclick = () => { S.schedKind = b.dataset.sk; renderMySchedule(); });
   v.querySelectorAll('[data-snav]').forEach(b => b.onclick = () => schedNav(+b.dataset.snav));
+  v.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { S.schedScope = b.dataset.scope; renderMySchedule(); });
 }
 
 // ── My Tasks: the staff member's day-task assignments (any role) ──────────────
