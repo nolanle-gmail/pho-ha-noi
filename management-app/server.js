@@ -44,6 +44,9 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/translate', require('./routes/translate'));
 app.use('/api/timeclock', require('./routes/timeclock'));
+// Mounted before the '/api' core router: schedule's /mine accepts the Waitlist
+// service key (core's verifyToken would otherwise reject the keyless request).
+app.use('/api/schedule', require('./routes/schedule'));
 app.use('/api', require('./routes/core'));
 app.use('/api/inventory', require('./routes/inventory'));
 app.use('/api/menu', require('./routes/menu'));
@@ -51,7 +54,6 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/central', require('./routes/central'));
 app.use('/api/distribution', require('./routes/distribution'));
-app.use('/api/schedule', require('./routes/schedule'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {
