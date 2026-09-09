@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 8, 2026_
+_Last updated: September 9, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -816,6 +816,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 
 | View | Purpose | Shown to |
 |---|---|---|
+| 📅 My Schedule | The staff member's own manager-set shifts, in **Day / Week / Bi-weekly / Month** views — each day shows the hours, job(s), breaks and location, plus shift count & scheduled hours for the period. Sits at the **top** of the menu, above My Tasks | Shift-scheduled staff (store managers + floor/kitchen roles); **hidden for all-location leadership** (owner / admin / HR / GM / regional), who aren't shift-scheduled |
 | 📋 My Tasks | Assigned day-tasks — Start, Done, optional proof photos (multi-upload) and comments / feedback | Everyone |
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
@@ -1337,8 +1338,10 @@ Hand each tester the section that matches their job.
 
 ### Kitchen & other positions (Chef, Line/Prep Cook, Cashier, Bartender, Barista, Dishwasher)
 
-Self-service everywhere: **My Schedule** (Management) or the Staff app's **My
-Tasks**, **Messages** and **My Hours**. Punch in and out at the time-clock station.
+Self-service everywhere: the Staff app's **📅 My Schedule** (their shifts by
+day/week/bi-weekly/month), **My Tasks**, **Messages** and **My Hours** — the same
+schedule is also read-only under **My Schedule** in the Management console. Punch in
+and out at the time-clock station.
 
 ### Guest (no login)
 
