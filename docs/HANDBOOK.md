@@ -726,7 +726,7 @@ erDiagram
 | `chat_message_attachments` | Chat | Pictures & videos on a chat message (bytes in the DB; per-kind size caps) |
 | `chat_reads` | Chat | Per-member read cursor for unread counts |
 | `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
-| `floor_alert_acks` | Messaging | One row per staff member who acknowledged an alert ("On it") |
+| `floor_alert_acks` | Messaging | One row per staff member who acknowledged ("On it") an alert, plus when they marked it **done** (`completed_at`) |
 | `sms_messages` | Messaging | One row per SMS blast a manager/owner composes (target, body, recipient & sent counts, provider) |
 | `sms_recipients` | Messaging | Per-person delivery record for a blast (phone + status: sent / logged / failed / no_phone) |
 | `push_subscriptions` | Messaging | Web Push subscriptions — one row per device a user enabled notifications on (endpoint + keys); dead endpoints auto-pruned |
@@ -1193,23 +1193,30 @@ flowchart LR
   P --> D[Live SSE push]
   R --> D
   E --> D
-  D --> POP[Pop-up on staff screen] -->|✓ On it| ACK[Acknowledged]
-  ACK --> S[Sender sees who's on it]
+  D --> POP[Pop-up on staff screen]
+  POP -->|✓ On it| ACK[Acknowledged]
+  ACK -->|✓ Mark done| DONE[Done — alert closes]
+  ACK -.->|still open| NAG[Re-nags every 10 min until done]
+  DONE --> S[Sender sees Acked + Done]
 ```
 
 - **Send** from the **🔔 Alert** button in the Staff app header, or in the Management
   console under **Messages → Floor alerts**. Pick **who** (a person, a role, or everyone
   on the floor), tap a **quick message** (with a table-number fill-in) or type your own,
   choose **Urgent** or **Normal**, and send.
-- **Receive** — the alert rides the same live stream as messages, so it appears within a
-  moment on every targeted staff member's screen; anything still pending also shows when
-  they next open the app. They tap **✓ On it** to acknowledge (or Dismiss). Each staff
-  member can mute the chime and/or vibration for their own device under
-  **⚙️ Settings → Floor alerts** (the pop-up still appears).
-- **Track** — the sender's **Floor alerts** tab lists recent alerts with a live
-  acknowledgement count, who acknowledged, and a **Close** button. Only owner / admin /
-  GM / regional / store managers can send; a manager can only alert their own store.
-  Every send is written to the audit log.
+- **Receive — two steps.** The alert rides the same live stream as messages, so it appears
+  within a moment on every targeted staff member's screen; anything still pending also shows
+  when they next open the app. The staff member first taps **✓ On it** to acknowledge (or
+  Dismiss), then — when the task is actually finished — taps **✓ Mark done**. An alert that's
+  been acknowledged **but not yet marked done stays on the person's screen and re-surfaces on
+  the 10-minute reminder**, so it can't be silently forgotten. Each staff member can mute the
+  chime and/or vibration for their own device under **⚙️ Settings → Floor alerts** (the pop-up
+  still appears).
+- **Track** — the sender's **Floor alerts** tab lists recent alerts with live **Acked** *and*
+  **Done** counts; tap **Who** to see who's *on it* versus *done*. A single-person alert
+  **closes automatically** the moment that person marks it done; role/everyone alerts are
+  closed by the sender with **Close**. Only owner / admin / GM / regional / store managers can
+  send; a manager can only alert their own store. Every send is written to the audit log.
 
 Alerts are for immediate floor coordination; use **Messages** (§6.5) for anything that
 should live in an inbox or thread.
@@ -1437,8 +1444,12 @@ Needs two devices/tabs: one signed in as a **manager** (`(408) 555-0102` /
    *"Help table {n} right away"* quick message with **#** = 5, leave it **Urgent**, and
    **Send**.
 3. **Pops up** — within a moment the server's screen shows a full-screen **URGENT ALERT**
-   card ("Help table 5 right away — from …") with a chime. Tap **✓ On it**.
-4. **Sender sees it** — the manager gets a "✓ … is on it" toast, and the **Floor alerts**
-   tab shows the alert's acknowledgement count tick up (tap **Who** to see the name).
-5. **Access check** — sign in as the server and confirm there is **no 🔔 Alert button**;
+   card ("Help table 5 right away — from …") with a chime. Tap **✓ On it**; the card
+   switches to **✓ Mark done**.
+4. **Finish it** — once the table's handled, tap **✓ Mark done**. (If you dismiss without
+   finishing, the alert stays and re-nags after 10 minutes.)
+5. **Sender sees it** — the manager gets a "✓ … is on it" then "✓ … marked it done" toast,
+   and the **Floor alerts** tab shows the **Acked** and **Done** counts tick up (tap **Who**
+   to see who's *on it* vs *done*); a single-person alert auto-closes when done.
+6. **Access check** — sign in as the server and confirm there is **no 🔔 Alert button**;
    a non-manager cannot send (the API returns 403).
