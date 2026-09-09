@@ -48,10 +48,15 @@ async function viaTextbelt(to, body) {
   return { sent: true, id: j.textId };
 }
 
+// Appended to every message (for SMS/A2P compliance) unless it already carries an
+// opt-out notice — so the delivered texts match the registered sample messages.
+const STOP_SUFFIX = ' Reply STOP to opt out.';
+
 // Send one SMS. Never throws — returns { sent, provider, to, id?, error?, logged? }.
 async function sendSms(rawTo, body) {
   const to = toE164(rawTo);
-  const text = String(body || '').slice(0, 1200);
+  let text = String(body || '').slice(0, 1200);
+  if (text && !/reply stop/i.test(text)) text = (text + STOP_SUFFIX).slice(0, 1600);
   if (!to) return { sent: false, provider: PROVIDER, to: null, error: 'invalid_phone' };
   if (PROVIDER === 'none') { console.log(`[sms:log-only] -> ${to}: ${text}`); return { sent: false, provider: 'none', to, logged: true }; }
   try {
