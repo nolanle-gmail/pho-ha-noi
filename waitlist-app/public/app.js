@@ -57,6 +57,10 @@ const SELF_SERVICE_ROLES = ['server', 'busser', 'host', 'frontdesk', 'cashier', 
 const isServerRole = (r) => SERVER_ROLES.includes(r);
 const isFrontDeskRole = (r) => FD_ROLES.includes(r);
 const isSelfServiceRole = (r) => SELF_SERVICE_ROLES.includes(r);
+// All-location leadership roles (scope = all). These aren't shift-scheduled, so
+// they don't get a "My Schedule" — store managers and floor staff do.
+const ALL_LOCATION_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const isAllLocationRole = (r) => ALL_LOCATION_ROLES.includes(r);
 // Who can send floor alerts (mirrors the Management alerts route CAN_SEND).
 const ALERT_SENDERS = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 // Back-of-house kitchen roles can see the floor but not seat / change tables.
@@ -264,7 +268,8 @@ function setupStaffStream() {
 function renderNav() {
   const nav = $('subnav');
   const role = S.user.role;
-  const items = [['myschedule', '📅 My Schedule'], ['mytasks', '📋 My Tasks']];   // schedule on top, then tasks
+  // Shift-scheduled staff get "My Schedule" on top; all-location leadership doesn't.
+  const items = isAllLocationRole(role) ? [['mytasks', '📋 My Tasks']] : [['myschedule', '📅 My Schedule'], ['mytasks', '📋 My Tasks']];
   if (isSelfServiceRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isSelfServiceRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
