@@ -538,4 +538,70 @@ router.delete('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
+// ── Copy a whole week's schedule into another week ────────────────────────────
+// Fills a new week from an earlier one in a single confirm, so staff on a steady
+// weekly pattern don't have to be re-entered by hand. Copies WORK shifts only
+// (with their assigned jobs and breaks) for people still on this location's roster;
+// leave (sick / vacation / on-leave) is date-specific and is NOT carried over.
+// If the target week already has work shifts, the caller must pass overwrite=true
+// (which clears them first) — otherwise it returns 409 so the UI can confirm.
+router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'You can only schedule your own location.' });
+  if (!db.prepare(`SELECT 1 FROM locations WHERE id=?`).get(locId)) return res.status(404).json({ error: 'Location not found.' });
+  const toWeek = weekStart(req.body.to_week);
+  const fromWeek = weekStart(req.body.from_week || addDays(toWeek, -7));
+  if (fromWeek === toWeek) return res.status(400).json({ error: 'Pick a different week to copy from.' });
+  const overwrite = req.body.overwrite === true || req.body.overwrite === 1 || req.body.overwrite === 'true';
+
+  // Only schedule people currently on this location's roster (home or also-works).
+  const staffIds = new Set(locationStaff(locId).map(s => s.id));
+  const fromEnd = addDays(fromWeek, 6), toEnd = addDays(toWeek, 6);
+
+  // Source: work shifts at THIS location in the from-week, for current roster.
+  const src = db.prepare(`SELECT * FROM shifts WHERE location_id=? AND kind='work' AND shift_date BETWEEN ? AND ?`)
+    .all(locId, fromWeek, fromEnd).filter(s => staffIds.has(s.user_id));
+  if (!src.length) return res.status(400).json({ error: 'That week has no work shifts to copy at this location.' });
+
+  const existing = db.prepare(`SELECT id, user_id FROM shifts WHERE location_id=? AND kind='work' AND shift_date BETWEEN ? AND ?`)
+    .all(locId, toWeek, toEnd).filter(s => staffIds.has(s.user_id));
+  if (existing.length && !overwrite) {
+    return res.status(409).json({ error: 'target_not_empty', existing: existing.length,
+      message: `This week already has ${existing.length} work shift${existing.length === 1 ? '' : 's'}.` });
+  }
+
+  const offset = Math.round((new Date(toWeek + 'T00:00:00') - new Date(fromWeek + 'T00:00:00')) / 86400000);
+  const jobsBy = db.prepare(`SELECT job_id FROM shift_jobs WHERE shift_id=?`);
+  const breaksBy = db.prepare(`SELECT start_time, end_time, label FROM shift_breaks WHERE shift_id=?`);
+  const insShift = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const insJob = db.prepare(`INSERT OR IGNORE INTO shift_jobs (shift_id, job_id) VALUES (?,?)`);
+  const insBrk = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
+
+  let out;
+  db.exec('BEGIN');
+  try {
+    let cleared = 0;
+    for (const e of existing) {
+      db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(e.id);
+      db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(e.id);
+      db.prepare(`DELETE FROM shifts WHERE id=?`).run(e.id);
+      cleared++;
+    }
+    let copied = 0;
+    for (const s of src) {
+      const nd = addDays(s.shift_date, offset);
+      const r = insShift.run(s.user_id, locId, nd, s.start_time, s.end_time, s.notes, req.user.id, 'work', 0, null);
+      const nid = Number(r.lastInsertRowid);
+      for (const j of jobsBy.all(s.id)) insJob.run(nid, j.job_id);
+      for (const b of breaksBy.all(s.id)) insBrk.run(nid, b.start_time, b.end_time, b.label);
+      copied++;
+    }
+    out = { copied, cleared };
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not copy the week.' }); }
+  auditLog(req, 'schedule_week_copy', 'location', locId, { from_week: fromWeek, to_week: toWeek, ...out });
+  res.json({ success: true, from_week: fromWeek, to_week: toWeek, ...out });
+});
+
 module.exports = router;

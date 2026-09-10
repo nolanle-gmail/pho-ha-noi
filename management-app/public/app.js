@@ -1698,6 +1698,7 @@ async function renderLocSchedule() {
         <button class="btn sm ghost" id="wkPrev">‹ Prev</button>
         <button class="btn sm ghost" id="wkToday">This week</button>
         <button class="btn sm ghost" id="wkNext">Next ›</button>
+        ${canEdit ? '<button class="btn sm ghost" id="wkCopy" title="Fill this week from an earlier week">⧉ Copy a week</button>' : ''}
       </div>
       <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
       ${canEdit ? '' : '<span class="badge gray">View only</span>'}
@@ -1719,6 +1720,7 @@ async function renderLocSchedule() {
   $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
   $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
   $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
+  if (canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
   if (canEdit) {
     $('locBody').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
       const st = data.staff.find(x => x.id == b.dataset.add);
@@ -1730,6 +1732,49 @@ async function renderLocSchedule() {
       if (shift) shiftModal(st, shift.shift_date, shift, jobs, data.location);
     });
   }
+}
+
+// Copy an earlier week's work shifts (jobs + breaks) into the week on screen, in
+// one confirm — so a steady weekly roster doesn't have to be re-entered by hand.
+function copyWeekModal(toWeek, location) {
+  const host = $('modalHost');
+  const opts = Array.from({ length: 8 }, (_, i) => {
+    const fw = addDaysIso(toWeek, -7 * (i + 1));
+    return `<option value="${fw}">Week of ${esc(fmtDay(fw))} – ${esc(fmtDay(addDaysIso(fw, 6)))}</option>`;
+  }).join('');
+  const toLabel = `${fmtDay(toWeek)} – ${fmtDay(addDaysIso(toWeek, 6))}`;
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Copy a week's schedule</h3>
+    <div class="err" id="mErr"></div>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem">Fill <strong>${esc(shortLoc(location.name))}</strong>'s week of
+      <strong>${esc(toLabel)}</strong> from an earlier week. Copies <strong>work shifts</strong> with their jobs and breaks;
+      leave (sick / vacation) is not carried over. You can edit any shift afterward.</p>
+    <label>Copy from<select id="cwFrom">${opts}</select></label>
+    <label class="chk" style="margin:.7rem 0 0"><input type="checkbox" id="cwOver" /> Replace shifts already in this week</label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Copy week</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  $('mOk').onclick = async () => {
+    const fromWeek = $('cwFrom').value;
+    const overwrite = $('cwOver').checked;
+    $('mOk').disabled = true;
+    try {
+      const res = await fetch('/api/schedule/week/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.token },
+        body: JSON.stringify({ location_id: location.id, to_week: toWeek, from_week: fromWeek, overwrite }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.error === 'target_not_empty') {
+        $('mErr').textContent = `${data.message} Tick “Replace shifts already in this week”, then Copy again.`;
+        $('cwOver').checked = true; $('mOk').disabled = false; return;
+      }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      close();
+      toast(`Copied ${data.copied} shift${data.copied === 1 ? '' : 's'}${data.cleared ? ` (replaced ${data.cleared})` : ''}.`);
+      renderLocSchedule();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
 }
 
 function shiftModal(staff, dayIso, shift, jobs, location) {
