@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 9, 2026_
+_Last updated: September 10, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -849,10 +849,22 @@ in and **messages the location's manager(s)** to review for the timesheet. **Clo
 says goodbye on time; **more than 30 minutes early** warns, and on confirm messages the
 manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
 read. A background sweep reminds a staff member (and messages their manager) when they're
-still clocked in **30 minutes past a scheduled end**. Those overruns also appear on the
-**Time-Clock board** under "Still clocked in past their scheduled end," where a manager
-**approves the extra hours** (they keep working) or **clocks them out now** — either way
-it's recorded on the entry for the timesheet.
+still clocked in **past their scheduled end**. Those overruns also appear on the
+**Time-Clock board** under "Still clocked in past their scheduled end," where a manager or
+**shift lead** can **approve the extra hours** (they keep working), **add hours** (extend the
+allowed end by a set amount), or **clock them out now** — recorded on the entry for the
+timesheet, with a live **auto-clock-out countdown** per person.
+
+**Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
+to punch out, the system can **automatically clock a staffer out at their scheduled end** once
+they're a **grace window** past it with no approval. On the location's **Time Clock** tab, a
+manager or **shift lead** sets **⏲ Auto clock-out** — an on/off plus the **grace** in minutes
+past the scheduled end (default **30**, 0–240; stored on the location as `clock_out_grace_min` /
+`auto_clock_out`). The auto clock-out records the entry at the **scheduled end** (not the current
+time) and notifies the person and the leaders; it is **skipped** for anyone a lead **approved**
+to keep working or whose shift was **extended** with *Add hours*. Turning it off falls back to
+the reminder-only behavior (a lead closes overruns manually). Each store manager / shift lead
+sets their **own location's** policy.
 
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
