@@ -179,9 +179,12 @@ function sweepMissedClockOuts() {
       const overBy = (e.work_date < todayLocal ? 1440 : 0) + (localMinutesOfDay(tz, new Date()) - allowedEndMin);
       if (overBy < 0) continue; // not past their (extended) end yet
       const disp = locDisplay(e.loc_name);
+      // Staff-facing notices must come from a real sender (a leader) — the messaging
+      // layer drops self-messages, so notify(user→same user) would never arrive.
+      const sysSender = locationLeaders(e.location_id).find(id => String(id) !== String(e.user_id)) || null;
       // 1) One-time nudge as soon as they're past their end.
       if (!e.notified) {
-        try { notify(e.user_id, e.user_id, 'Don’t forget to clock out', `Your shift at ${disp} ended around ${end} and you’re still clocked in. Please clock out — otherwise a manager will review your extra hours.`); } catch { /* */ }
+        try { if (sysSender) notify(sysSender, e.user_id, 'Don’t forget to clock out', `Your shift at ${disp} ended around ${end} and you’re still clocked in. Please clock out — otherwise a manager will review your extra hours.`); } catch { /* */ }
         notifyLeaders(e.location_id, e.user_id, 'Missed clock-out', `${e.name} is still clocked in at ${disp} past their ${end} end time. Approve extra hours, add hours, or clock them out from the Time Clock board.`);
         db.prepare(`UPDATE time_entries SET overrun_notified=1 WHERE id=?`).run(e.id);
       }
@@ -195,7 +198,7 @@ function sweepMissedClockOuts() {
         const r = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
           .run(clockOut.toISOString(), workedToEnd, e.id);
         if (r.changes) {
-          try { notify(e.user_id, e.user_id, 'Automatically clocked out', `You didn’t clock out after your shift at ${disp}, so the system clocked you out at your scheduled end (${end}). If you worked later, ask a manager to adjust your hours.`); } catch { /* */ }
+          try { if (sysSender) notify(sysSender, e.user_id, 'Automatically clocked out', `You didn’t clock out after your shift at ${disp}, so the system clocked you out at your scheduled end (${end}). If you worked later, ask a manager to adjust your hours.`); } catch { /* */ }
           notifyLeaders(e.location_id, e.user_id, 'Auto clock-out', `${e.name} was automatically clocked out at ${disp} — ${e.grace} min past their ${end} end with no approval. Adjust their hours if they actually worked later.`);
         }
       }
