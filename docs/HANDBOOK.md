@@ -866,6 +866,11 @@ to keep working or whose shift was **extended** with *Add hours*. Turning it off
 the reminder-only behavior (a lead closes overruns manually). Each store manager / shift lead
 sets their **own location's** policy.
 
+The staff-facing notices — the *"Don't forget to clock out"* nudge and the *"Automatically
+clocked out"* notice — are sent **from a location leader** (a manager, or the owner/GM as a
+system sender), not from the staffer to themselves. The messaging layer drops self-messages, so
+sending them from a real leader is what makes them land in the staff member's inbox and push.
+
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
 they acknowledge it like any floor alert. The lead time is **per location** — set the
