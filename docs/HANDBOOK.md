@@ -981,6 +981,16 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
+- **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,
+  so a steady weekly roster doesn't have to be re-entered by hand. Pick any of the last
+  **8 weeks** to copy from (defaults to the **previous week**); it clones every **work
+  shift** — with its assigned **jobs and breaks** — for people still on the location's
+  roster, and you can edit any shift afterward. **Leave** (sick / vacation) is
+  date-specific and is **not** carried over. If the target week already has work shifts,
+  it asks first — tick **"Replace shifts already in this week"** to overwrite them
+  (otherwise the copy is refused so nothing is duplicated). Any scheduler — manager /
+  GM / owner / anyone with the **`manage`** cap (e.g. Shift Lead) — can use it on a
+  location they can edit.
 - **Leave** — the **+** entry has a **Type**: Work shift, or **Sick / Vacation /
   On-leave**. Leave takes a duration — **all day** (8 h), a **number of hours**, or a
   **from–to** span — and shows as a coloured chip (🤒 / 🏖️ / 🗓️). Leave never counts
