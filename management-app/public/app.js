@@ -1289,21 +1289,29 @@ async function renderMySchedule() {
 
   const dayCard = (iso, i) => {
     const ss = (byDay[iso] || []).slice().sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
-    const dayH = sumHours(ss);
-    const dayBreak = sumBreakMinutes(ss);
-    const load = taskLoad(ss);
+    const leaves = ss.filter(isLeaveShift);
+    const work = ss.filter(s => !isLeaveShift(s));
+    const dayH = sumHours(work);
+    const dayBreak = sumBreakMinutes(work);
+    const load = taskLoad(work);
     const over = dayH > DAILY_MAX;
+    const leaveCard = (s) => {
+      const m = LEAVE_META[s.kind] || { label: s.kind, icon: '', chip: 'gray' };
+      const dur = s.all_day ? 'all day' : `${fmtH(leaveHoursOf(s))}h${s.start_time ? ` · ${to12h(s.start_time)}–${to12h(s.end_time)}` : ''}`;
+      return `<div class="leave-card ${m.chip}" title="${esc(m.label)} — ${dur}">${m.icon} <b>${esc(m.label)}</b> <span class="leave-dur">${dur}</span></div>`;
+    };
     return `<div class="myday${iso === todayIso() ? ' today' : ''}">
-      <div class="myday-head"><span>${WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]} <span class="myday-date">${fmtDay(iso)}</span></span>${ss.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
+      <div class="myday-head"><span>${WD[(new Date(iso + 'T00:00:00').getDay() + 6) % 7]} <span class="myday-date">${fmtDay(iso)}</span></span>${work.length ? `<span class="myday-h${over ? ' over' : ''}">${over ? '⚠ ' : ''}${fmtH(dayH)}h</span>` : ''}</div>
       ${dayBreak ? `<div class="myday-break">☕ ${dayBreak} min break${dayBreak > 10 ? 's' : ''}</div>` : ''}
       ${load.min ? `<div class="myday-tasks${load.heavy ? ' heavy' : ''}" title="${fmtDur(load.min)} of tasks on a ${fmtH(dayH)}h shift (${load.pct}%)">${load.heavy ? '⚠ ' : '📋 '}${fmtDur(load.min)} of tasks${load.heavy ? ' — heavy load' : ''}</div>` : ''}
-      ${ss.length ? ss.map(s => `<div class="myshift">
+      ${leaves.map(leaveCard).join('')}
+      ${work.length ? work.map(s => `<div class="myshift">
         <div class="myshift-top"><strong>${to12h(s.start_time)}–${to12h(s.end_time)}</strong> <span class="myshift-loc">${esc(shortLoc(s.location_name))}</span></div>
         <div class="shift-jobs">${s.jobs.length ? s.jobs.map(j => esc(j.name)).join(', ') : 'no jobs'}</div>
         ${(s.tasks && s.tasks.length) ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? `<strong>${esc(to12h(t.task_time))}</strong> ` : ''}${esc(t.name)}${t.done ? ' ✓' : ''}</span>`).join('')}</div>` : ''}
         ${(s.breaks && s.breaks.length) ? `<div class="myshift-breaks">${s.breaks.map(b => `<span class="brk-chip">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : ''}
         ${s.notes ? `<div class="myshift-note">📝 ${esc(s.notes)}</div>` : ''}
-      </div>`).join('') : '<div class="myday-off">Day off</div>'}
+      </div>`).join('') : (leaves.length ? '' : '<div class="myday-off">Day off</div>')}
     </div>`;
   };
 
