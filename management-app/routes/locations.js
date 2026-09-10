@@ -151,6 +151,22 @@ router.put('/:id/break-lead', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true, break_reminder_lead_min: lead });
 });
 
+// Auto clock-out policy — a manager/shift-lead may set their own location's grace
+// window (minutes a staffer can run past their scheduled end before the system
+// clocks them out) and turn the automatic clock-out on/off.
+router.put('/:id/clock-out', requireRole(ROLES.MANAGE), (req, res) => {
+  if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(req.params.id);
+  if (!loc) return res.status(404).json({ error: 'Location not found' });
+  const n = parseInt(req.body.clock_out_grace_min, 10);
+  if (!Number.isFinite(n)) return res.status(400).json({ error: 'Enter a number of minutes.' });
+  const grace = Math.min(240, Math.max(0, n));
+  const auto = req.body.auto_clock_out ? 1 : 0;
+  db.prepare(`UPDATE locations SET clock_out_grace_min=?, auto_clock_out=? WHERE id=?`).run(grace, auto, loc.id);
+  auditLog(req, 'location_clock_out_policy', 'location', loc.id, { clock_out_grace_min: grace, auto_clock_out: auto });
+  res.json({ success: true, clock_out_grace_min: grace, auto_clock_out: auto });
+});
+
 // ── Equipment ────────────────────────────────────────────────────────────────
 router.get('/:id/equipment', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });

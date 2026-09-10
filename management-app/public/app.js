@@ -2152,11 +2152,19 @@ async function renderLocTimeClock() {
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
   const overruns = S.tcOverruns || [];
   const overrunCards = overruns.length ? `<div class="tc-overruns"><div class="tc-overruns-h">⏰ Still clocked in past their scheduled end</div>${overruns.map(o => `
-    <div class="tc-overrun"><span class="tc-overrun-info"><strong>${esc(o.name)}</strong> — in since ${esc(o.clock_in)}, scheduled to ${esc(o.scheduled_end)} · <strong>${fmtDur(o.over_minutes)}</strong> over · worked ${fmtDur(o.worked_minutes)}</span>
+    <div class="tc-overrun"><span class="tc-overrun-info"><strong>${esc(o.name)}</strong> — in since ${esc(o.clock_in)}, scheduled to ${esc(o.scheduled_end)}${o.extra_min ? ` <span class="badge blue">+${fmtDur(o.extra_min)} added</span>` : ''} · <strong>${fmtDur(o.over_minutes)}</strong> over · worked ${fmtDur(o.worked_minutes)}${o.decision !== 'approved' && o.auto_out_in != null ? ` · <span class="tc-autoout">⏲ auto clock-out in ${fmtDur(o.auto_out_in)}</span>` : ''}</span>
       ${o.decision === 'approved'
         ? '<span class="badge ok">Extra hours approved</span>'
-        : `<span class="tc-overrun-acts"><button class="btn sm ok" data-ovapprove="${o.id}">Approve extra hours</button><button class="btn sm ghost" data-ovforce="${o.id}" data-name="${esc(o.name)}">Clock out now</button></span>`}
+        : `<span class="tc-overrun-acts"><button class="btn sm ok" data-ovapprove="${o.id}">Approve (keep working)</button><button class="btn sm ghost" data-ovextend="${o.id}" data-name="${esc(o.name)}">Add hours</button><button class="btn sm ghost" data-ovforce="${o.id}" data-name="${esc(o.name)}">Clock out now</button></span>`}
     </div>`).join('')}</div>` : '';
+  const loc = data.location || {};
+  const policyBar = myCap('manage') ? `<div class="tc-policy">
+      <span class="tc-policy-h">⏲ Auto clock-out</span>
+      <label class="tc-policy-tog"><input type="checkbox" id="cpAuto" ${loc.auto_clock_out ? 'checked' : ''}> Automatically clock out</label>
+      <span class="tc-policy-grace">grace <input type="number" id="cpGrace" min="0" max="240" step="5" value="${loc.clock_out_grace_min != null ? loc.clock_out_grace_min : 30}"> min past the scheduled end</span>
+      <button class="btn sm" id="cpSave">Save</button>
+      <span class="tc-policy-note">Staff who don't clock out are auto-clocked-out at their scheduled end after this window, unless a manager/lead approves or adds hours.</span>
+    </div>` : '';
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div class="week-nav"><button class="btn sm ghost" id="tcPrev">‹ Prev</button><button class="btn sm ghost" id="tcToday">Today</button><button class="btn sm ghost" id="tcNext">Next ›</button></div>
@@ -2170,6 +2178,7 @@ async function renderLocTimeClock() {
       ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}
       ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
     </div>
+    ${policyBar}
     ${overrunCards}
     ${alertCards}
     <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
@@ -2195,6 +2204,20 @@ async function renderLocTimeClock() {
     try { await api('/timeclock/overrun/' + b.dataset.ovforce + '/force-out', { method: 'POST' }); toast('Clocked out'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
   });
+  $('locBody').querySelectorAll('[data-ovextend]').forEach(b => b.onclick = async () => {
+    const h = prompt(`Add how many more hours for ${b.dataset.name}? (e.g. 1 or 0.5)`);
+    if (h == null) return;
+    const hours = parseFloat(h);
+    if (!(hours > 0) || hours > 12) { toast('Enter a positive number of hours (up to 12).', true); return; }
+    try { await api('/timeclock/overrun/' + b.dataset.ovextend + '/extend', { method: 'POST', body: JSON.stringify({ hours }) }); toast(`Added ${hours}h — they can keep working until then`); renderLocTimeClock(); }
+    catch (e) { toast(e.message, true); }
+  });
+  if ($('cpSave')) $('cpSave').onclick = async () => {
+    const grace = parseInt($('cpGrace').value, 10);
+    if (!Number.isFinite(grace)) { toast('Enter a grace time in minutes.', true); return; }
+    try { await api('/locations/' + S.locDetailId + '/clock-out', { method: 'PUT', body: JSON.stringify({ clock_out_grace_min: grace, auto_clock_out: $('cpAuto').checked }) }); toast('Auto clock-out settings saved'); renderLocTimeClock(); }
+    catch (e) { toast(e.message, true); }
+  };
   if (payroll) {
     if ($('prCsv')) $('prCsv').onclick = () => exportPayrollCSV(payroll);
     $('locBody').querySelectorAll('[data-payperiod]').forEach(b => b.onclick = () => { S.payPeriod = b.dataset.payperiod; renderLocTimeClock(); });

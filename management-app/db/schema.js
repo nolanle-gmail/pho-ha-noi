@@ -936,6 +936,13 @@ function migrate() {
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_at TEXT`,
     // Floor alert: staff mark a task done (not just acknowledged) — stamps when.
     `ALTER TABLE floor_alert_acks ADD COLUMN completed_at TEXT`,
+    // Auto clock-out for staff who work past their scheduled end (per location):
+    // grace minutes past the end before the system clocks them out, and an on/off.
+    `ALTER TABLE locations ADD COLUMN clock_out_grace_min INTEGER NOT NULL DEFAULT 30`,
+    `ALTER TABLE locations ADD COLUMN auto_clock_out INTEGER NOT NULL DEFAULT 1`,
+    // Extra minutes a manager/lead added to a shift so the person can keep working
+    // past their scheduled end without being auto-clocked-out.
+    `ALTER TABLE time_entries ADD COLUMN overrun_extra_min INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

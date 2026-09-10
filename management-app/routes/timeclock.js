@@ -157,22 +157,48 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
   return res.status(400).json({ error: 'Unknown action.' });
 });
 
-// Missed clock-out sweep: 30 min past a scheduled end and still clocked in →
-// remind the staff member and message the location leaders (once per entry).
+// Missed clock-out sweep. When a still-clocked-in staff member passes their
+// scheduled end (+ any manager-added extra), we first nudge them and the location
+// leaders (once). Then, once they're the location's grace window past that end and
+// no one approved the extra hours, the system auto-clocks them out at their
+// scheduled end — unless the location turned auto clock-out off (then it's just the
+// nudge and managers handle it from the Time Clock board).
 function sweepMissedClockOuts() {
   try {
-    const open = db.prepare(`SELECT te.id, te.user_id, te.location_id, te.work_date, te.clock_in, u.name
-      FROM time_entries te JOIN users u ON u.id=te.user_id WHERE te.clock_out IS NULL AND COALESCE(te.overrun_notified,0)=0`).all();
+    const open = db.prepare(`SELECT te.id, te.user_id, te.location_id, te.work_date, te.clock_in,
+        COALESCE(te.overrun_notified,0) AS notified, te.overrun_decision AS decision, COALESCE(te.overrun_extra_min,0) AS extra,
+        u.name, l.timezone, COALESCE(l.clock_out_grace_min,30) AS grace, COALESCE(l.auto_clock_out,1) AS auto_out, l.name AS loc_name
+      FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+      WHERE te.clock_out IS NULL`).all();
     for (const e of open) {
-      const tz = locTz(e.location_id);
+      const tz = e.timezone || DEFAULT_TZ;
       const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
-      if (!end) continue;
-      const todayLocal = localDate(tz), overBy = localMinutesOfDay(tz, new Date()) - hhmmToMin(end);
-      if (e.work_date >= todayLocal && overBy < 30) continue; // not yet 30 min past today's end
-      const disp = locDisplay((db.prepare(`SELECT name FROM locations WHERE id=?`).get(e.location_id) || {}).name);
-      try { notify(e.user_id, e.user_id, 'Don’t forget to clock out', `Your shift at ${disp} ended around ${end} and you’re still clocked in. Please clock out — otherwise a manager will review your extra hours.`); } catch { /* */ }
-      notifyLeaders(e.location_id, e.user_id, 'Missed clock-out', `${e.name} is still clocked in at ${disp} past their ${end} end time. Confirm whether they should keep working; otherwise clock them out from the Time Clock board.`);
-      db.prepare(`UPDATE time_entries SET overrun_notified=1 WHERE id=?`).run(e.id);
+      if (!end) continue; // no scheduled end → nothing to enforce
+      const todayLocal = localDate(tz);
+      const allowedEndMin = hhmmToMin(end) + (Number(e.extra) || 0);
+      const overBy = (e.work_date < todayLocal ? 1440 : 0) + (localMinutesOfDay(tz, new Date()) - allowedEndMin);
+      if (overBy < 0) continue; // not past their (extended) end yet
+      const disp = locDisplay(e.loc_name);
+      // 1) One-time nudge as soon as they're past their end.
+      if (!e.notified) {
+        try { notify(e.user_id, e.user_id, 'Don’t forget to clock out', `Your shift at ${disp} ended around ${end} and you’re still clocked in. Please clock out — otherwise a manager will review your extra hours.`); } catch { /* */ }
+        notifyLeaders(e.location_id, e.user_id, 'Missed clock-out', `${e.name} is still clocked in at ${disp} past their ${end} end time. Approve extra hours, add hours, or clock them out from the Time Clock board.`);
+        db.prepare(`UPDATE time_entries SET overrun_notified=1 WHERE id=?`).run(e.id);
+      }
+      // 2) Auto clock-out once past the grace window, unless a lead approved keep-working.
+      if (e.auto_out && e.decision !== 'approved' && overBy >= Number(e.grace)) {
+        const clockIn = new Date(e.clock_in);
+        let workedToEnd = allowedEndMin - localMinutesOfDay(tz, clockIn);
+        if (workedToEnd < 0) workedToEnd += 1440;
+        workedToEnd = Math.max(0, workedToEnd);
+        const clockOut = new Date(clockIn.getTime() + workedToEnd * 60000);
+        const r = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
+          .run(clockOut.toISOString(), workedToEnd, e.id);
+        if (r.changes) {
+          try { notify(e.user_id, e.user_id, 'Automatically clocked out', `You didn’t clock out after your shift at ${disp}, so the system clocked you out at your scheduled end (${end}). If you worked later, ask a manager to adjust your hours.`); } catch { /* */ }
+          notifyLeaders(e.location_id, e.user_id, 'Auto clock-out', `${e.name} was automatically clocked out at ${disp} — ${e.grace} min past their ${end} end with no approval. Adjust their hours if they actually worked later.`);
+        }
+      }
     }
   } catch (err) { console.error('clock sweep failed:', err.message); }
 }
@@ -310,22 +336,27 @@ router.get('/overruns', requireRole(ROLES.MANAGE), (req, res) => {
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const tz = locTz(locId), today = localDate(tz), nowMin = localMinutesOfDay(tz, new Date());
+  const loc = db.prepare(`SELECT COALESCE(clock_out_grace_min,30) AS grace, COALESCE(auto_clock_out,1) AS auto_out FROM locations WHERE id=?`).get(locId) || { grace: 30, auto_out: 1 };
   const open = db.prepare(`SELECT te.*, u.name, u.employee_code FROM time_entries te JOIN users u ON u.id=te.user_id
     WHERE te.location_id=? AND te.clock_out IS NULL ORDER BY te.clock_in`).all(locId);
   const rows = [];
   for (const e of open) {
     const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
     if (!end) continue;
+    const extra = Number(e.overrun_extra_min) || 0;
     const over = (e.work_date < today ? 1440 : 0) + (nowMin - hhmmToMin(end));
     if (over <= 0) continue; // not past their scheduled end yet
+    // Minutes until the system auto-clocks them out (past the extended end + grace).
+    const overExtended = over - extra;
+    const autoOutIn = (loc.auto_out && e.overrun_decision !== 'approved') ? Math.max(0, loc.grace - overExtended) : null;
     rows.push({
       id: e.id, user_id: e.user_id, name: e.name, employee_code: e.employee_code,
       clock_in: localTime(tz, new Date(e.clock_in)), scheduled_end: end,
       worked_minutes: Math.max(0, Math.round((Date.now() - new Date(e.clock_in).getTime()) / 60000)),
-      over_minutes: over, decision: e.overrun_decision || null,
+      over_minutes: over, extra_min: extra, decision: e.overrun_decision || null, auto_out_in: autoOutIn,
     });
   }
-  res.json({ overruns: rows });
+  res.json({ overruns: rows, grace_min: loc.grace, auto_clock_out: !!loc.auto_out });
 });
 
 // Approve the extra hours — they keep working (recorded for audit/timesheet).
@@ -353,6 +384,23 @@ router.post('/overrun/:id/force-out', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true, worked_minutes: worked });
 });
 
+// Add extra hours — let them keep working past their scheduled end for a set
+// amount before the auto clock-out applies again. Accepts { hours } or { minutes }.
+router.post('/overrun/:id/extend', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  if (e.clock_out) return res.status(409).json({ error: 'This person is already clocked out.' });
+  const mins = Math.round((parseFloat(req.body.minutes) || (parseFloat(req.body.hours) || 0) * 60));
+  if (!(mins > 0) || mins > 720) return res.status(400).json({ error: 'Add between 1 minute and 12 hours.' });
+  const extra = (Number(e.overrun_extra_min) || 0) + mins;
+  // Reset the nudge flag so they get a fresh reminder near the new end time.
+  db.prepare(`UPDATE time_entries SET overrun_extra_min=?, overrun_notified=0 WHERE id=?`).run(extra, e.id);
+  auditLog(req, 'overrun_extended', 'user', e.user_id, { time_entry_id: e.id, added_minutes: mins, total_extra_minutes: extra });
+  try { notify(req.user.id, e.user_id, 'Extra time added to your shift', `Your manager added ${fmtDurMin(mins)} to today’s shift — please clock out by the new end time.`); } catch { /* */ }
+  res.json({ success: true, added_minutes: mins, extra_min: extra });
+});
+
 // Break-reminder audit archive for a location/day (proof staff were reminded).
 router.get('/break-reminders', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
@@ -370,8 +418,9 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+  const loc = db.prepare(`SELECT id, name, timezone, COALESCE(clock_out_grace_min,30) AS clock_out_grace_min, COALESCE(auto_clock_out,1) AS auto_clock_out FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  loc.auto_clock_out = !!loc.auto_clock_out;
   const tz = loc.timezone || DEFAULT_TZ;
   const today = localDate(tz);
   const date = validDate(req.query.date) || today;
@@ -819,6 +868,7 @@ router.post('/alerts/:id/resolve', requireRole(ROLES.MANAGE), (req, res) => {
 });
 
 module.exports = router;
+module.exports.sweepMissedClockOuts = sweepMissedClockOuts; // exported for tests/manual runs
 // Start the missed-clock-out sweep (called by server.js when it's the entry point).
 module.exports.startClockSweep = function startClockSweep() {
   const t = setInterval(sweepMissedClockOuts, 10 * 60 * 1000);
