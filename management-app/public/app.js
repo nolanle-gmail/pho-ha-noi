@@ -340,7 +340,7 @@ function showSection(section) {
   if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
-  if (isMessages) { renderMsgTabs(); renderMessages(); return; }
+  if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
   const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries }[section];
@@ -1323,14 +1323,75 @@ async function renderMySchedule() {
       </div>
       <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
       <span class="badge ${overWeek ? 'out' : (weekH ? 'ok' : 'gray')}" title="Hours scheduled this week">${fmtH(weekH)}h / ${WEEKLY_MAX}h</span>
+      <button class="btn sm" id="reqTimeOff">🏖 Request time off</button>
     </div>
     ${warn}
     <div class="myweek">${days.map((d, i) => dayCard(d, i)).join('')}</div>
+    <div id="myReqList"></div>
     <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong>. Days over the limit are flagged ⚠. Only a manager can change a shift.</p>`;
 
   $('wkPrev').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, -7); renderMySchedule(); };
   $('wkNext').onclick = () => { S.mySchedWeek = addDaysIso(data.week_start, 7); renderMySchedule(); };
   $('wkToday').onclick = () => { S.mySchedWeek = null; renderMySchedule(); };
+  $('reqTimeOff').onclick = () => leaveRequestModal();
+  renderMyLeaveRequests();
+}
+
+// The staff member's own recent time-off requests, shown under My Schedule.
+async function renderMyLeaveRequests() {
+  const host = $('myReqList'); if (!host) return;
+  let d; try { d = await api('/schedule/leave-requests/mine'); } catch { return; }
+  const reqs = d.requests || [];
+  if (!reqs.length) { host.innerHTML = ''; return; }
+  const chip = (s) => `<span class="badge ${s === 'approved' ? 'ok' : s === 'rejected' ? 'out' : 'gray'}">${s}</span>`;
+  const kindLabel = (k) => k === 'sick' ? '🤒 Sick leave' : '🏖 Vacation';
+  const span = (r) => r.all_day ? (r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`) : `${fmtDay(r.start_date)} · ${r.hours}h`;
+  host.innerHTML = `<h3 style="margin:1.4rem 0 .5rem">My time-off requests</h3>
+    <div class="twrap"><table><thead><tr><th>Type</th><th>Dates</th><th>Status</th><th>Note</th></tr></thead><tbody>
+    ${reqs.map(r => `<tr><td>${kindLabel(r.kind)}</td><td>${span(r)}</td><td>${chip(r.status)}${r.decided_by_name ? ` <span class="sub" style="color:var(--muted)">by ${esc(r.decided_by_name)}</span>` : ''}</td><td class="sub" style="color:var(--muted)">${esc(r.decision_note || r.reason || '')}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+// Modal for a staff member to request vacation / sick leave.
+function leaveRequestModal() {
+  const host = $('modalHost');
+  const today = todayIso();
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Request time off</h3>
+    <div class="err" id="mErr"></div>
+    <div class="form-grid">
+      <label style="grid-column:1/-1">Type<select id="lrKind">
+        <option value="vacation">🏖 Vacation</option>
+        <option value="sick">🤒 Sick leave</option>
+      </select></label>
+      <label>From<input id="lrStart" type="date" value="${today}" min="${today}" /></label>
+      <label>To<input id="lrEnd" type="date" value="${today}" min="${today}" /></label>
+    </div>
+    <label class="chk" style="margin:.2rem 0"><input type="checkbox" id="lrAllDay" checked /> Full day(s)</label>
+    <div class="form-grid" id="lrHoursRow" hidden><label>Hours (single day)<input id="lrHours" type="number" min="0.5" step="0.5" value="4" /></label></div>
+    <div class="form-grid"><label style="grid-column:1/-1">Reason <span style="color:var(--muted);font-weight:400">(optional)</span><input id="lrReason" placeholder="e.g. family trip" /></label></div>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Submit request</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  const allDay = $('lrAllDay'), hoursRow = $('lrHoursRow');
+  const sync = () => { hoursRow.style.display = allDay.checked ? 'none' : ''; if (!allDay.checked) { $('lrEnd').value = $('lrStart').value; } };
+  allDay.onchange = sync; sync();
+  $('lrStart').onchange = () => { if ($('lrEnd').value < $('lrStart').value || !allDay.checked) $('lrEnd').value = $('lrStart').value; };
+  $('mCancel').onclick = close;
+  $('mOk').onclick = async () => {
+    const body = {
+      kind: $('lrKind').value,
+      start_date: $('lrStart').value,
+      end_date: allDay.checked ? $('lrEnd').value : $('lrStart').value,
+      all_day: allDay.checked,
+      hours: allDay.checked ? undefined : parseFloat($('lrHours').value),
+      reason: $('lrReason').value.trim(),
+    };
+    $('mOk').disabled = true;
+    try {
+      await api('/schedule/leave-requests', { method: 'POST', body: JSON.stringify(body) });
+      close(); toast('Time-off request submitted.'); renderMyLeaveRequests();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
 }
 
 // ── Self-service landing (Server, Busser, Chef, Front Desk, …) ───────────────
@@ -3935,15 +3996,76 @@ async function renderSmsBlast() {
 }
 
 const MSG_TABS = [['inbox', 'Inbox'], ['sent', 'Sent'], ['compose', 'Compose'], ['chat', '💬 Chat'], ['alerts', '🔔 Floor alerts'], ['sms', '📱 Text']];
+function msgTabsFor() {
+  // Managers / owner / HR (manage cap) also get a Requests tab for time-off approvals.
+  return myCap('manage') ? [...MSG_TABS, ['requests', '📋 Requests']] : MSG_TABS;
+}
 function renderMsgTabs() {
-  $('tabs').innerHTML = MSG_TABS.map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}${k === 'chat' && S.chatUnread ? ` <span class="tab-badge">${S.chatUnread}</span>` : ''}</button>`).join('');
+  $('tabs').innerHTML = msgTabsFor().map(([k, l]) => `<button data-gtab="${k}" class="${S.msgTab === k ? 'active' : ''}">${l}${k === 'inbox' && S.unread ? ` <span class="tab-badge">${S.unread}</span>` : ''}${k === 'chat' && S.chatUnread ? ` <span class="tab-badge">${S.chatUnread}</span>` : ''}${k === 'requests' && S.reqPending ? ` <span class="tab-badge">${S.reqPending}</span>` : ''}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.msgTab = b.dataset.gtab; S.msgThread = null; S.msgArchived = false; S.chatGroup = null; renderMsgTabs(); renderMessages(); });
 }
 function renderMessages() {
   if (S.msgTab === 'chat') { if (S.chatGroup) return renderChatGroup(); $('view').innerHTML = '<div class="empty">Loading…</div>'; return renderChatList(); }
   if (S.msgThread) return renderThread();
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts, sms: renderSmsBlast }[S.msgTab])();
+  ({ inbox: renderInbox, sent: renderSent, compose: renderCompose, alerts: renderFloorAlerts, sms: renderSmsBlast, requests: renderRequests }[S.msgTab] || renderInbox)();
+}
+
+// Refresh the pending time-off count that drives the Requests tab badge.
+async function refreshReqPending() {
+  if (!myCap('manage')) { S.reqPending = 0; return; }
+  try { S.reqPending = (await api('/schedule/leave-requests/pending-count')).count || 0; } catch { S.reqPending = 0; }
+}
+
+// ── Requests: managers / owner / HR approve or reject time-off requests ───────
+let _reqStatus = 'pending';
+async function renderRequests() {
+  const v = $('view');
+  if (!myCap('manage')) { v.innerHTML = '<div class="empty">Time-off requests are reviewed by managers, owners and HR.</div>'; return; }
+  let d;
+  try { d = await api('/schedule/leave-requests?status=' + _reqStatus); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  S.reqPending = d.pending_count || 0; renderMsgTabs();
+  const reqs = d.requests || [];
+  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const span = (r) => r.all_day ? (r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`) : `${fmtDay(r.start_date)} · ${r.hours}h`;
+  const chip = (s) => `<span class="badge ${s === 'approved' ? 'ok' : s === 'rejected' ? 'out' : 'gray'}">${s}</span>`;
+  const seg = (k, l) => `<button class="btn sm ${_reqStatus === k ? '' : 'ghost'}" data-rs="${k}">${l}</button>`;
+  const card = (r) => `<div class="req-card">
+      <div class="req-main">
+        <div class="req-who"><strong>${esc(r.user_name)}</strong> <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(r.user_role)}</span> ${d.scope === 'all' && r.location_name ? `<span class="badge blue">${esc(shortLoc(r.location_name))}</span>` : ''}</div>
+        <div class="req-what">${kindLabel(r.kind)} · <strong>${span(r)}</strong></div>
+        ${r.reason ? `<div class="req-reason">📝 ${esc(r.reason)}</div>` : ''}
+        ${r.status !== 'pending' ? `<div class="sub" style="color:var(--muted)">${chip(r.status)}${r.decided_by_name ? ` by ${esc(r.decided_by_name)}` : ''}${r.decision_note ? ` — ${esc(r.decision_note)}` : ''}</div>` : ''}
+      </div>
+      ${r.status === 'pending' ? `<div class="req-actions"><button class="btn sm" data-approve="${r.id}">Approve</button><button class="btn sm ghost danger" data-reject="${r.id}">Reject</button></div>` : ''}
+    </div>`;
+  v.innerHTML = `
+    <h2 class="page">📋 Time-off requests <span style="font-weight:400;color:var(--muted);font-size:.9rem">— approve or reject vacation & sick leave</span></h2>
+    <div style="display:flex;gap:.35rem;margin:.2rem 0 1rem">${seg('pending', 'Pending')}${seg('approved', 'Approved')}${seg('rejected', 'Rejected')}${seg('all', 'All')}</div>
+    ${reqs.length ? reqs.map(card).join('') : '<div class="empty">No ' + (_reqStatus === 'all' ? '' : _reqStatus + ' ') + 'requests.</div>'}`;
+  v.querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { _reqStatus = b.dataset.rs; renderRequests(); });
+  v.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => decideRequest(b.dataset.approve, 'approve'));
+  v.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => decideRequest(b.dataset.reject, 'reject'));
+}
+function decideRequest(id, decision) {
+  const host = $('modalHost');
+  const approve = decision === 'approve';
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${approve ? 'Approve' : 'Reject'} time-off request</h3>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">${approve ? 'The staff member’s schedule will show these leave hours, and they’ll be notified.' : 'Nothing on the schedule changes. The staff member will be notified.'}</p>
+    <div class="err" id="mErr"></div>
+    <label>Note to the staff member <span style="color:var(--muted);font-weight:400">(optional)</span><input id="drNote" placeholder="${approve ? 'e.g. enjoy!' : 'e.g. need coverage that week'}" /></label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn${approve ? '' : ' danger'}" id="mOk">${approve ? 'Approve' : 'Reject'}</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  $('mOk').onclick = async () => {
+    $('mOk').disabled = true;
+    try {
+      await api(`/schedule/leave-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, note: $('drNote').value.trim() }) });
+      close(); toast(approve ? 'Approved — schedule updated, staff notified.' : 'Rejected — staff notified.');
+      await refreshReqPending(); renderRequests();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
 }
 
 // ── Message attachments (pictures & videos) ──────────────────────────────────

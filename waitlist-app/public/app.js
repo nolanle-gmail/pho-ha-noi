@@ -161,6 +161,7 @@ async function boot() {
   setupStaffStream();   // sub-second push (SSE) for live views
   refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
   refreshChatUnread(); setInterval(refreshChatUnread, 30000); // chat badge (+ pop-up comparisons)
+  refreshReqPending(); setInterval(refreshReqPending, 60000); // time-off requests badge (leads only)
   startRenag();          // 10-min re-nag for anything left unreviewed
   // Floor alerts: managers get a Send button; everyone gets any pending alert on load.
   const ab = $('alertBtn');
@@ -324,7 +325,7 @@ const roleWord = (r) => ({ owner: 'Owner', admin: 'Admin', general_manager: 'Gen
 const msgAgo = (iso) => { const d = new Date((iso || '').replace(' ', 'T') + 'Z'); const m = Math.floor((Date.now() - d.getTime()) / 60000); return m < 60 ? Math.max(0, m) + 'm ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
 
 // Total unread across direct messages + team chat — the Messages nav badge shows both.
-const navUnread = () => (S.unread || 0) + (S.chatUnread || 0);
+const navUnread = () => (S.unread || 0) + (S.chatUnread || 0) + (S.reqPending || 0);
 // Poll the unread counts and refresh the nav badge (no full re-render).
 async function refreshMsgUnread() {
   try { S.unread = (await api('/messages/unread-count')).count || 0; } catch { /* offline */ return; }
@@ -336,9 +337,11 @@ async function refreshChatUnread() {
 }
 // Inbox / Chat switch shown at the top of the Messages view.
 function msgSegment(active) {
+  const reqTab = canViewTeam() ? `<button class="seg-btn ${active === 'requests' ? 'active' : ''}" data-mv="requests">📋 Requests${S.reqPending ? ` (${S.reqPending})` : ''}</button>` : '';
   return `<div class="seg" style="margin-bottom:.7rem">
     <button class="seg-btn ${active === 'inbox' ? 'active' : ''}" data-mv="inbox">Inbox${S.unread ? ` (${S.unread})` : ''}</button>
     <button class="seg-btn ${active === 'chat' ? 'active' : ''}" data-mv="chat">💬 Chat${S.chatUnread ? ` (${S.chatUnread})` : ''}</button>
+    ${reqTab}
   </div>`;
 }
 function wireMsgSegment(v) {
@@ -399,6 +402,7 @@ async function renderMessages() {
   if (S.msgThread) return renderThreadView();
   if (S.chatGroup) return renderChatGroupView();
   if (S.msgView === 'chat') return renderChatListView();
+  if (S.msgView === 'requests') return renderStaffRequests();
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
   const arch = S.msgArchived;
@@ -874,12 +878,116 @@ async function renderMySchedule() {
     <div class="section-head"><h2>${team ? 'Team Schedule' : 'My Schedule'}</h2>
       <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-snav="-1">‹</button><span style="font-weight:700">${esc(schedRangeLabel(d))}</span><button class="btn ghost" data-snav="1">›</button></div></div>
     ${scopeToggle}
+    ${team ? '' : '<button class="btn" id="reqTimeOff" style="margin:0 0 .8rem">🏖 Request time off</button>'}
     <div class="subnav" style="margin:0 0 1rem;position:static">${pill('daily', 'Day')}${pill('weekly', 'Week')}${pill('biweekly', 'Bi-weekly')}${pill('monthly', 'Month')}</div>
     <div class="stats"><div class="stat"><div class="label">${team ? 'Shifts (team)' : 'Shifts'}</div><div class="value">${work.length}</div></div><div class="stat"><div class="label">${team ? 'Hours (team)' : 'Scheduled'}</div><div class="value">${fmtHrs(totalMin)}</div></div></div>
-    <div class="sched-list">${(d.days || []).map(dayCard).join('') || '<div class="empty">No schedule for this period.</div>'}</div>`;
+    <div class="sched-list">${(d.days || []).map(dayCard).join('') || '<div class="empty">No schedule for this period.</div>'}</div>
+    ${team ? '' : '<div id="myReqList"></div>'}`;
   v.querySelectorAll('[data-sk]').forEach(b => b.onclick = () => { S.schedKind = b.dataset.sk; renderMySchedule(); });
   v.querySelectorAll('[data-snav]').forEach(b => b.onclick = () => schedNav(+b.dataset.snav));
   v.querySelectorAll('[data-scope]').forEach(b => b.onclick = () => { S.schedScope = b.dataset.scope; renderMySchedule(); });
+  if ($('reqTimeOff')) $('reqTimeOff').onclick = () => staffLeaveModal();
+  if (!team) renderMyLeaveReqs();
+}
+
+// The staff member's own time-off requests, listed under My Schedule.
+async function renderMyLeaveReqs() {
+  const host = $('myReqList'); if (!host) return;
+  let d; try { d = await api('/myschedule/leave-requests/mine'); } catch { return; }
+  const reqs = d.requests || [];
+  if (!reqs.length) { host.innerHTML = ''; return; }
+  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const stChip = (s) => `<span class="sched-status ${s}">${s}</span>`;
+  const dd = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const span = (r) => r.all_day ? (r.start_date === r.end_date ? dd(r.start_date) : `${dd(r.start_date)} – ${dd(r.end_date)}`) : `${dd(r.start_date)} · ${r.hours}h`;
+  host.innerHTML = `<h3 style="margin:1.4rem 0 .5rem">My time-off requests</h3>
+    ${reqs.map(r => `<div class="req-row"><div><strong>${kindLabel(r.kind)}</strong> · ${span(r)}${r.decision_note ? `<div class="muted" style="font-size:.8rem">“${esc(r.decision_note)}”</div>` : (r.reason ? `<div class="muted" style="font-size:.8rem">${esc(r.reason)}</div>` : '')}</div>${stChip(r.status)}</div>`).join('')}`;
+}
+
+// Staff modal to request vacation / sick leave.
+function staffLeaveModal() {
+  const host = $('modalHost');
+  const today = new Date().toISOString().slice(0, 10);
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Request time off</h3>
+    <div class="err" id="mErr" style="display:none"></div>
+    <label class="fld">Type<select id="lrKind"><option value="vacation">🏖 Vacation</option><option value="sick">🤒 Sick leave</option></select></label>
+    <label class="fld">From<input id="lrStart" type="date" value="${today}" min="${today}" /></label>
+    <label class="fld" id="lrEndWrap">To<input id="lrEnd" type="date" value="${today}" min="${today}" /></label>
+    <label class="chk" style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0"><input type="checkbox" id="lrAllDay" checked /> Full day(s)</label>
+    <label class="fld" id="lrHoursWrap" hidden>Hours (single day)<input id="lrHours" type="number" min="0.5" step="0.5" value="4" /></label>
+    <label class="fld">Reason (optional)<input id="lrReason" placeholder="e.g. family trip" /></label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Submit</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  const allDay = $('lrAllDay');
+  const sync = () => { $('lrHoursWrap').style.display = allDay.checked ? 'none' : ''; $('lrEndWrap').style.display = allDay.checked ? '' : 'none'; };
+  allDay.onchange = sync; sync();
+  $('lrStart').onchange = () => { if ($('lrEnd').value < $('lrStart').value) $('lrEnd').value = $('lrStart').value; };
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    const err = $('mErr');
+    const body = { kind: $('lrKind').value, start_date: $('lrStart').value, end_date: allDay.checked ? $('lrEnd').value : $('lrStart').value, all_day: allDay.checked, hours: allDay.checked ? undefined : parseFloat($('lrHours').value), reason: $('lrReason').value.trim() };
+    $('mOk').disabled = true;
+    try { await api('/myschedule/leave-requests', { method: 'POST', body: JSON.stringify(body) }); close(); toast('Request submitted'); renderMyLeaveReqs(); }
+    catch (e) { err.style.display = ''; err.textContent = e.message; $('mOk').disabled = false; }
+  };
+}
+
+// Leads/managers (manage cap): review time-off requests in the Staff app.
+let _staffReqStatus = 'pending';
+async function refreshReqPending() {
+  if (!canViewTeam()) { S.reqPending = 0; return; }
+  try { S.reqPending = (await api('/myschedule/leave-requests/pending-count')).count || 0; } catch { S.reqPending = 0; }
+  if (S.user) renderNav();
+}
+async function renderStaffRequests() {
+  const v = $('view');
+  v.innerHTML = msgSegment('requests') + '<div class="empty">Loading…</div>';
+  let d; try { d = await api('/myschedule/leave-requests?status=' + _staffReqStatus); } catch (e) { v.innerHTML = msgSegment('requests') + `<div class="empty">${esc(e.message)}</div>`; return; }
+  S.reqPending = d.pending_count || 0; renderNav();
+  const reqs = d.requests || [];
+  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const dd = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const span = (r) => r.all_day ? (r.start_date === r.end_date ? dd(r.start_date) : `${dd(r.start_date)} – ${dd(r.end_date)}`) : `${dd(r.start_date)} · ${r.hours}h`;
+  const seg = (k, l) => `<button class="navbtn ${_staffReqStatus === k ? 'active' : ''}" data-rs="${k}">${l}</button>`;
+  const card = (r) => `<div class="req-row" style="flex-direction:column;align-items:stretch;gap:.5rem">
+      <div><strong>${esc(r.user_name)}</strong> <span class="muted">${esc(r.user_role)}</span>${d.scope === 'all' && r.location_name ? ` · <span class="muted">${esc(r.location_name.replace('Pho Ha Noi — ', ''))}</span>` : ''}</div>
+      <div>${kindLabel(r.kind)} · <strong>${span(r)}</strong></div>
+      ${r.reason ? `<div class="muted" style="font-size:.85rem">📝 ${esc(r.reason)}</div>` : ''}
+      ${r.status === 'pending'
+        ? `<div style="display:flex;gap:.4rem"><button class="btn" data-ap="${r.id}">Approve</button><button class="btn ghost" data-rj="${r.id}">Reject</button></div>`
+        : `<div><span class="sched-status ${r.status}">${r.status}</span>${r.decided_by_name ? ` <span class="muted">by ${esc(r.decided_by_name)}</span>` : ''}${r.decision_note ? ` <span class="muted">— ${esc(r.decision_note)}</span>` : ''}</div>`}
+    </div>`;
+  v.innerHTML = msgSegment('requests') + `
+    <div class="section-head"><h2>Time-off Requests</h2></div>
+    <div class="subnav" style="margin:0 0 1rem;position:static">${seg('pending', 'Pending')}${seg('approved', 'Approved')}${seg('rejected', 'Rejected')}${seg('all', 'All')}</div>
+    ${reqs.length ? reqs.map(card).join('') : `<div class="empty">No ${_staffReqStatus === 'all' ? '' : _staffReqStatus + ' '}requests.</div>`}`;
+  wireMsgSegment(v);
+  v.querySelectorAll('[data-rs]').forEach(b => b.onclick = () => { _staffReqStatus = b.dataset.rs; renderStaffRequests(); });
+  v.querySelectorAll('[data-ap]').forEach(b => b.onclick = () => decideStaffRequest(b.dataset.ap, 'approve'));
+  v.querySelectorAll('[data-rj]').forEach(b => b.onclick = () => decideStaffRequest(b.dataset.rj, 'reject'));
+}
+function decideStaffRequest(id, decision) {
+  const host = $('modalHost');
+  const approve = decision === 'approve';
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${approve ? 'Approve' : 'Reject'} request</h3>
+    <p class="sub" style="margin:.1rem 0 .6rem">${approve ? 'Their schedule will show these leave hours, and they’ll be notified.' : 'Nothing changes on the schedule. They’ll be notified.'}</p>
+    <div class="err" id="mErr" style="display:none"></div>
+    <label class="fld">Note (optional)<input id="drNote" placeholder="${approve ? 'e.g. enjoy!' : 'e.g. need coverage'}" /></label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${approve ? 'Approve' : 'Reject'}</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    $('mOk').disabled = true;
+    try {
+      await api(`/myschedule/leave-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, note: $('drNote').value.trim() }) });
+      close(); toast(approve ? 'Approved — staff notified' : 'Rejected — staff notified');
+      await refreshReqPending(); renderStaffRequests();
+    } catch (e) { const err = $('mErr'); err.style.display = ''; err.textContent = e.message; $('mOk').disabled = false; }
+  };
 }
 
 // ── My Tasks: the staff member's day-task assignments (any role) ──────────────

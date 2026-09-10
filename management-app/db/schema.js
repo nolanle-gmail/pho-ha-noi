@@ -738,6 +738,28 @@ function migrate() {
       label      TEXT
     );
 
+    -- Time-off requests staff submit from My Schedule. A manager / owner / HR
+    -- (anyone with the 'manage' cap) approves or rejects; approval writes leave
+    -- shifts across the date range so the days show as vacation / sick hours.
+    CREATE TABLE IF NOT EXISTS leave_requests (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      location_id   INTEGER REFERENCES locations(id),   -- the requester's home store at submit time
+      kind          TEXT NOT NULL CHECK(kind IN ('vacation','sick')),
+      start_date    TEXT NOT NULL,                        -- ISO date
+      end_date      TEXT NOT NULL,                        -- ISO date (>= start_date)
+      all_day       INTEGER NOT NULL DEFAULT 1,           -- 1 = full days; 0 = a single day of "hours"
+      hours         REAL,                                 -- hours when not all_day (single-day request)
+      reason        TEXT,
+      status        TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+      decided_by    INTEGER REFERENCES users(id),
+      decided_at    TEXT,
+      decision_note TEXT,
+      created_at    TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_leave_req_status ON leave_requests(status, location_id);
+    CREATE INDEX IF NOT EXISTS idx_leave_req_user ON leave_requests(user_id, created_at);
+
     -- Central-Kitchen distribution: a store's raw-food order to the Central Kitchen,
     -- tracked as one unit with its CK-first / vendor-fallback split. The CK portion
     -- (ck_qty) moves through this row's own ship→receive lifecycle; the shortfall

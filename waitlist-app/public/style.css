@@ -28,6 +28,11 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sched-leave { font-weight: 600; color: var(--gold, #b45309); }
 .sched-brk, .sched-loc { color: var(--muted); font-size: .82rem; }
 .sched-off { color: var(--muted); font-size: .85rem; }
+.req-row { display: flex; justify-content: space-between; align-items: center; gap: .8rem; border: 1px solid #eadfce; background: #fff; border-radius: 12px; padding: .7rem .9rem; margin-bottom: .6rem; }
+.sched-status { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: .18rem .5rem; border-radius: 999px; white-space: nowrap; }
+.sched-status.pending { background: #f3ece0; color: #7a6a52; }
+.sched-status.approved { background: #def0e2; color: #15803d; }
+.sched-status.rejected { background: #fbe3e1; color: #b91c1c; }
 .setup-link { display: inline-flex; align-items: center; gap: .35rem; font-size: .85rem; font-weight: 600; color: var(--red, #b91c1c); text-decoration: none; }
 .setup-link:hover { text-decoration: underline; }
 .login-card .app-copyright { margin-top: 1rem; padding: 0; }

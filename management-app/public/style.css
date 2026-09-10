@@ -96,6 +96,10 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .week-nav { display: flex; gap: .35rem; }
 .week-label { font-size: .95rem; }
 .sched-autoroll { margin: 0 0 1rem; font-size: .85rem; color: var(--muted); cursor: pointer; }
+.req-card { display: flex; justify-content: space-between; align-items: center; gap: 1rem; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: .8rem 1rem; margin-bottom: .6rem; flex-wrap: wrap; }
+.req-what { margin-top: .15rem; }
+.req-reason { color: var(--muted); font-size: .85rem; margin-top: .2rem; }
+.req-actions { display: flex; gap: .4rem; flex: 0 0 auto; }
 .sched-table { table-layout: fixed; }
 .sched-table th, .sched-table td { vertical-align: top; border: 1px solid var(--line); }
 .sched-table th { text-align: center; font-size: .78rem; color: var(--muted); padding: .35rem; }

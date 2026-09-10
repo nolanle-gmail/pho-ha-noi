@@ -82,6 +82,153 @@ router.get('/location',
     res.json({ kind, start, end, days, today: localDate(loc.timezone || DEFAULT_TZ), location: { id: loc.id, name: loc.name }, shifts });
   });
 
+// ── Time-off requests (vacation / sick) ─────────────────────────────────────
+// Staff submit from My Schedule (Staff app via service key, or the console with a
+// JWT); anyone with the 'manage' cap approves/rejects from Messages → Requests.
+// Approval writes leave shifts across the range so those days show as vacation /
+// sick hours; rejection changes nothing. Both notify the requester. Defined
+// BEFORE the JWT gate so the Staff app can reach them with the shared service key.
+const svcKeyOrJwt = (req, res, next) => { const key = req.headers['x-service-key'] || req.query.key; if (key && key === SCHED_SERVICE_KEY) return next(); return verifyToken(req, res, next); };
+function schedActor(req) {
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (key && key === SCHED_SERVICE_KEY) {
+    const email = String(req.query.as || (req.body && req.body.as) || '').toLowerCase().trim();
+    return email ? db.prepare(`SELECT id, name, role, location_id, email FROM users WHERE lower(email)=? AND is_active=1`).get(email) : null;
+  }
+  if (req.user) return db.prepare(`SELECT id, name, role, location_id, email FROM users WHERE id=?`).get(req.user.id);
+  return null;
+}
+const isValidDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : null;
+const LEAVE_LABEL = { vacation: 'vacation', sick: 'sick leave' };
+const MAX_LEAVE_DAYS = 60;
+// Location-scoped leaders to ping when a request lands (all-location leadership
+// review from the Requests tab instead, so they aren't pinged per store).
+function requestApprovers(locId) {
+  if (!locId) return [];
+  return db.prepare(`SELECT id, role FROM users WHERE is_active=1 AND location_id=?`).all(locId)
+    .filter(u => roleHasCap(u.role, 'manage') && !seesAllLocations(u.role)).map(u => u.id);
+}
+function leaveDateList(start, end) { const out = []; for (let d = start; d <= end; d = addDays(d, 1)) { out.push(d); if (out.length > 366) break; } return out; }
+function fmtRange(a, b) { return a === b ? a : `${a} → ${b}`; }
+
+// Staff: submit a request.
+router.post('/leave-requests', svcKeyOrJwt, (req, res) => {
+  const u = schedActor(req);
+  if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
+  const kind = ['vacation', 'sick'].includes(req.body.kind) ? req.body.kind : null;
+  if (!kind) return res.status(400).json({ error: 'Choose vacation or sick leave.' });
+  const start = isValidDate(req.body.start_date);
+  const end = isValidDate(req.body.end_date || req.body.start_date);
+  if (!start || !end) return res.status(400).json({ error: 'Pick valid start and end dates.' });
+  if (end < start) return res.status(400).json({ error: 'The end date is before the start date.' });
+  if (leaveDateList(start, end).length > MAX_LEAVE_DAYS) return res.status(400).json({ error: `A single request can span at most ${MAX_LEAVE_DAYS} days.` });
+  const allDay = (req.body.all_day === false || req.body.all_day === 0 || req.body.all_day === 'false') ? 0 : 1;
+  let hours = null;
+  if (!allDay) {
+    if (start !== end) return res.status(400).json({ error: 'For a set number of hours, request a single day.' });
+    const n = parseFloat(req.body.hours);
+    if (!(Number.isFinite(n) && n > 0)) return res.status(400).json({ error: 'Enter the number of hours.' });
+    hours = Math.round(n * 100) / 100;
+  }
+  const reason = (req.body.reason || '').toString().trim().slice(0, 500) || null;
+  if (!u.location_id) return res.status(400).json({ error: 'Your account has no home location, so leave can’t be scheduled. Ask a manager.' });
+  const r = db.prepare(`INSERT INTO leave_requests (user_id, location_id, kind, start_date, end_date, all_day, hours, reason) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(u.id, u.location_id, kind, start, end, allDay, hours, reason);
+  const span = allDay ? fmtRange(start, end) : `${start} (${hours}h)`;
+  for (const mgr of requestApprovers(u.location_id)) {
+    try { notify(u.id, mgr, 'Time-off request', `${u.name} requested ${LEAVE_LABEL[kind]} for ${span}. Review it under Messages → Requests.`); } catch { /* */ }
+  }
+  res.json({ success: true, id: r.lastInsertRowid });
+});
+
+// Staff: my own requests (most recent first).
+router.get('/leave-requests/mine', svcKeyOrJwt, (req, res) => {
+  const u = schedActor(req);
+  if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
+  const rows = db.prepare(`SELECT lr.*, d.name AS decided_by_name FROM leave_requests lr
+    LEFT JOIN users d ON d.id = lr.decided_by WHERE lr.user_id=? ORDER BY lr.created_at DESC LIMIT 100`).all(u.id);
+  res.json({ requests: rows });
+});
+
+// Approvers: list requests (pending by default), scoped to what they can see.
+router.get('/leave-requests', svcKeyOrJwt, (req, res) => {
+  const u = schedActor(req);
+  if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
+  if (!roleHasCap(u.role, 'manage')) return res.status(403).json({ error: 'Not allowed to review time-off requests.' });
+  const status = ['pending', 'approved', 'rejected', 'all'].includes(req.query.status) ? req.query.status : 'pending';
+  const all = seesAllLocations(u.role);
+  const where = [], args = [];
+  if (status !== 'all') { where.push('lr.status=?'); args.push(status); }
+  if (!all) { where.push('lr.location_id=?'); args.push(u.location_id); }
+  const sql = `SELECT lr.*, u.name AS user_name, u.role AS user_role, l.name AS location_name, d.name AS decided_by_name
+    FROM leave_requests lr JOIN users u ON u.id=lr.user_id
+    LEFT JOIN locations l ON l.id=lr.location_id LEFT JOIN users d ON d.id=lr.decided_by
+    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+    ORDER BY CASE lr.status WHEN 'pending' THEN 0 ELSE 1 END, lr.created_at DESC LIMIT 300`;
+  const requests = db.prepare(sql).all(...args);
+  const pending_count = all
+    ? db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending'`).get().c
+    : db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND location_id=?`).get(u.location_id).c;
+  res.json({ requests, pending_count, scope: all ? 'all' : 'location' });
+});
+
+// Approvers: count of pending requests they can act on (for the Requests badge).
+router.get('/leave-requests/pending-count', svcKeyOrJwt, (req, res) => {
+  const u = schedActor(req);
+  if (!u || !roleHasCap(u.role, 'manage')) return res.json({ count: 0 });
+  const count = seesAllLocations(u.role)
+    ? db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending'`).get().c
+    : db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND location_id=?`).get(u.location_id).c;
+  res.json({ count });
+});
+
+// Write leave shifts across a request's date range so the days read as leave hours.
+// Existing WORK shifts that day are converted (their scheduled span becomes the
+// leave hours); a day with nothing scheduled becomes a full-day (8h) leave.
+function applyApprovedLeave(reqRow, deciderId) {
+  const locId = reqRow.location_id;
+  const insShift = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  db.exec('BEGIN');
+  try {
+    for (const d of leaveDateList(reqRow.start_date, reqRow.end_date)) {
+      const works = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(reqRow.user_id, locId, d);
+      let leaveHours, allDay;
+      if (!reqRow.all_day && reqRow.hours) { leaveHours = reqRow.hours; allDay = 0; }
+      else if (works.length) { leaveHours = Math.round(works.reduce((n, s) => n + spanHours(s.start_time, s.end_time), 0) * 100) / 100; allDay = 0; }
+      else { leaveHours = FULL_DAY_HOURS; allDay = 1; }
+      for (const w of works) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(w.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(w.id); db.prepare(`DELETE FROM shifts WHERE id=?`).run(w.id); }
+      db.prepare(`DELETE FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind IN ('sick','vacation','leave')`).run(reqRow.user_id, locId, d);
+      insShift.run(reqRow.user_id, locId, d, null, null, `Approved ${reqRow.kind} request`, deciderId, reqRow.kind, allDay, leaveHours);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+
+// Approvers: approve or reject a request.
+router.post('/leave-requests/:id/decide', svcKeyOrJwt, (req, res) => {
+  const u = schedActor(req);
+  if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
+  if (!roleHasCap(u.role, 'manage')) return res.status(403).json({ error: 'Not allowed to decide time-off requests.' });
+  const lr = db.prepare(`SELECT * FROM leave_requests WHERE id=?`).get(req.params.id);
+  if (!lr) return res.status(404).json({ error: 'Request not found.' });
+  if (!seesAllLocations(u.role) && String(lr.location_id) !== String(u.location_id)) return res.status(403).json({ error: 'That request is for another location.' });
+  if (lr.status !== 'pending') return res.status(400).json({ error: `This request was already ${lr.status}.` });
+  const decision = req.body.decision === 'approve' ? 'approved' : req.body.decision === 'reject' ? 'rejected' : null;
+  if (!decision) return res.status(400).json({ error: 'Decision must be approve or reject.' });
+  const note = (req.body.note || '').toString().trim().slice(0, 500) || null;
+  if (decision === 'approved') {
+    try { applyApprovedLeave(lr, u.id); } catch (e) { return res.status(500).json({ error: 'Could not apply the leave to the schedule.' }); }
+  }
+  db.prepare(`UPDATE leave_requests SET status=?, decided_by=?, decided_at=datetime('now'), decision_note=? WHERE id=?`).run(decision, u.id, note, lr.id);
+  const span = lr.all_day ? fmtRange(lr.start_date, lr.end_date) : `${lr.start_date} (${lr.hours}h)`;
+  const body = decision === 'approved'
+    ? `Your ${LEAVE_LABEL[lr.kind]} request for ${span} was approved — your schedule now shows those ${lr.kind} hours.${note ? ` Note: ${note}` : ''}`
+    : `Your ${LEAVE_LABEL[lr.kind]} request for ${span} was not approved. Your schedule is unchanged.${note ? ` Note: ${note}` : ''}`;
+  try { notify(u.id, lr.user_id, `Time-off ${decision}`, body); } catch { /* */ }
+  auditLog({ user: u }, decision === 'approved' ? 'leave_approve' : 'leave_reject', 'leave_request', lr.id, { kind: lr.kind, start: lr.start_date, end: lr.end_date });
+  res.json({ success: true, status: decision });
+});
+
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
