@@ -991,6 +991,16 @@ seven days):
   (otherwise the copy is refused so nothing is duplicated). Any scheduler — manager /
   GM / owner / anyone with the **`manage`** cap (e.g. Shift Lead) — can use it on a
   location they can edit.
+- **⟳ Auto-copy weekly** — for a location whose roster is the same week to week, a
+  scheduler can turn on **"Auto-copy this schedule to next week, every week"** (a toggle
+  under the Schedule tab, stored on the location as `auto_roll_schedule`; **off by
+  default**, opt-in per store). A background sweep then copies that location's **current
+  week** into the **upcoming week** automatically — the same work-shifts-with-jobs-and-breaks
+  copy as the button, with the same rules: it **only fills an upcoming week that's still
+  empty** (so it never overwrites shifts a manager already set), and it **never carries
+  leave** forward. Because it only touches empty weeks it's self-rolling — each time the
+  work week flips, the newly-empty next week fills in. Managers can still edit or use
+  **Copy a week** on top of it. The sweep runs on server start and every 12 hours.
 - **Leave** — the **+** entry has a **Type**: Work shift, or **Sick / Vacation /
   On-leave**. Leave takes a duration — **all day** (8 h), a **number of hours**, or a
   **from–to** span — and shows as a coloured chip (🤒 / 🏖️ / 🗓️). Leave never counts
