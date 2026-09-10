@@ -95,6 +95,7 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sched-head { align-items: center; margin-bottom: .8rem; flex-wrap: wrap; gap: .6rem; }
 .week-nav { display: flex; gap: .35rem; }
 .week-label { font-size: .95rem; }
+.sched-autoroll { margin: 0 0 1rem; font-size: .85rem; color: var(--muted); cursor: pointer; }
 .sched-table { table-layout: fixed; }
 .sched-table th, .sched-table td { vertical-align: top; border: 1px solid var(--line); }
 .sched-table th { text-align: center; font-size: .78rem; color: var(--muted); padding: .35rem; }

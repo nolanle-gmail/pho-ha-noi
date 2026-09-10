@@ -1703,6 +1703,10 @@ async function renderLocSchedule() {
       <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
       ${canEdit ? '' : '<span class="badge gray">View only</span>'}
     </div>
+    ${canEdit ? `<label class="chk sched-autoroll" title="Each week, automatically copy this location's current week into the next week if it's still empty. Never overwrites shifts you've already set; leave is not carried over.">
+      <input type="checkbox" id="schAutoRoll" ${data.location.auto_roll_schedule ? 'checked' : ''}/>
+      ⟳ Auto-copy this schedule to next week, every week
+    </label>` : ''}
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
       ${days.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
@@ -1721,6 +1725,14 @@ async function renderLocSchedule() {
   $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
   $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
   if (canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
+  if (canEdit && $('schAutoRoll')) $('schAutoRoll').onchange = async (e) => {
+    const enabled = e.target.checked;
+    try {
+      await api('/schedule/auto-roll', { method: 'PUT', body: JSON.stringify({ location_id: data.location.id, enabled }) });
+      data.location.auto_roll_schedule = enabled;
+      toast(enabled ? 'Weekly auto-copy on — next week fills from this one automatically.' : 'Weekly auto-copy off.');
+    } catch (err) { e.target.checked = !enabled; toast(err.message, true); }
+  };
   if (canEdit) {
     $('locBody').querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
       const st = data.staff.find(x => x.id == b.dataset.add);

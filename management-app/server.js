@@ -61,6 +61,8 @@ if (require.main === module) {
   // Background sweeps (real server only): missed clock-outs + break reminders.
   try { require('./routes/timeclock').startClockSweep(); } catch { /* optional */ }
   try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
+  // Weekly schedule auto-roll for locations that opted in.
+  try { require('./routes/schedule').startScheduleRoll(); } catch { /* optional */ }
 }
 
 module.exports = app;

@@ -379,8 +379,9 @@ router.get('/week', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+  const loc = db.prepare(`SELECT id, name, timezone, COALESCE(auto_roll_schedule,0) AS auto_roll_schedule FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  loc.auto_roll_schedule = !!loc.auto_roll_schedule;
   const ws = weekStart(req.query.week);
   const staff = locationStaff(locId);
   const byUser = shiftsForUsers(staff.map(s => s.id), ws);
@@ -545,31 +546,21 @@ router.delete('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
 // leave (sick / vacation / on-leave) is date-specific and is NOT carried over.
 // If the target week already has work shifts, the caller must pass overwrite=true
 // (which clears them first) — otherwise it returns 409 so the UI can confirm.
-router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
-  const locId = parseInt(req.body.location_id, 10);
-  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
-  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'You can only schedule your own location.' });
-  if (!db.prepare(`SELECT 1 FROM locations WHERE id=?`).get(locId)) return res.status(404).json({ error: 'Location not found.' });
-  const toWeek = weekStart(req.body.to_week);
-  const fromWeek = weekStart(req.body.from_week || addDays(toWeek, -7));
-  if (fromWeek === toWeek) return res.status(400).json({ error: 'Pick a different week to copy from.' });
-  const overwrite = req.body.overwrite === true || req.body.overwrite === 1 || req.body.overwrite === 'true';
-
-  // Only schedule people currently on this location's roster (home or also-works).
+// Core copy used by both the manual route and the weekly auto-roll sweep. Clones
+// the from-week's WORK shifts (with jobs + breaks) into the to-week for people on
+// the location's current roster. Returns { copied, cleared } on success, or an
+// object with `conflict`/`empty`/`error` when it can't proceed. `createdBy` is
+// stamped on the new shifts (the acting user, or null for the automated sweep).
+function copyWeek(locId, fromWeek, toWeek, { overwrite = false, createdBy = null } = {}) {
+  if (fromWeek === toWeek) return { error: 'same_week' };
   const staffIds = new Set(locationStaff(locId).map(s => s.id));
   const fromEnd = addDays(fromWeek, 6), toEnd = addDays(toWeek, 6);
-
-  // Source: work shifts at THIS location in the from-week, for current roster.
   const src = db.prepare(`SELECT * FROM shifts WHERE location_id=? AND kind='work' AND shift_date BETWEEN ? AND ?`)
     .all(locId, fromWeek, fromEnd).filter(s => staffIds.has(s.user_id));
-  if (!src.length) return res.status(400).json({ error: 'That week has no work shifts to copy at this location.' });
-
+  if (!src.length) return { empty: true, copied: 0, cleared: 0 };
   const existing = db.prepare(`SELECT id, user_id FROM shifts WHERE location_id=? AND kind='work' AND shift_date BETWEEN ? AND ?`)
     .all(locId, toWeek, toEnd).filter(s => staffIds.has(s.user_id));
-  if (existing.length && !overwrite) {
-    return res.status(409).json({ error: 'target_not_empty', existing: existing.length,
-      message: `This week already has ${existing.length} work shift${existing.length === 1 ? '' : 's'}.` });
-  }
+  if (existing.length && !overwrite) return { conflict: existing.length };
 
   const offset = Math.round((new Date(toWeek + 'T00:00:00') - new Date(fromWeek + 'T00:00:00')) / 86400000);
   const jobsBy = db.prepare(`SELECT job_id FROM shift_jobs WHERE shift_id=?`);
@@ -578,7 +569,6 @@ router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
   const insJob = db.prepare(`INSERT OR IGNORE INTO shift_jobs (shift_id, job_id) VALUES (?,?)`);
   const insBrk = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
 
-  let out;
   db.exec('BEGIN');
   try {
     let cleared = 0;
@@ -591,17 +581,76 @@ router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
     let copied = 0;
     for (const s of src) {
       const nd = addDays(s.shift_date, offset);
-      const r = insShift.run(s.user_id, locId, nd, s.start_time, s.end_time, s.notes, req.user.id, 'work', 0, null);
+      const r = insShift.run(s.user_id, locId, nd, s.start_time, s.end_time, s.notes, createdBy, 'work', 0, null);
       const nid = Number(r.lastInsertRowid);
       for (const j of jobsBy.all(s.id)) insJob.run(nid, j.job_id);
       for (const b of breaksBy.all(s.id)) insBrk.run(nid, b.start_time, b.end_time, b.label);
       copied++;
     }
-    out = { copied, cleared };
     db.exec('COMMIT');
-  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not copy the week.' }); }
-  auditLog(req, 'schedule_week_copy', 'location', locId, { from_week: fromWeek, to_week: toWeek, ...out });
-  res.json({ success: true, from_week: fromWeek, to_week: toWeek, ...out });
+    return { copied, cleared };
+  } catch (e) { db.exec('ROLLBACK'); return { error: e.message || 'copy_failed' }; }
+}
+
+router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'You can only schedule your own location.' });
+  if (!db.prepare(`SELECT 1 FROM locations WHERE id=?`).get(locId)) return res.status(404).json({ error: 'Location not found.' });
+  const toWeek = weekStart(req.body.to_week);
+  const fromWeek = weekStart(req.body.from_week || addDays(toWeek, -7));
+  const overwrite = req.body.overwrite === true || req.body.overwrite === 1 || req.body.overwrite === 'true';
+
+  const r = copyWeek(locId, fromWeek, toWeek, { overwrite, createdBy: req.user.id });
+  if (r.error === 'same_week') return res.status(400).json({ error: 'Pick a different week to copy from.' });
+  if (r.empty) return res.status(400).json({ error: 'That week has no work shifts to copy at this location.' });
+  if (r.conflict) return res.status(409).json({ error: 'target_not_empty', existing: r.conflict,
+    message: `This week already has ${r.conflict} work shift${r.conflict === 1 ? '' : 's'}.` });
+  if (r.error) return res.status(500).json({ error: 'Could not copy the week.' });
+  auditLog(req, 'schedule_week_copy', 'location', locId, { from_week: fromWeek, to_week: toWeek, ...r });
+  res.json({ success: true, from_week: fromWeek, to_week: toWeek, ...r });
 });
 
+// Per-location opt-in for the weekly auto-roll (manager / shift-lead, own store).
+router.put('/auto-roll', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  if (!db.prepare(`SELECT 1 FROM locations WHERE id=?`).get(locId)) return res.status(404).json({ error: 'Location not found.' });
+  const enabled = req.body.enabled === true || req.body.enabled === 1 || req.body.enabled === 'true' ? 1 : 0;
+  db.prepare(`UPDATE locations SET auto_roll_schedule=? WHERE id=?`).run(enabled, locId);
+  auditLog(req, 'schedule_auto_roll', 'location', locId, { enabled });
+  res.json({ success: true, auto_roll_schedule: enabled });
+});
+
+// Weekly auto-roll sweep — for each location that opted in, copy the CURRENT
+// week's work shifts into the UPCOMING week if that week is still empty. The
+// "only when empty" guard makes it idempotent and self-rolling: once the upcoming
+// week is filled it's skipped, and when the week flips the newly-empty week gets
+// filled. Never overwrites a week someone already started; never carries leave.
+function sweepWeeklyScheduleRoll() {
+  try {
+    const locs = db.prepare(`SELECT id, name, timezone FROM locations WHERE auto_roll_schedule=1`).all();
+    for (const loc of locs) {
+      try {
+        const tz = loc.timezone || DEFAULT_TZ;
+        const cur = weekStart(localDate(tz));       // week containing "today" at the store
+        const next = addDays(cur, 7);
+        const r = copyWeek(loc.id, cur, next, { overwrite: false, createdBy: null });
+        if (r.copied) console.log(`schedule auto-roll: ${loc.name} — copied ${r.copied} shifts into week ${next}`);
+      } catch (e) { console.error(`schedule auto-roll failed for location ${loc.id}:`, e.message); }
+    }
+  } catch (err) { console.error('schedule auto-roll sweep failed:', err.message); }
+}
+
 module.exports = router;
+module.exports.sweepWeeklyScheduleRoll = sweepWeeklyScheduleRoll; // exported for tests/manual runs
+// Roll the schedule forward weekly. Runs on startup and every 12h; the empty-week
+// guard dedupes, so the exact cadence only affects how soon after week-flip the
+// upcoming week is populated.
+module.exports.startScheduleRoll = function startScheduleRoll() {
+  sweepWeeklyScheduleRoll();
+  const t = setInterval(sweepWeeklyScheduleRoll, 12 * 60 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};

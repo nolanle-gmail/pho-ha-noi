@@ -943,6 +943,9 @@ function migrate() {
     // Extra minutes a manager/lead added to a shift so the person can keep working
     // past their scheduled end without being auto-clocked-out.
     `ALTER TABLE time_entries ADD COLUMN overrun_extra_min INTEGER NOT NULL DEFAULT 0`,
+    // Opt-in: when set, a weekly sweep copies this location's current week's work
+    // shifts into the upcoming week if that week is still empty (never overwrites).
+    `ALTER TABLE locations ADD COLUMN auto_roll_schedule INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the
