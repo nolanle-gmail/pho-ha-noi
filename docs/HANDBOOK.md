@@ -1010,6 +1010,34 @@ seven days):
   included in the CSV export). A person's HR **status** can also be set to `on_leave`
   on their profile.
 
+Managers set leave directly with the **+** entry above; staff can also **request** it
+themselves (next).
+
+#### Time-off requests (staff → manager approval)
+
+Staff request **vacation** or **sick leave** themselves, and a manager approves or
+rejects it — no phone calls or paper.
+
+- **Requesting** — on **My Schedule** (Staff app, or the Management console for
+  shift-scheduled staff) a **🏖 Request time off** button opens a short form: **type**
+  (Vacation / Sick), a **date** or **date range** (or a single day of a set number of
+  **hours**), and an optional **reason**. Submitted requests, with their status, list
+  under **My time-off requests** right there.
+- **Reviewing** — every request lands in a **📋 Requests** tab under **Messages**, shown
+  to anyone with the **`manage`** capability (manager / owner / HR / GM / shift-lead). It
+  is **scoped**: a store's managers and shift-leads see their own location's requests;
+  all-location leadership (owner / admin / HR / GM) sees every store. A badge shows the
+  pending count. Filter by Pending / Approved / Rejected / All.
+- **Approve** → the requested days are written onto the schedule as **leave hours**: a day
+  the person was **scheduled to work** has those hours **converted to** vacation / sick
+  hours (the work shift is replaced); a day with nothing scheduled becomes a **full 8 h**
+  leave day. From then on it behaves like any leave entry — totalled on **My Hours** and
+  the **Timesheet**, never counted as worked hours.
+- **Reject** → **nothing on the schedule changes.**
+- **Either way**, the requester gets a **message** with the decision (and the approver's
+  optional note). Requests are stored in `leave_requests`; approval writes the leave via
+  the same path as a manager-entered leave shift.
+
 ### 6.4 Inventory replenishment & the central kitchen
 
 ```mermaid
