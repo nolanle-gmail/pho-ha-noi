@@ -2245,6 +2245,43 @@ async function openLocTaskListModal(locId, locName) {
 }
 
 // ── Time Clock — check-in/out status for the location (manager/GM/owner) ──────
+// Assign hours to / adjust one time-clock entry (manager or shift-lead). For a
+// substitute who clocked in unscheduled, set their scheduled start/end (which
+// drives the auto clock-out and their timesheet); any punch time can be corrected.
+function tcEntryModal(r) {
+  const host = $('modalHost');
+  const unsched = !!r.unscheduled;
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${unsched ? 'Assign hours' : 'Adjust entry'} — ${esc(r.name)}</h3>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">${unsched
+      ? 'This person clocked in without a schedule today. Set the hours they were meant to work — this schedules them (so the auto clock-out applies) and feeds their timesheet.'
+      : 'Correct the scheduled hours or the clock-in / clock-out times for this entry.'}</p>
+    <div class="err" id="mErr"></div>
+    <div class="form-grid">
+      <label>Scheduled start<input id="tcStart" type="time" value="${esc(r.shift_start || '')}" /></label>
+      <label>Scheduled end<input id="tcEnd" type="time" value="${esc(r.shift_end || '')}" /></label>
+      <label>Clock-in<input id="tcIn" type="time" value="${esc(r.clock_in_hhmm || '')}" /></label>
+      <label>Clock-out <span style="color:var(--muted);font-weight:400">${r.status === 'in' ? '(still on the clock)' : ''}</span><input id="tcOut" type="time" value="${esc(r.clock_out_hhmm || '')}" /></label>
+    </div>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    const st = $('tcStart').value, en = $('tcEnd').value, ci = $('tcIn').value, co = $('tcOut').value;
+    const payload = {};
+    if (st || en) { payload.start_time = st; payload.end_time = en; }
+    if (ci) payload.clock_in = ci;
+    if (co) payload.clock_out = co;
+    if (!Object.keys(payload).length) { $('mErr').textContent = 'Set the hours or a clock time.'; return; }
+    $('mOk').disabled = true;
+    try {
+      await api('/timeclock/entry/' + r.id, { method: 'PUT', body: JSON.stringify(payload) });
+      close(); toast('Entry updated — staff notified.'); renderLocTimeClock();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
+}
+
 async function renderLocTimeClock() {
   const canManage = ORG_ADMIN.includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
   let data, alerts = { alerts: [] }, payroll = null;
@@ -2264,12 +2301,14 @@ async function renderLocTimeClock() {
   const sm = data.summary;
   const statusChip = (r) => r.status === 'in' ? '<span class="badge ok">🟢 On clock</span>'
     : `<span class="badge gray">Checked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
-  const entryRows = data.entries.map(r => `<tr>
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
+  const canEditTc = myCap('manage');
+  const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
+  const entryRows = data.entries.map(r => `<tr${r.unscheduled ? ' class="tc-unscheduled"' : ''}>
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
     <td>${r.clock_in || '—'}</td><td>${r.clock_out || '—'}</td>
     <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
-    <td>${statusChip(r)}</td></tr>`).join('');
+    <td>${statusChip(r)}${editBtn(r)}</td></tr>`).join('');
   const notInRows = data.not_in.map(r => `<tr class="task-unassigned">
     <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
     <td>—</td><td>—</td><td>${fmtDur(r.scheduled_minutes)}</td><td>—</td>
@@ -2320,6 +2359,10 @@ async function renderLocTimeClock() {
   $('locBody').querySelectorAll('[data-resolve]').forEach(b => b.onclick = async () => {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
+  });
+  $('locBody').querySelectorAll('[data-tcedit]').forEach(b => b.onclick = () => {
+    const r = data.entries.find(x => String(x.id) === String(b.dataset.tcedit));
+    if (r) tcEntryModal(r);
   });
   $('locBody').querySelectorAll('[data-ovapprove]').forEach(b => b.onclick = async () => {
     try { await api('/timeclock/overrun/' + b.dataset.ovapprove + '/approve', { method: 'POST' }); toast('Extra hours approved'); renderLocTimeClock(); }

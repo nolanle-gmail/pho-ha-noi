@@ -149,6 +149,7 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .tc-overrun-info { font-size: .86rem; color: var(--ink); flex: 1; min-width: 200px; }
 .tc-overrun-acts { display: flex; gap: .4rem; flex-shrink: 0; }
 .tc-autoout { color: var(--out); font-weight: 600; }
+.tc-unscheduled { background: var(--gold-soft, #fbe9c7); }
 .tc-policy { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; border: 1px solid var(--line); background: var(--surface); border-radius: 11px; padding: .6rem .85rem; margin: 0 0 1rem; font-size: .86rem; }
 .tc-policy-h { font-weight: 700; }
 .tc-policy-tog { display: inline-flex; align-items: center; gap: .35rem; }

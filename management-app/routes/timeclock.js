@@ -10,7 +10,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap, SECRET } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
@@ -55,8 +55,13 @@ const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone FROM loc
 function greetingWord(tz) { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
 const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(c);
 const hhmmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+// The people who lead a location: any active staffer assigned there whose role
+// carries the 'manage' cap — managers, assistant/kitchen managers AND shift leads
+// (or any custom manage-capable role). Falls back to org leadership if a store has
+// none on file. Used for every leader alert (missed / unscheduled clock-in, etc.).
 function locationLeaders(locId) {
-  let ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND location_id=? AND role IN ('manager','assistant_manager','kitchen_manager')`).all(locId).map(r => r.id);
+  let ids = db.prepare(`SELECT id, role FROM users WHERE is_active=1 AND location_id=?`).all(locId)
+    .filter(u => roleHasCap(u.role, 'manage')).map(u => u.id);
   if (!ids.length) ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role IN ('owner','admin','general_manager')`).all().map(r => r.id);
   return ids;
 }
@@ -430,17 +435,25 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
 
   const entries = db.prepare(`SELECT te.*, u.name, u.employee_code FROM time_entries te JOIN users u ON u.id=te.user_id
     WHERE te.location_id=? AND te.work_date=? ORDER BY te.clock_in`).all(locId, date);
+  // Whose work shift(s) exist for this day/location (to flag unscheduled clock-ins).
+  const shiftBy = {};
+  for (const s of db.prepare(`SELECT user_id, MIN(start_time) AS start_time, MAX(end_time) AS end_time FROM shifts WHERE location_id=? AND shift_date=? AND kind='work' GROUP BY user_id`).all(locId, date)) shiftBy[s.user_id] = s;
+  const hhmm = (iso) => { const d = new Date(iso); return `${String(localMinutesOfDay(tz, d) / 60 | 0).padStart(2, '0')}:${String(localMinutesOfDay(tz, d) % 60).padStart(2, '0')}`; };
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
+    const sh = shiftBy[e.user_id];
     return {
-      user_id: e.user_id, name: e.name, employee_code: e.employee_code,
+      id: e.id, user_id: e.user_id, name: e.name, employee_code: e.employee_code,
       clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
+      clock_in_hhmm: hhmm(e.clock_in), clock_out_hhmm: e.clock_out ? hhmm(e.clock_out) : null,
       status: e.clock_out ? 'out' : 'in',
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
       short: e.short_confirmed ? 1 : 0,
+      unscheduled: sh ? 0 : 1,
+      shift_start: sh ? sh.start_time : null, shift_end: sh ? sh.end_time : null,
     };
   });
   // Scheduled today but no punch yet → "not in".
@@ -462,6 +475,78 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       overtime: rows.filter(r => r.overtime_minutes > 0).length,
     },
   });
+});
+
+// Convert a local wall-clock HH:MM on a date to a UTC instant in the given tz.
+function localWallToInstant(tz, dateStr, hhmm) {
+  const [Y, Mo, D] = String(dateStr).split('-').map(Number);
+  const [h, mi] = String(hhmm).split(':').map(Number);
+  const guess = Date.UTC(Y, Mo - 1, D, h, mi);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz || DEFAULT_TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+  return new Date(guess - (asUTC - guess));
+}
+
+// Manager / shift-lead: assign work hours to (and/or correct the punch times of)
+// one time-clock entry — the fix for a substitute who clocks in unscheduled, or any
+// punch that needs correcting. Assigning hours writes/replaces the day's work shift
+// (so the scheduled end drives the 30-min auto clock-out) and sets the entry's
+// scheduled minutes; editing times rewrites clock-in / clock-out. Notifies the staffer.
+router.put('/entry/:id', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const tz = locTz(e.location_id);
+  const hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const b = req.body || {};
+  const hasHours = b.start_time !== undefined || b.end_time !== undefined;
+  const start = b.start_time ? String(b.start_time).slice(0, 5) : null;
+  const end = b.end_time ? String(b.end_time).slice(0, 5) : null;
+  if (hasHours) {
+    if (!hhmmRe.test(start || '') || !hhmmRe.test(end || '')) return res.status(400).json({ error: 'Scheduled start and end must both be HH:MM (24-hour).' });
+    if (spanMin(start, end) <= 0) return res.status(400).json({ error: 'Scheduled end must be after the start.' });
+  }
+  let clockInISO = e.clock_in, clockOutISO = e.clock_out;
+  if (b.clock_in !== undefined) {
+    if (!hhmmRe.test(String(b.clock_in))) return res.status(400).json({ error: 'Clock-in must be HH:MM (24-hour).' });
+    clockInISO = localWallToInstant(tz, e.work_date, b.clock_in).toISOString();
+  }
+  if (b.clock_out !== undefined) {
+    if (b.clock_out === null || b.clock_out === '') clockOutISO = null;
+    else {
+      if (!hhmmRe.test(String(b.clock_out))) return res.status(400).json({ error: 'Clock-out must be HH:MM (24-hour).' });
+      let outD = localWallToInstant(tz, e.work_date, b.clock_out);
+      if (outD.getTime() <= new Date(clockInISO).getTime()) outD = new Date(outD.getTime() + 86400000); // past midnight
+      clockOutISO = outD.toISOString();
+    }
+  }
+  if (!hasHours && b.clock_in === undefined && b.clock_out === undefined) return res.status(400).json({ error: 'Nothing to update.' });
+
+  db.exec('BEGIN');
+  try {
+    if (hasHours) {
+      const old = db.prepare(`SELECT id FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(e.user_id, e.location_id, e.work_date);
+      for (const s of old) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(s.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(s.id); db.prepare(`DELETE FROM shifts WHERE id=?`).run(s.id); }
+      db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?, 'work',0,NULL)`)
+        .run(e.user_id, e.location_id, e.work_date, start, end, 'Assigned from time clock', req.user.id);
+      // Apply the assigned schedule to that day's entries and let the auto clock-out
+      // re-evaluate against the new end (clear any prior overrun decision/nudge).
+      db.prepare(`UPDATE time_entries SET scheduled_minutes=?, overrun_notified=0, overrun_extra_min=0, overrun_decision=NULL, overrun_decided_by=NULL, overrun_decided_at=NULL WHERE user_id=? AND location_id=? AND work_date=?`)
+        .run(spanMin(start, end), e.user_id, e.location_id, e.work_date);
+    }
+    const worked = clockOutISO ? Math.max(0, Math.round((new Date(clockOutISO).getTime() - new Date(clockInISO).getTime()) / 60000)) : null;
+    db.prepare(`UPDATE time_entries SET clock_in=?, clock_out=?, worked_minutes=? WHERE id=?`).run(clockInISO, clockOutISO, worked, e.id);
+    db.exec('COMMIT');
+  } catch (err) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not update the entry.' }); }
+
+  auditLog(req, 'time_entry_edit', 'user', e.user_id, { time_entry_id: e.id, assigned_hours: hasHours ? `${start}-${end}` : undefined, clock_in: b.clock_in, clock_out: b.clock_out });
+  try {
+    const parts = [];
+    if (hasHours) parts.push(`your hours were set to ${start}–${end}`);
+    if (b.clock_in !== undefined || b.clock_out !== undefined) parts.push('your clock times were adjusted');
+    if (parts.length) notify(req.user.id, e.user_id, 'Your time entry was updated', `A manager updated today’s time entry at your store — ${parts.join(' and ')}. Check My Hours.`);
+  } catch { /* */ }
+  res.json({ success: true });
 });
 
 // ── Payroll / overtime export for a pay period ───────────────────────────────
