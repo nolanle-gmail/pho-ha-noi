@@ -886,6 +886,10 @@ the change. At the end of the day the manager/shift lead **approves the timeshee
 (Reports → Timesheets / the payroll sign-off). If the sub forgets to clock out, once hours are
 assigned the normal **30-min grace auto clock-out** takes over at the assigned end.
 
+*Verified end-to-end on production (Sep 11, 2026):* unscheduled kiosk clock-in → leader alert
+(including the location's shift lead) → assign hours + correct punch times → auto clock-out at the
+assigned end — using throwaway accounts, no real staff contacted.
+
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
 they acknowledge it like any floor alert. The lead time is **per location** — set the
