@@ -889,8 +889,16 @@ with no provider configured it runs in **log-only** mode — every message is re
 audit but nothing is actually sent (and nothing costs money). Setting `SMS_PROVIDER` +
 credentials (as Fly secrets) switches it live:
 
-- **Twilio** — `SMS_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`.
+- **Twilio** — `SMS_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`
+  (or `TWILIO_MESSAGING_SERVICE_SID`). If both a Service and a `TWILIO_FROM` are set, the Service wins.
 - **TextBelt** — `SMS_PROVIDER=textbelt` with `TEXTBELT_KEY` (the key `textbelt` gives 1 free msg/day, for testing).
+
+> **✅ SMS is LIVE (as of September 10, 2026).** Both production apps run `SMS_PROVIDER=twilio`
+> and send real texts from the toll-free number **+1 (888) 365-3670**, which passed Twilio
+> **toll-free verification** (`TWILIO_APPROVED`) under the registered legal entity **HaNoi Bistros**.
+> Sends go directly *from* that number (no Messaging Service is configured, which is the expected
+> setup for a per-number toll-free verification). Both the staff **blast** path and the guest
+> **"your table is ready"** path have been verified delivering end-to-end.
 
 What gets texted:
 
