@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 10, 2026_
+_Last updated: September 11, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -916,12 +916,18 @@ What gets texted:
   leaders.
 - **Blast / compose** — **Messages → 📱 Text** lets an owner/admin/manager text **everyone**,
   **a role**, or **specific people** (e.g. "cover needed tonight", a task reminder). *Specific
-  people* is a **type-ahead recipient search with chips** (like the message composer) — search
-  by name and add **one or more** staff to text them all at once; only staff with a phone on
-  file are searchable. Managers are scoped to their own store; owner/admin/GM can pick any store
-  or all. Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent
-  list shows "N people" for a multi-recipient send), and the composer shows a log-only banner
-  until a provider is live.
+  people* is a recipient picker with chips — add **one or more** staff and text them all at once;
+  only staff with a phone on file are selectable.
+  - **All-location roles** (owner / admin / HR / GM) get a **location dropdown** in the picker:
+    **"Everyone — search all locations"** or a specific store (**"<store> — see all staff"**).
+    Pick a store to **browse all its staff** (with a **"+ Add all N shown"** shortcut); choose
+    *Everyone* and **search by name** to find anyone across every store (each result is tagged
+    with its store). **Selected chips persist as you switch stores**, so you can gather recipients
+    from several locations into a single send; **"Clear all"** resets. **Store managers** pick
+    from their own store's staff.
+  - Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent list shows
+    "N people" for a multi-recipient send), and the composer shows a log-only banner until a
+    provider is live.
 
 ---
 
