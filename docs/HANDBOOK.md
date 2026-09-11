@@ -916,8 +916,10 @@ What gets texted:
   leaders.
 - **Blast / compose** — **Messages → 📱 Text** uses the **same "To" picker as the message
   composer** (e.g. "cover needed tonight", a task reminder). The **To** dropdown offers:
-  **Everyone** · **Owner / Admin / Managers** · **A specific person…** · **All staff** · **A whole
-  location…** (the last shown to all-location roles). *A specific person…* opens a **type-ahead
+  **Everyone** · **Owner / Admin / Managers** · **A role…** · **A specific person…** · **All staff**
+  · **A whole location…** (the last shown to all-location roles). *A role…* reveals a role select
+  (roles present among textable staff, with per-role counts) — owner/admin/HR/GM text that role
+  company-wide, store managers just their store. *A specific person…* opens a **type-ahead
   recipient search with chips** — search by name (each result tagged with role · store) and add
   **one or more** staff to text them all at once; **"Clear all"** resets. *A whole location…* adds
   a store dropdown. Only staff **with a phone on file** are selectable (the picker shows "N of M
