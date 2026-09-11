@@ -29,11 +29,14 @@ router.get('/staff', (req, res) => {
   if (!locId && !seesAllLocations(req.user.role)) return res.status(400).json({ error: 'A location is required.' });
   if (locId && !ownsLoc(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const rows = locId
-    ? db.prepare(`SELECT id, name, role, phone FROM users WHERE location_id=? AND is_active=1 ORDER BY name`).all(locId)
-    : db.prepare(`SELECT id, name, role, phone FROM users WHERE is_active=1 ORDER BY name`).all();
-  const staff = rows.map(r => ({ id: r.id, name: r.name, role: r.role, has_phone: !!r.phone }));
+    ? db.prepare(`SELECT u.id, u.name, u.role, u.phone, u.location_id, l.name AS location_name FROM users u LEFT JOIN locations l ON l.id=u.location_id WHERE u.location_id=? AND u.is_active=1 ORDER BY u.name`).all(locId)
+    : db.prepare(`SELECT u.id, u.name, u.role, u.phone, u.location_id, l.name AS location_name FROM users u LEFT JOIN locations l ON l.id=u.location_id WHERE u.is_active=1 ORDER BY l.name, u.name`).all();
+  const staff = rows.map(r => ({ id: r.id, name: r.name, role: r.role, has_phone: !!r.phone, location_id: r.location_id, location_name: r.location_name }));
   const roles = [...new Set(staff.map(s => s.role))].sort();
-  res.json({ location_id: locId || null, staff, roles, with_phone: staff.filter(s => s.has_phone).length });
+  // Distinct locations present in this pool (for the recipient-picker location filter).
+  const locations = [...new Map(staff.filter(s => s.location_id).map(s => [s.location_id, { id: s.location_id, name: s.location_name }])).values()]
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  res.json({ location_id: locId || null, staff, roles, locations, with_phone: staff.filter(s => s.has_phone).length });
 });
 
 // Resolve the set of recipients {id, name, phone} for a blast.

@@ -3948,7 +3948,14 @@ async function renderSmsBlast() {
   let status = { enabled: false, provider: 'none' }, data = { staff: [], roles: [], with_phone: 0 }, recent = { messages: [] };
   try { [status, data, recent] = await Promise.all([api('/sms/status'), api('/sms/staff?location_id=' + encodeURIComponent(locId || '')), api('/sms/recent')]); }
   catch (e) { /* staff may fail if no location yet */ }
+  // The recipient picker draws from a full cross-location pool for all-location
+  // roles (owner/HR/admin/GM) so they can pick across stores in one send; store
+  // managers pick from their own store. Loaded independently of the top Store
+  // filter (which only scopes the Everyone / A-role broadcast targets).
+  let pool = data;
+  if (seesAll) { try { pool = await api('/sms/staff?location_id='); } catch { /* keep data */ } }
   const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('');
+  const poolLocs = pool.locations || [];
   const chips = SMS_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('');
   v.innerHTML = `
     <h2 class="page">📱 Text message <span style="font-weight:400;color:var(--muted);font-size:.9rem">— SMS to staff phones</span></h2>
@@ -3966,6 +3973,10 @@ async function renderSmsBlast() {
         </div>
         <select id="smRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
         <div id="smPeople" class="hidden" style="margin-top:.4rem">
+          ${poolLocs.length > 1 ? `<select id="smPeopleLoc" class="fld" style="margin-bottom:.4rem">
+            <option value="">🔍 Everyone — search all locations</option>
+            ${poolLocs.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))} — see all staff</option>`).join('')}
+          </select>` : ''}
           <div id="smRecipChips" class="recip-chips"></div>
           <input id="smRecipSearch" class="fld" placeholder="🔍 Type a name to add…" autocomplete="off" />
           <div id="smRecipList" class="recip-list hidden"></div>
@@ -3990,25 +4001,41 @@ async function renderSmsBlast() {
   v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
   const smLoc = $('smLoc'); if (smLoc) smLoc.onchange = () => { S.loc = smLoc.value; renderMessages(); };
 
-  // Multi-recipient picker with type-ahead search — only staff who have a phone
-  // on file can be texted, so the search list is limited to them.
-  const textable = (data.staff || []).filter(s => s.has_phone);
+  // Multi-recipient picker: filter by location (all-location roles) and/or search
+  // by name, then add one or many. Chips persist across location/search changes.
+  // Only staff with a phone on file are textable, so the pool is limited to them.
+  const textable = (pool.staff || []).filter(s => s.has_phone);
   const picked = new Map();
   const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
   const drawChips = () => {
-    $('smRecipChips').innerHTML = picked.size ? [...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('') : `<span class="recip-empty">No one selected yet — type a name below. ${textable.length} of ${data.staff.length} staff have a phone.</span>`;
-    $('smRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
+    $('smRecipChips').innerHTML = picked.size
+      ? `${[...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('')} <button type="button" class="recip-clear" data-clearall>Clear all (${picked.size})</button>`
+      : `<span class="recip-empty">No one selected yet — pick a location to browse, or type a name to search. ${textable.length} of ${pool.staff.length} staff have a phone.</span>`;
+    $('smRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); drawList(); });
+    const clr = $('smRecipChips').querySelector('[data-clearall]'); if (clr) clr.onclick = () => { picked.clear(); drawChips(); drawList(); };
   };
-  const drawList = (q) => {
+  const pickLoc = () => ($('smPeopleLoc') ? $('smPeopleLoc').value : (seesAll ? '' : String(S.user.location_id || '')));
+  const drawList = () => {
     const list = $('smRecipList');
-    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
-    const m = textable.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
-    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}</span></button>`).join('') : '<div class="recip-none">No one with a phone matches that name.</div>';
+    const q = ($('smRecipSearch').value || '').trim().toLowerCase();
+    const loc = pickLoc();
+    let cands = textable.filter(u => !picked.has(u.id) && (!loc || String(u.location_id) === String(loc)));
+    if (q) cands = cands.filter(u => wPrefix(u.name, q));
+    // "Everyone" with no search yet → prompt to search (avoid dumping every store).
+    if (!q && !loc) { list.classList.remove('hidden'); list.innerHTML = '<div class="recip-none">Type a name to search everyone, or pick a location above to see all its staff.</div>'; return; }
+    const shown = cands.slice(0, 200);
+    const showLocTag = !loc; // when searching across everyone, show which store each person is at
+    const addAll = (!q && loc && shown.length) ? `<button type="button" class="recip-item recip-addall" data-addall="1"><b>+ Add all ${shown.length} shown</b></button>` : '';
+    list.innerHTML = addAll + (shown.length
+      ? shown.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${showLocTag && u.location_name ? ' · ' + esc(shortLoc(u.location_name)) : ''}</span></button>`).join('')
+      : `<div class="recip-none">${q ? 'No one with a phone matches that name.' : 'No textable staff at this location.'}</div>`);
     list.classList.remove('hidden');
-    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = textable.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('smRecipSearch').value = ''; drawList(''); $('smRecipSearch').focus(); });
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = textable.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('smRecipSearch').value = ''; drawList(); $('smRecipSearch').focus(); });
+    const all = list.querySelector('[data-addall]'); if (all) all.onclick = () => { shown.forEach(u => picked.set(u.id, u)); drawChips(); drawList(); };
   };
-  $('smRecipSearch').oninput = () => drawList($('smRecipSearch').value.trim().toLowerCase());
-  drawChips();
+  $('smRecipSearch').oninput = () => drawList();
+  if ($('smPeopleLoc')) $('smPeopleLoc').onchange = () => { $('smRecipSearch').value = ''; drawList(); };
+  drawChips(); drawList();
 
   $('smSend').onclick = async () => {
     $('smErr').textContent = '';

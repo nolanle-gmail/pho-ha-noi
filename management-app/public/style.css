@@ -541,6 +541,9 @@ tr:hover .order-hover { opacity: 1; }
 .recip-item:last-child { border-bottom: none; }
 .recip-item:hover { background: var(--gold-soft); }
 .recip-role { color: var(--muted); font-size: .8rem; }
+.recip-clear { border: none; background: transparent; color: var(--red); cursor: pointer; font-size: .8rem; font-weight: 600; padding: .2rem .3rem; }
+.recip-clear:hover { text-decoration: underline; }
+.recip-addall { color: var(--red); background: var(--gold-soft); }
 .recip-none { padding: .6rem .7rem; color: var(--muted); font-size: .88rem; }
 /* Chat-group new-group picker */
 .cg-bulk { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .6rem 0; }
