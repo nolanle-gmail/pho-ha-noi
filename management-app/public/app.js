@@ -3960,6 +3960,9 @@ async function renderSmsBlast() {
   groups.push(['Owner / Admin / Managers', leaders.map(u => u.id)]);
   // Only keep groups that actually contain someone textable.
   const shownGroups = groups.map(g => [g[0], g[1], g[1].filter(id => textableIds.has(id)).length]).filter(g => g[2] > 0);
+  // Roles present among textable staff (for the "A role…" filter).
+  const roleCounts = {}; textable.forEach(s => { roleCounts[s.role] = (roleCounts[s.role] || 0) + 1; });
+  const roleRows = Object.keys(roleCounts).sort((a, b) => roleLabel(a).localeCompare(roleLabel(b)));
 
   const chips = SMS_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('');
   v.innerHTML = `
@@ -3972,10 +3975,12 @@ async function renderSmsBlast() {
       <div class="al-field"><label>To <span style="font-weight:400;color:var(--muted)">· ${textable.length} of ${recips.length} have a phone</span></label>
         <select id="smAud" class="fld">
           ${shownGroups.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[2]})</option>`).join('')}
+          ${roleRows.length ? '<option value="role">A role…</option>' : ''}
           <option value="direct">A specific person…</option>
           <option value="all">All staff${seesAll ? '' : ' (my store)'}</option>
           ${seesAll && poolLocs.length ? '<option value="location">A whole location…</option>' : ''}
         </select>
+        <div id="smRolePick" class="hidden" style="margin-top:.5rem"><select id="smRoleSel" class="fld">${roleRows.map(r => `<option value="${esc(r)}">${esc(roleLabel(r))} (${roleCounts[r]})</option>`).join('')}</select></div>
         <div id="smDirect" class="hidden" style="margin-top:.5rem">
           <div id="smRecipChips" class="recip-chips"></div>
           <input id="smRecipSearch" class="fld" placeholder="🔍 Type a name to add…" autocomplete="off" />
@@ -4001,7 +4006,7 @@ async function renderSmsBlast() {
   v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
 
   const smAud = $('smAud');
-  smAud.onchange = () => { const val = smAud.value; $('smDirect').classList.toggle('hidden', val !== 'direct'); $('smLocPick').classList.toggle('hidden', val !== 'location'); if (val === 'direct') $('smRecipSearch').focus(); };
+  smAud.onchange = () => { const val = smAud.value; $('smDirect').classList.toggle('hidden', val !== 'direct'); $('smLocPick').classList.toggle('hidden', val !== 'location'); $('smRolePick').classList.toggle('hidden', val !== 'role'); if (val === 'direct') $('smRecipSearch').focus(); };
 
   // "A specific person…" — the same type-ahead recipient search + chips as the
   // message composer; add one or many. Only staff with a phone are searchable.
@@ -4039,6 +4044,9 @@ async function renderSmsBlast() {
       } else if (val === 'direct') {
         payload.target_type = 'people'; payload.target_user_ids = [...picked.keys()];
         if (!payload.target_user_ids.length) throw new Error('Add at least one recipient.');
+      } else if (val === 'role') {
+        payload.target_type = 'role'; payload.target_role = $('smRoleSel').value;
+        payload.location_id = seesAll ? '' : (S.user.location_id || '');
       } else if (val === 'location') {
         payload.target_type = 'all'; payload.location_id = $('smLocSel').value;
       } else { // all
