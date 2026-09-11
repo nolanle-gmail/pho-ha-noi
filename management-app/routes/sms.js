@@ -46,6 +46,17 @@ function resolveRecipients(req, body) {
     if (!ownsLoc(req, u.location_id)) return { error: 'Not your location.' };
     return { locId: u.location_id, list: [u] };
   }
+  if (type === 'people') {
+    const ids = Array.isArray(body.target_user_ids)
+      ? [...new Set(body.target_user_ids.map(n => parseInt(n, 10)).filter(Boolean))].slice(0, 500) : [];
+    if (!ids.length) return { error: 'Pick at least one recipient.' };
+    const ph = ids.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT id, name, phone, location_id FROM users WHERE is_active=1 AND id IN (${ph}) ORDER BY name`).all(...ids);
+    const owned = rows.filter(u => ownsLoc(req, u.location_id));
+    if (!owned.length) return { error: 'None of those recipients are at a location you manage.' };
+    const locs = [...new Set(owned.map(u => String(u.location_id)))];
+    return { locId: locs.length === 1 ? owned[0].location_id : null, list: owned };
+  }
   // role / all need a location unless the caller sees all locations
   if (!locId && !seesAllLocations(req.user.role)) return { error: 'A location is required.' };
   if (locId && !ownsLoc(req, locId)) return { error: 'Not your location.' };
@@ -67,7 +78,7 @@ router.post('/send', async (req, res) => {
   if (!canSend(req.user.role)) return res.status(403).json({ error: 'Not allowed to send texts.' });
   const body = (req.body.body || '').toString().trim().slice(0, 600);
   if (!body) return res.status(400).json({ error: 'A text message is required.' });
-  const type = ['user', 'role', 'all'].includes(req.body.target_type) ? req.body.target_type : null;
+  const type = ['user', 'people', 'role', 'all'].includes(req.body.target_type) ? req.body.target_type : null;
   if (!type) return res.status(400).json({ error: 'Choose who to text.' });
 
   const r = resolveRecipients(req, req.body);

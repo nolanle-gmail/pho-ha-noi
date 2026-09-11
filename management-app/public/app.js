@@ -3949,7 +3949,6 @@ async function renderSmsBlast() {
   try { [status, data, recent] = await Promise.all([api('/sms/status'), api('/sms/staff?location_id=' + encodeURIComponent(locId || '')), api('/sms/recent')]); }
   catch (e) { /* staff may fail if no location yet */ }
   const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('');
-  const staffOpts = (data.staff || []).map(s => `<option value="${s.id}" ${s.has_phone ? '' : 'disabled'}>${esc(s.name)} · ${esc(roleLabel(s.role))}${s.has_phone ? '' : ' (no phone)'}</option>`).join('');
   const chips = SMS_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('');
   v.innerHTML = `
     <h2 class="page">📱 Text message <span style="font-weight:400;color:var(--muted);font-size:.9rem">— SMS to staff phones</span></h2>
@@ -3963,10 +3962,14 @@ async function renderSmsBlast() {
         <div class="seg" id="smTarget">
           <button type="button" class="seg-btn active" data-t="all">Everyone</button>
           <button type="button" class="seg-btn" data-t="role" ${data.roles && data.roles.length ? '' : 'disabled'}>A role</button>
-          <button type="button" class="seg-btn" data-t="user" ${data.staff && data.staff.length ? '' : 'disabled'}>A person</button>
+          <button type="button" class="seg-btn" data-t="people" ${data.staff && data.staff.length ? '' : 'disabled'}>Specific people</button>
         </div>
         <select id="smRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
-        <select id="smUser" class="hidden" style="margin-top:.4rem">${staffOpts || '<option>—</option>'}</select>
+        <div id="smPeople" class="hidden" style="margin-top:.4rem">
+          <div id="smRecipChips" class="recip-chips"></div>
+          <input id="smRecipSearch" class="fld" placeholder="🔍 Type a name to add…" autocomplete="off" />
+          <div id="smRecipList" class="recip-list hidden"></div>
+        </div>
       </div>
       <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div></div>
       <div class="al-field"><label>Message</label><textarea id="smBody" rows="3" maxlength="600" placeholder="Type your text message"></textarea>
@@ -3977,15 +3980,36 @@ async function renderSmsBlast() {
       <h3>Recent texts <span style="font-weight:400;color:var(--muted);font-size:.85rem">for audit</span></h3>
       ${recent.messages.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>By</th><th>To</th><th>Message</th><th class="num">Recipients</th><th class="num">Sent</th></tr></thead><tbody>
         ${recent.messages.map(m => `<tr><td class="mono">${esc((m.created_at || '').slice(0, 16).replace('T', ' '))}</td><td>${esc(m.sender_name || '—')}</td>
-          <td>${m.target_type === 'user' ? 'A person' : m.target_type === 'role' ? esc(roleLabel(m.target_role)) : 'Everyone'}</td>
+          <td>${m.target_type === 'user' ? 'A person' : m.target_type === 'people' ? `${m.recipient_count} people` : m.target_type === 'role' ? esc(roleLabel(m.target_role)) : 'Everyone'}</td>
           <td>${esc(m.body)}</td><td class="num">${m.recipient_count}</td><td class="num">${m.sent_count}${m.provider === 'none' ? ' <span class="badge gray">log</span>' : ''}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No texts sent yet.</div>'}
     </div>`;
   const cnt = () => $('smCount').textContent = ($('smBody').value || '').length;
   $('smBody').oninput = cnt;
-  v.querySelectorAll('#smTarget .seg-btn').forEach(b => b.onclick = () => { if (b.disabled) return; v.querySelectorAll('#smTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b)); $('smRole').classList.toggle('hidden', b.dataset.t !== 'role'); $('smUser').classList.toggle('hidden', b.dataset.t !== 'user'); });
+  v.querySelectorAll('#smTarget .seg-btn').forEach(b => b.onclick = () => { if (b.disabled) return; v.querySelectorAll('#smTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b)); $('smRole').classList.toggle('hidden', b.dataset.t !== 'role'); $('smPeople').classList.toggle('hidden', b.dataset.t !== 'people'); if (b.dataset.t === 'people') $('smRecipSearch').focus(); });
   v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
   const smLoc = $('smLoc'); if (smLoc) smLoc.onchange = () => { S.loc = smLoc.value; renderMessages(); };
+
+  // Multi-recipient picker with type-ahead search — only staff who have a phone
+  // on file can be texted, so the search list is limited to them.
+  const textable = (data.staff || []).filter(s => s.has_phone);
+  const picked = new Map();
+  const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
+  const drawChips = () => {
+    $('smRecipChips').innerHTML = picked.size ? [...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('') : `<span class="recip-empty">No one selected yet — type a name below. ${textable.length} of ${data.staff.length} staff have a phone.</span>`;
+    $('smRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
+  };
+  const drawList = (q) => {
+    const list = $('smRecipList');
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = textable.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}</span></button>`).join('') : '<div class="recip-none">No one with a phone matches that name.</div>';
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = textable.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('smRecipSearch').value = ''; drawList(''); $('smRecipSearch').focus(); });
+  };
+  $('smRecipSearch').oninput = () => drawList($('smRecipSearch').value.trim().toLowerCase());
+  drawChips();
+
   $('smSend').onclick = async () => {
     $('smErr').textContent = '';
     try {
@@ -3994,7 +4018,7 @@ async function renderSmsBlast() {
       if (!text) throw new Error('Type a message.');
       const payload = { target_type: target, body: text, location_id: (smLoc ? smLoc.value : locId) };
       if (target === 'role') payload.target_role = $('smRole').value;
-      if (target === 'user') payload.target_user_id = $('smUser').value;
+      if (target === 'people') { payload.target_user_ids = [...picked.keys()]; if (!payload.target_user_ids.length) throw new Error('Add at least one recipient.'); }
       const r = await api('/sms/send', { method: 'POST', body: JSON.stringify(payload) });
       const noPhone = r.no_phone ? `, ${r.no_phone} had no phone` : '';
       toast(r.logged_only ? `Logged ${r.recipients} (log-only — not sent)${noPhone}` : `Texted ${r.sent}/${r.recipients}${noPhone} 📱`);
