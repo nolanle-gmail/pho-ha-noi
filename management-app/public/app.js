@@ -3943,19 +3943,24 @@ async function renderSmsBlast() {
   const v = $('view');
   if (!myCap('manage')) { v.innerHTML = '<div class="empty">Text messages are sent by managers and owners.</div>'; return; }
   const seesAll = ALERT_SEES_ALL.includes(S.user.role);
-  const stores = (S.locations || []).filter(l => l.type !== 'central_kitchen');
-  const locId = seesAll ? (S.loc || (stores[0] && stores[0].id) || '') : S.user.location_id;
-  let status = { enabled: false, provider: 'none' }, data = { staff: [], roles: [], with_phone: 0 }, recent = { messages: [] };
-  try { [status, data, recent] = await Promise.all([api('/sms/status'), api('/sms/staff?location_id=' + encodeURIComponent(locId || '')), api('/sms/recent')]); }
+  let status = { enabled: false, provider: 'none' }, pool = { staff: [], locations: [] }, recent = { messages: [] };
+  // One cross-location pool (owner/HR/admin/GM get everyone; a store manager gets
+  // their own store — the /sms/staff endpoint scopes by the caller's role).
+  try { [status, pool, recent] = await Promise.all([api('/sms/status'), api('/sms/staff?location_id='), api('/sms/recent')]); }
   catch (e) { /* staff may fail if no location yet */ }
-  // The recipient picker draws from a full cross-location pool for all-location
-  // roles (owner/HR/admin/GM) so they can pick across stores in one send; store
-  // managers pick from their own store. Loaded independently of the top Store
-  // filter (which only scopes the Everyone / A-role broadcast targets).
-  let pool = data;
-  if (seesAll) { try { pool = await api('/sms/staff?location_id='); } catch { /* keep data */ } }
-  const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('');
+  const recips = pool.staff || [];
+  const textable = recips.filter(s => s.has_phone);
+  const textableIds = new Set(textable.map(s => s.id));
   const poolLocs = pool.locations || [];
+
+  // "To" quick groups, mirroring the message composer. Each is [label, [ids]].
+  const groups = [];
+  groups.push([seesAll ? 'Everyone' : 'Everyone at my store', recips.map(u => u.id)]);
+  const leaders = recips.filter(u => MSG_LEADERSHIP.includes(u.role) || MSG_MANAGERS.includes(u.role));
+  groups.push(['Owner / Admin / Managers', leaders.map(u => u.id)]);
+  // Only keep groups that actually contain someone textable.
+  const shownGroups = groups.map(g => [g[0], g[1], g[1].filter(id => textableIds.has(id)).length]).filter(g => g[2] > 0);
+
   const chips = SMS_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('');
   v.innerHTML = `
     <h2 class="page">📱 Text message <span style="font-weight:400;color:var(--muted);font-size:.9rem">— SMS to staff phones</span></h2>
@@ -3964,23 +3969,19 @@ async function renderSmsBlast() {
       : `<div class="callout" style="background:var(--gold-soft,#fbe9c7);border-left:3px solid var(--gold-strong,#b45309)"><b>Log-only mode.</b> No SMS provider is configured yet, so messages are recorded for audit but <b>not actually sent</b>. Set an SMS provider to go live.</div>`}
     <div class="section" style="max-width:640px">
       <div class="err" id="smErr"></div>
-      ${seesAll ? `<div class="al-field"><label>Store</label><select id="smLoc"><option value="">All locations</option>${stores.map(l => `<option value="${l.id}" ${String(l.id) === String(locId) ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>` : ''}
-      <div class="al-field"><label>Who <span style="font-weight:400;color:var(--muted)">· ${data.with_phone || 0} of ${data.staff.length} have a phone</span></label>
-        <div class="seg" id="smTarget">
-          <button type="button" class="seg-btn active" data-t="all">Everyone</button>
-          <button type="button" class="seg-btn" data-t="role" ${data.roles && data.roles.length ? '' : 'disabled'}>A role</button>
-          <button type="button" class="seg-btn" data-t="people" ${data.staff && data.staff.length ? '' : 'disabled'}>Specific people</button>
-        </div>
-        <select id="smRole" class="hidden" style="margin-top:.4rem">${roleOpts || '<option>—</option>'}</select>
-        <div id="smPeople" class="hidden" style="margin-top:.4rem">
-          ${poolLocs.length > 1 ? `<select id="smPeopleLoc" class="fld" style="margin-bottom:.4rem">
-            <option value="">🔍 Everyone — search all locations</option>
-            ${poolLocs.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))} — see all staff</option>`).join('')}
-          </select>` : ''}
+      <div class="al-field"><label>To <span style="font-weight:400;color:var(--muted)">· ${textable.length} of ${recips.length} have a phone</span></label>
+        <select id="smAud" class="fld">
+          ${shownGroups.map((g, i) => `<option value="g:${i}">${esc(g[0])} (${g[2]})</option>`).join('')}
+          <option value="direct">A specific person…</option>
+          <option value="all">All staff${seesAll ? '' : ' (my store)'}</option>
+          ${seesAll && poolLocs.length ? '<option value="location">A whole location…</option>' : ''}
+        </select>
+        <div id="smDirect" class="hidden" style="margin-top:.5rem">
           <div id="smRecipChips" class="recip-chips"></div>
           <input id="smRecipSearch" class="fld" placeholder="🔍 Type a name to add…" autocomplete="off" />
           <div id="smRecipList" class="recip-list hidden"></div>
         </div>
+        <div id="smLocPick" class="hidden" style="margin-top:.5rem"><select id="smLocSel" class="fld">${poolLocs.map(l => `<option value="${l.id}">${esc(shortLoc(l.name))}</option>`).join('')}</select></div>
       </div>
       <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div></div>
       <div class="al-field"><label>Message</label><textarea id="smBody" rows="3" maxlength="600" placeholder="Type your text message"></textarea>
@@ -3997,55 +3998,52 @@ async function renderSmsBlast() {
     </div>`;
   const cnt = () => $('smCount').textContent = ($('smBody').value || '').length;
   $('smBody').oninput = cnt;
-  v.querySelectorAll('#smTarget .seg-btn').forEach(b => b.onclick = () => { if (b.disabled) return; v.querySelectorAll('#smTarget .seg-btn').forEach(x => x.classList.toggle('active', x === b)); $('smRole').classList.toggle('hidden', b.dataset.t !== 'role'); $('smPeople').classList.toggle('hidden', b.dataset.t !== 'people'); if (b.dataset.t === 'people') $('smRecipSearch').focus(); });
   v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
-  const smLoc = $('smLoc'); if (smLoc) smLoc.onchange = () => { S.loc = smLoc.value; renderMessages(); };
 
-  // Multi-recipient picker: filter by location (all-location roles) and/or search
-  // by name, then add one or many. Chips persist across location/search changes.
-  // Only staff with a phone on file are textable, so the pool is limited to them.
-  const textable = (pool.staff || []).filter(s => s.has_phone);
+  const smAud = $('smAud');
+  smAud.onchange = () => { const val = smAud.value; $('smDirect').classList.toggle('hidden', val !== 'direct'); $('smLocPick').classList.toggle('hidden', val !== 'location'); if (val === 'direct') $('smRecipSearch').focus(); };
+
+  // "A specific person…" — the same type-ahead recipient search + chips as the
+  // message composer; add one or many. Only staff with a phone are searchable.
   const picked = new Map();
   const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
   const drawChips = () => {
     $('smRecipChips').innerHTML = picked.size
       ? `${[...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('')} <button type="button" class="recip-clear" data-clearall>Clear all (${picked.size})</button>`
-      : `<span class="recip-empty">No one selected yet — pick a location to browse, or type a name to search. ${textable.length} of ${pool.staff.length} staff have a phone.</span>`;
-    $('smRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); drawList(); });
-    const clr = $('smRecipChips').querySelector('[data-clearall]'); if (clr) clr.onclick = () => { picked.clear(); drawChips(); drawList(); };
+      : `<span class="recip-empty">No one selected yet — type a name to add. ${textable.length} of ${recips.length} staff have a phone.</span>`;
+    $('smRecipChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
+    const clr = $('smRecipChips').querySelector('[data-clearall]'); if (clr) clr.onclick = () => { picked.clear(); drawChips(); };
   };
-  const pickLoc = () => ($('smPeopleLoc') ? $('smPeopleLoc').value : (seesAll ? '' : String(S.user.location_id || '')));
-  const drawList = () => {
+  const drawList = (q) => {
     const list = $('smRecipList');
-    const q = ($('smRecipSearch').value || '').trim().toLowerCase();
-    const loc = pickLoc();
-    let cands = textable.filter(u => !picked.has(u.id) && (!loc || String(u.location_id) === String(loc)));
-    if (q) cands = cands.filter(u => wPrefix(u.name, q));
-    // "Everyone" with no search yet → prompt to search (avoid dumping every store).
-    if (!q && !loc) { list.classList.remove('hidden'); list.innerHTML = '<div class="recip-none">Type a name to search everyone, or pick a location above to see all its staff.</div>'; return; }
-    const shown = cands.slice(0, 200);
-    const showLocTag = !loc; // when searching across everyone, show which store each person is at
-    const addAll = (!q && loc && shown.length) ? `<button type="button" class="recip-item recip-addall" data-addall="1"><b>+ Add all ${shown.length} shown</b></button>` : '';
-    list.innerHTML = addAll + (shown.length
-      ? shown.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${showLocTag && u.location_name ? ' · ' + esc(shortLoc(u.location_name)) : ''}</span></button>`).join('')
-      : `<div class="recip-none">${q ? 'No one with a phone matches that name.' : 'No textable staff at this location.'}</div>`);
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = textable.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${u.location_name ? ' · ' + esc(shortLoc(u.location_name)) : ''}</span></button>`).join('') : '<div class="recip-none">No one with a phone matches that name.</div>';
     list.classList.remove('hidden');
-    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = textable.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('smRecipSearch').value = ''; drawList(); $('smRecipSearch').focus(); });
-    const all = list.querySelector('[data-addall]'); if (all) all.onclick = () => { shown.forEach(u => picked.set(u.id, u)); drawChips(); drawList(); };
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = textable.find(x => x.id == b.dataset.add); if (u) picked.set(u.id, u); drawChips(); $('smRecipSearch').value = ''; drawList(''); $('smRecipSearch').focus(); });
   };
-  $('smRecipSearch').oninput = () => drawList();
-  if ($('smPeopleLoc')) $('smPeopleLoc').onchange = () => { $('smRecipSearch').value = ''; drawList(); };
-  drawChips(); drawList();
+  $('smRecipSearch').oninput = () => drawList($('smRecipSearch').value.trim().toLowerCase());
+  drawChips();
 
   $('smSend').onclick = async () => {
     $('smErr').textContent = '';
     try {
-      const target = v.querySelector('#smTarget .seg-btn.active').dataset.t;
       const text = $('smBody').value.trim();
       if (!text) throw new Error('Type a message.');
-      const payload = { target_type: target, body: text, location_id: (smLoc ? smLoc.value : locId) };
-      if (target === 'role') payload.target_role = $('smRole').value;
-      if (target === 'people') { payload.target_user_ids = [...picked.keys()]; if (!payload.target_user_ids.length) throw new Error('Add at least one recipient.'); }
+      const val = smAud.value;
+      const payload = { body: text };
+      if (val.startsWith('g:')) {
+        const ids = shownGroups[parseInt(val.slice(2), 10)][1].filter(id => textableIds.has(id));
+        if (!ids.length) throw new Error('No one in that group has a phone.');
+        payload.target_type = 'people'; payload.target_user_ids = ids;
+      } else if (val === 'direct') {
+        payload.target_type = 'people'; payload.target_user_ids = [...picked.keys()];
+        if (!payload.target_user_ids.length) throw new Error('Add at least one recipient.');
+      } else if (val === 'location') {
+        payload.target_type = 'all'; payload.location_id = $('smLocSel').value;
+      } else { // all
+        payload.target_type = 'all'; payload.location_id = seesAll ? '' : (S.user.location_id || '');
+      }
       const r = await api('/sms/send', { method: 'POST', body: JSON.stringify(payload) });
       const noPhone = r.no_phone ? `, ${r.no_phone} had no phone` : '';
       toast(r.logged_only ? `Logged ${r.recipients} (log-only — not sent)${noPhone}` : `Texted ${r.sent}/${r.recipients}${noPhone} 📱`);
