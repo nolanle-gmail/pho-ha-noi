@@ -845,7 +845,7 @@ Entering a code shows a message panel:
 **Clock in** goes straight through when they're within 30 minutes of a shift here.
 Otherwise it warns and asks them to confirm — **not scheduled today**, **scheduled at
 another location**, or **more than 30 minutes early** — and on confirm it clocks them
-in and **messages the location's manager(s)** to review for the timesheet. **Clock out**
+in and **messages the location's managers and shift leads** to review for the timesheet. **Clock out**
 says goodbye on time; **more than 30 minutes early** warns, and on confirm messages the
 manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
 read. A background sweep reminds a staff member (and messages their manager) when they're
@@ -870,6 +870,21 @@ The staff-facing notices — the *"Don't forget to clock out"* nudge and the *"A
 clocked out"* notice — are sent **from a location leader** (a manager, or the owner/GM as a
 system sender), not from the staffer to themselves. The messaging layer drops self-messages, so
 sending them from a real leader is what makes them land in the staff member's inbox and push.
+Every leader alert here (missed / early / unscheduled clock-in, auto clock-out) goes to
+**everyone at the location with the `manage` cap — managers, assistant/kitchen managers AND shift
+leads**, not just the store manager.
+
+**Unscheduled clock-in (a substitute).** Someone can clock in even with **no shift today** — e.g.
+covering for a sick coworker. They confirm the "not scheduled today" prompt, get clocked in, and
+the location's **managers and shift leads are alerted**. On the **Time Clock** board that entry is
+**highlighted with a ⚠ no schedule badge** and an **➕ Assign hours** button (a scheduled entry
+shows **Adjust** instead). A manager or shift lead opens it and **sets the hours the person was
+meant to work** — this writes a work shift for that day (so the person now counts as scheduled,
+the **30-minute auto clock-out applies to that assigned end**, and the day feeds their timesheet)
+— and can also **correct the clock-in / clock-out times** on the entry. The staffer is notified of
+the change. At the end of the day the manager/shift lead **approves the timesheet** as usual
+(Reports → Timesheets / the payroll sign-off). If the sub forgets to clock out, once hours are
+assigned the normal **30-min grace auto clock-out** takes over at the assigned end.
 
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
