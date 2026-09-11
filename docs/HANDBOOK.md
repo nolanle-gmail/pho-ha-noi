@@ -914,20 +914,17 @@ What gets texted:
 - **Staff** — the **break reminder** also goes to the staff member's phone, and **manager
   alerts** (missed clock-out, early clock-out, clock-in to review) also text the location's
   leaders.
-- **Blast / compose** — **Messages → 📱 Text** lets an owner/admin/manager text **everyone**,
-  **a role**, or **specific people** (e.g. "cover needed tonight", a task reminder). *Specific
-  people* is a recipient picker with chips — add **one or more** staff and text them all at once;
-  only staff with a phone on file are selectable.
-  - **All-location roles** (owner / admin / HR / GM) get a **location dropdown** in the picker:
-    **"Everyone — search all locations"** or a specific store (**"<store> — see all staff"**).
-    Pick a store to **browse all its staff** (with a **"+ Add all N shown"** shortcut); choose
-    *Everyone* and **search by name** to find anyone across every store (each result is tagged
-    with its store). **Selected chips persist as you switch stores**, so you can gather recipients
-    from several locations into a single send; **"Clear all"** resets. **Store managers** pick
-    from their own store's staff.
-  - Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent list shows
-    "N people" for a multi-recipient send), and the composer shows a log-only banner until a
-    provider is live.
+- **Blast / compose** — **Messages → 📱 Text** uses the **same "To" picker as the message
+  composer** (e.g. "cover needed tonight", a task reminder). The **To** dropdown offers:
+  **Everyone** · **Owner / Admin / Managers** · **A specific person…** · **All staff** · **A whole
+  location…** (the last shown to all-location roles). *A specific person…* opens a **type-ahead
+  recipient search with chips** — search by name (each result tagged with role · store) and add
+  **one or more** staff to text them all at once; **"Clear all"** resets. *A whole location…* adds
+  a store dropdown. Only staff **with a phone on file** are selectable (the picker shows "N of M
+  have a phone"). Store managers are scoped to their own store; owner/admin/HR/GM reach every
+  store. Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent list
+  shows "N people" for a multi-recipient send), and the composer shows a log-only banner until a
+  provider is live.
 
 ---
 
