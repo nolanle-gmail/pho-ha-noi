@@ -915,9 +915,12 @@ What gets texted:
   alerts** (missed clock-out, early clock-out, clock-in to review) also text the location's
   leaders.
 - **Blast / compose** — **Messages → 📱 Text** lets an owner/admin/manager text **everyone**,
-  **a role**, or **one person** (e.g. "cover needed tonight", a task reminder). Managers are
-  scoped to their own store; owner/admin/GM can pick any store or all. Every blast is archived
-  in `sms_messages` + `sms_recipients` for audit, and the composer shows a log-only banner
+  **a role**, or **specific people** (e.g. "cover needed tonight", a task reminder). *Specific
+  people* is a **type-ahead recipient search with chips** (like the message composer) — search
+  by name and add **one or more** staff to text them all at once; only staff with a phone on
+  file are searchable. Managers are scoped to their own store; owner/admin/GM can pick any store
+  or all. Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent
+  list shows "N people" for a multi-recipient send), and the composer shows a log-only banner
   until a provider is live.
 
 ---
