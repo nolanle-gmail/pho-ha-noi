@@ -241,7 +241,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .app-shell { min-height: 100vh; }
 
 .sidebar {
-  position: fixed; top: 0; left: 0; width: var(--sidebar-w); height: 100vh;
+  position: fixed; top: 0; left: 0; width: var(--sidebar-w); height: 100vh; height: 100dvh;
   background: var(--red-dark); color: #fff; display: flex; flex-direction: column; z-index: 40;
 }
 .sidebar-logo { padding: 1.1rem 1.25rem 1rem; border-bottom: 1px solid rgba(255,255,255,.1); }
@@ -251,7 +251,7 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sidebar-user { padding: .8rem 1.25rem; border-bottom: 1px solid rgba(255,255,255,.1); }
 .sidebar-user .user-name { font-size: .9rem; font-weight: 700; }
 .sidebar-user .user-role { font-size: .74rem; opacity: .7; text-transform: capitalize; margin-top: .1rem; }
-.sidebar-nav { flex: 1; padding: .6rem 0; overflow-y: auto; }
+.sidebar-nav { flex: 1; min-height: 0; padding: .6rem 0; overflow-y: auto; }
 .nav-item {
   display: flex; align-items: center; gap: .7rem; width: 100%; text-align: left; background: transparent;
   border: none; color: rgba(255,255,255,.78); padding: .7rem 1.25rem; font-size: .9rem; font-weight: 600;
