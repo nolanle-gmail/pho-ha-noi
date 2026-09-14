@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 11, 2026_
+_Last updated: September 14, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -751,7 +751,10 @@ Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 ### Management console (port 4001)
 
 A left sidebar filtered by access level, with per-module tab bars. Managers land on
-a location dashboard; self-service staff land on a personal home screen.
+a location dashboard; self-service staff land on a personal home screen. **On phones the
+sidebar collapses to a ☰ hamburger drawer** — the drawer uses the dynamic viewport height
+(`100dvh`) so its footer (**Account Settings** and **Sign Out**) stays on-screen above the
+mobile browser's bottom toolbar rather than being pushed out of view.
 
 | Module | What's inside | Who |
 |---|---|---|
