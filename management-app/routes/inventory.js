@@ -34,8 +34,8 @@ router.get('/dashboard', requireRole(ROLES.OPS), (req, res) => {
   const low = db.prepare(`SELECT COUNT(*) c FROM inventory ${active} AND quantity < min_quantity`).get(...args).c;
   const expArgs = locId ? [locId] : [];
   const expCond = locId ? 'AND location_id=?' : '';
-  const expiring = db.prepare(`SELECT COUNT(*) c FROM inventory_lots WHERE quantity>0 AND expiry_date IS NOT NULL AND date(expiry_date) <= date('now','+7 days') ${expCond}`).get(...expArgs).c;
-  const openOrders = db.prepare(`SELECT COUNT(*) c FROM supply_orders ${cond ? cond + ' AND' : 'WHERE'} status IN ('pending','approved','shipped')`).get(...args).c;
+  const expiring = db.prepare(`SELECT COUNT(*) c FROM inventory_lots lo JOIN inventory i ON i.id=lo.item_id WHERE i.is_active=1 AND lo.quantity>0 AND lo.expiry_date IS NOT NULL AND date(lo.expiry_date) <= date('now','+7 days') ${expCond ? 'AND lo.location_id=?' : ''}`).get(...expArgs).c;
+  const openOrders = db.prepare(`SELECT COUNT(*) c FROM supply_orders so LEFT JOIN inventory i ON i.id=so.item_id WHERE (so.item_id IS NULL OR i.is_active=1) AND so.status IN ('pending','approved','shipped') ${locId ? 'AND so.location_id=?' : ''}`).get(...args).c;
   res.json({ total_value: value, item_count: items, low_stock: low, expiring_7d: expiring, open_orders: openOrders });
 });
 
@@ -201,7 +201,8 @@ router.delete('/vendors/:id', requireRole(ROLES.MANAGE), (req, res) => {
 // ── Supply orders (purchase orders) ────────────────────────────────────────
 router.get('/supply-orders', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
-  const cond = locId ? 'WHERE so.location_id=?' : '';
+  // Hide orders whose item has been archived (kept in the DB, just out of view).
+  const cond = 'WHERE (so.item_id IS NULL OR i.is_active=1)' + (locId ? ' AND so.location_id=?' : '');
   const args = locId ? [locId] : [];
   res.json(db.prepare(`
     SELECT so.*, COALESCE(so.item_name, i.item_name) as item_name, COALESCE(i.unit,'units') as unit,
@@ -440,7 +441,7 @@ router.delete('/:id', requireRole(ROLES.OPS), (req, res) => {
 // ── Lots & expiry ──────────────────────────────────────────────────────────
 router.get('/lots', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
-  const conds = ['lo.quantity > 0'], args = [];
+  const conds = ['lo.quantity > 0', 'i.is_active=1'], args = [];
   if (locId) { conds.push('lo.location_id=?'); args.push(locId); }
   if (req.query.item_id) { conds.push('lo.item_id=?'); args.push(req.query.item_id); }
   res.json(db.prepare(`
@@ -453,7 +454,7 @@ router.get('/lots', requireRole(ROLES.OPS), (req, res) => {
 router.get('/expiring', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   const days = Math.max(0, parseInt(req.query.days) || 7);
-  const conds = ['lo.quantity > 0', 'lo.expiry_date IS NOT NULL', `date(lo.expiry_date) <= date('now', '+' || ? || ' days')`];
+  const conds = ['lo.quantity > 0', 'i.is_active=1', 'lo.expiry_date IS NOT NULL', `date(lo.expiry_date) <= date('now', '+' || ? || ' days')`];
   const args = [days];
   if (locId) { conds.push('lo.location_id=?'); args.push(locId); }
   const rows = db.prepare(`
