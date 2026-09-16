@@ -560,7 +560,7 @@ router.get('/week', requireRole(ROLES.MANAGE), (req, res) => {
     timezone: loc.timezone || DEFAULT_TZ,
     staff: staff.map(s => {
       const shifts = byUser[s.id] || [];
-      const lastChange = shifts.reduce((mx, x) => (x.created_at && x.created_at > mx ? x.created_at : mx), '');
+      const lastChange = shifts.reduce((mx, x) => { const ts = x.updated_at || x.created_at; return ts && ts > mx ? ts : mx; }, '');
       const seen_at = seenBy[s.id] || null;
       return { ...s, shifts, seen_at, has_schedule: shifts.length > 0, schedule_seen: !!seen_at && (!lastChange || seen_at >= lastChange) };
     }),
@@ -733,7 +733,7 @@ router.put('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const end = isLeave && spec.allDay ? null : (req.body.end_time !== undefined ? (req.body.end_time || null) : shift.end_time);
   const date = req.body.shift_date !== undefined ? req.body.shift_date : shift.shift_date;
   const notes = req.body.notes !== undefined ? (req.body.notes || null) : shift.notes;
-  db.prepare(`UPDATE shifts SET shift_date=?, start_time=?, end_time=?, notes=?, kind=?, all_day=?, leave_hours=? WHERE id=?`)
+  db.prepare(`UPDATE shifts SET shift_date=?, start_time=?, end_time=?, notes=?, kind=?, all_day=?, leave_hours=?, updated_at=datetime('now') WHERE id=?`)
     .run(date, start, end, notes, spec.kind, spec.allDay, spec.leaveHours, shift.id);
   // Leave has no jobs or breaks; a work shift keeps them.
   if (isLeave) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(shift.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shift.id); }
@@ -752,6 +752,10 @@ router.delete('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(shift.id);
   db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(shift.id);
   db.prepare(`DELETE FROM shifts WHERE id=?`).run(shift.id);
+  // A removal changes their week too — touch their other shifts that week so the
+  // read/unread eye flips back to unread until they look again.
+  const ws = weekStart(shift.shift_date);
+  db.prepare(`UPDATE shifts SET updated_at=datetime('now') WHERE user_id=? AND shift_date BETWEEN ? AND ?`).run(shift.user_id, ws, addDays(ws, 6));
   auditLog(req, 'shift_delete', 'shift', shift.id, { date: shift.shift_date });
   res.json({ success: true });
 });

@@ -1062,8 +1062,8 @@ seven days):
 - A **read/unread eye 👁️** sits by each scheduled person's name: **solid** once they've
   opened their own schedule (My Schedule in the console or the Staff app) for that week
   **since it last changed**, **dimmed with a slash** if they haven't seen the latest yet.
-  Editing someone's shifts flips them back to unread until they look again; the tooltip
-  shows when they last viewed it.
+  Changing someone's shifts — **adding, editing, or removing** one — flips them back to
+  unread until they look again; the tooltip shows when they last viewed it.
 - **View filters** — a bar above the grid lets whoever is viewing narrow it down without
   changing anyone's schedule (the choices are remembered in that browser):
   - **Scheduled only** — hide staff with no scheduled hours in the current view.

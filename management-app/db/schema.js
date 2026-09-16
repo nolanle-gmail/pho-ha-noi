@@ -718,7 +718,8 @@ function migrate() {
       end_time    TEXT,                         -- "17:00"
       notes       TEXT,
       created_by  INTEGER REFERENCES users(id),
-      created_at  TEXT DEFAULT (datetime('now'))
+      created_at  TEXT DEFAULT (datetime('now')),
+      updated_at  TEXT                          -- set when a shift is edited (read/unread eye)
     );
 
     -- Which staff have opened their OWN schedule for a given work week — drives the
@@ -978,6 +979,9 @@ function migrate() {
     // Opt-in: when set, a weekly sweep copies this location's current week's work
     // shifts into the upcoming week if that week is still empty (never overwrites).
     `ALTER TABLE locations ADD COLUMN auto_roll_schedule INTEGER NOT NULL DEFAULT 0`,
+    // Last time a shift row was edited — drives the read/unread eye (a change after
+    // the staffer last viewed their schedule flips them back to unread).
+    `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the
