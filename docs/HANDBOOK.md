@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 15, 2026_
+_Last updated: September 16, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -863,6 +863,11 @@ out** button on their board row — for a **manager / shift lead / owner / HR** 
 `manage` cap). It opens a small dialog with the finish time (defaults to now for today, editable
 for the real end time); saving sets the clock-out, recomputes their worked hours, and notifies
 them. This works for anyone on the clock, scheduled or not — not only overruns.
+
+The board is scoped to the day being viewed, but **anyone still clocked in from a previous day**
+(an overnight shift, or a forgotten clock-out) **stays on the board** — shown with a **"⏱ since
+&lt;date&gt;"** badge — so a currently-open entry never disappears at midnight and a leader can always
+see it and clock them out.
 
 **Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
 to punch out, the system can **automatically clock a staffer out at their scheduled end** once
