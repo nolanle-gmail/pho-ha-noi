@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 14, 2026_
+_Last updated: September 15, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -857,6 +857,12 @@ still clocked in **past their scheduled end**. Those overruns also appear on the
 **shift lead** can **approve the extra hours** (they keep working), **add hours** (extend the
 allowed end by a set amount), or **clock them out now** — recorded on the entry for the
 timesheet, with a live **auto-clock-out countdown** per person.
+
+**Clock a staffer out when they forgot.** Every person still on the clock also has a **Clock
+out** button on their board row — for a **manager / shift lead / owner / HR** (anyone with the
+`manage` cap). It opens a small dialog with the finish time (defaults to now for today, editable
+for the real end time); saving sets the clock-out, recomputes their worked hours, and notifies
+them. This works for anyone on the clock, scheduled or not — not only overruns.
 
 **Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
 to punch out, the system can **automatically clock a staffer out at their scheduled end** once
