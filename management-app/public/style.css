@@ -99,7 +99,8 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sched-filters { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; padding: .6rem .8rem; margin: 0 0 .9rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); font-size: .85rem; }
 .sched-filters .chk { margin: 0; display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; white-space: nowrap; }
 .sched-filter-role { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); }
-.sched-filter-role select { font-size: .85rem; padding: .2rem .4rem; }
+.sched-filters input { margin: 0; }   /* cancel the global input margin-bottom inside the filter bar */
+.sched-filter-role select { font-size: .85rem; padding: .2rem .4rem; margin: 0; width: auto; }
 .sched-filter-total { margin-left: auto; color: var(--muted); white-space: nowrap; }
 .sched-filter-total strong { color: var(--ink); }
 .req-card { display: flex; justify-content: space-between; align-items: center; gap: 1rem; border: 1px solid var(--line); background: var(--surface); border-radius: 12px; padding: .8rem 1rem; margin-bottom: .6rem; flex-wrap: wrap; }
