@@ -2310,6 +2310,7 @@ function tcEntryModal(r) {
 }
 
 async function renderLocTimeClock() {
+  clearTimeout(S._tcTimer);   // reset the auto-refresh timer on every (re)render
   const canManage = ORG_ADMIN.includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
   let data, alerts = { alerts: [] }, payroll = null;
   try {
@@ -2444,6 +2445,12 @@ async function renderLocTimeClock() {
     });
     q('[data-msg]', b => b.onclick = () => quickMessageModal(+b.dataset.msg, b.dataset.msgname));
   }
+  // Live-refresh the board so new clock-ins/outs appear without a manual reload.
+  S._tcTimer = setTimeout(function tcTick() {
+    if (!(S.section === 'locations' && S.locTab === 'timeclock' && S.locDetailId)) return; // left the board → stop
+    if ($('modalHost') && $('modalHost').innerHTML) { S._tcTimer = setTimeout(tcTick, 20000); return; } // a dialog is open → wait
+    renderLocTimeClock();   // re-render (and reschedule its own timer)
+  }, 20000);
 }
 
 // Bi-weekly pay periods are two Sat–Fri weeks, anchored to a fixed Saturday
