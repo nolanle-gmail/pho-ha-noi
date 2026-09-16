@@ -721,6 +721,16 @@ function migrate() {
       created_at  TEXT DEFAULT (datetime('now'))
     );
 
+    -- Which staff have opened their OWN schedule for a given work week — drives the
+    -- read/unread eye on the manager's schedule grid. One row per (user, week),
+    -- upserted with a fresh seen_at each time the person views their schedule.
+    CREATE TABLE IF NOT EXISTS schedule_views (
+      user_id    INTEGER NOT NULL REFERENCES users(id),
+      week_start TEXT NOT NULL,               -- Saturday ISO of the viewed week
+      seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, week_start)
+    );
+
     -- Jobs/tasks assigned to a shift (a shift can carry several jobs).
     CREATE TABLE IF NOT EXISTS shift_jobs (
       shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,

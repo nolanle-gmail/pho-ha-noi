@@ -1769,15 +1769,20 @@ async function renderLocSchedule() {
     S.schedDay = (data.today && days.includes(data.today)) ? data.today : days[0];
   }
   const viewDays = dayMode ? [S.schedDay] : days;
-  // View filters (persisted per viewer). effShifts respects "this location only";
-  // hoursOf also narrows to the selected day in Day view.
+  // View filters (persisted per viewer). scopeDay narrows to the selected day in Day view.
   const F = S.schedFilters || (S.schedFilters = loadSchedFilters());
   const inThisLoc = (s) => String(s.location_id) === String(data.location.id);
-  const effShifts = (st) => F.thisLocOnly ? st.shifts.filter(inThisLoc) : st.shifts;
   const scopeDay = (arr) => dayMode ? arr.filter(s => s.shift_date === S.schedDay) : arr;
-  const hoursOf = (st) => sumHours(scopeDay(effShifts(st)));            // worked hours (OT basis)
-  const leaveOf = (st) => sumLeaveHours(scopeDay(effShifts(st)));      // paid sick / vacation / leave hours
-  const paidOf = (st) => hoursOf(st) + leaveOf(st);                    // total paid hours = worked + leave
+  // The name total is THIS location's hours/pay; the all-locations total is a
+  // separate line shown when the person is also scheduled elsewhere.
+  const hereShifts = (st) => scopeDay(st.shifts.filter(inThisLoc));
+  const allShifts = (st) => scopeDay(st.shifts);
+  const workedHere = (st) => sumHours(hereShifts(st));                 // worked hours here (OT basis)
+  const leaveHere = (st) => sumLeaveHours(hereShifts(st));             // paid sick / vacation / leave here
+  const paidHere = (st) => workedHere(st) + leaveHere(st);            // total paid hours here
+  const workedAll = (st) => sumHours(allShifts(st));                   // worked hours across all locations
+  const paidAll = (st) => workedAll(st) + sumLeaveHours(allShifts(st));
+  const otherLocCount = (st) => new Set(allShifts(st).filter(s => !inThisLoc(s)).map(s => s.location_id)).size;
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -1809,12 +1814,27 @@ async function renderLocSchedule() {
   const max = dayMode ? DAILY_MAX : WEEKLY_MAX;
   const nameTotal = (st) => {
     if (!F.showPay) return '';
-    const worked = hoursOf(st), leave = leaveOf(st), paid = worked + leave;
+    const worked = workedHere(st), leave = leaveHere(st), paid = worked + leave;
     const rate = Number(st.hourly_rate) || 0;
-    const pay = paid * rate;                 // pay covers worked + paid leave hours
+    const pay = paid * rate;                 // pay covers worked + paid leave hours at THIS location
     const over = worked > max;               // overtime is about worked hours only
-    const title = `${leave > 0 ? `${worked.toFixed(2)} worked + ${leave.toFixed(2)} leave = ${paid.toFixed(2)} h` : `${paid.toFixed(2)} h`} × $${rate.toFixed(2)}/h${over ? ` — worked over the ${max}h limit` : ''}${F.thisLocOnly ? ' — this location only' : ''}${dayMode ? ' — this day' : ''}`;
-    return `<div class="sched-name-total${over ? ' over' : ''}" title="${title}">${paid.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}${leave > 0 ? `<span class="sched-leave-inc">incl. ${leave.toFixed(2)}h leave</span>` : ''}</div>`;
+    const title = `${leave > 0 ? `${worked.toFixed(2)} worked + ${leave.toFixed(2)} leave = ${paid.toFixed(2)} h` : `${paid.toFixed(2)} h`} × $${rate.toFixed(2)}/h${over ? ` — worked over the ${max}h limit` : ''}${dayMode ? ' — this day' : ''}`;
+    // When the person is also scheduled at other stores, show their grand total across
+    // all locations (turns red past the limit — useful for spotting cross-store overtime).
+    let allLine = '';
+    if (!F.thisLocOnly && otherLocCount(st) > 0) {
+      const allPaid = paidAll(st), allOver = workedAll(st) > max;
+      allLine = `<div class="sched-alllocs${allOver ? ' over' : ''}" title="Total across every location this ${dayMode ? 'day' : 'week'}${allOver ? ` — over the ${max}h limit combined` : ''}">(${allPaid.toFixed(2)} hrs, all locations)</div>`;
+    }
+    return `<div class="sched-name-total${over ? ' over' : ''}" title="${title}">${paid.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}${leave > 0 ? `<span class="sched-leave-inc">incl. ${leave.toFixed(2)}h leave</span>` : ''}</div>${allLine}`;
+  };
+  // Read/unread eye: has the staffer opened their own schedule for this week since it
+  // last changed? Shown only when they actually have shifts to review.
+  const seenEye = (st) => {
+    if (!st.has_schedule) return '';
+    const when = st.seen_at ? ` on ${fmtDay(String(st.seen_at).slice(0, 10))}` : '';
+    const title = st.schedule_seen ? `Opened their schedule${when}` : (st.seen_at ? `Hasn't opened the latest schedule (last viewed${when})` : 'Hasn’t opened their schedule yet');
+    return `<span class="sched-seen ${st.schedule_seen ? 'read' : 'unread'}" title="${esc(title)}" aria-label="${st.schedule_seen ? 'Schedule viewed' : 'Schedule not viewed'}">👁️</span>`;
   };
 
   // Roles present at this location (for the role filter), and the client-side
@@ -1823,10 +1843,10 @@ async function renderLocSchedule() {
   if (F.role && !rolesPresent.includes(F.role)) F.role = '';   // role no longer here
   let shownStaff = data.staff;
   if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
-  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidOf(s) > 0);   // worked OR paid leave
-  const totH = shownStaff.reduce((t, s) => t + paidOf(s), 0);
-  const totLeave = shownStaff.reduce((t, s) => t + leaveOf(s), 0);
-  const totPay = shownStaff.reduce((t, s) => t + paidOf(s) * (Number(s.hourly_rate) || 0), 0);
+  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0);   // scheduled at this location
+  const totH = shownStaff.reduce((t, s) => t + paidHere(s), 0);
+  const totLeave = shownStaff.reduce((t, s) => t + leaveHere(s), 0);
+  const totPay = shownStaff.reduce((t, s) => t + paidHere(s) * (Number(s.hourly_rate) || 0), 0);
   const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role;
   const colspan = viewDays.length + 1;
 
@@ -1862,8 +1882,8 @@ async function renderLocSchedule() {
       ${viewDays.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
     </tr></thead><tbody>
       ${shownStaff.length ? shownStaff.map(st => `<tr>
-        <td class="sched-name"><div><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
-          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</div>${nameTotal(st)}</td>
+        <td class="sched-name"><div class="sched-name-row"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
+          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}${seenEye(st)}</div>${nameTotal(st)}</td>
         ${viewDays.map(d => cell(st, d)).join('')}
       </tr>`).join('') : `<tr><td colspan="${colspan}" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
     </tbody></table></div>

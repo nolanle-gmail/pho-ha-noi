@@ -139,6 +139,13 @@ td.sched-name { font-size: .86rem; }
 .sched-name-total.over { color: var(--out, #b91c1c); }
 .sched-leave-inc { display: block; margin-top: .05rem; font-size: .68rem; font-weight: 500; color: var(--info, #1d4ed8); }
 .sched-filter-total .sched-leave-inc { display: inline; margin: 0; }
+.sched-alllocs { margin-top: .1rem; font-size: .72rem; font-weight: 600; color: var(--muted); }
+.sched-alllocs.over { color: var(--out, #b91c1c); }
+.sched-name-row { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* Read/unread eye: solid when the staffer has opened their schedule, dimmed + slashed when not. */
+.sched-seen { position: relative; display: inline-block; margin-left: auto; font-size: .95rem; line-height: 1; cursor: default; }
+.sched-seen.unread { opacity: .4; }
+.sched-seen.unread::after { content: ""; position: absolute; left: -2px; right: -2px; top: 46%; height: 2px; background: var(--out, #b91c1c); transform: rotate(-18deg); border-radius: 2px; }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
 .shift-card { background: var(--shift-green); color: #fff; border: 1px solid var(--shift-green-d); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }

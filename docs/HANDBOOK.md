@@ -1047,11 +1047,23 @@ seven days):
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
 - Under each staff member's name the grid shows their **total as `<hours> hrs / $<pay>`**
-  (the week, or the day in Day view). The hours and pay **include paid sick / vacation /
-  on-leave hours** as well as worked hours — pay = (worked + paid-leave hours) × the
-  person's pay rate — and a small **"incl. `<n>`h leave"** note appears when any of the
-  total is leave. The **red ⚠** over-limit flag is based on **worked hours only** (leave
-  isn't overtime). The totals chip above the grid sums the shown staff the same way.
+  **for this location** (the week, or the day in Day view). The hours and pay **include
+  paid sick / vacation / on-leave hours** as well as worked hours — pay = (worked +
+  paid-leave hours) × the person's pay rate — and a small **"incl. `<n>`h leave"** note
+  appears when any of the total is leave. The **red ⚠** over-limit flag is based on
+  **worked hours only** (leave isn't overtime). The totals chip above the grid sums the
+  shown staff the same way.
+  - **All-locations total** — when a person is also scheduled at **another store**, a
+    second line **"(`<total>` hrs, all locations)"** shows their grand total across every
+    location for the period. It turns **red** once the combined worked hours pass the
+    40 h/week (or 8 h/day) limit — so cross-store overtime is easy to spot even though
+    this store only owes the hours on the first line. (Hidden when **This location only**
+    is on.)
+- A **read/unread eye 👁️** sits by each scheduled person's name: **solid** once they've
+  opened their own schedule (My Schedule in the console or the Staff app) for that week
+  **since it last changed**, **dimmed with a slash** if they haven't seen the latest yet.
+  Editing someone's shifts flips them back to unread until they look again; the tooltip
+  shows when they last viewed it.
 - **View filters** — a bar above the grid lets whoever is viewing narrow it down without
   changing anyone's schedule (the choices are remembered in that browser):
   - **Scheduled only** — hide staff with no scheduled hours in the current view.

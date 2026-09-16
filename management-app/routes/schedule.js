@@ -47,6 +47,7 @@ router.get('/mine',
     const shifts = rows.map(s => ({ ...s, jobs: jobsBy.all(s.id), breaks: breaksBy.all(s.id) }));
     const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
     const tz = (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(user.location_id) || {}).timezone || DEFAULT_TZ;
+    markScheduleSeen(user.id, start, end);   // the staff opened their own schedule
     res.json({ kind, start, end, days, today: localDate(tz), shifts });
   });
 
@@ -247,6 +248,17 @@ function weekStart(dateStr) {
   return fmtLocal(d);
 }
 function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocal(d); }
+
+// Record that a staff member opened their OWN schedule — one upsert per work week
+// covered by [start,end]. Feeds the read/unread eye on the manager's schedule grid.
+const _seenUpsert = db.prepare(`INSERT INTO schedule_views (user_id, week_start, seen_at) VALUES (?,?,datetime('now'))
+  ON CONFLICT(user_id, week_start) DO UPDATE SET seen_at=datetime('now')`);
+function markScheduleSeen(userId, start, end) {
+  try {
+    let w = weekStart(start); const last = weekStart(end);
+    for (let guard = 0; guard < 8; guard++) { _seenUpsert.run(userId, w); if (w >= last) break; w = addDays(w, 7); }
+  } catch { /* seen-tracking is best-effort, never block the schedule */ }
+}
 
 // ── Job/task catalog ─────────────────────────────────────────────────────────
 router.get('/jobs', requireRole(ROLES.MANAGE), (req, res) => {
@@ -533,13 +545,25 @@ router.get('/week', requireRole(ROLES.MANAGE), (req, res) => {
   const staff = locationStaff(locId);
   const byUser = shiftsForUsers(staff.map(s => s.id), ws);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  // Read/unread: has each staffer opened THEIR schedule for this week since it last
+  // changed? seen_at (their last view of this week) vs the newest shift that week.
+  const seenBy = {};
+  if (staff.length) {
+    const ph = staff.map(() => '?').join(',');
+    for (const r of db.prepare(`SELECT user_id, seen_at FROM schedule_views WHERE week_start=? AND user_id IN (${ph})`).all(ws, ...staff.map(s => s.id))) seenBy[r.user_id] = r.seen_at;
+  }
   res.json({
     location: loc,
     week_start: ws,
     days,
     today: localDate(loc.timezone || DEFAULT_TZ), // location-local "today" for the grid highlight
     timezone: loc.timezone || DEFAULT_TZ,
-    staff: staff.map(s => ({ ...s, shifts: byUser[s.id] || [] })),
+    staff: staff.map(s => {
+      const shifts = byUser[s.id] || [];
+      const lastChange = shifts.reduce((mx, x) => (x.created_at && x.created_at > mx ? x.created_at : mx), '');
+      const seen_at = seenBy[s.id] || null;
+      return { ...s, shifts, seen_at, has_schedule: shifts.length > 0, schedule_seen: !!seen_at && (!lastChange || seen_at >= lastChange) };
+    }),
   });
 });
 
@@ -593,6 +617,7 @@ router.get('/my-week', (req, res) => {
   const ws = weekStart(req.query.week);
   const byUser = shiftsForUsers([req.user.id], ws);
   const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  markScheduleSeen(req.user.id, ws, ws);   // the staff opened their own schedule
   res.json({ week_start: ws, days, shifts: byUser[req.user.id] || [] });
 });
 
