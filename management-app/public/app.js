@@ -1723,23 +1723,57 @@ function loadSchedFilters() {
   try { return Object.assign(def, JSON.parse(localStorage.getItem('phn_sched_filters') || '{}')); }
   catch { return def; }
 }
+// Which period the schedule shows: 'week' (default), 'month' or 'day'. Per viewer.
+function loadSchedPeriod() {
+  let p; try { p = localStorage.getItem('phn_sched_period'); } catch { p = null; }
+  return (p === 'month' || p === 'day') ? p : 'week';
+}
+function setSchedPeriod(p) { S.schedPeriod = p; try { localStorage.setItem('phn_sched_period', p); } catch { /* ignore */ } }
+// Shift a 'YYYY-MM' month string by n months.
+function addMonthIso(ym, n) {
+  const [y, m] = ym.split('-').map(Number);
+  const d = new Date(y, m - 1 + n, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+// The Week / Month / Day picker shared by every schedule view.
+function schedPeriodSelect(period) {
+  return `<select id="schPeriod" class="sched-period" title="View by week, month or day" aria-label="Period">
+    <option value="week" ${period === 'week' ? 'selected' : ''}>Week</option>
+    <option value="month" ${period === 'month' ? 'selected' : ''}>Month</option>
+    <option value="day" ${period === 'day' ? 'selected' : ''}>Day</option>
+  </select>`;
+}
+function wireSchedPeriodSelect() {
+  const el = $('schPeriod'); if (!el) return;
+  el.onchange = (e) => { setSchedPeriod(e.target.value); renderLocSchedule(); };
+}
 
 async function renderLocSchedule() {
+  const period = S.schedPeriod || (S.schedPeriod = loadSchedPeriod());
+  if (period === 'month') return renderLocScheduleMonth();
+  const dayMode = period === 'day';
   const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  const weekParam = dayMode ? (S.schedDay || '') : (S.schedWeek || '');
   let data, jobs;
   try {
     [data, jobs] = await Promise.all([
-      api('/schedule/week?location_id=' + S.locDetailId + (S.schedWeek ? '&week=' + S.schedWeek : '')),
+      api('/schedule/week?location_id=' + S.locDetailId + (weekParam ? '&week=' + weekParam : '')),
       api('/schedule/jobs?active=1'),
     ]);
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.schedWeek = data.week_start;
   const days = data.days;
-  // View filters (persisted per viewer). effShifts/effHours respect "this location only".
+  if (dayMode && (!S.schedDay || !days.includes(S.schedDay))) {
+    S.schedDay = (data.today && days.includes(data.today)) ? data.today : days[0];
+  }
+  const viewDays = dayMode ? [S.schedDay] : days;
+  // View filters (persisted per viewer). effShifts respects "this location only";
+  // hoursOf also narrows to the selected day in Day view.
   const F = S.schedFilters || (S.schedFilters = loadSchedFilters());
   const inThisLoc = (s) => String(s.location_id) === String(data.location.id);
   const effShifts = (st) => F.thisLocOnly ? st.shifts.filter(inThisLoc) : st.shifts;
-  const effHours = (st) => sumHours(effShifts(st));
+  const scopeDay = (arr) => dayMode ? arr.filter(s => s.shift_date === S.schedDay) : arr;
+  const hoursOf = (st) => sumHours(scopeDay(effShifts(st)));
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -1766,14 +1800,15 @@ async function renderLocSchedule() {
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
     return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${leaveCards}${awayCards}${add}</td>`;
   };
-  // Under each staff name: total scheduled hours this week and the resulting pay
-  // (hours × their pay rate).
+  // Under each staff name: total scheduled hours (the week, or the day in Day view)
+  // and the resulting pay (hours × their pay rate).
+  const max = dayMode ? DAILY_MAX : WEEKLY_MAX;
   const nameTotal = (st) => {
     if (!F.showPay) return '';
-    const h = effHours(st);
+    const h = hoursOf(st);
     const pay = h * (Number(st.hourly_rate) || 0);
-    const over = h > WEEKLY_MAX;
-    return `<div class="sched-name-total${over ? ' over' : ''}" title="${h.toFixed(2)} h × $${(Number(st.hourly_rate) || 0).toFixed(2)}/h${over ? ` — over the ${WEEKLY_MAX}h limit` : ''}${F.thisLocOnly ? ' — this location only' : ''}">${h.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}</div>`;
+    const over = h > max;
+    return `<div class="sched-name-total${over ? ' over' : ''}" title="${h.toFixed(2)} h × $${(Number(st.hourly_rate) || 0).toFixed(2)}/h${over ? ` — over the ${max}h limit` : ''}${F.thisLocOnly ? ' — this location only' : ''}${dayMode ? ' — this day' : ''}">${h.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}</div>`;
   };
 
   // Roles present at this location (for the role filter), and the client-side
@@ -1782,23 +1817,28 @@ async function renderLocSchedule() {
   if (F.role && !rolesPresent.includes(F.role)) F.role = '';   // role no longer here
   let shownStaff = data.staff;
   if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
-  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => effHours(s) > 0);
-  const totH = shownStaff.reduce((t, s) => t + effHours(s), 0);
-  const totPay = shownStaff.reduce((t, s) => t + effHours(s) * (Number(s.hourly_rate) || 0), 0);
+  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => hoursOf(s) > 0);
+  const totH = shownStaff.reduce((t, s) => t + hoursOf(s), 0);
+  const totPay = shownStaff.reduce((t, s) => t + hoursOf(s) * (Number(s.hourly_rate) || 0), 0);
   const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role;
+  const colspan = viewDays.length + 1;
+
+  const dayLabel = () => { const d = S.schedDay, wd = WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]; return `${wd}, <strong>${fmtDay(d)}</strong>, ${d.slice(0, 4)}${d === data.today ? ' · <span class="badge blue">Today</span>' : ''}`; };
+  const weekLabel = `Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}`;
 
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div class="week-nav">
-        <button class="btn sm ghost" id="wkPrev">‹ Prev</button>
-        <button class="btn sm ghost" id="wkToday">This week</button>
-        <button class="btn sm ghost" id="wkNext">Next ›</button>
-        ${canEdit ? '<button class="btn sm ghost" id="wkCopy" title="Fill this week from an earlier week">⧉ Copy a week</button>' : ''}
+        ${schedPeriodSelect(period)}
+        <button class="btn sm ghost" id="wkPrev">‹ ${dayMode ? 'Prev day' : 'Prev'}</button>
+        <button class="btn sm ghost" id="wkToday">${dayMode ? 'Today' : 'This week'}</button>
+        <button class="btn sm ghost" id="wkNext">${dayMode ? 'Next day' : 'Next'} ›</button>
+        ${(!dayMode && canEdit) ? '<button class="btn sm ghost" id="wkCopy" title="Fill this week from an earlier week">⧉ Copy a week</button>' : ''}
       </div>
-      <div class="week-label">Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}</div>
+      <div class="week-label">${dayMode ? dayLabel() : weekLabel}</div>
       ${canEdit ? '' : '<span class="badge gray">View only</span>'}
     </div>
-    ${canEdit ? `<label class="chk sched-autoroll" title="Each week, automatically copy this location's current week into the next week if it's still empty. Never overwrites shifts you've already set; leave is not carried over.">
+    ${(!dayMode && canEdit) ? `<label class="chk sched-autoroll" title="Each week, automatically copy this location's current week into the next week if it's still empty. Never overwrites shifts you've already set; leave is not carried over.">
       <input type="checkbox" id="schAutoRoll" ${data.location.auto_roll_schedule ? 'checked' : ''}/>
       ⟳ Auto-copy this schedule to next week, every week
     </label>` : ''}
@@ -1812,19 +1852,26 @@ async function renderLocSchedule() {
     </div>
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
-      ${days.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
+      ${viewDays.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
     </tr></thead><tbody>
       ${shownStaff.length ? shownStaff.map(st => `<tr>
         <td class="sched-name"><div><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
           ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</div>${nameTotal(st)}</td>
-        ${days.map(d => cell(st, d)).join('')}
-      </tr>`).join('') : `<tr><td colspan="8" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
+        ${viewDays.map(d => cell(st, d)).join('')}
+      </tr>`).join('') : `<tr><td colspan="${colspan}" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong> — over-limit shifts are flagged ⚠ (approve an exception when editing). Click a shift to edit; use + to add.</p>`;
 
-  $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
-  $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
-  $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
+  wireSchedPeriodSelect();
+  if (dayMode) {
+    $('wkPrev').onclick = () => { S.schedDay = addDaysIso(S.schedDay, -1); renderLocSchedule(); };
+    $('wkNext').onclick = () => { S.schedDay = addDaysIso(S.schedDay, 1); renderLocSchedule(); };
+    $('wkToday').onclick = () => { S.schedDay = null; renderLocSchedule(); };
+  } else {
+    $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
+    $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
+    $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
+  }
   const saveF = () => { try { localStorage.setItem('phn_sched_filters', JSON.stringify(F)); } catch { /* ignore */ } renderLocSchedule(); };
   $('fScheduled').onchange = (e) => { F.scheduledOnly = e.target.checked; saveF(); };
   $('fThisLoc').onchange = (e) => { F.thisLocOnly = e.target.checked; saveF(); };
@@ -1833,8 +1880,8 @@ async function renderLocSchedule() {
   const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; saveF(); };
   if ($('fClear')) $('fClear').onclick = clearF;
   if ($('fClear2')) $('fClear2').onclick = clearF;
-  if (canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
-  if (canEdit && $('schAutoRoll')) $('schAutoRoll').onchange = async (e) => {
+  if (!dayMode && canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
+  if (!dayMode && canEdit && $('schAutoRoll')) $('schAutoRoll').onchange = async (e) => {
     const enabled = e.target.checked;
     try {
       await api('/schedule/auto-roll', { method: 'PUT', body: JSON.stringify({ location_id: data.location.id, enabled }) });
@@ -1853,6 +1900,59 @@ async function renderLocSchedule() {
       if (shift) shiftModal(st, shift.shift_date, shift, jobs, data.location);
     });
   }
+}
+
+// Month view — a calendar of the location's schedule: each day shows how many staff
+// are scheduled and the total hours (a light per-day roll-up from /schedule/month).
+// Click a day to open it in Day view. Weeks run Saturday → Friday to match the grid.
+async function renderLocScheduleMonth() {
+  let data;
+  try { data = await api('/schedule/month?location_id=' + S.locDetailId + (S.schedMonth ? '&month=' + S.schedMonth : '')); }
+  catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  S.schedMonth = data.month;
+  const dates = [];
+  for (let d = data.grid_start; d <= data.grid_end && dates.length < 42; d = addDaysIso(d, 1)) dates.push(d);
+  const inMonth = (d) => d.slice(0, 7) === data.month;
+  const WKD = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+  const monthLabel = new Date(data.month + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  let monthHours = 0, monthLeave = 0;
+  for (const d of dates) { if (!inMonth(d)) continue; const r = data.days[d]; if (r) { monthHours += r.hours; monthLeave += r.leave_hours; } }
+  const cellHtml = (d) => {
+    const r = data.days[d];
+    const cls = `mcal-cell${inMonth(d) ? '' : ' out'}${d === data.today ? ' is-today' : ''}`;
+    const body = (r && (r.staff || r.leave))
+      ? `<div class="mcal-body"><span class="mcal-staff">${r.staff} staff</span><span class="mcal-hrs">${r.hours.toFixed(1)}h</span>${r.leave ? `<span class="mcal-leave">${r.leave} leave</span>` : ''}</div>`
+      : '';
+    return `<div class="${cls}" data-mday="${d}" role="button" tabindex="0" title="Open ${esc(fmtDay(d))}"><span class="mcal-date">${Number(d.slice(8, 10))}</span>${body}</div>`;
+  };
+  $('locBody').innerHTML = `
+    <div class="row-between sched-head">
+      <div class="week-nav">
+        ${schedPeriodSelect('month')}
+        <button class="btn sm ghost" id="wkPrev">‹ Prev</button>
+        <button class="btn sm ghost" id="wkToday">This month</button>
+        <button class="btn sm ghost" id="wkNext">Next ›</button>
+      </div>
+      <div class="week-label"><strong>${esc(monthLabel)}</strong></div>
+    </div>
+    <div class="sched-filters">
+      <span class="sched-filter-total"><strong>${esc(shortLoc(data.location.name))}</strong> · <strong>${monthHours.toFixed(1)} hrs</strong> scheduled${monthLeave ? ` · <strong>${monthLeave.toFixed(1)} leave hrs</strong>` : ''}</span>
+    </div>
+    <div class="mcal">
+      <div class="mcal-head">${WKD.map(w => `<div>${w}</div>`).join('')}</div>
+      <div class="mcal-grid">${dates.map(cellHtml).join('')}</div>
+    </div>
+    <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Each day shows how many staff are scheduled and the total hours. Click a day to open it in Day view.</p>`;
+
+  wireSchedPeriodSelect();
+  $('wkPrev').onclick = () => { S.schedMonth = addMonthIso(data.month, -1); renderLocSchedule(); };
+  $('wkNext').onclick = () => { S.schedMonth = addMonthIso(data.month, 1); renderLocSchedule(); };
+  $('wkToday').onclick = () => { S.schedMonth = null; renderLocSchedule(); };
+  $('locBody').querySelectorAll('[data-mday]').forEach(c => {
+    const go = () => { setSchedPeriod('day'); S.schedDay = c.dataset.mday; renderLocSchedule(); };
+    c.onclick = go;
+    c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
+  });
 }
 
 // Copy an earlier week's work shifts (jobs + breaks) into the week on screen, in

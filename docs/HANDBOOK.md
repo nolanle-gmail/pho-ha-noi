@@ -1024,6 +1024,17 @@ Staff watch their own totals in **My Hours**.
 A manager builds the week from the Location → Schedule grid (every staff member ×
 seven days):
 
+- **Week / Month / Day** — a period picker at the top-left switches the view (the
+  choice is remembered per viewer):
+  - **Week** — the editable staff × 7-day grid (the default; everything below).
+  - **Month** — a calendar of the location's schedule; each day shows how many staff
+    are scheduled and the total hours (a light roll-up), with the current day
+    highlighted and out-of-month days dimmed. Click any day to jump into **Day** view.
+  - **Day** — the same grid focused on one day, with Prev day / Today / Next day. The
+    under-name total and the filters apply to that day; the over-limit flag uses the
+    **8 h/day** limit.
+  - The **view filters** (below) apply in Week and Day; the Month calendar is a
+    location-wide roll-up and has its own hours summary instead.
 - Click **+** on a day → set start/end, pick one or more **jobs** from the catalog,
   add paid **breaks** (10 min each; unlocked once a shift is ≥ 3.5 h; max 2/day
   unless the day tops 10 h).

@@ -543,6 +543,50 @@ router.get('/week', requireRole(ROLES.MANAGE), (req, res) => {
   });
 });
 
+// Month view — a per-day roll-up for the calendar (how many staff are scheduled
+// and the total hours each day), for the whole calendar grid that shows the month.
+// Light payload: aggregates only, not every shift. Weeks run Saturday → Friday to
+// match the week grid.
+router.get('/month', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.query.location_id, 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const tz = loc.timezone || DEFAULT_TZ;
+  const today = localDate(tz);
+  const m = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : today.slice(0, 7);
+  const [Y, M] = m.split('-').map(Number);
+  const firstIso = `${m}-01`;
+  const lastIso = `${m}-${String(new Date(Y, M, 0).getDate()).padStart(2, '0')}`;
+  const gridStart = weekStart(firstIso);               // Saturday on/before the 1st
+  const gridEnd = addDays(weekStart(lastIso), 6);      // Friday on/after the last
+  const rows = db.prepare(`
+    SELECT s.shift_date, s.user_id, s.start_time, s.end_time, s.kind, s.leave_hours
+    FROM shifts s WHERE s.location_id=? AND s.shift_date BETWEEN ? AND ?
+  `).all(locId, gridStart, gridEnd);
+  const acc = {};
+  for (const s of rows) {
+    const r = acc[s.shift_date] || (acc[s.shift_date] = { work: {}, hours: 0, leave: {}, leaveHours: 0 });
+    if (s.kind === 'work') {
+      r.work[s.user_id] = 1;
+      if (s.start_time && s.end_time) r.hours += spanHours(s.start_time, s.end_time);
+    } else { r.leave[s.user_id] = 1; r.leaveHours += Number(s.leave_hours) || 0; }
+  }
+  const days = {};
+  for (const [d, r] of Object.entries(acc)) {
+    days[d] = {
+      staff: Object.keys(r.work).length, hours: Math.round(r.hours * 100) / 100,
+      leave: Object.keys(r.leave).length, leave_hours: Math.round(r.leaveHours * 100) / 100,
+    };
+  }
+  res.json({
+    location: { id: loc.id, name: loc.name }, month: m,
+    grid_start: gridStart, grid_end: gridEnd, month_first: firstIso, month_last: lastIso,
+    today, timezone: tz, days,
+  });
+});
+
 // Any signed-in staff member can see their own week (all locations they work).
 router.get('/my-week', (req, res) => {
   const ws = weekStart(req.query.week);
