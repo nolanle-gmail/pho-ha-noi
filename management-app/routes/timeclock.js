@@ -433,17 +433,23 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const today = localDate(tz);
   const date = validDate(req.query.date) || today;
 
+  // Entries for the chosen day, PLUS anyone still on the clock from an earlier day
+  // (an overnight shift, or a forgotten clock-out) so a currently-open entry never
+  // disappears from the board at midnight — leaders can always see (and close) it.
   const entries = db.prepare(`SELECT te.*, u.name, u.employee_code FROM time_entries te JOIN users u ON u.id=te.user_id
-    WHERE te.location_id=? AND te.work_date=? ORDER BY te.clock_in`).all(locId, date);
+    WHERE te.location_id=? AND (te.work_date=? OR (te.clock_out IS NULL AND te.work_date < ?)) ORDER BY te.clock_out IS NULL DESC, te.clock_in`).all(locId, date, date);
   // Whose work shift(s) exist for this day/location (to flag unscheduled clock-ins).
   const shiftBy = {};
   for (const s of db.prepare(`SELECT user_id, MIN(start_time) AS start_time, MAX(end_time) AS end_time FROM shifts WHERE location_id=? AND shift_date=? AND kind='work' GROUP BY user_id`).all(locId, date)) shiftBy[s.user_id] = s;
   const hhmm = (iso) => { const d = new Date(iso); return `${String(localMinutesOfDay(tz, d) / 60 | 0).padStart(2, '0')}:${String(localMinutesOfDay(tz, d) % 60).padStart(2, '0')}`; };
+  const shiftFor = db.prepare(`SELECT MIN(start_time) AS start_time, MAX(end_time) AS end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
-    const sh = shiftBy[e.user_id];
+    // Their shift on the entry's OWN day (carryover entries look up their prior day).
+    const rawSh = e.work_date === date ? shiftBy[e.user_id] : shiftFor.get(e.user_id, locId, e.work_date);
+    const sh = rawSh && rawSh.start_time ? rawSh : null;
     return {
       id: e.id, user_id: e.user_id, name: e.name, employee_code: e.employee_code,
       clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
@@ -454,6 +460,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       short: e.short_confirmed ? 1 : 0,
       unscheduled: sh ? 0 : 1,
       shift_start: sh ? sh.start_time : null, shift_end: sh ? sh.end_time : null,
+      work_date: e.work_date, carryover: e.work_date !== date ? 1 : 0,
     };
   });
   // Scheduled today but no punch yet → "not in".

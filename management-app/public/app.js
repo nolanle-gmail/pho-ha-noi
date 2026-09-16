@@ -2330,8 +2330,8 @@ async function renderLocTimeClock() {
     : `<span class="badge gray">Checked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
   const canEditTc = myCap('manage');
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
-  const entryRows = data.entries.map(r => `<tr${r.unscheduled ? ' class="tc-unscheduled"' : ''}>
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
+  const entryRows = data.entries.map(r => `<tr${r.unscheduled || r.carryover ? ' class="tc-unscheduled"' : ''}>
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
     <td>${r.clock_in || '—'}</td><td>${r.clock_out || '—'}</td>
     <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
