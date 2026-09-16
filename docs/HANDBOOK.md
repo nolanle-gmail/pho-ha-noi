@@ -1037,6 +1037,16 @@ seven days):
 - Under each staff member's name the grid shows their **weekly total as `<hours> hrs /
   $<pay>`** — pay = the week's scheduled hours × that person's pay rate (it turns **red ⚠**
   when the hours pass the 40 h limit).
+- **View filters** — a bar above the grid lets whoever is viewing narrow it down without
+  changing anyone's schedule (the choices are remembered in that browser):
+  - **Scheduled only** — hide staff with no scheduled hours in the current view.
+  - **This location only** — hide the read-only "@ store" cards for shifts a person works
+    at other locations, so the grid shows just this store's shifts. The under-name
+    `hrs / $pay` total then counts only this location's hours.
+  - **Show hours & pay** — turn the under-name `hrs / $pay` line on or off.
+  - **Role** — show only one role (the dropdown lists the roles present at this location).
+  - A **Clear** button resets the filters, and a totals chip on the right reads
+    **"Showing *N* of *M* · *X* hrs · $*Y*"** for the staff currently shown.
 - **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,
   so a steady weekly roster doesn't have to be re-entered by hand. Pick any of the last
   **8 weeks** to copy from (defaults to the **previous week**); it clones every **work

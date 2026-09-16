@@ -1717,6 +1717,13 @@ const fmtH = (h) => (Math.round(h * 10) / 10).toString().replace(/\.0$/, '');
 const to12h = (hhmm) => { if (!hhmm) return '—'; const [H, M] = String(hhmm).split(':').map(Number); if (isNaN(H)) return hhmm; const ap = H < 12 ? 'am' : 'pm'; const h = (H % 12) || 12; return M ? `${h}:${String(M).padStart(2, '0')}${ap}` : `${h}${ap}`; };
 const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.label ? ' ' + b.label : ''}`;
 
+// Schedule view filters, remembered per viewer in this browser. showPay defaults on.
+function loadSchedFilters() {
+  const def = { scheduledOnly: false, thisLocOnly: false, role: '', showPay: true };
+  try { return Object.assign(def, JSON.parse(localStorage.getItem('phn_sched_filters') || '{}')); }
+  catch { return def; }
+}
+
 async function renderLocSchedule() {
   const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
   let data, jobs;
@@ -1728,6 +1735,11 @@ async function renderLocSchedule() {
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.schedWeek = data.week_start;
   const days = data.days;
+  // View filters (persisted per viewer). effShifts/effHours respect "this location only".
+  const F = S.schedFilters || (S.schedFilters = loadSchedFilters());
+  const inThisLoc = (s) => String(s.location_id) === String(data.location.id);
+  const effShifts = (st) => F.thisLocOnly ? st.shifts.filter(inThisLoc) : st.shifts;
+  const effHours = (st) => sumHours(effShifts(st));
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -1747,7 +1759,7 @@ async function renderLocSchedule() {
       const dur = s.all_day ? 'all day' : `${fmtH(leaveHoursOf(s))}h${s.start_time ? ` · ${s.start_time}–${s.end_time}` : ''}`;
       return `<div class="leave-card ${m.chip}${canEdit ? ' editable' : ''}" data-shift="${s.id}" title="${esc(m.label)} — ${dur}">${m.icon} <b>${esc(m.label)}</b> <span class="leave-dur">${dur}</span></div>`;
     }).join('');
-    const awayCards = away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
+    const awayCards = F.thisLocOnly ? '' : away.map(s => `<div class="shift-card away" title="Scheduled at ${esc(shortLoc(s.location_name))}">
         <div class="shift-time">${to12h(s.start_time)}–${to12h(s.end_time)}</div>
         <div class="shift-away-loc">@ ${esc(shortLoc(s.location_name))}</div>
       </div>`).join('');
@@ -1757,11 +1769,23 @@ async function renderLocSchedule() {
   // Under each staff name: total scheduled hours this week and the resulting pay
   // (hours × their pay rate).
   const nameTotal = (st) => {
-    const h = sumHours(st.shifts);
+    if (!F.showPay) return '';
+    const h = effHours(st);
     const pay = h * (Number(st.hourly_rate) || 0);
     const over = h > WEEKLY_MAX;
-    return `<div class="sched-name-total${over ? ' over' : ''}" title="${h.toFixed(2)} h × $${(Number(st.hourly_rate) || 0).toFixed(2)}/h${over ? ` — over the ${WEEKLY_MAX}h limit` : ''}">${h.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}</div>`;
+    return `<div class="sched-name-total${over ? ' over' : ''}" title="${h.toFixed(2)} h × $${(Number(st.hourly_rate) || 0).toFixed(2)}/h${over ? ` — over the ${WEEKLY_MAX}h limit` : ''}${F.thisLocOnly ? ' — this location only' : ''}">${h.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}</div>`;
   };
+
+  // Roles present at this location (for the role filter), and the client-side
+  // filtered list of staff to actually show.
+  const rolesPresent = [...new Set(data.staff.map(s => s.role))].sort();
+  if (F.role && !rolesPresent.includes(F.role)) F.role = '';   // role no longer here
+  let shownStaff = data.staff;
+  if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
+  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => effHours(s) > 0);
+  const totH = shownStaff.reduce((t, s) => t + effHours(s), 0);
+  const totPay = shownStaff.reduce((t, s) => t + effHours(s) * (Number(s.hourly_rate) || 0), 0);
+  const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role;
 
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
@@ -1778,21 +1802,37 @@ async function renderLocSchedule() {
       <input type="checkbox" id="schAutoRoll" ${data.location.auto_roll_schedule ? 'checked' : ''}/>
       ⟳ Auto-copy this schedule to next week, every week
     </label>` : ''}
+    <div class="sched-filters">
+      <label class="chk" title="Hide staff with no scheduled hours in this view."><input type="checkbox" id="fScheduled" ${F.scheduledOnly ? 'checked' : ''}/> Scheduled only</label>
+      <label class="chk" title="Show only shifts at this location; hide shifts staff work at other locations."><input type="checkbox" id="fThisLoc" ${F.thisLocOnly ? 'checked' : ''}/> This location only</label>
+      <label class="chk" title="Show total hours and pay under each name."><input type="checkbox" id="fShowPay" ${F.showPay ? 'checked' : ''}/> Show hours &amp; pay</label>
+      <label class="sched-filter-role">Role <select id="fRole"><option value="">All roles</option>${rolesPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
+      ${anyFilter ? '<button class="btn sm ghost" id="fClear" title="Clear all filters">Clear</button>' : ''}
+      <span class="sched-filter-total" title="Totals for the staff shown">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong> · <strong>$${totPay.toFixed(2)}</strong></span>
+    </div>
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
       ${days.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
     </tr></thead><tbody>
-      ${data.staff.length ? data.staff.map(st => `<tr>
+      ${shownStaff.length ? shownStaff.map(st => `<tr>
         <td class="sched-name"><div><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
           ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</div>${nameTotal(st)}</td>
         ${days.map(d => cell(st, d)).join('')}
-      </tr>`).join('') : `<tr><td colspan="8" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
+      </tr>`).join('') : `<tr><td colspan="8" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong> — over-limit shifts are flagged ⚠ (approve an exception when editing). Click a shift to edit; use + to add.</p>`;
 
   $('wkPrev').onclick = () => { S.schedWeek = addDaysIso(data.week_start, -7); renderLocSchedule(); };
   $('wkNext').onclick = () => { S.schedWeek = addDaysIso(data.week_start, 7); renderLocSchedule(); };
   $('wkToday').onclick = () => { S.schedWeek = null; renderLocSchedule(); };
+  const saveF = () => { try { localStorage.setItem('phn_sched_filters', JSON.stringify(F)); } catch { /* ignore */ } renderLocSchedule(); };
+  $('fScheduled').onchange = (e) => { F.scheduledOnly = e.target.checked; saveF(); };
+  $('fThisLoc').onchange = (e) => { F.thisLocOnly = e.target.checked; saveF(); };
+  $('fShowPay').onchange = (e) => { F.showPay = e.target.checked; saveF(); };
+  $('fRole').onchange = (e) => { F.role = e.target.value; saveF(); };
+  const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; saveF(); };
+  if ($('fClear')) $('fClear').onclick = clearF;
+  if ($('fClear2')) $('fClear2').onclick = clearF;
   if (canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
   if (canEdit && $('schAutoRoll')) $('schAutoRoll').onchange = async (e) => {
     const enabled = e.target.checked;
