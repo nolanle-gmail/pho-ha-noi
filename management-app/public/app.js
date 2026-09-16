@@ -3096,7 +3096,7 @@ const JOB_TITLES = [
 ];
 // A text input backed by a <datalist> — type freely or pick a suggestion.
 const dlInput = (k, label, val, opts) => `<label class="pfl">${label}<input id="pf_${k}" list="dl_${k}" value="${esc(val == null ? '' : val)}" autocomplete="off" placeholder="Type or pick…" /><datalist id="dl_${k}">${opts.map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist></label>`;
-const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs / Tasks'], ['access', 'Access Levels'], ['activity', 'Activity Log']];
+const STAFF_TABS = [['overview', 'Overview'], ['directory', 'Directory'], ['jobs', 'Jobs'], ['access', 'Access Levels'], ['activity', 'Activity Log']];
 // The Activity Log (access trail) is owner/admin only.
 const staffTabsFor = () => STAFF_TABS.filter(([k]) => k !== 'activity' || ORG_ADMIN.includes(S.user.role));
 function renderStaffTabs() {
