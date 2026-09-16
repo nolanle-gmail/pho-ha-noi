@@ -869,6 +869,10 @@ The board is scoped to the day being viewed, but **anyone still clocked in from 
 &lt;date&gt;"** badge — so a currently-open entry never disappears at midnight and a leader can always
 see it and clock them out.
 
+The board **auto-refreshes about every 20 seconds** while it's open (it pauses while a dialog is
+open and stops when you leave the tab), so a staffer's **clock-in / clock-out appears on the
+leaders' board on its own** — no manual reload needed.
+
 **Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
 to punch out, the system can **automatically clock a staffer out at their scheduled end** once
 they're a **grace window** past it with no approval. On the location's **Time Clock** tab, a
