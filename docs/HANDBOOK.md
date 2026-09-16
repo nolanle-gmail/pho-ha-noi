@@ -760,7 +760,7 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
-| **Staff** | Directory (A–Z, searchable by phone/name/code), full HR-profile edit, jobs/tasks catalog, Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
+| **Staff** | Directory (A–Z, searchable by name / phone — **including a person's previous login numbers** — / code / email / role), full HR-profile edit, jobs/tasks catalog, Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
@@ -785,7 +785,8 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 > (the profile shows a **"Previous login numbers"** line, and it's kept in
 > `user_phone_history` + the audit log), so an old number still traces back to the person;
 > all of their history stays attached because it's keyed by their stable account, not the
-> phone. **Work email** is now **editable** too (optional; a blank one falls back to an
+> phone. **Directory search matches a person's previous numbers**, so typing an old phone
+> still finds them. **Work email** is now **editable** too (optional; a blank one falls back to an
 > internal placeholder, and it's kept unique). Change **role** or location to move someone
 > between roles or stores (owner/admin).
 >

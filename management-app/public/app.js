@@ -3316,12 +3316,19 @@ async function renderStaffDirectory() {
   const canAdd = ORG_ADMIN.includes(S.user.role);
   const isManagerish = MGR_EDIT_ROLES.includes(S.user.role);
   const q = staffSearch.trim().toLowerCase();
+  const qDigits = q.replace(/\D+/g, '');
   const searching = q.length > 0;
+  // Match name/email/role/code, the current phone, and any PREVIOUS login numbers
+  // (prev_phones). A digit query also matches phone digits so a formatted number works.
+  const matches = (u) => {
+    const hay = (u.name + ' ' + u.email + ' ' + (u.phone || '') + ' ' + u.role + ' ' + (u.employee_code || '') + ' ' + (u.prev_phones || '')).toLowerCase();
+    if (hay.includes(q)) return true;
+    if (qDigits.length >= 3) return ((u.phone || '') + ' ' + (u.prev_phones || '')).replace(/\D+/g, '').includes(qDigits);
+    return false;
+  };
   // Which first-letters actually have people (for the A–Z bar).
   const present = new Set(rows.map(letterOf));
-  const shown = (searching
-    ? rows.filter(u => (u.name + ' ' + u.email + ' ' + (u.phone || '') + ' ' + u.role + ' ' + (u.employee_code || '')).toLowerCase().includes(q))
-    : rows.filter(u => letterOf(u) === staffLetter))
+  const shown = (searching ? rows.filter(matches) : rows.filter(u => letterOf(u) === staffLetter))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
 
   // A–Z bar (plus '#' only if some name is non-alphabetic).
@@ -3357,7 +3364,7 @@ async function renderStaffDirectory() {
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
       ${canAdd ? '<button class="btn" id="addStaff">+ Add staff</button>' : (isManagerish ? '' : '<span class="badge gray">View only</span>')}</div>
     <div class="letter-bar">${bar}</div>
-    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search all staff by name, phone, code, email or role…" value="${esc(staffSearch)}" style="max-width:340px" />
+    <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search by name, phone (incl. previous), code, email or role…" value="${esc(staffSearch)}" style="max-width:360px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
     <div class="table-wrap"><table><thead><tr>
       <th>Name</th><th>Code</th><th>Phone (login)</th><th>Role</th><th>Location</th><th>Status</th><th>Actions</th>
@@ -3580,7 +3587,7 @@ const mmddyyFromDob = (dob) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob 
 
 // Full add-staff form (account + complete profile in one go).
 function renderStaffAdd(locations) {
-  const inp = (k, label, val, type = 'text') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" /></label>`;
+  const inp = (k, label, val, type = 'text', attrs = '') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" ${attrs} /></label>`;
   const selRaw = (k, label, val, opts) => `<label class="pfl">${label}<select id="pf_${k}">${opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(val || '') ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>`;
   const selS = (k, label, val, arr) => selRaw(k, label, val, arr.map(x => ({ v: x, n: x || '—' })));
   const roleOpts = accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) }));
@@ -3590,7 +3597,7 @@ function renderStaffAdd(locations) {
       <div><button class="btn ghost" id="cancelAdd">Cancel</button> <button class="btn" id="saveAdd">Create account</button></div></div>
     <div class="err" id="addErr"></div>
     <div class="prof-cols">
-      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel')}${inp('email', 'Email (optional)', '', 'email')}${inp('password', 'Temporary password (min 8)', '', 'password')}${selRaw('role', 'Role', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
+      <div class="section"><h3>Account</h3>${inp('name', 'Full name', '', 'text', 'autocomplete="off"')}${inp('acct_phone', 'Phone (login) — 10 digits', '', 'tel', 'autocomplete="off"')}${inp('email', 'Email (optional)', '', 'email', 'autocomplete="off"')}${inp('password', 'Temporary password (min 8)', '', 'password', 'autocomplete="new-password"')}${selRaw('role', 'Role', 'employee', roleOpts)}${selRaw('location_id', 'Home location', '', locOpts)}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', '')}${inp('legal_first_name', 'Legal first name', '')}${inp('legal_last_name', 'Legal last name', '')}${inp('dob', 'Date of birth (required)', '', 'date')}${inp('gender', 'Gender', '')}${inp('personal_id', 'Personal ID (9 digits)', '')}${inp('employee_code', 'Employee code (6 digits — leave blank to use date of birth)', '')}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', '', 'email')}${inp('phone', 'Mobile', '')}${inp('alt_phone', 'Alt phone', '')}${selS('preferred_contact', 'Preferred contact', '', ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', '')}${inp('address_line2', 'Address line 2', '')}${inp('city', 'City', '')}${inp('state', 'State', '')}${inp('postal_code', 'Postal code', '')}${inp('country', 'Country', 'USA')}</div>
@@ -3600,6 +3607,18 @@ function renderStaffAdd(locations) {
       <div class="section"><h3>Also works at (transfers)</h3><div class="loc-checks">${(locations || []).map(l => `<label class="chk"><input type="checkbox" data-loc="${l.id}" /> <span>${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</span></label>`).join('')}</div></div>
       <div class="section" style="grid-column:1/-1"><h3>Skills &amp; notes</h3>${inp('skills', 'Skills / roles (comma-separated)', '')}<label class="pfl">Notes<textarea id="pf_notes" rows="3"></textarea></label></div>
     </div>`;
+  // Guard the email/password fields against browser autofill (Chrome ignores
+  // autocomplete="off" for saved logins). Start them empty + readonly so nothing is
+  // pre-filled, and drop readonly the moment the user focuses to type.
+  ['pf_email', 'pf_password'].forEach(id => {
+    const el = $(id); if (!el) return;
+    el.value = ''; el.setAttribute('readonly', 'readonly');
+    const unlock = () => el.removeAttribute('readonly');
+    el.addEventListener('focus', unlock, { once: true });
+    el.addEventListener('pointerdown', unlock, { once: true });
+  });
+  // Clear once more after the paint, catching any late autofill.
+  setTimeout(() => { const e = $('pf_email'), p = $('pf_password'); if (e && document.activeElement !== e) e.value = ''; if (p && document.activeElement !== p) p.value = ''; }, 250);
   $('cancelAdd').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
   $('saveAdd').onclick = async () => {
     $('addErr').textContent = '';
