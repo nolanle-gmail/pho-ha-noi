@@ -107,6 +107,8 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sched-date { font-weight: 700; color: var(--ink); font-size: .85rem; }
 .sched-name { width: 12rem; text-align: left !important; background: #fff; }
 td.sched-name { font-size: .86rem; }
+.sched-name-total { margin-top: .2rem; font-size: .78rem; font-weight: 700; color: var(--gold-strong, #b45309); }
+.sched-name-total.over { color: var(--out, #b91c1c); }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
 .shift-card { background: var(--shift-green); color: #fff; border: 1px solid var(--shift-green-d); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }

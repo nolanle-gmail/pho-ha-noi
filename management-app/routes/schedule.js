@@ -487,7 +487,7 @@ function locationStaff(locId) {
   const roles = ROLES.SCHEDULED;
   const ph = roles.map(() => '?').join(',');
   return db.prepare(`
-    SELECT DISTINCT u.id, u.name, u.role, u.location_id AS home_location_id
+    SELECT DISTINCT u.id, u.name, u.role, u.location_id AS home_location_id, u.hourly_rate
     FROM users u
     LEFT JOIN staff_locations sl ON sl.user_id = u.id
     WHERE u.is_active=1 AND u.role IN (${ph})

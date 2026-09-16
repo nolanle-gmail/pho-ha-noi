@@ -1754,11 +1754,13 @@ async function renderLocSchedule() {
     const add = canEdit ? `<button class="shift-add" data-add="${st.id}" data-day="${day}" title="Add shift">+</button>` : '';
     return `<td class="sched-cell${dayTotal > DAILY_MAX ? ' cell-over' : ''}">${hereCards}${leaveCards}${awayCards}${add}</td>`;
   };
-  const weekBadge = (st) => {
+  // Under each staff name: total scheduled hours this week and the resulting pay
+  // (hours × their pay rate).
+  const nameTotal = (st) => {
     const h = sumHours(st.shifts);
-    if (!h) return '<span class="hours-none">—</span>';
-    return h > WEEKLY_MAX ? `<span class="badge out" title="Over the ${WEEKLY_MAX}h full-time limit">${fmtH(h)}h ⚠</span>`
-      : `<span class="badge ${h === WEEKLY_MAX ? 'blue' : 'ok'}">${fmtH(h)}h</span>`;
+    const pay = h * (Number(st.hourly_rate) || 0);
+    const over = h > WEEKLY_MAX;
+    return `<div class="sched-name-total${over ? ' over' : ''}" title="${h.toFixed(2)} h × $${(Number(st.hourly_rate) || 0).toFixed(2)}/h${over ? ` — over the ${WEEKLY_MAX}h limit` : ''}">${h.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}</div>`;
   };
 
   $('locBody').innerHTML = `
@@ -1779,14 +1781,12 @@ async function renderLocSchedule() {
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
       ${days.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
-      <th class="sched-week">Week<div class="sched-date">/ ${WEEKLY_MAX}h</div></th>
     </tr></thead><tbody>
       ${data.staff.length ? data.staff.map(st => `<tr>
-        <td class="sched-name"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
-          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</td>
+        <td class="sched-name"><div><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
+          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}</div>${nameTotal(st)}</td>
         ${days.map(d => cell(st, d)).join('')}
-        <td class="sched-week">${weekBadge(st)}</td>
-      </tr>`).join('') : `<tr><td colspan="9" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
+      </tr>`).join('') : `<tr><td colspan="8" class="empty">No staff assigned to this location. Add or assign staff in the Staff section first.</td></tr>`}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong> — over-limit shifts are flagged ⚠ (approve an exception when editing). Click a shift to edit; use + to add.</p>`;
 
