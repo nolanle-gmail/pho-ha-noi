@@ -3228,7 +3228,7 @@ async function renderJobsCatalog() {
     </tbody></table></div>`;
   const specificCount = active.filter(j => j.kind === 'specific').length;
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">Jobs &amp; Tasks <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${active.length} active</span></h2>
+    <div class="row-between"><h2 class="page">Jobs <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${active.length} active</span></h2>
       ${canManage ? '<button class="btn" id="addJob">+ Add job</button>' : '<span class="badge gray">View only</span>'}</div>
     <p class="sub" style="color:var(--muted);margin-top:0"><span class="badge gray">standard</span> role duties assigned when building the weekly schedule; <span class="badge blue">specific</span> (${specificCount}) day-of tasks the manager assigns to working staff on the <strong>Day Tasks</strong> tab.</p>
     ${depts.length ? depts.map(section).join('') : '<div class="empty">No jobs in the catalog yet.</div>'}`;
