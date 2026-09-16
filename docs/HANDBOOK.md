@@ -788,7 +788,8 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 > phone. **Directory search matches a person's previous numbers**, so typing an old phone
 > still finds them. **Work email** is now **editable** too (optional; a blank one falls back to an
 > internal placeholder, and it's kept unique). Change **role** or location to move someone
-> between roles or stores (owner/admin).
+> between roles or stores (owner/admin). The **Role** dropdown (on both Add and Edit staff)
+> lists roles **alphabetically**.
 >
 > **Adding staff** also requires a **date of birth**, and takes an **Employee code**
 > (exactly 6 digits — left blank, it's generated from the DOB as MMDDYY) and an optional
@@ -963,8 +964,9 @@ What gets texted:
   composer** (e.g. "cover needed tonight", a task reminder). The **To** dropdown offers:
   **Everyone** · **Owner / Admin / Managers** · **A role…** · **A specific person…** · **All staff**
   · **A whole location…** (the last shown to all-location roles). *A role…* reveals a role select
-  (roles present among textable staff, with per-role counts) — owner/admin/HR/GM text that role
-  company-wide, store managers just their store. *A specific person…* opens a **type-ahead
+  (roles present among textable staff, with per-role counts, **listed alphabetically**) —
+  owner/admin/HR/GM text that role company-wide, store managers just their store. The role pickers
+  on **Floor alerts** and **Chat** (add members "by role") are alphabetical too. *A specific person…* opens a **type-ahead
   recipient search with chips** — search by name (each result tagged with role · store) and add
   **one or more** staff to text them all at once; **"Clear all"** resets. *A whole location…* adds
   a store dropdown. Only staff **with a phone on file** are selectable (the picker shows "N of M
