@@ -2031,8 +2031,8 @@ function copyWeekModal(toWeek, location) {
 function shiftModal(staff, dayIso, shift, jobs, location) {
   const isNew = !shift;
   const chosen = new Set((shift && shift.jobs ? shift.jobs : []).map(j => String(j.id)));
-  const byDept = {}; jobs.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
-  const depts = Object.keys(byDept).sort((a, b) => JOB_DEPTS.indexOf(a) - JOB_DEPTS.indexOf(b));
+  const byDept = {}; jobs.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
+  const depts = Object.keys(byDept).sort((a, b) => (JOB_DEPTS.indexOf(a) === -1 ? 99 : JOB_DEPTS.indexOf(a)) - (JOB_DEPTS.indexOf(b) === -1 ? 99 : JOB_DEPTS.indexOf(b)) || a.localeCompare(b));
   const wd = WD[(new Date(dayIso + 'T00:00:00').getDay() + 6) % 7];
   const host = $('modalHost');
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide"><h3>Schedule — ${esc(staff.name)}</h3>
@@ -2379,7 +2379,7 @@ async function openLocTaskListModal(locId, locName) {
       <details style="margin-top:.8rem"><summary style="cursor:pointer;font-weight:600">+ Add a new task to the catalog</summary>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.6rem">
           <label style="grid-column:1/3">Name<input id="ntName" placeholder="e.g. Water the patio plants"/></label>
-          <label>Department<select id="ntDept"><option>Front of House</option><option>Back of House</option><option>Facilities</option><option>Packaging</option><option>Logistics</option><option>Management</option></select></label>
+          <label>Department<select id="ntDept"><option>Front House</option><option>Kitchen</option><option>Bar</option><option>Management</option></select></label>
           <label>Complexity<select id="ntCx"><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
           <label>Est. minutes *<input id="ntEst" type="number" min="1" step="5" placeholder="required"/></label>
           <label>Code (optional)<input id="ntCode" placeholder="auto if blank"/></label>
@@ -3197,7 +3197,8 @@ async function renderStaffOverview() {
 
 // ── Job / task catalog ───────────────────────────────────────────────────────
 const COMPLEXITY_CHIP = { low: 'ok', medium: 'blue', high: 'low' };
-const JOB_DEPTS = ['Front of House', 'Back of House', 'Bar', 'Facilities', 'Management'];
+const JOB_DEPTS = ['Front House', 'Kitchen', 'Bar', 'Management'];
+const NO_DEPT = 'Department Not Set';
 async function renderJobsCatalog() {
   let jobs;
   try { jobs = await api('/schedule/jobs'); }
@@ -3205,8 +3206,9 @@ async function renderJobsCatalog() {
   const canManage = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
   const active = jobs.filter(j => j.is_active);
   const byDept = {};
-  active.forEach(j => { (byDept[j.department || 'Other'] = byDept[j.department || 'Other'] || []).push(j); });
-  const depts = Object.keys(byDept).sort((a, b) => JOB_DEPTS.indexOf(a) - JOB_DEPTS.indexOf(b));
+  active.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
+  const deptRank = (d) => { const i = JOB_DEPTS.indexOf(d); return i === -1 ? 99 : i; };   // unset sorts last
+  const depts = Object.keys(byDept).sort((a, b) => deptRank(a) - deptRank(b) || a.localeCompare(b));
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '—')}</span>`;
   const kindBadge = (k) => `<span class="badge ${k === 'specific' ? 'blue' : 'gray'}">${k === 'specific' ? 'specific' : 'standard'}</span>`;
   const section = (d) => `
@@ -3252,7 +3254,7 @@ function jobModal(job) {
     <div class="form-grid">
       <label>Job ID<input id="j_code" value="${esc(j.code || '')}" placeholder="e.g. FOH-08" /></label>
       <label>Job / task name<input id="j_name" value="${esc(j.name || '')}" /></label>
-      <label>Department<select id="j_department">${['', ...JOB_DEPTS].map(d => opt(d, j.department || '')).join('')}</select></label>
+      <label>Department<select id="j_department"><option value="" ${!(j.department || '') ? 'selected' : ''}>${esc(NO_DEPT)}</option>${JOB_DEPTS.map(d => opt(d, j.department || '')).join('')}</select></label>
       <label>Kind<select id="j_kind"><option value="standard" ${(j.kind || 'standard') === 'standard' ? 'selected' : ''}>Standard (schedule duty)</option><option value="specific" ${j.kind === 'specific' ? 'selected' : ''}>Specific (day task)</option></select></label>
       <label>Complexity<select id="j_complexity">${['low', 'medium', 'high'].map(c => opt(c, j.complexity || 'medium')).join('')}</select></label>
       <label>Est. minutes <span style="color:var(--muted);font-weight:400">(required for day tasks)</span><input id="j_est_minutes" type="number" min="0" value="${j.est_minutes != null ? j.est_minutes : ''}" /></label>

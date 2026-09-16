@@ -486,7 +486,7 @@ function migrate() {
       code        TEXT UNIQUE,                 -- Job ID, e.g. "FOH-02"
       name        TEXT NOT NULL,
       description TEXT,                         -- description / instructions
-      department  TEXT,                         -- Front of House / Back of House / Bar / Facilities / Management
+      department  TEXT,                         -- Front House / Kitchen / Bar / Management (empty = Department Not Set)
       complexity  TEXT DEFAULT 'medium',        -- low / medium / high
       est_minutes INTEGER,                      -- typical duration
       notes       TEXT,
