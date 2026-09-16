@@ -1034,6 +1034,9 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
+- Under each staff member's name the grid shows their **weekly total as `<hours> hrs /
+  $<pay>`** — pay = the week's scheduled hours × that person's pay rate (it turns **red ⚠**
+  when the hours pass the 40 h limit).
 - **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,
   so a steady weekly roster doesn't have to be re-entered by hand. Pick any of the last
   **8 weeks** to copy from (defaults to the **previous week**); it clones every **work
