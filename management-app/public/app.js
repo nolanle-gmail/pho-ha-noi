@@ -2065,8 +2065,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     <div class="job-pick-label">Assign jobs / tasks <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
     <div class="job-pick">
       ${depts.map(d => `<div class="job-pick-dept"><div class="jpd-head">${esc(d)}</div>
-        ${byDept[d].map(j => `<label class="chk jpick"><input type="checkbox" data-job="${j.id}" ${chosen.has(String(j.id)) ? 'checked' : ''}/>
-          <span class="badge ${COMPLEXITY_CHIP[j.complexity] || 'gray'}">${esc(j.complexity || '')}</span> ${esc(j.name)}${j.code ? ` <span class="mono" style="color:var(--muted)">${esc(j.code)}</span>` : ''}</label>`).join('')}
+        ${byDept[d].map(j => `<label class="chk jpick"><input type="checkbox" data-job="${j.id}" ${chosen.has(String(j.id)) ? 'checked' : ''}/> ${esc(j.name)}</label>`).join('')}
       </div>`).join('')}
     </div>
     <div id="otWarn"></div>
