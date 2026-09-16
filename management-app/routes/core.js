@@ -102,13 +102,28 @@ router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
 
   if (req.body.name !== undefined) { fields.push('name=?'); vals.push(String(req.body.name).slice(0, 120)); }
 
-  // Phone is the login credential — validate, normalize and keep it unique.
+  // Phone is the login credential — validate, normalize and keep it unique. A change
+  // is recorded in user_phone_history (below) so the old number stays traceable.
+  let phoneChangedFrom = null;
   if (req.body.phone !== undefined) {
     if (!isValidPhone(req.body.phone)) return res.status(400).json({ error: 'Enter a 10-digit phone number.' });
     const ph = normalizePhone(req.body.phone);
     const clash = db.prepare(`SELECT id FROM users WHERE phone=? AND id<>?`).get(ph, u.id);
     if (clash) return res.status(409).json({ error: 'That phone number is already in use.' });
+    if (ph !== u.phone) phoneChangedFrom = u.phone;
     fields.push('phone=?'); vals.push(ph);
+  }
+
+  // Work email — an optional internal identity, now editable. Blank falls back to the
+  // phone-based placeholder (matching Add staff). Kept unique across accounts.
+  if (req.body.email !== undefined) {
+    const raw = String(req.body.email || '').toLowerCase().trim();
+    const phForEmail = normalizePhone(req.body.phone !== undefined ? req.body.phone : u.phone);
+    const em = raw || `p${phForEmail}@staff.phohanoi.local`;
+    if (raw && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em))) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const eclash = db.prepare(`SELECT id FROM users WHERE email=? AND id<>?`).get(em, u.id);
+    if (eclash) return res.status(409).json({ error: 'That email is already in use.' });
+    fields.push('email=?'); vals.push(em);
   }
 
   const newRole = req.body.role;
@@ -134,6 +149,13 @@ router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(u.id);
   db.prepare(`UPDATE users SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  // Record a login-phone change so the previous number stays linked to this person
+  // for audit / tracking (all the staffer's history is keyed by their stable user_id).
+  if (phoneChangedFrom !== null) {
+    const newPh = normalizePhone(req.body.phone);
+    db.prepare(`INSERT INTO user_phone_history (user_id, old_phone, new_phone, changed_by) VALUES (?,?,?,?)`).run(u.id, phoneChangedFrom, newPh, req.user.id);
+    auditLog(req, 'staff_phone_change', 'user', u.id, { from: phoneChangedFrom, to: newPh });
+  }
   auditLog(req, 'staff_update', 'user', u.id, { name: u.name, changes: req.body });
   res.json({ success: true });
 });
@@ -193,7 +215,8 @@ router.get('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   const profile = db.prepare(`SELECT * FROM staff_profiles WHERE user_id=?`).get(u.id) || {};
   const assigned = db.prepare(`SELECT location_id FROM staff_locations WHERE user_id=?`).all(u.id).map(r => r.location_id);
   const supervisor = profile.supervisor_id ? db.prepare(`SELECT id, name FROM users WHERE id=?`).get(profile.supervisor_id) : null;
-  res.json({ ...u, profile, assigned_location_ids: assigned, supervisor });
+  const phoneHistory = db.prepare(`SELECT old_phone, new_phone, changed_at FROM user_phone_history WHERE user_id=? ORDER BY changed_at DESC`).all(u.id);
+  res.json({ ...u, profile, assigned_location_ids: assigned, supervisor, phone_history: phoneHistory });
 });
 
 // Update a profile (owner/admin, or a manager for their own staff).

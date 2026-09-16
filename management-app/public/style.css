@@ -146,6 +146,10 @@ td.sched-name { font-size: .86rem; }
 .sched-seen { position: relative; display: inline-block; margin-left: auto; font-size: .95rem; line-height: 1; cursor: default; }
 .sched-seen.unread { opacity: .4; }
 .sched-seen.unread::after { content: ""; position: absolute; left: -2px; right: -2px; top: 46%; height: 2px; background: var(--out, #b91c1c); transform: rotate(-18deg); border-radius: 2px; }
+/* Add-staff confirmation screen */
+.add-done { border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); padding: 1.2rem 1.4rem; margin-top: 1rem; max-width: 560px; }
+.add-done-msg { font-size: 1.05rem; margin: 0 0 1rem; }
+.add-done-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
 .shift-card { background: var(--shift-green); color: #fff; border: 1px solid var(--shift-green-d); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }

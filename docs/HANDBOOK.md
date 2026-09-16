@@ -780,14 +780,21 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 >   Add staff** button.
 >
 > **Phone is the sign-in** (a 10-digit number, mandatory when adding staff) and can be
-> edited by anyone who can edit the account; email is an optional internal identity and
-> is read-only here. Change **role** or location to move someone between roles or
-> stores (owner/admin).
+> edited by anyone who can edit the account — if a staffer changes their number, update
+> it here and they keep signing in with the new one. Every login-phone change is recorded
+> (the profile shows a **"Previous login numbers"** line, and it's kept in
+> `user_phone_history` + the audit log), so an old number still traces back to the person;
+> all of their history stays attached because it's keyed by their stable account, not the
+> phone. **Work email** is now **editable** too (optional; a blank one falls back to an
+> internal placeholder, and it's kept unique). Change **role** or location to move someone
+> between roles or stores (owner/admin).
 >
 > **Adding staff** also requires a **date of birth**, and takes an **Employee code**
 > (exactly 6 digits — left blank, it's generated from the DOB as MMDDYY) and an optional
 > **Personal ID** (entered as 9 digits, stored in a transformed form). The Employment
-> section has a **Terminated date** for when someone permanently leaves.
+> section has a **Terminated date** for when someone permanently leaves. After an account
+> is created, a confirmation screen offers **＋ Add another staff** (and a link to the new
+> profile), so several people can be added back-to-back without leaving and reopening.
 >
 > **Documents.** Each staff profile has a **document holder** — upload signed contracts,
 > certificates, licenses and scans (images, PDF, Word/Excel/PowerPoint or text, 25 MB

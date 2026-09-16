@@ -3406,7 +3406,7 @@ async function renderStaffProfile(id) {
     <p class="sub" style="color:var(--muted);margin-top:0">${p.job_title ? '<strong>' + esc(p.job_title) + '</strong> · ' : ''}${esc(shortLoc(d.location_name) || 'All locations')} · joined ${esc((d.created_at || '').slice(0, 10))}</p>
     <div class="prof-cols">
       <div class="section"><h3>Personal</h3>${F('Preferred name', p.preferred_name)}${F('Legal name', [p.legal_first_name, p.legal_last_name].filter(Boolean).join(' '))}${F('Date of birth', p.dob)}${F('Gender', p.gender)}${F('Personal ID', p.personal_id)}${F('Employee code', p.employee_code)}</div>
-      <div class="section"><h3>Contact</h3>${F('Work email', d.email)}${F('Personal email', p.personal_email)}${F('Mobile', p.phone)}${F('Alt phone', p.alt_phone)}${F('Preferred contact', p.preferred_contact)}</div>
+      <div class="section"><h3>Contact</h3>${F('Work email', /@staff\.phohanoi\.local$/.test(d.email || '') ? '' : d.email)}${F('Personal email', p.personal_email)}${F('Mobile', p.phone)}${F('Alt phone', p.alt_phone)}${F('Preferred contact', p.preferred_contact)}${(d.phone_history && d.phone_history.length) ? F('Previous login numbers', d.phone_history.map(h => fmtPhone(h.old_phone)).filter(Boolean).join(', ')) : ''}</div>
       <div class="section"><h3>Mailing address</h3>${F('Address', [p.address_line1, p.address_line2].filter(Boolean).join(', '))}${F('City', p.city)}${F('State', p.state)}${F('Postal code', p.postal_code)}${F('Country', p.country)}</div>
       <div class="section"><h3>Emergency contact</h3>${F('Name', p.emergency_name)}${F('Relationship', p.emergency_relation)}${F('Phone', p.emergency_phone)}</div>
       <div class="section"><h3>Employment</h3>${F('Job title', p.job_title)}${F('Department', p.department)}${F('Type', p.employment_type)}${F('Hire date', p.hire_date)}${F('Termination date', p.termination_date)}${F('Supervisor', d.supervisor ? d.supervisor.name : '')}${F('Home location', shortLoc(d.location_name) || 'All locations')}${F('Also works at', assigned)}</div>
@@ -3517,7 +3517,7 @@ function staffProfileEdit(d, locations, staff) {
     <div class="prof-cols">
       <div class="section"><h3>Account</h3>${inp('name', 'Full name', d.name)}
         ${inp('acct_phone', 'Login phone — 10 digits', d.phone || '', 'tel')}
-        <label class="pfl">Work email<input type="text" value="${esc(d.email || '')}" disabled title="Email is an optional internal identity; sign-in is by phone" /></label>
+        ${inp('acct_email', 'Work email (optional)', /@staff\.phohanoi\.local$/.test(d.email || '') ? '' : (d.email || ''), 'email')}
         ${canEditAccountFields()
           ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
@@ -3546,6 +3546,8 @@ function staffProfileEdit(d, locations, staff) {
       delete body.acct_phone;
       if (digits) { if (digits.length !== 10) { toast('Login phone must be 10 digits.', true); return; } account.phone = digits; }
     }
+    // Work email is an account field too (optional; blank falls back to a placeholder).
+    if (body.acct_email !== undefined) { account.email = (body.acct_email || '').trim(); delete body.acct_email; }
     if (canEditAccountFields()) {
       if (body.role !== undefined) { account.role = body.role; delete body.role; }
       if (body.location_id !== undefined) { account.location_id = body.location_id; delete body.location_id; }
@@ -3629,9 +3631,27 @@ function renderStaffAdd(locations) {
       body.assigned_location_ids = [...$('view').querySelectorAll('[data-loc]:checked')].map(c => c.dataset.loc);
       await api('/staff/' + created.id + '/profile', { method: 'PUT', body: JSON.stringify(body) });
       toast('Staff account created');
-      renderStaffProfile(created.id);
+      renderStaffAddDone({ id: created.id, name }, locations);
     } catch (e) { $('addErr').textContent = e.message; }
   };
+}
+
+// After creating a staff member — confirm, and offer to add another without
+// having to leave and re-open Add staff.
+function renderStaffAddDone(created, locations) {
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Staff added</h2>
+      <div><button class="btn ghost" id="doneToDir">Back to staff</button></div></div>
+    <div class="add-done">
+      <p class="add-done-msg">✓ <strong>${esc(created.name)}</strong>'s account was created.</p>
+      <div class="add-done-actions">
+        <button class="btn" id="addAnother">＋ Add another staff</button>
+        <button class="btn ghost" id="viewNew">View ${esc(created.name)}'s profile</button>
+      </div>
+    </div>`;
+  $('addAnother').onclick = () => renderStaffAdd(locations);
+  $('viewNew').onclick = () => renderStaffProfile(created.id);
+  $('doneToDir').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
 }
 
 const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];

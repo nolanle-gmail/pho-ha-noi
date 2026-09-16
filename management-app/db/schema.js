@@ -732,6 +732,19 @@ function migrate() {
       PRIMARY KEY (user_id, week_start)
     );
 
+    -- Audit trail of a staff member's login-phone changes, so a previous number
+    -- still links to the person (phone is the login; user_id stays the stable key).
+    CREATE TABLE IF NOT EXISTS user_phone_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id),
+      old_phone  TEXT,
+      new_phone  TEXT,
+      changed_by INTEGER REFERENCES users(id),
+      changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_uph_user ON user_phone_history(user_id);
+    CREATE INDEX IF NOT EXISTS idx_uph_old ON user_phone_history(old_phone);
+
     -- Jobs/tasks assigned to a shift (a shift can carry several jobs).
     CREATE TABLE IF NOT EXISTS shift_jobs (
       shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
