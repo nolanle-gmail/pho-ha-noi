@@ -137,6 +137,8 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 td.sched-name { font-size: .86rem; }
 .sched-name-total { margin-top: .2rem; font-size: .78rem; font-weight: 700; color: var(--gold-strong, #b45309); }
 .sched-name-total.over { color: var(--out, #b91c1c); }
+.sched-leave-inc { display: block; margin-top: .05rem; font-size: .68rem; font-weight: 500; color: var(--info, #1d4ed8); }
+.sched-filter-total .sched-leave-inc { display: inline; margin: 0; }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
 .shift-card { background: var(--shift-green); color: #fff; border: 1px solid var(--shift-green-d); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }

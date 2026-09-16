@@ -1045,9 +1045,12 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
-- Under each staff member's name the grid shows their **weekly total as `<hours> hrs /
-  $<pay>`** — pay = the week's scheduled hours × that person's pay rate (it turns **red ⚠**
-  when the hours pass the 40 h limit).
+- Under each staff member's name the grid shows their **total as `<hours> hrs / $<pay>`**
+  (the week, or the day in Day view). The hours and pay **include paid sick / vacation /
+  on-leave hours** as well as worked hours — pay = (worked + paid-leave hours) × the
+  person's pay rate — and a small **"incl. `<n>`h leave"** note appears when any of the
+  total is leave. The **red ⚠** over-limit flag is based on **worked hours only** (leave
+  isn't overtime). The totals chip above the grid sums the shown staff the same way.
 - **View filters** — a bar above the grid lets whoever is viewing narrow it down without
   changing anyone's schedule (the choices are remembered in that browser):
   - **Scheduled only** — hide staff with no scheduled hours in the current view.
