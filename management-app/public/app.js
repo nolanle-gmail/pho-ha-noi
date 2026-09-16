@@ -3526,7 +3526,7 @@ function staffProfileEdit(d, locations, staff) {
         ${inp('acct_phone', 'Login phone — 10 digits', d.phone || '', 'tel')}
         ${inp('acct_email', 'Work email (optional)', /@staff\.phohanoi\.local$/.test(d.email || '') ? '' : (d.email || ''), 'email')}
         ${canEditAccountFields()
-          ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })))
+          ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })).sort((a, b) => a.n.localeCompare(b.n)))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
           : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('personal_id', 'Personal ID (enter 9 digits to change)', p.personal_id)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
@@ -3590,7 +3590,7 @@ function renderStaffAdd(locations) {
   const inp = (k, label, val, type = 'text', attrs = '') => `<label class="pfl">${label}<input id="pf_${k}" type="${type}" value="${esc(val == null ? '' : val)}" ${attrs} /></label>`;
   const selRaw = (k, label, val, opts) => `<label class="pfl">${label}<select id="pf_${k}">${opts.map(o => `<option value="${esc(o.v)}" ${String(o.v) === String(val || '') ? 'selected' : ''}>${esc(o.n)}</option>`).join('')}</select></label>`;
   const selS = (k, label, val, arr) => selRaw(k, label, val, arr.map(x => ({ v: x, n: x || '—' })));
-  const roleOpts = accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) }));
+  const roleOpts = accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })).sort((a, b) => a.n.localeCompare(b.n));
   const locOpts = [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') })));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Add staff</h2>
