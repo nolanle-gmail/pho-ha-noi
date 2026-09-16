@@ -575,8 +575,9 @@ router.get('/month', requireRole(ROLES.MANAGE), (req, res) => {
   }
   const days = {};
   for (const [d, r] of Object.entries(acc)) {
+    const scheduled = new Set([...Object.keys(r.work), ...Object.keys(r.leave)]).size;
     days[d] = {
-      staff: Object.keys(r.work).length, hours: Math.round(r.hours * 100) / 100,
+      staff: Object.keys(r.work).length, scheduled, hours: Math.round(r.hours * 100) / 100,
       leave: Object.keys(r.leave).length, leave_hours: Math.round(r.leaveHours * 100) / 100,
     };
   }

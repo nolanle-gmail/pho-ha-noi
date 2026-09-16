@@ -1923,14 +1923,17 @@ async function renderLocScheduleMonth() {
   const WKD = ['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
   const monthLabel = new Date(data.month + '-01T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   let monthHours = 0, monthLeave = 0;
-  for (const d of dates) { if (!inMonth(d)) continue; const r = data.days[d]; if (r) { monthHours += r.hours; monthLeave += r.leave_hours; } }
+  for (const d of dates) { if (!inMonth(d)) continue; const r = data.days[d]; if (r) { monthHours += r.hours + r.leave_hours; monthLeave += r.leave_hours; } }
   const cellHtml = (d) => {
     const r = data.days[d];
     const cls = `mcal-cell${inMonth(d) ? '' : ' out'}${d === data.today ? ' is-today' : ''}`;
-    const body = (r && (r.staff || r.leave))
-      ? `<div class="mcal-body"><span class="mcal-staff">${r.staff} staff</span><span class="mcal-hrs">${r.hours.toFixed(1)}h</span>${r.leave ? `<span class="mcal-leave">${r.leave} leave</span>` : ''}</div>`
+    const paid = r ? r.hours + r.leave_hours : 0;                 // worked + paid leave
+    const people = r ? (r.scheduled != null ? r.scheduled : r.staff) : 0;
+    const body = (r && (people || paid))
+      ? `<div class="mcal-body"><span class="mcal-staff">${people} staff</span><span class="mcal-hrs">${paid.toFixed(1)}h</span>${r.leave ? `<span class="mcal-leave">${r.leave} leave</span>` : ''}</div>`
       : '';
-    return `<div class="${cls}" data-mday="${d}" role="button" tabindex="0" title="Open ${esc(fmtDay(d))}"><span class="mcal-date">${Number(d.slice(8, 10))}</span>${body}</div>`;
+    const tip = r ? `${fmtDay(d)} · ${r.hours.toFixed(1)}h worked${r.leave_hours ? ` + ${r.leave_hours.toFixed(1)}h leave` : ''}` : `Open ${fmtDay(d)}`;
+    return `<div class="${cls}" data-mday="${d}" role="button" tabindex="0" title="${esc(tip)}"><span class="mcal-date">${Number(d.slice(8, 10))}</span>${body}</div>`;
   };
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
@@ -1943,7 +1946,7 @@ async function renderLocScheduleMonth() {
       <div class="week-label"><strong>${esc(monthLabel)}</strong></div>
     </div>
     <div class="sched-filters">
-      <span class="sched-filter-total"><strong>${esc(shortLoc(data.location.name))}</strong> · <strong>${monthHours.toFixed(1)} hrs</strong> scheduled${monthLeave ? ` · <strong>${monthLeave.toFixed(1)} leave hrs</strong>` : ''}</span>
+      <span class="sched-filter-total"><strong>${esc(shortLoc(data.location.name))}</strong> · <strong>${monthHours.toFixed(1)} hrs</strong> scheduled${monthLeave ? ` <span class="sched-leave-inc">(incl. ${monthLeave.toFixed(1)}h leave)</span>` : ''}</span>
     </div>
     <div class="mcal">
       <div class="mcal-head">${WKD.map(w => `<div>${w}</div>`).join('')}</div>

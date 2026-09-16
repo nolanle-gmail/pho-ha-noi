@@ -1028,8 +1028,9 @@ seven days):
   choice is remembered per viewer):
   - **Week** — the editable staff × 7-day grid (the default; everything below).
   - **Month** — a calendar of the location's schedule; each day shows how many staff
-    are scheduled and the total hours (a light roll-up), with the current day
-    highlighted and out-of-month days dimmed. Click any day to jump into **Day** view.
+    are scheduled and the **total hours (worked + paid leave)**, with a `<n> leave` note
+    and a month summary that folds leave in too. The current day is highlighted and
+    out-of-month days dimmed. Click any day to jump into **Day** view.
   - **Day** — the same grid focused on one day, with Prev day / Today / Next day. The
     under-name total and the filters apply to that day; the over-limit flag uses the
     **8 h/day** limit.
