@@ -4161,7 +4161,8 @@ async function renderFloorAlerts() {
   let data = { staff: [], roles: [] }, sent = { alerts: [] };
   try { [data, sent] = await Promise.all([api('/alerts/staff?location_id=' + encodeURIComponent(locId || '')), api('/alerts/sent')]); }
   catch (e) { /* staff may fail if no location yet */ }
-  const roleOpts = (data.roles || []).map(r => `<option value="${r}">${esc(ALERT_ROLE_LABEL[r] || roleLabel(r))}</option>`).join('');
+  const alertRoleName = (r) => ALERT_ROLE_LABEL[r] || roleLabel(r);
+  const roleOpts = (data.roles || []).slice().sort((a, b) => alertRoleName(a).localeCompare(alertRoleName(b))).map(r => `<option value="${r}">${esc(alertRoleName(r))}</option>`).join('');
   const staffOpts = (data.staff || []).map(s => `<option value="${s.id}">${esc(s.name)} · ${esc(roleLabel(s.role))}</option>`).join('');
   const chips = ALERT_PRESETS.map(p => `<button type="button" class="al-chip" data-preset="${esc(p)}">${esc(p.replace('{n}', '#'))}</button>`).join('');
   const targetDesc = (a) => a.target_type === 'user' ? esc(a.target_user_name || 'a person') : a.target_type === 'role' ? (ALERT_ROLE_LABEL[a.target_role] || a.target_role) : 'Everyone on floor';
@@ -4836,7 +4837,7 @@ async function openNewChatGroup() {
     <label class="fld-label">Group name</label><input id="cgName" class="fld" placeholder="e.g. San Jose Servers" />
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="cgLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
-      <select id="cgRole"><option value="">— by role —</option>${roles.map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
+      <select id="cgRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
       <button class="btn sm ghost" id="cgClear">Clear</button></div>` : ''}
     <div class="cg-members">${recips.map(memberRow).join('')}</div>
     <div class="actions" style="margin-top:1rem"><span id="cgCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="cgCreate">Create group</button></div>
@@ -4886,7 +4887,7 @@ async function openAddChatMembers(gid, existingIds) {
     <div class="err" id="amErr"></div>
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="amLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
-      <select id="amRole"><option value="">— by role —</option>${roles.map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
+      <select id="amRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
       <button class="btn sm ghost" id="amClear">Clear</button></div>` : ''}
     <div class="cg-members">${candidates.map(memberRow).join('')}</div>
     <div class="actions" style="margin-top:1rem"><span id="amCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="amAdd">Add to group</button></div>
