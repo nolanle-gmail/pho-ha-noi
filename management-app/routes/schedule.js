@@ -73,12 +73,24 @@ router.get('/location',
     if (!loc) return res.status(404).json({ error: 'Location not found.' });
     const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'weekly';
     const { start, end } = schedPeriod(kind, req.query.anchor);
-    const rows = db.prepare(`SELECT s.id, s.user_id, u.name AS user_name, u.role AS user_role, s.shift_date, s.start_time, s.end_time, s.kind, s.all_day, s.leave_hours
+    const rows = db.prepare(`SELECT s.id, s.user_id, u.name AS user_name, u.role AS user_role, s.shift_date, s.start_time, s.end_time, s.kind, s.all_day, s.leave_hours, s.created_at, s.updated_at
       FROM shifts s JOIN users u ON u.id = s.user_id
       WHERE s.location_id=? AND s.shift_date BETWEEN ? AND ? ORDER BY s.shift_date, s.start_time IS NULL, s.start_time, u.name`).all(locId, start, end);
     const jobsBy = db.prepare(`SELECT j.name FROM shift_jobs sj JOIN jobs j ON j.id = sj.job_id WHERE sj.shift_id=? ORDER BY j.name`);
     const breaksBy = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
-    const shifts = rows.map(s => ({ ...s, jobs: jobsBy.all(s.id), breaks: breaksBy.all(s.id) }));
+    // Read/unread per person for this period: has each staffer opened their own
+    // schedule since their shifts here last changed? Same eye as the manager grid.
+    const lastChangeBy = {}, seenBy = {};
+    for (const s of rows) { const ts = s.updated_at || s.created_at; if (ts && (!lastChangeBy[s.user_id] || ts > lastChangeBy[s.user_id])) lastChangeBy[s.user_id] = ts; }
+    const userIds = [...new Set(rows.map(s => s.user_id))];
+    if (userIds.length) {
+      const ph = userIds.map(() => '?').join(',');
+      for (const r of db.prepare(`SELECT user_id, MAX(seen_at) AS seen_at FROM schedule_views WHERE user_id IN (${ph}) AND week_start BETWEEN ? AND ? GROUP BY user_id`).all(...userIds, weekStart(start), weekStart(end))) seenBy[r.user_id] = r.seen_at;
+    }
+    const shifts = rows.map(s => {
+      const seen_at = seenBy[s.user_id] || null;
+      return { ...s, jobs: jobsBy.all(s.id), breaks: breaksBy.all(s.id), seen_at, schedule_seen: !!seen_at && (!lastChangeBy[s.user_id] || seen_at >= lastChangeBy[s.user_id]) };
+    });
     const days = []; for (let d = start; d <= end; d = addDays(d, 1)) days.push(d);
     res.json({ kind, start, end, days, today: localDate(loc.timezone || DEFAULT_TZ), location: { id: loc.id, name: loc.name }, shifts });
   });

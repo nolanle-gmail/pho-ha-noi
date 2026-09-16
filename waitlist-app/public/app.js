@@ -842,6 +842,15 @@ function schedNav(dir) {
 }
 // Leads/managers (roles with the 'manage' cap) can switch to the whole location.
 const canViewTeam = () => !!(S.user && Array.isArray(S.user.caps) && S.user.caps.includes('manage'));
+// Read/unread eye for the Team schedule — has this person opened their own schedule
+// since it last changed? (schedule_seen comes from the Management team endpoint.)
+function schedSeenEye(s) {
+  if (typeof s.schedule_seen === 'undefined') return '';
+  const day = s.seen_at ? String(s.seen_at).slice(0, 10) : '';
+  const title = s.schedule_seen ? ('Opened their schedule' + (day ? ' on ' + day : '')) : (day ? 'Hasn’t opened the latest schedule (last viewed ' + day + ')' : 'Hasn’t opened their schedule yet');
+  return `<span class="sched-seen ${s.schedule_seen ? 'read' : 'unread'}" title="${esc(title)}" aria-label="${s.schedule_seen ? 'viewed' : 'not viewed'}">👁️</span>`;
+}
+
 async function renderMySchedule() {
   if (!S.schedAnchor) S.schedAnchor = new Date().toISOString().slice(0, 10);
   if (!canViewTeam()) S.schedScope = 'mine';
@@ -855,7 +864,7 @@ async function renderMySchedule() {
   const totalMin = Math.round(work.reduce((n, s) => n + schedSpanH(s.start_time, s.end_time), 0) * 60);
   const kindLabel = (k) => ({ sick: '🤒 Sick', vacation: '🏖 Vacation', leave: '📋 On leave' }[k] || k);
   const shiftLine = (s) => {
-    const who = team ? `<span class="sched-who">${esc(s.user_name)}</span> ` : '';
+    const who = team ? `<span class="sched-who">${esc(s.user_name)}</span>${schedSeenEye(s)} ` : '';
     if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift">${who}<span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
     const jobs = (s.jobs || []).map(j => esc(j.name)).join(', ');
     const brk = (s.breaks || []).length ? ` · <span class="sched-brk">${s.breaks.length} break${s.breaks.length > 1 ? 's' : ''}</span>` : '';
