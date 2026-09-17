@@ -404,7 +404,9 @@ function startToastBackfillResume() {
 const minsSince = (iso) => { if (!iso) return null; const t = Date.parse(String(iso).slice(0, 19) + 'Z'); return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 60000)) : null; };
 
 // Current active tables (open, unpaid orders) for a location, each with how long it
-// has been open and a state relative to the location's alert threshold.
+// has been open and a state relative to the location's alert threshold. Excludes
+// non-dining orders — those with no table (to-go / delivery / online) and staff
+// "Employee" tabs — which legitimately stay open and would false-alert.
 function computeServiceFlow(locationId) {
   const loc = db.prepare(`SELECT service_alert_min FROM toast_locations WHERE location_id=?`).get(locationId) || {};
   const threshold = loc.service_alert_min || 40;
@@ -413,10 +415,11 @@ function computeServiceFlow(locationId) {
       COALESCE(NULLIF(TRIM(COALESCE(u.name,'')),''), NULLIF(TRIM(COALESCE(e.chosen_name,e.first_name)||' '||COALESCE(e.last_name,'')),'')) AS server_name
     FROM toast_orders o
     JOIN (SELECT DISTINCT order_guid FROM toast_checks WHERE location_id=? AND business_date=? AND payment_status='OPEN' AND voided=0) oc ON oc.order_guid=o.guid
-    LEFT JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
+    JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
     LEFT JOIN toast_employees e ON e.guid=o.server_guid
     LEFT JOIN users u ON u.id=e.user_id
-    WHERE o.location_id=? AND o.business_date=? AND o.voided=0 AND o.paid_at IS NULL`).all(locationId, today, locationId, today);
+    WHERE o.location_id=? AND o.business_date=? AND o.voided=0 AND o.paid_at IS NULL
+      AND o.table_guid IS NOT NULL AND lower(tbl.name) NOT LIKE '%employee%'`).all(locationId, today, locationId, today);
   const tables = rows.map(r => { const m = minsSince(r.opened_at); return { order_guid: r.guid, table_name: r.table_name, server_name: r.server_name, guests: r.num_guests, opened_at: r.opened_at, minutes_open: m, state: (m != null && m >= threshold) ? 'attention' : 'in_service' }; })
     .sort((a, b) => (b.minutes_open || 0) - (a.minutes_open || 0));
   return { threshold, tables, in_service: tables.filter(t => t.state === 'in_service').length, attention: tables.filter(t => t.state === 'attention').length, updated_at: new Date().toISOString() };
