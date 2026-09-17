@@ -112,6 +112,9 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sto-what { color: var(--ink); }
 .sto-reason { color: var(--muted); }
 .sto-req-act { display: flex; gap: .4rem; flex-shrink: 0; }
+/* Backfill progress bar */
+.bf-bar { height: 8px; border-radius: 6px; background: var(--line, #e3e3e3); overflow: hidden; }
+.bf-fill { height: 100%; background: var(--brand, #b91c1c); transition: width .4s ease; }
 .sched-period { width: auto; margin: 0; padding: .3rem .5rem; font: inherit; font-weight: 600; border-radius: 8px; }
 
 /* ── Month calendar ─────────────────────────────────────── */

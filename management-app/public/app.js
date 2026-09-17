@@ -412,6 +412,17 @@ async function renderIntegrations() {
     </div>` : ''}
 
     ${maps.length ? `<div class="section" style="margin-bottom:1rem">
+      <h3>Historical data (backfill)</h3>
+      <p class="sub" style="color:var(--muted);font-size:.82rem;margin:.1rem 0 .5rem">Store months of past sales &amp; order detail locally, so you can review and analyze without pulling from Toast each time. Runs in the background across all mapped locations.</p>
+      <div class="profile-row" style="font-size:.82rem"><span>History stored</span><strong>${(() => { const b = maps.map(m => m.backfilled_from).filter(Boolean).sort(); return b.length ? 'back to ' + fmtDay(b[0]) : 'recent days only'; })()}</strong></div>
+      <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;margin-top:.4rem">
+        <label style="margin:0">Days back<input id="tbDays" type="number" min="7" max="800" value="190" style="width:90px"/></label>
+        <button class="btn" id="tbStart">Backfill history</button>
+      </div>
+      <div id="tbStatus" style="margin-top:.6rem"></div>
+    </div>` : ''}
+
+    ${maps.length ? `<div class="section" style="margin-bottom:1rem">
       <h3>Toast staff & jobs</h3>
       <p class="sub" style="color:var(--muted);font-size:.82rem;margin:.1rem 0 .5rem">Pull the Toast roster and match each Toast employee to a person in this app (by email, phone, then name). Clock-in/out is tracked in this app, not Toast.</p>
       <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
@@ -467,6 +478,32 @@ async function renderIntegrations() {
   if ($('tlRun')) $('tlRun').onclick = () => runToastLabor(+$('tlLoc').value, $('tlRun'));
   if ($('tmRun')) $('tmRun').onclick = () => runToastMenu(+$('tmLoc').value, $('tmRun'));
   if ($('tmCompare')) $('tmCompare').onclick = () => runToastMenuCompare(maps, $('tmCompare'));
+  if ($('tbStart')) $('tbStart').onclick = async () => {
+    const days = +$('tbDays').value || 190;
+    if (!confirm(`Backfill ${days} days of sales history for all mapped locations? This runs in the background and may take a while.`)) return;
+    $('tbStart').disabled = true;
+    try { await api('/toast/backfill', { method: 'POST', body: JSON.stringify({ days }) }); toast('Backfill started — running in the background.'); pollBackfill(); }
+    catch (e) { toast(e.message, true); $('tbStart').disabled = false; }
+  };
+  pollBackfill();   // show progress if a backfill is already running
+}
+// Poll the backfill progress and render it; keeps polling while it runs.
+async function pollBackfill() {
+  const box = $('tbStatus'); if (!box || S.section !== 'integrations') return;
+  let d; try { d = await api('/toast/backfill'); } catch { return; }
+  if (!d.startedAt) { box.innerHTML = ''; if ($('tbStart')) $('tbStart').disabled = false; return; }
+  const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+  if (d.running) {
+    box.innerHTML = `<div class="bf-bar"><div class="bf-fill" style="width:${pct}%"></div></div>
+      <div class="sub" style="color:var(--muted);font-size:.8rem;margin-top:.3rem">Backfilling… <strong>${d.done}</strong> / ${d.total} days (${pct}%)${d.currentName ? ` · ${esc(shortLoc(d.currentName))} ${d.currentDate ? fmtDay(d.currentDate) : ''}` : ''}${d.errors ? ` · ${d.errors} errors` : ''}
+      <button class="btn sm ghost danger" id="tbCancel" style="margin-left:.5rem">Cancel</button></div>`;
+    if ($('tbStart')) $('tbStart').disabled = true;
+    if ($('tbCancel')) $('tbCancel').onclick = async () => { try { await api('/toast/backfill/cancel', { method: 'POST', body: '{}' }); toast('Stopping…'); } catch (e) { toast(e.message, true); } };
+    clearTimeout(S._bfTimer); S._bfTimer = setTimeout(pollBackfill, 3000);
+  } else {
+    box.innerHTML = `<p class="sub" style="color:var(--ok);margin:.2rem 0">✓ Backfill complete — <strong>${d.done}</strong> days pulled${d.errors ? ` (${d.errors} errors)` : ''}. <button class="btn sm ghost" onclick="renderIntegrations()">Refresh</button></p>`;
+    if ($('tbStart')) $('tbStart').disabled = false;
+  }
 }
 // Pull a location's Toast menu and show a compact price book.
 async function runToastMenu(location_id, btn) {

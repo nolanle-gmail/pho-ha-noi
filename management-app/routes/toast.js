@@ -174,6 +174,17 @@ router.post('/sync/labor', ADMIN, async (req, res) => {
   } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
 });
 
+// Start a historical backfill (default ~6 months) for all mapped locations. Runs in
+// the background; poll GET /backfill for progress.
+router.post('/backfill', ADMIN, async (req, res) => {
+  const r = await toastSync.runBackfill({ days: req.body.days });
+  if (!r.started) return res.status(r.reason === 'already_running' ? 409 : 400).json({ error: r.reason === 'already_running' ? 'A backfill is already running.' : 'Toast is not configured.', status: r.status });
+  auditLog(req, 'toast_backfill_start', 'toast', null, { days: r.days, total: r.total });
+  res.json({ ok: true, ...r });
+});
+router.get('/backfill', ADMIN, (req, res) => res.json(toastSync.backfillStatus()));
+router.post('/backfill/cancel', ADMIN, (req, res) => { toastSync.cancelBackfill(); res.json({ ok: true }); });
+
 // Read the mirrored Toast roster (employees + match status) and job catalog.
 router.get('/labor', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);

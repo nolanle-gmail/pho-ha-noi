@@ -1003,6 +1003,28 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_toast_payments_loc_date ON toast_payments(location_id, business_date);
 
+    -- Line items (menu-item selections) on each check — the item-level detail needed
+    -- for sales analysis (item mix, category, quantity). Keyed by Toast selection GUID.
+    CREATE TABLE IF NOT EXISTS toast_selections (
+      location_id          INTEGER NOT NULL,
+      guid                 TEXT NOT NULL,
+      check_guid           TEXT,
+      order_guid           TEXT,
+      business_date        TEXT,
+      item_name            TEXT,
+      item_guid            TEXT,
+      sales_category_guid  TEXT,
+      selection_type       TEXT,
+      quantity             REAL,
+      price                REAL,
+      pre_discount_price   REAL,
+      voided               INTEGER NOT NULL DEFAULT 0,
+      synced_at            TEXT,
+      PRIMARY KEY (location_id, guid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_sel_loc_date ON toast_selections(location_id, business_date);
+    CREATE INDEX IF NOT EXISTS idx_toast_sel_item ON toast_selections(location_id, item_name);
+
     -- Toast staff roster & job catalog (from the Labor API). Employees are matched to
     -- our own users (by email / phone / name) so Toast sales can be attributed to a
     -- real person in this system. NOTE: this restaurant tracks clock-in/out in THIS
@@ -1147,6 +1169,8 @@ function migrate() {
     `ALTER TABLE location_hours ADD COLUMN close_time2 TEXT`,
     // Per-location opt-out of the automatic Toast sync during operating hours.
     `ALTER TABLE toast_locations ADD COLUMN auto_sync INTEGER NOT NULL DEFAULT 1`,
+    // Earliest business date backfilled for this location (how far history goes back).
+    `ALTER TABLE toast_locations ADD COLUMN backfilled_from TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

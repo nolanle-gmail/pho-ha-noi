@@ -19,6 +19,11 @@ const upCheck = db.prepare(`INSERT INTO toast_checks
   VALUES (@guid,@order_guid,@location_id,@business_date,@amount,@tax_amount,@total_amount,@tip_amount,@discount_amount,@service_charge_amount,@payment_status,@voided,datetime('now'))
   ON CONFLICT(guid) DO UPDATE SET order_guid=excluded.order_guid,location_id=excluded.location_id,business_date=excluded.business_date,amount=excluded.amount,tax_amount=excluded.tax_amount,total_amount=excluded.total_amount,tip_amount=excluded.tip_amount,discount_amount=excluded.discount_amount,service_charge_amount=excluded.service_charge_amount,payment_status=excluded.payment_status,voided=excluded.voided,synced_at=datetime('now')`);
 
+const upSelection = db.prepare(`INSERT INTO toast_selections
+  (location_id,guid,check_guid,order_guid,business_date,item_name,item_guid,sales_category_guid,selection_type,quantity,price,pre_discount_price,voided,synced_at)
+  VALUES (@location_id,@guid,@check_guid,@order_guid,@business_date,@item_name,@item_guid,@sales_category_guid,@selection_type,@quantity,@price,@pre_discount_price,@voided,datetime('now'))
+  ON CONFLICT(location_id,guid) DO UPDATE SET check_guid=excluded.check_guid,order_guid=excluded.order_guid,business_date=excluded.business_date,item_name=excluded.item_name,item_guid=excluded.item_guid,sales_category_guid=excluded.sales_category_guid,selection_type=excluded.selection_type,quantity=excluded.quantity,price=excluded.price,pre_discount_price=excluded.pre_discount_price,voided=excluded.voided,synced_at=datetime('now')`);
+
 const upPayment = db.prepare(`INSERT INTO toast_payments
   (guid,check_guid,order_guid,location_id,business_date,amount,tip_amount,type,card_type,card_entry_mode,refund_amount,paid_at,synced_at)
   VALUES (@guid,@check_guid,@order_guid,@location_id,@business_date,@amount,@tip_amount,@type,@card_type,@card_entry_mode,@refund_amount,@paid_at,datetime('now'))
@@ -48,7 +53,7 @@ async function syncOrders(locationId, businessDate) {
       if (arr.length < pageSize || page > 200) break;
       page++;
     }
-    let nChecks = 0, nPays = 0;
+    let nChecks = 0, nPays = 0, nSel = 0;
     db.exec('BEGIN');
     try {
       for (const o of orders) {
@@ -85,14 +90,24 @@ async function syncOrders(locationId, businessDate) {
             });
             nPays++;
           }
+          for (const s of (c.selections || [])) {
+            upSelection.run({
+              guid: s.guid, check_guid: c.guid, order_guid: o.guid, location_id: locationId, business_date: businessDate,
+              item_name: s.displayName || null, item_guid: (s.item && s.item.guid) || null,
+              sales_category_guid: (s.salesCategory && s.salesCategory.guid) || null, selection_type: s.selectionType || null,
+              quantity: s.quantity != null ? s.quantity : null, price: s.price != null ? s.price : null,
+              pre_discount_price: s.preDiscountPrice != null ? s.preDiscountPrice : null, voided: bool(s.voided),
+            });
+            nSel++;
+          }
         }
       }
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); throw e; }
     db.prepare(`UPDATE toast_locations SET last_synced_at=datetime('now') WHERE location_id=?`).run(locationId);
     db.prepare(`UPDATE toast_sync_log SET status='ok', record_count=?, detail=?, finished_at=datetime('now') WHERE id=?`)
-      .run(orders.length, `${orders.length} orders · ${nChecks} checks · ${nPays} payments`, logId);
-    return { orders: orders.length, checks: nChecks, payments: nPays };
+      .run(orders.length, `${orders.length} orders · ${nChecks} checks · ${nPays} payments · ${nSel} items`, logId);
+    return { orders: orders.length, checks: nChecks, payments: nPays, items: nSel };
   } catch (e) {
     db.prepare(`UPDATE toast_sync_log SET status='error', detail=?, finished_at=datetime('now') WHERE id=?`).run(String(e.message).slice(0, 500), logId);
     throw e;
@@ -291,4 +306,51 @@ function startToastSweep() {
   console.log(`[toast-sweep] auto-sync every ${intervalMin} min (grace ${graceMin} min).`);
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday };
+// ── Historical backfill ───────────────────────────────────────────────────────
+// Pull N days of history (default ~6 months) for every mapped location into the
+// mirror, oldest missing day first, gently throttled to respect Toast rate limits.
+// Idempotent + resumable: each location's backfilled_from records how far back it
+// goes, so re-running continues where it left off. Runs in the background.
+const _backfill = { running: false, startedAt: null, finishedAt: null, days: 0, total: 0, done: 0, errors: 0, currentLoc: null, currentName: null, currentDate: null, cancel: false };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function backfillStatus() { return { ..._backfill }; }
+function cancelBackfill() { if (_backfill.running) _backfill.cancel = true; }
+
+async function runBackfill({ days = 190, throttleMs = 300 } = {}) {
+  if (_backfill.running) return { started: false, reason: 'already_running', status: backfillStatus() };
+  if (!toast.toastEnabled()) return { started: false, reason: 'not_configured' };
+  days = Math.max(1, Math.min(800, parseInt(days, 10) || 190));
+  const yesterday = addDaysIso(pacificToday(), -1);
+  const target = addDaysIso(pacificToday(), -days);
+  const maps = db.prepare(`SELECT tl.location_id, l.name FROM toast_locations tl JOIN locations l ON l.id=tl.location_id WHERE tl.active=1 ORDER BY tl.location_id`).all();
+  // Build the task list: for each location, the dates it still needs (from its current
+  // earliest edge back to target). New locations start at yesterday.
+  const tasks = [];
+  for (const m of maps) {
+    const bf = (db.prepare(`SELECT backfilled_from FROM toast_locations WHERE location_id=?`).get(m.location_id) || {}).backfilled_from;
+    let from = bf ? addDaysIso(bf, -1) : yesterday;        // resume just below the covered edge
+    for (let d = from; d >= target; d = addDaysIso(d, -1)) tasks.push({ loc: m.location_id, name: m.name, date: d });
+  }
+  Object.assign(_backfill, { running: true, startedAt: new Date().toISOString(), finishedAt: null, days, total: tasks.length, done: 0, errors: 0, cancel: false, currentLoc: null, currentName: null, currentDate: null });
+  const logId = db.prepare(`INSERT INTO toast_sync_log (domain, window_start, window_end, status) VALUES ('backfill', ?, ?, 'running')`).run(target, yesterday).lastInsertRowid;
+  (async () => {
+    for (const t of tasks) {
+      if (_backfill.cancel) break;
+      _backfill.currentLoc = t.loc; _backfill.currentName = t.name; _backfill.currentDate = t.date;
+      try {
+        await syncOrders(t.loc, t.date);
+        db.prepare(`UPDATE toast_locations SET backfilled_from=? WHERE location_id=? AND (backfilled_from IS NULL OR backfilled_from > ?)`).run(t.date, t.loc, t.date);
+      } catch (e) { _backfill.errors++; console.error(`[toast-backfill] loc ${t.loc} ${t.date}:`, e.message); }
+      _backfill.done++;
+      if (_backfill.done % 10 === 0) db.prepare(`UPDATE toast_sync_log SET record_count=?, detail=? WHERE id=?`).run(_backfill.done, `${_backfill.done}/${_backfill.total} days · ${_backfill.errors} errors`, logId);
+      await sleep(throttleMs);
+    }
+    _backfill.running = false; _backfill.finishedAt = new Date().toISOString();
+    db.prepare(`UPDATE toast_sync_log SET status=?, record_count=?, detail=?, finished_at=datetime('now') WHERE id=?`)
+      .run(_backfill.cancel ? 'error' : 'ok', _backfill.done, `${_backfill.done}/${_backfill.total} days pulled · ${_backfill.errors} errors${_backfill.cancel ? ' · cancelled' : ''}`, logId);
+  })().catch((e) => { _backfill.running = false; console.error('[toast-backfill]', e.message); });
+  return { started: true, total: tasks.length, days, target, status: backfillStatus() };
+}
+
+module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill };
