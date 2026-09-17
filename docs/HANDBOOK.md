@@ -770,6 +770,7 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | Module | What's inside | Who |
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
+| **Service** | 🛎️ Live guest-visit board (waitlist → seated → in service → paying → done) + servers-today report, and an **⏳ Active waitlist** tab (parties still waiting, longest first, with Seat/Left). All-location roles get an All/by-location selector; location roles are pinned to their store | Owner/Admin/HR/GM all · Manager+ own store |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
 | **Staff** | Directory (A–Z, searchable by name / phone — **including a person's previous login numbers** — / code / email / role), full HR-profile edit, **Jobs** tab (job/task catalog), Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
