@@ -273,6 +273,33 @@ router.get('/orders/:guid', MANAGE, (req, res) => {
   res.json({ order: { ...o, status: orderStatus(o) }, checks, payments, items });
 });
 
+// Live service-flow board for a location: active (open) tables with how long each has
+// been open and its state, plus recent dry-run "check on table" alerts and settings.
+router.get('/service-flow', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const cfg = db.prepare(`SELECT service_alert_min, service_flow_on, service_alerts_live FROM toast_locations WHERE location_id=?`).get(location_id) || {};
+  const flow = toastSync.computeServiceFlow(location_id);
+  const alerts = db.prepare(`SELECT table_name, server_name, minutes_open, status, created_at FROM toast_service_alerts WHERE location_id=? ORDER BY id DESC LIMIT 15`).all(location_id);
+  res.json({ ...flow, settings: { alert_min: cfg.service_alert_min || 40, flow_on: !!cfg.service_flow_on, alerts_live: !!cfg.service_alerts_live }, recent_alerts: alerts });
+});
+
+// Update service-flow settings for a location (threshold, on/off, live vs dry-run).
+router.post('/service-flow/settings', ADMIN, (req, res) => {
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  const fields = [], args = [];
+  if (req.body.alert_min !== undefined) { const n = parseInt(req.body.alert_min, 10); fields.push('service_alert_min=?'); args.push(Number.isFinite(n) ? Math.min(240, Math.max(5, n)) : 40); }
+  if (req.body.flow_on !== undefined) { fields.push('service_flow_on=?'); args.push(req.body.flow_on ? 1 : 0); }
+  if (req.body.alerts_live !== undefined) { fields.push('service_alerts_live=?'); args.push(req.body.alerts_live ? 1 : 0); }
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update.' });
+  args.push(location_id);
+  db.prepare(`UPDATE toast_locations SET ${fields.join(',')} WHERE location_id=?`).run(...args);
+  auditLog(req, 'toast_service_settings', 'location', location_id, req.body);
+  res.json({ ok: true });
+});
+
 // Read a location's mirrored menu (price book).
 router.get('/menu', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);

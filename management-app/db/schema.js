@@ -1089,6 +1089,22 @@ function migrate() {
       synced_at    TEXT,
       PRIMARY KEY (location_id, type, guid)
     );
+
+    -- Service-flow "check on this table" events. In dry-run they are logged only
+    -- (status='logged', no staff pinged); once live they become 'notified'. One row
+    -- per order so a table isn't re-alerted every sweep.
+    CREATE TABLE IF NOT EXISTS toast_service_alerts (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id  INTEGER,
+      order_guid   TEXT UNIQUE,
+      table_name   TEXT,
+      server_name  TEXT,
+      opened_at    TEXT,
+      minutes_open INTEGER,
+      status       TEXT NOT NULL DEFAULT 'logged',   -- 'logged' (dry-run) | 'notified'
+      created_at   TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_svc_alerts ON toast_service_alerts(location_id, id);
   `);
 
   // Migrations for databases created before these columns existed.
@@ -1186,6 +1202,11 @@ function migrate() {
     `CREATE INDEX IF NOT EXISTS idx_toast_checks_order ON toast_checks(order_guid)`,
     `CREATE INDEX IF NOT EXISTS idx_toast_payments_order ON toast_payments(order_guid)`,
     `CREATE INDEX IF NOT EXISTS idx_toast_selections_order ON toast_selections(order_guid)`,
+    // Service-flow settings per location: minutes-open before a "check on table" alert,
+    // whether the live pull/flow is on, and whether alerts are live (0 = dry-run, log only).
+    `ALTER TABLE toast_locations ADD COLUMN service_alert_min INTEGER NOT NULL DEFAULT 40`,
+    `ALTER TABLE toast_locations ADD COLUMN service_flow_on INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE toast_locations ADD COLUMN service_alerts_live INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

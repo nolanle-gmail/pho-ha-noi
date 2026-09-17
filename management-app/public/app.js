@@ -209,6 +209,7 @@ const SECTIONS = [
   ['reports', '📈', 'Reports', 'reports'],
   ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
   ['toastorders', '🧾', 'Orders', 'manage'],
+  ['serviceflow', '⏱️', 'Service Flow', 'manage'],
   ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
@@ -346,7 +347,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -471,6 +472,49 @@ async function loadAnalytics() {
   } catch (e) {
     if (S.section === 'salesanalytics') $('view').querySelectorAll('.empty').forEach(el => el.textContent = e.message);
   }
+}
+
+// ── Service Flow board (live table state from Toast; dry-run alerts) ──────────
+async function renderServiceFlow() {
+  const isAdmin = roleScopeOf(S.user.role) === 'all';
+  if (!S.sfLoc) S.sfLoc = isAdmin ? String((S.locations[0] || {}).id || '') : String(S.user.location_id);
+  const locOpts = isAdmin ? `<label class="sched-filter-role">Location <select id="sfLoc">${(S.locations || []).map(l => `<option value="${l.id}" ${String(S.sfLoc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></label>` : '';
+  $('view').innerHTML = `
+    <h2 class="page">⏱️ Service Flow <span style="font-weight:400;color:var(--muted);font-size:.9rem">— live table state from Toast orders</span></h2>
+    <div class="sched-filters">${locOpts}<span class="sched-filter-total" id="sfMeta"></span></div>
+    <div id="sfBanner"></div>
+    <div id="sfBody"><div class="empty">Loading…</div></div>`;
+  if ($('sfLoc')) $('sfLoc').onchange = (e) => { S.sfLoc = e.target.value; loadServiceFlow(); };
+  loadServiceFlow();
+}
+async function loadServiceFlow() {
+  clearTimeout(S._sfTimer);
+  if (S.section !== 'serviceflow' || !S.sfLoc) return;
+  let d; try { d = await api('/toast/service-flow?location_id=' + S.sfLoc); }
+  catch (e) { if ($('sfBody')) $('sfBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.section !== 'serviceflow') return;
+  if ($('sfMeta')) $('sfMeta').innerHTML = `updated ${new Date(d.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · alert at <strong>${d.threshold} min</strong>`;
+  if ($('sfBanner')) $('sfBanner').innerHTML = d.settings.alerts_live
+    ? '<div class="callout brand" style="margin:.2rem 0 1rem">🔔 <b>Alerts are LIVE</b> — staff are notified when a table passes the threshold.</div>'
+    : '<div class="callout" style="margin:.2rem 0 1rem">🧪 <b>Dry-run</b> — "check on table" alerts are being <b>logged only</b>; no staff are pinged yet. Watch the flagged tables below to tune the threshold, then go live.</div>';
+  const card = (t) => `<div class="card sf-card ${t.state}">
+    <div class="sf-top"><span class="sf-table">${t.table_name ? 'Table ' + esc(t.table_name) : 'No table'}</span><span class="sf-mins ${t.state}">${t.minutes_open != null ? t.minutes_open + 'm' : '—'}</span></div>
+    <div class="sf-server">${t.server_name ? esc(t.server_name) : '<span style="color:var(--muted)">unassigned</span>'}${t.guests ? ' · ' + t.guests + ' guests' : ''}</div>
+    <div class="sf-state">${t.state === 'attention' ? '⚠ Check on table — open too long without paying' : '🟢 In service'}</div>
+  </div>`;
+  const attention = d.tables.filter(t => t.state === 'attention'), normal = d.tables.filter(t => t.state !== 'attention');
+  $('sfBody').innerHTML = `
+    <div class="kpis" style="margin-bottom:1rem">
+      <div class="card"><div class="label">Active tables</div><div class="value">${d.tables.length}</div></div>
+      <div class="card"><div class="label">In service</div><div class="value ok">${d.in_service}</div></div>
+      <div class="card"><div class="label">Needs attention</div><div class="value ${d.attention ? 'bad' : ''}">${d.attention}</div></div>
+    </div>
+    ${d.tables.length ? `<div class="sf-grid">${attention.map(card).join('')}${normal.map(card).join('')}</div>`
+      : '<div class="empty">No open tables right now (the store may be closed, or all orders are paid).</div>'}
+    ${d.recent_alerts.length ? `<div class="section" style="margin-top:1rem"><h3>Recent "check on table" alerts ${d.settings.alerts_live ? '' : '<span class="badge gray">dry-run · logged</span>'}</h3>
+      <div class="table-wrap"><table><thead><tr><th>Table</th><th>Server</th><th class="num">Open</th><th>When</th></tr></thead>
+      <tbody>${d.recent_alerts.map(a => `<tr><td>${a.table_name ? esc(a.table_name) : '—'}</td><td>${a.server_name ? esc(a.server_name) : '—'}</td><td class="num">${a.minutes_open}m</td><td class="sub" style="color:var(--muted)">${esc((a.created_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+  S._sfTimer = setTimeout(loadServiceFlow, 30000);   // self-refresh
 }
 
 // ── Orders browser (Toast order detail; owner/admin/manager) ──────────────────

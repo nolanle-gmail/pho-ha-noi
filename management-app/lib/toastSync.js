@@ -400,4 +400,57 @@ function startToastBackfillResume() {
   setTimeout(() => { runBackfill({ days }).then((r) => console.log('[toast-backfill] auto-resume started:', r.total, 'day-pulls')).catch((e) => console.error('[toast-backfill] resume:', e.message)); }, 60000);
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume };
+// ── Service flow: derive live table state from open Toast orders ──────────────
+const minsSince = (iso) => { if (!iso) return null; const t = Date.parse(String(iso).slice(0, 19) + 'Z'); return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 60000)) : null; };
+
+// Current active tables (open, unpaid orders) for a location, each with how long it
+// has been open and a state relative to the location's alert threshold.
+function computeServiceFlow(locationId) {
+  const loc = db.prepare(`SELECT service_alert_min FROM toast_locations WHERE location_id=?`).get(locationId) || {};
+  const threshold = loc.service_alert_min || 40;
+  const today = pacificToday();
+  const rows = db.prepare(`SELECT o.guid, o.opened_at, o.num_guests, tbl.name AS table_name,
+      COALESCE(NULLIF(TRIM(COALESCE(u.name,'')),''), NULLIF(TRIM(COALESCE(e.chosen_name,e.first_name)||' '||COALESCE(e.last_name,'')),'')) AS server_name
+    FROM toast_orders o
+    JOIN (SELECT DISTINCT order_guid FROM toast_checks WHERE location_id=? AND business_date=? AND payment_status='OPEN' AND voided=0) oc ON oc.order_guid=o.guid
+    LEFT JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
+    LEFT JOIN toast_employees e ON e.guid=o.server_guid
+    LEFT JOIN users u ON u.id=e.user_id
+    WHERE o.location_id=? AND o.business_date=? AND o.voided=0 AND o.paid_at IS NULL`).all(locationId, today, locationId, today);
+  const tables = rows.map(r => { const m = minsSince(r.opened_at); return { order_guid: r.guid, table_name: r.table_name, server_name: r.server_name, guests: r.num_guests, opened_at: r.opened_at, minutes_open: m, state: (m != null && m >= threshold) ? 'attention' : 'in_service' }; })
+    .sort((a, b) => (b.minutes_open || 0) - (a.minutes_open || 0));
+  return { threshold, tables, in_service: tables.filter(t => t.state === 'in_service').length, attention: tables.filter(t => t.state === 'attention').length, updated_at: new Date().toISOString() };
+}
+
+const insAlert = db.prepare(`INSERT OR IGNORE INTO toast_service_alerts (location_id, order_guid, table_name, server_name, opened_at, minutes_open, status) VALUES (?,?,?,?,?,?,?)`);
+
+// One live pass: refresh today's orders for each open, service-flow-enabled location,
+// then log a "check on table" alert (dry-run) for any table open past the threshold.
+async function runServiceFlowSweep({ graceMin = 30 } = {}) {
+  if (!toast.toastEnabled()) return;
+  const maps = db.prepare(`SELECT location_id, service_alert_min, service_alerts_live FROM toast_locations WHERE active=1 AND service_flow_on=1`).all();
+  const today = pacificToday(), nowMin = toMin(localTime(PACIFIC)), weekday = weekdayMon0(today);
+  for (const m of maps) {
+    if (!openWindow(m.location_id, weekday, nowMin, graceMin)) continue;   // only while open
+    try { await syncOrders(m.location_id, today); } catch (e) { console.error(`[toast-serviceflow] sync loc ${m.location_id}:`, e.message); continue; }
+    const flow = computeServiceFlow(m.location_id);
+    for (const t of flow.tables) {
+      if (t.state !== 'attention') continue;
+      const r = insAlert.run(m.location_id, t.order_guid, t.table_name, t.server_name, t.opened_at, t.minutes_open, m.service_alerts_live ? 'notified' : 'logged');
+      if (r.changes) console.log(`[toast-serviceflow]${m.service_alerts_live ? '' : ' DRY-RUN'} loc ${m.location_id} table ${t.table_name || '?'} open ${t.minutes_open}m (server ${t.server_name || '?'})`);
+      // Live alerts (notify staff) are wired in a later step; dry-run only logs.
+    }
+  }
+}
+
+let _liveTimer = null;
+function startToastLiveSweep() {
+  if (_liveTimer || !toast.toastEnabled()) { if (!toast.toastEnabled()) console.log('[toast-serviceflow] Toast not configured.'); return; }
+  const min = Math.max(2, parseInt(process.env.TOAST_LIVE_INTERVAL_MIN, 10) || 5);
+  const run = () => runServiceFlowSweep().catch((e) => console.error('[toast-serviceflow]', e.message));
+  setTimeout(run, 90000);                       // after backfill-resume, staggered
+  _liveTimer = setInterval(run, min * 60000);
+  console.log(`[toast-serviceflow] live service-flow sweep every ${min} min (dry-run alerts).`);
+}
+
+module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume, computeServiceFlow, runServiceFlowSweep, startToastLiveSweep };

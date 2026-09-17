@@ -123,6 +123,16 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .hbar { position: relative; display: flex; align-items: center; min-width: 120px; height: 20px; background: var(--surface-2, #f2f2f2); border-radius: 4px; overflow: hidden; }
 .hbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--brand, #b91c1c) 22%, transparent); }
 .hbar span { position: relative; padding: 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
+/* Service Flow board */
+.sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; }
+.sf-card { padding: .8rem .9rem; border-left: 4px solid var(--ok); }
+.sf-card.attention { border-left-color: var(--out); background: color-mix(in srgb, var(--out) 7%, var(--surface)); }
+.sf-top { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
+.sf-table { font-weight: 800; font-size: 1.05rem; }
+.sf-mins { font-weight: 800; font-size: 1.05rem; color: var(--ok); font-variant-numeric: tabular-nums; }
+.sf-mins.attention { color: var(--out); }
+.sf-server { font-size: .82rem; color: var(--ink); margin-top: .15rem; }
+.sf-state { font-size: .76rem; color: var(--muted); margin-top: .3rem; }
 .sched-period { width: auto; margin: 0; padding: .3rem .5rem; font: inherit; font-weight: 600; border-radius: 8px; }
 
 /* ── Month calendar ─────────────────────────────────────── */

@@ -68,6 +68,8 @@ if (require.main === module) {
   try { require('./lib/toastSync').startToastSweep(); } catch { /* optional */ }
   // Resume the history backfill if it was interrupted (survives restarts/deploys).
   try { require('./lib/toastSync').startToastBackfillResume(); } catch { /* optional */ }
+  // Live 5-min service-flow sweep (dry-run: logs "check on table", pings no one yet).
+  try { require('./lib/toastSync').startToastLiveSweep(); } catch { /* optional */ }
 }
 
 module.exports = app;
