@@ -406,6 +406,16 @@ async function renderIntegrations() {
       <div id="tsResult" style="margin-top:.7rem"></div>
     </div>` : ''}
 
+    ${maps.length ? `<div class="section" style="margin-bottom:1rem">
+      <h3>Toast staff & jobs</h3>
+      <p class="sub" style="color:var(--muted);font-size:.82rem;margin:.1rem 0 .5rem">Pull the Toast roster and match each Toast employee to a person in this app (by email, phone, then name). Clock-in/out is tracked in this app, not Toast.</p>
+      <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+        <label style="margin:0">Location<select id="tlLoc">${maps.map(m => `<option value="${m.location_id}">${esc(m.location_name)}</option>`).join('')}</select></label>
+        <button class="btn" id="tlRun">Sync roster</button>
+      </div>
+      <div id="tlResult" style="margin-top:.7rem"></div>
+    </div>` : ''}
+
     <div class="section">
       <h3>Recent syncs</h3>
       <div class="table-wrap"><table>
@@ -437,6 +447,31 @@ async function renderIntegrations() {
     catch (e) { c.checked = !c.checked; toast(e.message, true); }
   });
   if ($('tsRun')) $('tsRun').onclick = () => runToastSync(+$('tsLoc').value, $('tsFrom').value, $('tsTo').value, $('tsRun'));
+  if ($('tlRun')) $('tlRun').onclick = () => runToastLabor(+$('tlLoc').value, $('tlRun'));
+}
+// Pull the Toast roster and show the match summary + any unmatched employees.
+async function runToastLabor(location_id, btn) {
+  if (btn) { btn.disabled = true; var old = btn.textContent; btn.textContent = 'Syncing…'; }
+  const box = $('tlResult');
+  try {
+    await api('/toast/sync/labor', { method: 'POST', body: JSON.stringify({ location_id }) });
+    const d = await api('/toast/labor?location_id=' + location_id);
+    toast('✓ Roster synced from Toast.');
+    const active = (d.employees || []).filter(e => !e.deleted);
+    const unmatched = active.filter(e => !e.user_id);
+    const nameOf = (e) => esc([e.chosen_name || e.first_name, e.last_name].filter(Boolean).join(' '));
+    if (box) box.innerHTML = `<div class="kpis" style="margin:.2rem 0 .6rem">
+        <div class="card"><div class="label">Toast employees</div><div class="value">${active.length}</div></div>
+        <div class="card"><div class="label">Matched to app</div><div class="value ok">${d.matched}</div></div>
+        <div class="card"><div class="label">Unmatched</div><div class="value ${unmatched.length ? 'warn' : ''}">${unmatched.length}</div></div>
+        <div class="card"><div class="label">Toast jobs</div><div class="value">${(d.jobs || []).filter(j => !j.deleted).length}</div></div>
+      </div>
+      ${unmatched.length ? `<div class="table-wrap"><table><thead><tr><th>Unmatched Toast employee</th><th>Email</th><th>Phone</th></tr></thead>
+        <tbody>${unmatched.map(e => `<tr><td>${nameOf(e)}</td><td class="sub" style="color:var(--muted)">${esc(e.email || '—')}</td><td class="sub" style="color:var(--muted)">${esc(e.phone || '—')}</td></tr>`).join('')}</tbody></table></div>
+        <p class="sub" style="color:var(--muted);font-size:.78rem;margin:.3rem 0 0">Unmatched people exist in Toast but not in this app (or their email/phone/name differ). Add or align them in Staff to link them.</p>`
+        : '<p class="sub" style="color:var(--ok)">Every active Toast employee is matched to a person in this app. ✓</p>'}`;
+  } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
 // Trigger an orders pull and show the resulting daily sales summary.
 async function runToastSync(location_id, from, to, btn) {

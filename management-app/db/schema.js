@@ -1002,6 +1002,37 @@ function migrate() {
       synced_at            TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_toast_payments_loc_date ON toast_payments(location_id, business_date);
+
+    -- Toast staff roster & job catalog (from the Labor API). Employees are matched to
+    -- our own users (by email / phone / name) so Toast sales can be attributed to a
+    -- real person in this system. NOTE: this restaurant tracks clock-in/out in THIS
+    -- app, not Toast, so there are no Toast time entries to mirror.
+    CREATE TABLE IF NOT EXISTS toast_employees (
+      guid                 TEXT PRIMARY KEY,
+      location_id          INTEGER,            -- last location synced under
+      first_name           TEXT,
+      last_name            TEXT,
+      chosen_name          TEXT,
+      email                TEXT,
+      phone                TEXT,               -- digits only
+      external_employee_id TEXT,
+      deleted              INTEGER NOT NULL DEFAULT 0,
+      user_id              INTEGER REFERENCES users(id),  -- matched app user (NULL = unmatched)
+      match_by             TEXT,               -- 'email' | 'phone' | 'name' | NULL
+      synced_at            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_emp_user ON toast_employees(user_id);
+
+    CREATE TABLE IF NOT EXISTS toast_jobs (
+      guid                 TEXT PRIMARY KEY,
+      location_id          INTEGER,
+      title                TEXT,
+      tipped               INTEGER NOT NULL DEFAULT 0,
+      default_wage         REAL,
+      wage_frequency       TEXT,
+      deleted              INTEGER NOT NULL DEFAULT 0,
+      synced_at            TEXT
+    );
   `);
 
   // Migrations for databases created before these columns existed.

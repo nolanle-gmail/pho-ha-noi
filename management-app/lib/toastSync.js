@@ -113,6 +113,68 @@ function salesSummary(locationId, businessDate) {
     WHERE o.location_id=? AND o.business_date=? AND o.voided=0`).get(locationId, businessDate);
 }
 
+// ── Labor: staff roster & job catalog ─────────────────────────────────────────
+const digits = (s) => String(s || '').replace(/\D+/g, '').slice(-10);
+
+const upEmp = db.prepare(`INSERT INTO toast_employees
+  (guid,location_id,first_name,last_name,chosen_name,email,phone,external_employee_id,deleted,user_id,match_by,synced_at)
+  VALUES (@guid,@location_id,@first_name,@last_name,@chosen_name,@email,@phone,@external_employee_id,@deleted,@user_id,@match_by,datetime('now'))
+  ON CONFLICT(guid) DO UPDATE SET location_id=excluded.location_id,first_name=excluded.first_name,last_name=excluded.last_name,chosen_name=excluded.chosen_name,email=excluded.email,phone=excluded.phone,external_employee_id=excluded.external_employee_id,deleted=excluded.deleted,user_id=excluded.user_id,match_by=excluded.match_by,synced_at=datetime('now')`);
+
+const upJob = db.prepare(`INSERT INTO toast_jobs (guid,location_id,title,tipped,default_wage,wage_frequency,deleted,synced_at)
+  VALUES (@guid,@location_id,@title,@tipped,@default_wage,@wage_frequency,@deleted,datetime('now'))
+  ON CONFLICT(guid) DO UPDATE SET location_id=excluded.location_id,title=excluded.title,tipped=excluded.tipped,default_wage=excluded.default_wage,wage_frequency=excluded.wage_frequency,deleted=excluded.deleted,synced_at=datetime('now')`);
+
+// Match a Toast employee to one of our users: email, then phone, then full name.
+function matchUser(emp) {
+  const email = (emp.email || '').toLowerCase().trim();
+  if (email) { const u = db.prepare(`SELECT id FROM users WHERE lower(email)=?`).get(email); if (u) return { user_id: u.id, match_by: 'email' }; }
+  const ph = digits(emp.phoneNumber);
+  if (ph.length === 10) { const u = db.prepare(`SELECT id FROM users WHERE phone=?`).get(ph); if (u) return { user_id: u.id, match_by: 'phone' }; }
+  const name = [emp.firstName, emp.lastName].filter(Boolean).join(' ').trim();
+  if (name) { const u = db.prepare(`SELECT id FROM users WHERE lower(name)=?`).get(name.toLowerCase()); if (u) return { user_id: u.id, match_by: 'name' }; }
+  return { user_id: null, match_by: null };
+}
+
+// Pull the Toast staff roster + job catalog for a location and match employees to
+// our users. Read-only. Returns { employees, jobs, matched }.
+async function syncLabor(locationId) {
+  const map = mapping(locationId);
+  if (!map) throw new Error('That location is not mapped to a Toast restaurant.');
+  const guid = map.toast_guid;
+  const log = db.prepare(`INSERT INTO toast_sync_log (domain,location_id,toast_guid,status) VALUES ('labor',?,?, 'running')`).run(locationId, guid);
+  const logId = log.lastInsertRowid;
+  try {
+    const employees = await toast.toastGetAll('/labor/v1/employees', { guid, pageSize: 100 });
+    const jobs = await toast.toastGetAll('/labor/v1/jobs', { guid, pageSize: 100 });
+    let matched = 0;
+    db.exec('BEGIN');
+    try {
+      for (const e of employees) {
+        const m = matchUser(e); if (m.user_id) matched++;
+        upEmp.run({
+          guid: e.guid, location_id: locationId,
+          first_name: e.firstName || null, last_name: e.lastName || null, chosen_name: e.chosenName || null,
+          email: (e.email || '').toLowerCase() || null, phone: digits(e.phoneNumber) || null,
+          external_employee_id: e.externalEmployeeId || null, deleted: e.deleted ? 1 : 0,
+          user_id: m.user_id, match_by: m.match_by,
+        });
+      }
+      for (const j of jobs) {
+        upJob.run({ guid: j.guid, location_id: locationId, title: j.title || null, tipped: j.tipped ? 1 : 0,
+          default_wage: j.defaultWage != null ? j.defaultWage : null, wage_frequency: j.wageFrequency || null, deleted: j.deleted ? 1 : 0 });
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    db.prepare(`UPDATE toast_sync_log SET status='ok', record_count=?, detail=?, finished_at=datetime('now') WHERE id=?`)
+      .run(employees.length, `${employees.length} employees (${matched} matched) · ${jobs.length} jobs`, logId);
+    return { employees: employees.length, jobs: jobs.length, matched };
+  } catch (e) {
+    db.prepare(`UPDATE toast_sync_log SET status='error', detail=?, finished_at=datetime('now') WHERE id=?`).run(String(e.message).slice(0, 500), logId);
+    throw e;
+  }
+}
+
 // ── Automatic sync during operating hours ─────────────────────────────────────
 // A background sweep keeps each mapped location's sales current: it finalizes the
 // prior business day once per local day, and re-pulls "today" every interval while
@@ -145,8 +207,13 @@ async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
     const st = _swState[m.location_id] || (_swState[m.location_id] = { lastLive: 0, settled: null });
     const today = localDate(m.tz), nowMin = toMin(localTime(m.tz));
     try {
-      // Finalize yesterday once at the first sweep of a new local day.
-      if (st.settled !== today) { await syncOrders(m.location_id, addDaysIso(today, -1)); st.settled = today; }
+      // Finalize yesterday once at the first sweep of a new local day, and refresh
+      // the staff roster / job catalog (they change rarely) at the same time.
+      if (st.settled !== today) {
+        await syncOrders(m.location_id, addDaysIso(today, -1));
+        try { await syncLabor(m.location_id); } catch (e) { console.error(`[toast-sweep] labor loc ${m.location_id}:`, e.message); }
+        st.settled = today;
+      }
       // Keep today fresh while open (throttled).
       if (openWindow(m.location_id, weekdayMon0(today), nowMin, graceMin) && (Date.now() - st.lastLive) >= liveThrottleMin * 60000) {
         await syncOrders(m.location_id, today); st.lastLive = Date.now();
@@ -167,4 +234,4 @@ function startToastSweep() {
   console.log(`[toast-sweep] auto-sync every ${intervalMin} min (grace ${graceMin} min).`);
 }
 
-module.exports = { syncOrders, salesSummary, sweepOnce, startToastSweep };
+module.exports = { syncOrders, salesSummary, syncLabor, sweepOnce, startToastSweep };

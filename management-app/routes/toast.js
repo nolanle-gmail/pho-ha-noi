@@ -110,6 +110,35 @@ router.post('/sync/orders', ADMIN, async (req, res) => {
   } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
 });
 
+// Pull the Toast staff roster + job catalog for a location and match to our users.
+router.post('/sync/labor', ADMIN, async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  try {
+    const r = await toastSync.syncLabor(location_id);
+    auditLog(req, 'toast_sync_labor', 'location', location_id, r);
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+});
+
+// Read the mirrored Toast roster (employees + match status) and job catalog.
+router.get('/labor', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const employees = db.prepare(`SELECT e.guid, e.first_name, e.last_name, e.chosen_name, e.email, e.phone,
+      e.deleted, e.match_by, e.user_id, u.name AS user_name, u.role AS user_role
+    FROM toast_employees e LEFT JOIN users u ON u.id=e.user_id
+    WHERE e.location_id=? ORDER BY e.deleted, e.first_name, e.last_name`).all(location_id);
+  const jobs = db.prepare(`SELECT title, tipped, default_wage, wage_frequency, deleted FROM toast_jobs WHERE location_id=? ORDER BY deleted, title`).all(location_id);
+  res.json({
+    employees, jobs,
+    matched: employees.filter(e => e.user_id).length,
+    unmatched: employees.filter(e => !e.user_id && !e.deleted).length,
+  });
+});
+
 // Read the mirrored per-day sales summary for one location (no Toast call).
 router.get('/sales', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);
