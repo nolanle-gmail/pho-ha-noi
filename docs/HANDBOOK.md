@@ -1082,6 +1082,14 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
+- **Staff rows are ordered by the job they're assigned** (not account order), front-of-house
+  leadership first through the kitchen and cleanup: **Shift Lead / Lead → Host →
+  Server / Back Server / Food Runner → Barista / Bartender → Busser → Dishwasher →
+  Line Cook (incl. Pho / Nuong / Cuon / Expo) → Clean up / Clean Up LB**, then **everything
+  else**, alphabetical by name within a tier. A row's rank is the **highest-priority job
+  across that person's shifts at this location** in the current view (Week or Day); someone
+  with **no job assigned** falls back to their **account role**. Month view is a calendar,
+  not staff rows, so the ordering applies to Week and Day.
 - Each work shift is a **colour-coded block** — the whole block takes the assigned job's
   colour (white text), and every job keeps the **same colour everywhere**, so roles are
   easy to tell apart at a glance across the grid. A multi-job shift uses the first job's
