@@ -671,7 +671,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 60 tables
+### Management database — 62 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -739,6 +739,8 @@ erDiagram
 | `toast_jobs` | Toast | Toast job catalog (title, tipped, wage) |
 | `toast_menu_items` | Toast | Published Toast menu flattened to one row per item per location (price book; cross-location price compare) |
 | `toast_selections` | Toast | Line items on each check (item, category, qty, price) — the item-level detail for sales analysis |
+| `toast_config` | Toast | Reference data per location — tables, dining options, service areas, revenue centers — to resolve order GUIDs into names |
+| `toast_service_alerts` | Toast | "Check on this table" events (dry-run = logged only, live = staff notified); one per order |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -775,6 +777,8 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
 | **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix) and day/time patterns from the stored Toast history — no live pull | Manager+ (own store) · Owner/Admin all |
+| **Orders** | 🧾 Browse a day's Toast orders (time, table, server, guests, items, net, tips, status) and open any order's full detail | Manager+ (own store) · Owner/Admin all |
+| **Service Flow** | ⏱️ Live table state from open Toast orders (in service / check-on-table), auto-pulled every 5 min | Manager+ (own store) · Owner/Admin all |
 | **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, backfill history, and toggle auto-sync (read-only) | Owner/Admin |
 | **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
@@ -873,6 +877,22 @@ avg check, guests), **top items** (menu mix, by revenue, from line items), and *
 hour-of-day patterns** for staffing/planning. Hours are shown in approximate Pacific time.
 Each section has a **⬇ CSV** button that exports exactly what's on screen for the current
 filter (opens directly in Excel; a UTF-8 BOM keeps accented item names intact).
+
+**Orders (🧾).** Browse the stored Toast orders for a location + date — each row shows the
+time, **table**, **server**, guests, item count, net, **tips** and a derived **status**
+(open / paid / voided). Open any order for the full detail: server, table, dining option,
+tips, **line items**, checks and payments. GUIDs are resolved to names via `toast_config`
+(tables/dining options) and the matched staff roster (server). Read-only from the local store.
+
+**Service Flow (⏱️).** A live board that derives each **table's state** from open Toast orders,
+refreshed by a **5-minute background sweep** (per open location). A table with an open, unpaid
+order is **🟢 in service**; once it has been open past a per-location threshold
+(`service_alert_min`, default **40 min**) it becomes **⚠ check on table**. Non-dining orders —
+those with **no table** (to-go / delivery / online) and staff **"Employee" tabs** — are excluded
+so they don't false-alert. "Check on table" events are recorded in `toast_service_alerts`;
+by default they are **dry-run (logged only, no staff pinged)** so the threshold can be validated
+against real data before going live (`service_alerts_live`). The board self-refreshes and is
+scoped per location (managers see their own store).
 
 ### Front Desk / Waitlist app (port 4002)
 
