@@ -3,7 +3,7 @@
 // read-only; credentials live in env / Fly secrets (see lib/toast.js), never here.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const toast = require('../lib/toast');
 const toastSync = require('../lib/toastSync');
@@ -286,6 +286,83 @@ router.delete('/map/:id', ADMIN, (req, res) => {
   db.prepare(`DELETE FROM toast_locations WHERE id=?`).run(row.id);
   auditLog(req, 'toast_unmap', 'location', row.location_id, { toast_guid: row.toast_guid });
   res.json({ success: true });
+});
+
+// ── Sales analytics (reads the local mirror only; never calls Toast) ──────────
+// Visible to managers and the reports tier; managers are scoped to their own store.
+const ANALYTICS = (req, res, next) => (roleHasCap(req.user.role, 'reports') || roleHasCap(req.user.role, 'manage'))
+  ? next() : res.status(403).json({ error: 'Not allowed to view sales analytics.' });
+const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+function rangeScope(req) {
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : toastSync.pacificToday();
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : addDaysIso(to, -90);
+  const all = seesAllLocations(req.user.role);
+  const loc = all ? (parseInt(req.query.location_id, 10) || null) : req.user.location_id;   // managers pinned to own store
+  return { from, to, loc, all };
+}
+const locClause = (loc) => (loc ? 'AND location_id=?' : '');
+const locArgs = (from, to, loc) => (loc ? [from, to, loc] : [from, to]);
+
+// Headline KPIs for the range.
+router.get('/analytics/summary', ANALYTICS, (req, res) => {
+  const { from, to, loc } = rangeScope(req); const lc = locClause(loc), a = locArgs(from, to, loc);
+  const m = db.prepare(`SELECT ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips, ROUND(SUM(tax_amount),2) tax, ROUND(SUM(discount_amount),2) discounts FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
+  const o = db.prepare(`SELECT COUNT(*) orders, COALESCE(SUM(num_guests),0) guests, COUNT(DISTINCT business_date) days FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
+  const it = db.prepare(`SELECT ROUND(SUM(quantity),0) qty FROM toast_selections WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
+  const net = m.net || 0, orders = o.orders || 0;
+  res.json({ from, to, net, total: m.total || 0, tips: m.tips || 0, tax: m.tax || 0, discounts: m.discounts || 0,
+    orders, guests: o.guests || 0, days: o.days || 0, items: it.qty || 0,
+    avg_check: orders ? Math.round(net / orders * 100) / 100 : 0, avg_per_day: (o.days ? Math.round(net / o.days * 100) / 100 : 0) });
+});
+
+// Revenue / orders / guests time series (day, week or month buckets).
+router.get('/analytics/trends', ANALYTICS, (req, res) => {
+  const { from, to, loc } = rangeScope(req); const lc = locClause(loc), a = locArgs(from, to, loc);
+  const g = req.query.granularity;
+  const bucket = g === 'month' ? "strftime('%Y-%m', business_date)" : g === 'week' ? "strftime('%Y-%W', business_date)" : 'business_date';
+  const money = db.prepare(`SELECT ${bucket} period, MIN(business_date) start, ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc} GROUP BY period`).all(...a);
+  const ord = db.prepare(`SELECT ${bucket} period, COUNT(*) orders, COALESCE(SUM(num_guests),0) guests FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc} GROUP BY period`).all(...a);
+  const byP = {}; for (const r of money) byP[r.period] = { period: r.period, start: r.start, net: r.net || 0, total: r.total || 0, tips: r.tips || 0, orders: 0, guests: 0 };
+  for (const r of ord) { const p = byP[r.period] || (byP[r.period] = { period: r.period, start: r.period, net: 0, total: 0, tips: 0 }); p.orders = r.orders; p.guests = r.guests; }
+  res.json({ from, to, granularity: g === 'month' ? 'month' : g === 'week' ? 'week' : 'day', series: Object.values(byP).sort((x, y) => String(x.start).localeCompare(String(y.start))) });
+});
+
+// Per-location rollup (admins see all; managers see their own store).
+router.get('/analytics/locations', ANALYTICS, (req, res) => {
+  const { from, to, all } = rangeScope(req);
+  const lc = all ? '' : 'AND o.location_id=?', a = all ? [from, to] : [from, to, req.user.location_id];
+  const ord = db.prepare(`SELECT o.location_id, l.name, COUNT(*) orders, COALESCE(SUM(o.num_guests),0) guests
+    FROM toast_orders o JOIN locations l ON l.id=o.location_id WHERE o.voided=0 AND o.business_date BETWEEN ? AND ? ${lc} GROUP BY o.location_id`).all(...a);
+  const lc2 = all ? '' : 'AND location_id=?';
+  const money = db.prepare(`SELECT location_id, ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc2} GROUP BY location_id`).all(...a);
+  const byLoc = {}; for (const r of money) byLoc[r.location_id] = r;
+  const rows = ord.map(o => { const m = byLoc[o.location_id] || {}; const net = m.net || 0; return { location_id: o.location_id, name: o.name, net, total: m.total || 0, tips: m.tips || 0, orders: o.orders, guests: o.guests, avg_check: o.orders ? Math.round(net / o.orders * 100) / 100 : 0 }; }).sort((x, y) => y.net - x.net);
+  res.json({ from, to, locations: rows });
+});
+
+// Top-selling items (menu mix) by revenue.
+router.get('/analytics/items', ANALYTICS, (req, res) => {
+  const { from, to, loc } = rangeScope(req); const lc = locClause(loc), a = locArgs(from, to, loc);
+  const limit = Math.min(100, Math.max(5, parseInt(req.query.limit, 10) || 25));
+  const items = db.prepare(`SELECT item_name, ROUND(SUM(quantity),0) qty, ROUND(SUM(price),2) revenue, COUNT(DISTINCT check_guid) checks
+    FROM toast_selections WHERE voided=0 AND price>0 AND business_date BETWEEN ? AND ? ${lc}
+    GROUP BY item_name ORDER BY revenue DESC LIMIT ${limit}`).all(...a);
+  res.json({ from, to, items });
+});
+
+// Day-of-week and hour-of-day patterns (for staffing / planning).
+router.get('/analytics/patterns', ANALYTICS, (req, res) => {
+  const { from, to, loc } = rangeScope(req); const lc = locClause(loc), a = locArgs(from, to, loc);
+  // Day of week (0=Sun..6=Sat) — revenue from checks, plus distinct-day counts for an average.
+  const dowMoney = db.prepare(`SELECT CAST(strftime('%w', business_date) AS INT) dow, ROUND(SUM(amount),2) net FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc} GROUP BY dow`).all(...a);
+  const dowDays = db.prepare(`SELECT CAST(strftime('%w', business_date) AS INT) dow, COUNT(DISTINCT business_date) days, COUNT(*) orders FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc} GROUP BY dow`).all(...a);
+  const dm = {}; dowMoney.forEach(r => dm[r.dow] = r.net); const dd = {}; dowDays.forEach(r => dd[r.dow] = r);
+  const dow = [0, 1, 2, 3, 4, 5, 6].map(i => ({ dow: i, net: dm[i] || 0, days: (dd[i] || {}).days || 0, orders: (dd[i] || {}).orders || 0, avg: (dd[i] && dd[i].days) ? Math.round((dm[i] || 0) / dd[i].days * 100) / 100 : 0 }));
+  // Hour of day (Pacific ≈ UTC−7). substr strips the +0000 suffix SQLite can't parse.
+  const hrRows = db.prepare(`SELECT CAST(strftime('%H', substr(opened_at,1,19), '-7 hours') AS INT) hr, COUNT(*) orders FROM toast_orders WHERE voided=0 AND opened_at IS NOT NULL AND business_date BETWEEN ? AND ? ${lc} GROUP BY hr`).all(...a);
+  const hm = {}; hrRows.forEach(r => { if (r.hr != null) hm[(r.hr + 24) % 24] = r.orders; });
+  const hours = Array.from({ length: 24 }, (_, h) => ({ hour: h, orders: hm[h] || 0 }));
+  res.json({ from, to, dow, hours });
 });
 
 module.exports = router;

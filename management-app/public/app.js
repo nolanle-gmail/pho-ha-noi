@@ -207,6 +207,7 @@ const SECTIONS = [
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
   ['menu', '🍽️', 'Menu/Recipes', 'manage'],
   ['reports', '📈', 'Reports', 'reports'],
+  ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
   ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
@@ -344,8 +345,92 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
+}
+
+// ── Sales Analytics (reads the local Toast mirror; owner/admin/manager) ───────
+function pacificTodayIso() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+function defaultAnFilters() {
+  const to = pacificTodayIso(); const def = { from: addDaysIso(to, -90), to, gran: 'week', loc: '' };
+  try { return Object.assign(def, JSON.parse(localStorage.getItem('phn_an_filters') || '{}')); } catch { return def; }
+}
+const moneyK = (n) => { n = Number(n) || 0; return n >= 1000 ? '$' + (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(n); };
+const WD_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+async function renderToastAnalytics() {
+  const F = S.anFilters || (S.anFilters = defaultAnFilters());
+  const isAdmin = roleScopeOf(S.user.role) === 'all';
+  const locOpts = isAdmin ? `<label class="sched-filter-role">Location <select id="anLoc"><option value="">All locations</option>${(S.locations || []).map(l => `<option value="${l.id}" ${String(F.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></label>` : '';
+  $('view').innerHTML = `
+    <h2 class="page">💹 Sales Analytics <span style="font-weight:400;color:var(--muted);font-size:.9rem">— from your stored Toast history (no live pull)</span></h2>
+    <div class="sched-filters">
+      <label class="sched-filter-role">From <input type="date" id="anFrom" value="${F.from}" max="${pacificTodayIso()}"></label>
+      <label class="sched-filter-role">To <input type="date" id="anTo" value="${F.to}" max="${pacificTodayIso()}"></label>
+      <label class="sched-filter-role">By <select id="anGran"><option value="day" ${F.gran === 'day' ? 'selected' : ''}>Day</option><option value="week" ${F.gran === 'week' ? 'selected' : ''}>Week</option><option value="month" ${F.gran === 'month' ? 'selected' : ''}>Month</option></select></label>
+      ${locOpts}
+      <span class="sched-filter-total" id="anRangeInfo"></span>
+    </div>
+    <div id="anKpis" class="kpis"></div>
+    <div class="section"><h3>Sales trend</h3><div id="anTrend"><div class="empty">Loading…</div></div></div>
+    ${isAdmin ? '<div class="section"><h3>By location</h3><div id="anLocs"><div class="empty">Loading…</div></div></div>' : ''}
+    <div class="grid two" style="align-items:start">
+      <div class="section"><h3>Top items</h3><div id="anItems"><div class="empty">Loading…</div></div></div>
+      <div class="section"><h3>Day &amp; time patterns</h3><div id="anPatterns"><div class="empty">Loading…</div></div></div>
+    </div>`;
+  const save = () => { try { localStorage.setItem('phn_an_filters', JSON.stringify(F)); } catch { /* ignore */ } loadAnalytics(); };
+  $('anFrom').onchange = (e) => { F.from = e.target.value; save(); };
+  $('anTo').onchange = (e) => { F.to = e.target.value; save(); };
+  $('anGran').onchange = (e) => { F.gran = e.target.value; save(); };
+  if ($('anLoc')) $('anLoc').onchange = (e) => { F.loc = e.target.value; save(); };
+  loadAnalytics();
+}
+
+async function loadAnalytics() {
+  const F = S.anFilters; const qs = `from=${F.from}&to=${F.to}${F.loc ? '&location_id=' + F.loc : ''}`;
+  const vbars = (rows, val, label, fmt) => {
+    const max = Math.max(1, ...rows.map(val));
+    return `<div class="vbars">${rows.map(r => `<div class="vbar" title="${esc(label(r))}: ${fmt(val(r))}"><div class="vbar-fill" style="height:${Math.round(val(r) / max * 100)}%"></div><span class="vbar-lbl">${esc(label(r))}</span></div>`).join('')}</div>`;
+  };
+  try {
+    const [sum, trend, items, pat] = await Promise.all([
+      api('/toast/analytics/summary?' + qs), api('/toast/analytics/trends?' + qs + '&granularity=' + F.gran),
+      api('/toast/analytics/items?' + qs + '&limit=25'), api('/toast/analytics/patterns?' + qs),
+    ]);
+    if (S.section !== 'salesanalytics') return;
+    if ($('anRangeInfo')) $('anRangeInfo').innerHTML = `${sum.days} day${sum.days === 1 ? '' : 's'} with sales · avg <strong>${money(sum.avg_per_day)}</strong>/day`;
+    $('anKpis').innerHTML = [
+      ['Net sales', money(sum.net)], ['Orders', (sum.orders || 0).toLocaleString()], ['Guests', (sum.guests || 0).toLocaleString()],
+      ['Avg check', money(sum.avg_check)], ['Items sold', (sum.items || 0).toLocaleString()], ['Tips', money(sum.tips)],
+    ].map(([k, v]) => `<div class="card"><div class="label">${k}</div><div class="value">${v}</div></div>`).join('');
+    // Trend
+    const per = (r) => F.gran === 'month' ? r.start.slice(0, 7) : F.gran === 'week' ? fmtDay(r.start) : fmtDay(r.start);
+    $('anTrend').innerHTML = trend.series.length
+      ? vbars(trend.series, r => r.net, per, moneyK) + `<p class="sub" style="color:var(--muted);font-size:.78rem;margin:.4rem 0 0">Net sales per ${trend.granularity}. Hover a bar for the exact figure.</p>`
+      : '<div class="empty">No sales in this range.</div>';
+    // Locations (admin only)
+    if ($('anLocs')) {
+      try {
+        const d = await api('/toast/analytics/locations?' + qs);
+        const max = Math.max(1, ...d.locations.map(l => l.net));
+        $('anLocs').innerHTML = d.locations.length ? `<div class="table-wrap"><table><thead><tr><th>Location</th><th>Net sales</th><th class="num">Orders</th><th class="num">Avg check</th><th class="num">Guests</th></tr></thead>
+          <tbody>${d.locations.map(l => `<tr><td><strong>${esc(shortLoc(l.name))}</strong></td>
+            <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(l.net / max * 100)}%"></div><span>${money(l.net)}</span></div></td>
+            <td class="num">${l.orders.toLocaleString()}</td><td class="num">${money(l.avg_check)}</td><td class="num">${l.guests.toLocaleString()}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data.</div>';
+      } catch (e) { $('anLocs').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    }
+    // Top items
+    const maxRev = Math.max(1, ...items.items.map(i => i.revenue));
+    $('anItems').innerHTML = items.items.length ? `<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Revenue</th></tr></thead>
+      <tbody>${items.items.map(i => `<tr><td>${esc(i.item_name)}</td><td class="num">${(i.qty || 0).toLocaleString()}</td>
+        <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(i.revenue / maxRev * 100)}%"></div><span>${money(i.revenue)}</span></div></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No items in this range.</div>';
+    // Patterns
+    const dowRows = pat.dow.map(d => ({ ...d, label: WD_SUN[d.dow] }));
+    $('anPatterns').innerHTML = `<h4 style="margin:.2rem 0 .3rem">Average sales by day of week</h4>${vbars(dowRows, r => r.avg, r => r.label, money)}
+      <h4 style="margin:1rem 0 .3rem">Orders by hour <span style="font-weight:400;color:var(--muted);font-size:.78rem">(approx. Pacific)</span></h4>${vbars(pat.hours.filter(h => h.orders > 0), r => r.orders, r => (r.hour % 12 || 12) + (r.hour < 12 ? 'a' : 'p'), (v) => v.toLocaleString())}`;
+  } catch (e) {
+    if (S.section === 'salesanalytics') $('view').querySelectorAll('.empty').forEach(el => el.textContent = e.message);
+  }
 }
 
 // ── Integrations: Toast POS (owner/admin) ────────────────────────────────────

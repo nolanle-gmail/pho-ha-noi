@@ -115,6 +115,14 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 /* Backfill progress bar */
 .bf-bar { height: 8px; border-radius: 6px; background: var(--line, #e3e3e3); overflow: hidden; }
 .bf-fill { height: 100%; background: var(--brand, #b91c1c); transition: width .4s ease; }
+/* Analytics charts */
+.vbars { display: flex; align-items: flex-end; gap: 3px; height: 160px; overflow-x: auto; padding-top: .5rem; }
+.vbar { flex: 1 0 14px; min-width: 14px; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+.vbar-fill { width: 70%; min-height: 2px; background: var(--brand, #b91c1c); border-radius: 3px 3px 0 0; }
+.vbar-lbl { font-size: .6rem; color: var(--muted); margin-top: .25rem; white-space: nowrap; transform: rotate(-45deg); transform-origin: top right; max-width: 3.5em; overflow: hidden; }
+.hbar { position: relative; display: flex; align-items: center; min-width: 120px; height: 20px; background: var(--surface-2, #f2f2f2); border-radius: 4px; overflow: hidden; }
+.hbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--brand, #b91c1c) 22%, transparent); }
+.hbar span { position: relative; padding: 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
 .sched-period { width: auto; margin: 0; padding: .3rem .5rem; font: inherit; font-weight: 600; border-radius: 8px; }
 
 /* ── Month calendar ─────────────────────────────────────── */
