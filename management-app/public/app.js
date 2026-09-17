@@ -358,7 +358,10 @@ async function renderIntegrations() {
   const maps = status.mappings || [];
   const mapped = new Set(maps.map(m => String(m.location_id)));
   const unmapped = (locs || []).filter(l => !mapped.has(String(l.id)));
-  const yday = addDaysIso(todayIso(), -1);
+  // All restaurants run on Pacific Time, so Toast business dates are Pacific — default
+  // the pickers to Pacific "today"/"yesterday" no matter the viewer's own timezone.
+  const pToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const yday = addDaysIso(pToday, -1);
   const syncRow = (s) => `<tr><td>${esc(s.domain)}</td><td>${esc((maps.find(m => m.location_id === s.location_id) || {}).location_name || s.location_id || '—')}</td>
     <td><span class="badge ${s.status === 'ok' ? 'ok' : s.status === 'error' ? 'out' : 'gray'}">${esc(s.status)}</span></td>
     <td class="num">${s.record_count || 0}</td><td>${esc(s.detail || '')}</td><td class="sub" style="color:var(--muted)">${esc((s.finished_at || s.started_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`;
@@ -399,8 +402,8 @@ async function renderIntegrations() {
       <h3>Pull sales</h3>
       <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
         <label style="margin:0">Location<select id="tsLoc">${maps.map(m => `<option value="${m.location_id}">${esc(m.location_name)}</option>`).join('')}</select></label>
-        <label style="margin:0">From<input id="tsFrom" type="date" value="${yday}" max="${todayIso()}" /></label>
-        <label style="margin:0">To<input id="tsTo" type="date" value="${yday}" max="${todayIso()}" /></label>
+        <label style="margin:0">From<input id="tsFrom" type="date" value="${yday}" max="${pToday}" /></label>
+        <label style="margin:0">To<input id="tsTo" type="date" value="${yday}" max="${pToday}" /></label>
         <button class="btn" id="tsRun">Pull sales</button>
       </div>
       <div id="tsResult" style="margin-top:.7rem"></div>

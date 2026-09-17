@@ -180,7 +180,12 @@ async function syncLabor(locationId) {
 // prior business day once per local day, and re-pulls "today" every interval while
 // the store is open (plus a grace window after close for closeout). Read-only,
 // idempotent, and per-location opt-out via toast_locations.auto_sync.
-const { localDate, localTime, DEFAULT_TZ } = require('./tz');
+const { localDate, localTime } = require('./tz');
+// Every Pho Ha Noi restaurant operates on Pacific Time, so all Toast business-date
+// boundaries ("today" / "yesterday") are computed in Pacific — independent of the
+// server's timezone, any location's timezone column, or whose browser is open.
+const PACIFIC = 'America/Los_Angeles';
+const pacificToday = () => localDate(PACIFIC);
 const toMin = (hhmm) => { const m = /^(\d{2}):(\d{2})/.exec(hhmm || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 // day_of_week 0=Mon…6=Sun for a local YYYY-MM-DD.
@@ -200,12 +205,11 @@ function openWindow(locId, weekday, nowMin, graceMin) {
 
 async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
   if (!toast.toastEnabled()) return;
-  const maps = db.prepare(`SELECT tl.location_id, COALESCE(l.timezone,?) AS tz
-    FROM toast_locations tl JOIN locations l ON l.id=tl.location_id
-    WHERE tl.active=1 AND tl.auto_sync=1`).all(DEFAULT_TZ);
+  const maps = db.prepare(`SELECT tl.location_id FROM toast_locations tl
+    JOIN locations l ON l.id=tl.location_id WHERE tl.active=1 AND tl.auto_sync=1`).all();
+  const today = pacificToday(), nowMin = toMin(localTime(PACIFIC));   // Pacific for all stores
   for (const m of maps) {
     const st = _swState[m.location_id] || (_swState[m.location_id] = { lastLive: 0, settled: null });
-    const today = localDate(m.tz), nowMin = toMin(localTime(m.tz));
     try {
       // Finalize yesterday once at the first sweep of a new local day, and refresh
       // the staff roster / job catalog (they change rarely) at the same time.
@@ -234,4 +238,4 @@ function startToastSweep() {
   console.log(`[toast-sweep] auto-sync every ${intervalMin} min (grace ${graceMin} min).`);
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, sweepOnce, startToastSweep };
+module.exports = { syncOrders, salesSummary, syncLabor, sweepOnce, startToastSweep, pacificToday };
