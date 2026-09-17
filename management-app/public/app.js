@@ -1202,18 +1202,18 @@ async function renderManagerDashboard() {
     </div>` : ''}
 
     <div class="section">
-      <div class="row-between"><h3 style="margin:0">Check-in / Check-out <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${clock.summary.on_clock || 0} on the clock · ${clock.summary.done || 0} checked out${clock.summary.not_in ? ` · ${clock.summary.not_in} not in` : ''}</span></h3>
+      <div class="row-between"><h3 style="margin:0">Clock In / Clock Out <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${clock.summary.on_clock || 0} on the clock · ${clock.summary.done || 0} clocked out${clock.summary.not_in ? ` · ${clock.summary.not_in} not in` : ''}</span></h3>
         <button class="btn sm" data-timeclock="1">Open time clock →</button></div>
-      ${clock.summary.short ? `<p class="sub" style="margin:.4rem 0 .2rem;color:var(--red);font-size:.85rem">⚠ ${clock.summary.short} checked out early today — review on the Time Clock tab.</p>` : ''}
-      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Worked</th><th>Status</th></tr></thead><tbody>
+      ${clock.summary.short ? `<p class="sub" style="margin:.4rem 0 .2rem;color:var(--red);font-size:.85rem">⚠ ${clock.summary.short} clocked out early today — review on the Time Clock tab.</p>` : ''}
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Clocked in</th><th>Clocked out</th><th>Worked</th><th>Status</th></tr></thead><tbody>
         ${clock.entries.length ? clock.entries.map(e => `<tr>
           <td><strong>${esc(e.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(e.employee_code || '')}</span></td>
           <td class="mono">${e.clock_in || '—'}</td>
           <td class="mono">${e.clock_out || '—'}</td>
           <td>${fmtDur(e.worked_minutes)}${e.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
-          <td>${e.status === 'in' ? '<span class="badge ok">🟢 On clock</span>' : `<span class="badge gray">Checked out</span>${e.short ? ' <span class="badge out">⚠ short</span>' : ''}${e.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(e.overtime_minutes)} OT</span>` : ''}`}</td>
-        </tr>`).join('') : '<tr><td colspan="5" class="empty">No check-ins yet today.</td></tr>'}
-        ${clock.not_in && clock.not_in.length ? `<tr><td colspan="5" style="color:var(--muted);font-size:.83rem;background:#fafafa">Scheduled, not checked in: ${clock.not_in.slice(0, 8).map(n => esc(n.name)).join(', ')}${clock.not_in.length > 8 ? ` +${clock.not_in.length - 8} more` : ''}</td></tr>` : ''}
+          <td>${e.status === 'in' ? '<span class="badge ok">🟢 On clock</span>' : `<span class="badge gray">Clocked out</span>${e.short ? ' <span class="badge out">⚠ short</span>' : ''}${e.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(e.overtime_minutes)} OT</span>` : ''}`}</td>
+        </tr>`).join('') : '<tr><td colspan="5" class="empty">No clock-ins yet today.</td></tr>'}
+        ${clock.not_in && clock.not_in.length ? `<tr><td colspan="5" style="color:var(--muted);font-size:.83rem;background:#fafafa">Scheduled, not clocked in: ${clock.not_in.slice(0, 8).map(n => esc(n.name)).join(', ')}${clock.not_in.length > 8 ? ` +${clock.not_in.length - 8} more` : ''}</td></tr>` : ''}
       </tbody></table></div>
     </div>
 

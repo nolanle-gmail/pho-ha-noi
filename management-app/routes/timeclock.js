@@ -141,7 +141,7 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     const sched = scheduledMinutes(staff.id, loc.id, date), late = lateMinutesFor(staff.id, loc.id, date, tz, now);
     const info = db.prepare(`INSERT INTO time_entries (user_id, location_id, work_date, clock_in, scheduled_minutes, late_minutes, opened_by) VALUES (?,?,?,?,?,?,?)`)
       .run(staff.id, loc.id, date, now.toISOString(), sched, late, staff.id);
-    if (late > 0) db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(loc.id, staff.id, 'late', `${staff.name} checked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
+    if (late > 0) db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(loc.id, staff.id, 'late', `${staff.name} clocked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
     if (reason) {
       const why = { early: 'more than 30 minutes early', wrong_location: 'at a location they’re not scheduled at today', no_schedule: 'without being scheduled today', no_schedule_wrong_location: 'without being scheduled today, and at an unusual location' }[reason];
       notifyLeaders(loc.id, staff.id, 'Clock-in to review', `${staff.name} clocked in at ${locDisplay(loc.name)} ${why} (${localTime(tz, now)}). Please review it for their timesheet.`);
@@ -302,7 +302,7 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
   const open = db.prepare(`SELECT * FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NULL ORDER BY id DESC LIMIT 1`).get(staff.id, locId, date);
 
   if (action === 'in') {
-    if (open) return res.status(409).json({ error: `${staff.name} is already checked in (since ${localTime(tz, new Date(open.clock_in))}).` });
+    if (open) return res.status(409).json({ error: `${staff.name} is already clocked in (since ${localTime(tz, new Date(open.clock_in))}).` });
     const sched = scheduledMinutes(staff.id, locId, date);
     const now = new Date();
     const late = lateMinutesFor(staff.id, locId, date, tz, now);
@@ -310,14 +310,14 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
       .run(staff.id, locId, date, now.toISOString(), sched, late, req.user.id);
     if (late > 0) {
       db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`)
-        .run(locId, staff.id, 'late', `${staff.name} checked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
+        .run(locId, staff.id, 'late', `${staff.name} clocked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
     }
     auditLog(req, 'clock_in', 'user', staff.id, { location_id: locId, scheduled_minutes: sched, late_minutes: late });
     return res.json({ success: true, action: 'in', staff: staff.name, at: localTime(tz, now), scheduled_minutes: sched, late_minutes: late });
   }
 
   // check-out
-  if (!open) return res.status(409).json({ error: `${staff.name} is not checked in.` });
+  if (!open) return res.status(409).json({ error: `${staff.name} is not clocked in.` });
   const now = new Date();
   const worked = Math.max(0, Math.round((now.getTime() - new Date(open.clock_in).getTime()) / 60000));
   const sched = open.scheduled_minutes || 0;
@@ -329,7 +329,7 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
   }
   db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, short_confirmed=? WHERE id=?`).run(now.toISOString(), worked, isShort ? 1 : 0, open.id);
   if (isShort) {
-    const msg = `${staff.name} checked out ${fmtDurMin(shortBy)} early — worked ${fmtDurMin(worked)} of ${fmtDurMin(sched)} scheduled.`;
+    const msg = `${staff.name} clocked out ${fmtDurMin(shortBy)} early — worked ${fmtDurMin(worked)} of ${fmtDurMin(sched)} scheduled.`;
     db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(locId, staff.id, 'short_shift', msg, open.id);
   }
   auditLog(req, 'clock_out', 'user', staff.id, { location_id: locId, worked_minutes: worked, short: isShort ? 1 : 0 });
