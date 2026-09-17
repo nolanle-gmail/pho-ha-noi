@@ -860,8 +860,10 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   Historical data) pulls **months of past sales** (default ~190 days) for all mapped
   locations into these local tables. It runs in the **background**, is **throttled** and
   **resumable** (`toast_locations.backfilled_from` records how far back each store goes), so
-  re-running continues where it left off. Everything is reviewed from the local mirror — Toast
-  is only touched to *fill* it.
+  re-running continues where it left off. It also **auto-resumes on server boot** if any store
+  isn't covered back to the target yet (`TOAST_BACKFILL_DAYS`, default 190), so a restart or
+  deploy never leaves the history half-pulled. Everything is reviewed from the local mirror —
+  Toast is only touched to *fill* it.
 
 **Sales Analytics (💹).** A separate section reads only the stored history — no live Toast
 call — with a **From / To / granularity / location** filter (managers see their own store;
