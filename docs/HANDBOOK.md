@@ -1080,11 +1080,11 @@ seven days):
   so a job reads the same colour in both apps.
 - Under each staff member's name the grid shows their **total as `<hours> hrs / $<pay>`**
   **for this location** (the week, or the day in Day view). The hours and pay **include
-  paid sick / vacation / on-leave hours** as well as worked hours — pay = (worked +
-  paid-leave hours) × the person's pay rate — and a small **"incl. `<n>`h leave"** note
-  appears when any of the total is leave. The **red ⚠** over-limit flag is based on
-  **worked hours only** (leave isn't overtime). The totals chip above the grid sums the
-  shown staff the same way.
+  paid leave — Paid Sick Leave and PTO** — as well as worked hours; pay = (worked +
+  paid-leave hours) × the person's pay rate, with a small **"incl. `<n>`h paid leave"**
+  note. **Unpaid Time Off is shown on the schedule but is NOT counted toward hours or
+  pay.** The **red ⚠** over-limit flag is based on **worked hours only** (leave isn't
+  overtime). The totals chip above the grid sums the shown staff the same way.
   - **All-locations total** — when a person is also scheduled at **another store**, a
     second line **"(`<total>` hrs, all locations)"** shows their grand total across every
     location for the period. It turns **red** once the combined worked hours pass the
@@ -1128,26 +1128,29 @@ seven days):
   leave** forward. Because it only touches empty weeks it's self-rolling — each time the
   work week flips, the newly-empty next week fills in. Managers can still edit or use
   **Copy a week** on top of it. The sweep runs on server start and every 12 hours.
-- **Leave** — the **+** entry has a **Type**: Work shift, or **Sick / Vacation /
-  On-leave**. Leave takes a duration — **all day** (8 h), a **number of hours**, or a
-  **from–to** span — and shows as a coloured chip (🤒 / 🏖️ / 🗓️). Leave never counts
-  toward worked hours or the 8h/40h limits; instead the **timesheet totals it as sick,
-  vacation, or leave hours** — on the person's **My Hours** (Sick / Vacation / On-leave
-  tiles) and on the manager's **Timesheet** as a **Leave** column (per-period total,
-  included in the CSV export). A person's HR **status** can also be set to `on_leave`
-  on their profile.
+- **Leave** — the **+** entry has a **Type**: **Work Shift**, **🤒 Paid Sick Leave**,
+  **🏖️ PTO**, or **🚫 Unpaid Time Off**. Leave takes a duration — **all day** (8 h), a
+  **number of hours**, or a **from–to** span — and shows as a coloured chip. Leave never
+  counts toward worked hours or the 8h/40h limits. **Paid Sick Leave** and **PTO** are
+  **paid** (they count toward the schedule's hours/pay total); **Unpaid Time Off** is
+  **not paid** — it appears on the schedule and timesheet but is excluded from pay. The
+  **timesheet** shows the paid-leave hours in its **Leave** column with Unpaid Time Off
+  listed separately, and the CSV export breaks them out as **Paid Sick Leave / PTO /
+  Unpaid Time Off** hours (the computed **Gross** pays worked/OT/DT hours only). A person's
+  HR **status** can also be set to `on_leave` on their profile.
 
 Managers set leave directly with the **+** entry above; staff can also **request** it
 themselves (next).
 
 #### Time-off requests (staff → manager approval)
 
-Staff request **vacation** or **sick leave** themselves, and a manager approves or
-rejects it — no phone calls or paper.
+Staff request **PTO** or **Paid Sick Leave** themselves, and a manager approves or
+rejects it — no phone calls or paper. (Unpaid Time Off is set by a manager on the
+schedule, not self-requested.)
 
 - **Requesting** — on **My Schedule** (Staff app, or the Management console for
   shift-scheduled staff) a **🏖 Request time off** button opens a short form: **type**
-  (Vacation / Sick), a **date** or **date range** (or a single day of a set number of
+  (PTO / Paid Sick Leave), a **date** or **date range** (or a single day of a set number of
   **hours**), and an optional **reason**. Submitted requests, with their status, list
   under **My time-off requests** right there.
 - **Reviewing** — every request lands in a **📋 Requests** tab under **Messages**, shown
