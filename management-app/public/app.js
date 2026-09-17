@@ -5628,16 +5628,17 @@ async function openNewChatGroup() {
   const host = $('modalHost');
   const locs = [...new Map(recips.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
   const roles = [...new Set(recips.map(u => u.role))];
-  const memberRow = (u) => `<label class="chk"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
+  const memberRow = (u) => `<label class="chk" data-name="${esc((u.name || '').toLowerCase())}"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide">
     <div class="row-between"><h3 style="margin:0">New chat group</h3><button class="btn sm ghost" id="cgCancel">Cancel</button></div>
     <div class="err" id="cgErr"></div>
     <label class="fld-label">Group name</label><input id="cgName" class="fld" placeholder="e.g. San Jose Servers" />
+    <input type="search" id="cgSearch" class="cg-search" placeholder="🔍 Search members by name…" autocomplete="off">
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="cgLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
       <select id="cgRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
       <button class="btn sm ghost" id="cgClear">Clear</button></div>` : ''}
-    <div class="cg-members">${recips.map(memberRow).join('')}</div>
+    <div class="cg-members">${recips.map(memberRow).join('')}<div class="cg-none hidden" id="cgNone">No one matches that name.</div></div>
     <div class="actions" style="margin-top:1rem"><span id="cgCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="cgCreate">Create group</button></div>
   </div></div>`;
   const close = () => host.innerHTML = '';
@@ -5647,6 +5648,12 @@ async function openNewChatGroup() {
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('cgCancel').onclick = close;
   boxes().forEach(b => b.onchange = updateCount);
+  const nameMatch = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
+  $('cgSearch').oninput = () => {
+    const q = $('cgSearch').value.trim().toLowerCase(); let shown = 0;
+    host.querySelectorAll('.cg-members label').forEach(l => { const ok = !q || nameMatch(l.dataset.name, q); l.style.display = ok ? '' : 'none'; if (ok) shown++; });
+    $('cgNone').classList.toggle('hidden', shown > 0);
+  };
   if (bulk) {
     $('cgLoc').onchange = () => { const v = $('cgLoc').value; if (v) pick(u => String(u.location_id) === v); $('cgLoc').value = ''; };
     $('cgRole').onchange = () => { const v = $('cgRole').value; if (v) pick(u => u.role === v); $('cgRole').value = ''; };
@@ -5679,15 +5686,16 @@ async function openAddChatMembers(gid, existingIds) {
   const host = $('modalHost');
   const locs = [...new Map(candidates.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
   const roles = [...new Set(candidates.map(u => u.role))];
-  const memberRow = (u) => `<label class="chk"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
+  const memberRow = (u) => `<label class="chk" data-name="${esc((u.name || '').toLowerCase())}"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide">
     <div class="row-between"><h3 style="margin:0">Add members</h3><button class="btn sm ghost" id="amCancel">Cancel</button></div>
     <div class="err" id="amErr"></div>
+    <input type="search" id="amSearch" class="cg-search" placeholder="🔍 Search by name…" autocomplete="off">
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="amLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
       <select id="amRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
       <button class="btn sm ghost" id="amClear">Clear</button></div>` : ''}
-    <div class="cg-members">${candidates.map(memberRow).join('')}</div>
+    <div class="cg-members">${candidates.map(memberRow).join('')}<div class="cg-none hidden" id="amNone">No one matches that name.</div></div>
     <div class="actions" style="margin-top:1rem"><span id="amCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="amAdd">Add to group</button></div>
   </div></div>`;
   const close = () => host.innerHTML = '';
@@ -5697,6 +5705,14 @@ async function openAddChatMembers(gid, existingIds) {
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('amCancel').onclick = close;
   boxes().forEach(b => b.onchange = updateCount);
+  // Type-ahead name search (same prefix match as the message composer): filters the
+  // list live; selections are kept even while hidden.
+  const nameMatch = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
+  $('amSearch').oninput = () => {
+    const q = $('amSearch').value.trim().toLowerCase(); let shown = 0;
+    host.querySelectorAll('.cg-members label').forEach(l => { const ok = !q || nameMatch(l.dataset.name, q); l.style.display = ok ? '' : 'none'; if (ok) shown++; });
+    $('amNone').classList.toggle('hidden', shown > 0);
+  };
   if (bulk) {
     $('amLoc').onchange = () => { const v = $('amLoc').value; if (v) pick(u => String(u.location_id) === v); $('amLoc').value = ''; };
     $('amRole').onchange = () => { const v = $('amRole').value; if (v) pick(u => u.role === v); $('amRole').value = ''; };
