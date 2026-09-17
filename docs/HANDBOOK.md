@@ -1056,9 +1056,10 @@ seven days):
   prep, the coffee/espresso machine and kegs/draft lines, and the **Management** set covers
   cash-drawer reconciliation, bank deposit, the daily sales/labor review, timesheet
   approval, line check &amp; walk-through, and the opening/closing manager checklists.
-- Click **+** on a day → set start/end, pick one or more **jobs** from the catalog
-  (the picker shows just the job name under its department), add paid **breaks** (10 min
-  each; unlocked once a shift is ≥ 3.5 h; max 2/day unless the day tops 10 h).
+- Click **+** on a day → set start/end, pick one or more **jobs** — the picker lists
+  **roles only** (just the job name under its department); day-tasks are assigned on the
+  **Day Tasks** board, not here — add paid **breaks** (10 min each; unlocked once a shift
+  is ≥ 3.5 h; max 2/day unless the day tops 10 h).
 - A day can hold multiple work periods (e.g. 8–12 and 12–16), each with its own
   break.
 - Soft limits: **8 h/day** and **40 h/week** turn the cell red ⚠ and block the save
@@ -1066,6 +1067,10 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
+- Each work shift is a **colour-coded block** — the whole block takes the assigned job's
+  colour (white text), and every job keeps the **same colour everywhere**, so roles are
+  easy to tell apart at a glance across the grid. A multi-job shift uses the first job's
+  colour; a shift with no job is a neutral grey.
 - Under each staff member's name the grid shows their **total as `<hours> hrs / $<pay>`**
   **for this location** (the week, or the day in Day view). The hours and pay **include
   paid sick / vacation / on-leave hours** as well as worked hours — pay = (worked +
