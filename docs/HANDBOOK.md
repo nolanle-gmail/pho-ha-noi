@@ -1123,6 +1123,12 @@ seven days):
     at other locations, so the grid shows just this store's shifts. The under-name
     `hrs / $pay` total then counts only this location's hours.
   - **Show hours & pay** — turn the under-name `hrs / $pay` line on or off.
+  - **Time off & requests** — narrow the grid to only staff **scheduled as time off**
+    (PTO, Paid Sick Leave or Unpaid Time Off) in the current view, and show a panel of the
+    location's **pending time-off requests** awaiting approval. Managers / owner / HR (the
+    `manage` cap) can **Approve** or **Reject** each request **inline** — approving writes
+    the leave shifts and re-renders the schedule on the spot, without switching to Messages
+    → Requests. (An all-location approver's list is scoped to the store being viewed.)
   - **Role** — show only one role (the dropdown lists the roles present at this location).
   - A **Clear** button resets the filters, and a totals chip on the right reads
     **"Showing *N* of *M* · *X* hrs · $*Y*"** for the staff currently shown.
