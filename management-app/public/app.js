@@ -2037,7 +2037,11 @@ function copyWeekModal(toWeek, location) {
 function shiftModal(staff, dayIso, shift, jobs, location) {
   const isNew = !shift;
   const chosen = new Set((shift && shift.jobs ? shift.jobs : []).map(j => String(j.id)));
-  const byDept = {}; jobs.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
+  // Only role duties (standard) are assignable to a shift here — day-tasks (specific)
+  // are assigned on the Day Tasks board, not when building the schedule. Any day-task
+  // already on this shift stays listed so it can still be unchecked.
+  const pickJobs = (jobs || []).filter(j => (j.kind || 'standard') === 'standard' || chosen.has(String(j.id)));
+  const byDept = {}; pickJobs.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
   const depts = Object.keys(byDept).sort((a, b) => (JOB_DEPTS.indexOf(a) === -1 ? 99 : JOB_DEPTS.indexOf(a)) - (JOB_DEPTS.indexOf(b) === -1 ? 99 : JOB_DEPTS.indexOf(b)) || a.localeCompare(b));
   const wd = WD[(new Date(dayIso + 'T00:00:00').getDay() + 6) % 7];
   const host = $('modalHost');
@@ -2068,7 +2072,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
       <button type="button" class="btn sm ghost" id="addBrk">+ Add break</button></div>
     <div id="brkHint" class="brk-hint"></div>
     <div id="brkList" class="brk-list"></div>
-    <div class="job-pick-label">Assign jobs / tasks <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
+    <div class="job-pick-label">Assign jobs <span style="color:var(--muted);font-weight:400">(pick one or more)</span></div>
     <div class="job-pick">
       ${depts.map(d => `<div class="job-pick-dept"><div class="jpd-head">${esc(d)}</div>
         ${byDept[d].map(j => `<label class="chk jpick"><input type="checkbox" data-job="${j.id}" ${chosen.has(String(j.id)) ? 'checked' : ''}/> ${esc(j.name)}</label>`).join('')}
