@@ -139,6 +139,49 @@ router.get('/labor', MANAGE, (req, res) => {
   });
 });
 
+// Pull the published Toast menu (prices) for a location into the mirror.
+router.post('/sync/menus', ADMIN, async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  try {
+    const r = await toastSync.syncMenus(location_id);
+    auditLog(req, 'toast_sync_menus', 'location', location_id, r);
+    res.json({ ok: true, ...r });
+  } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+});
+
+// Read a location's mirrored menu (price book).
+router.get('/menu', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const items = db.prepare(`SELECT guid, multi_location_id, name, pos_name, menu_name, group_name, price, visible
+    FROM toast_menu_items WHERE location_id=? ORDER BY group_name, name`).all(location_id);
+  res.json({ items, count: items.length, visible: items.filter(i => i.visible).length });
+});
+
+// Cross-location price comparison. Toast's multi-location id does not overlap across
+// these stores, so items are matched by name; each location's BASE (lowest) price for
+// a name is used, and $0 items are excluded, to cut size/variant noise. Returns items
+// whose base price differs across the mapped stores the caller can see.
+router.get('/menu/compare', MANAGE, (req, res) => {
+  const all = seesAllLocations(req.user.role);
+  const scope = all ? '' : 'AND location_id=?';
+  const args = all ? [] : [req.user.location_id];
+  // Per (name, location) base price.
+  const perLoc = db.prepare(`SELECT lower(name) AS k, MAX(name) AS name, location_id, MIN(price) AS price
+    FROM toast_menu_items WHERE visible=1 AND price > 0 ${scope} GROUP BY lower(name), location_id`).all(...args);
+  const byKey = {}, nameOf = {};
+  for (const r of perLoc) { (byKey[r.k] = byKey[r.k] || {})[r.location_id] = r.price; nameOf[r.k] = r.name; }
+  const items = Object.keys(byKey).map(k => {
+    const prices = byKey[k], vals = Object.values(prices);
+    const min = Math.min(...vals), max = Math.max(...vals);
+    return { name: nameOf[k], locations: vals.length, min_price: min, max_price: max, spread: Math.round((max - min) * 100) / 100, prices };
+  }).filter(it => it.locations >= 2 && it.spread > 0).sort((a, b) => b.spread - a.spread).slice(0, 200);
+  res.json({ items, differing: items.length });
+});
+
 // Read the mirrored per-day sales summary for one location (no Toast call).
 router.get('/sales', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);

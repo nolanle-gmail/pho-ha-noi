@@ -1033,6 +1033,29 @@ function migrate() {
       deleted              INTEGER NOT NULL DEFAULT 0,
       synced_at            TEXT
     );
+
+    -- Toast published menu, flattened to one row per item per location. Replaced whole
+    -- on each sync (a full snapshot). multi_location_id links the same item across
+    -- stores (masterId is a big int that loses precision in JSON, so it is NOT used).
+    CREATE TABLE IF NOT EXISTS toast_menu_items (
+      location_id          INTEGER NOT NULL,
+      guid                 TEXT NOT NULL,
+      multi_location_id    TEXT,
+      name                 TEXT,
+      pos_name             TEXT,
+      menu_name            TEXT,
+      group_name           TEXT,
+      price                REAL,
+      pricing_strategy     TEXT,
+      sku                  TEXT,
+      plu                  TEXT,
+      calories             INTEGER,
+      visible              INTEGER NOT NULL DEFAULT 1,
+      synced_at            TEXT,
+      PRIMARY KEY (location_id, guid)
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_menu_loc ON toast_menu_items(location_id, group_name, name);
+    CREATE INDEX IF NOT EXISTS idx_toast_menu_mli ON toast_menu_items(multi_location_id);
   `);
 
   // Migrations for databases created before these columns existed.

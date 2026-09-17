@@ -175,6 +175,58 @@ async function syncLabor(locationId) {
   }
 }
 
+// ── Menu & pricing ────────────────────────────────────────────────────────────
+const insMenuItem = db.prepare(`INSERT INTO toast_menu_items
+  (location_id,guid,multi_location_id,name,pos_name,menu_name,group_name,price,pricing_strategy,sku,plu,calories,visible,synced_at)
+  VALUES (@location_id,@guid,@multi_location_id,@name,@pos_name,@menu_name,@group_name,@price,@pricing_strategy,@sku,@plu,@calories,@visible,datetime('now'))
+  ON CONFLICT(location_id,guid) DO UPDATE SET multi_location_id=excluded.multi_location_id,name=excluded.name,pos_name=excluded.pos_name,menu_name=excluded.menu_name,group_name=excluded.group_name,price=excluded.price,pricing_strategy=excluded.pricing_strategy,sku=excluded.sku,plu=excluded.plu,calories=excluded.calories,visible=excluded.visible,synced_at=datetime('now')`);
+
+// Walk a menu group tree (groups can nest) collecting every item with its menu +
+// immediate group name.
+function collectItems(group, menuName, out) {
+  for (const it of (group.menuItems || [])) out.push({ item: it, menuName, groupName: group.name || null });
+  for (const sub of (group.menuGroups || [])) collectItems(sub, menuName, out);
+}
+
+// Pull the published Toast menu for a location and replace that location's item
+// snapshot. Read-only. Returns { items, groups, menus }.
+async function syncMenus(locationId) {
+  const map = mapping(locationId);
+  if (!map) throw new Error('That location is not mapped to a Toast restaurant.');
+  const guid = map.toast_guid;
+  const log = db.prepare(`INSERT INTO toast_sync_log (domain,location_id,toast_guid,status) VALUES ('menus',?,?, 'running')`).run(locationId, guid);
+  const logId = log.lastInsertRowid;
+  try {
+    const { body } = await toast.toastGet('/menus/v2/menus', { guid });
+    const menus = (body && body.menus) || (Array.isArray(body) ? body : []);
+    const rows = [];
+    let groups = 0;
+    for (const menu of menus) {
+      for (const g of (menu.menuGroups || [])) { groups++; collectItems(g, menu.name || null, rows); }
+    }
+    db.exec('BEGIN');
+    try {
+      db.prepare(`DELETE FROM toast_menu_items WHERE location_id=?`).run(locationId);
+      for (const { item, menuName, groupName } of rows) {
+        insMenuItem.run({
+          location_id: locationId, guid: item.guid, multi_location_id: item.multiLocationId || null,
+          name: item.name || null, pos_name: item.posName || null, menu_name: menuName, group_name: groupName,
+          price: item.price != null ? item.price : null, pricing_strategy: item.pricingStrategy || null,
+          sku: item.sku || null, plu: item.plu || null, calories: item.calories != null ? item.calories : null,
+          visible: (Array.isArray(item.visibility) && item.visibility.length) ? 1 : 0,
+        });
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    db.prepare(`UPDATE toast_sync_log SET status='ok', record_count=?, detail=?, finished_at=datetime('now') WHERE id=?`)
+      .run(rows.length, `${rows.length} items · ${groups} groups · ${menus.length} menus`, logId);
+    return { items: rows.length, groups, menus: menus.length };
+  } catch (e) {
+    db.prepare(`UPDATE toast_sync_log SET status='error', detail=?, finished_at=datetime('now') WHERE id=?`).run(String(e.message).slice(0, 500), logId);
+    throw e;
+  }
+}
+
 // ── Automatic sync during operating hours ─────────────────────────────────────
 // A background sweep keeps each mapped location's sales current: it finalizes the
 // prior business day once per local day, and re-pulls "today" every interval while
@@ -216,6 +268,7 @@ async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
       if (st.settled !== today) {
         await syncOrders(m.location_id, addDaysIso(today, -1));
         try { await syncLabor(m.location_id); } catch (e) { console.error(`[toast-sweep] labor loc ${m.location_id}:`, e.message); }
+        try { await syncMenus(m.location_id); } catch (e) { console.error(`[toast-sweep] menus loc ${m.location_id}:`, e.message); }
         st.settled = today;
       }
       // Keep today fresh while open (throttled).
@@ -238,4 +291,4 @@ function startToastSweep() {
   console.log(`[toast-sweep] auto-sync every ${intervalMin} min (grace ${graceMin} min).`);
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, sweepOnce, startToastSweep, pacificToday };
+module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday };

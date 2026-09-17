@@ -419,6 +419,17 @@ async function renderIntegrations() {
       <div id="tlResult" style="margin-top:.7rem"></div>
     </div>` : ''}
 
+    ${maps.length ? `<div class="section" style="margin-bottom:1rem">
+      <h3>Toast menu &amp; pricing</h3>
+      <p class="sub" style="color:var(--muted);font-size:.82rem;margin:.1rem 0 .5rem">Pull each location's published Toast menu (prices)${maps.length > 1 ? ', then compare pricing across stores to spot inconsistencies' : ''}.</p>
+      <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+        <label style="margin:0">Location<select id="tmLoc">${maps.map(m => `<option value="${m.location_id}">${esc(m.location_name)}</option>`).join('')}</select></label>
+        <button class="btn" id="tmRun">Sync menu</button>
+        ${maps.length > 1 ? '<button class="btn ghost" id="tmCompare">Compare prices across locations</button>' : ''}
+      </div>
+      <div id="tmResult" style="margin-top:.7rem"></div>
+    </div>` : ''}
+
     <div class="section">
       <h3>Recent syncs</h3>
       <div class="table-wrap"><table>
@@ -451,6 +462,38 @@ async function renderIntegrations() {
   });
   if ($('tsRun')) $('tsRun').onclick = () => runToastSync(+$('tsLoc').value, $('tsFrom').value, $('tsTo').value, $('tsRun'));
   if ($('tlRun')) $('tlRun').onclick = () => runToastLabor(+$('tlLoc').value, $('tlRun'));
+  if ($('tmRun')) $('tmRun').onclick = () => runToastMenu(+$('tmLoc').value, $('tmRun'));
+  if ($('tmCompare')) $('tmCompare').onclick = () => runToastMenuCompare(maps, $('tmCompare'));
+}
+// Pull a location's Toast menu and show a compact price book.
+async function runToastMenu(location_id, btn) {
+  if (btn) { btn.disabled = true; var old = btn.textContent; btn.textContent = 'Syncing…'; }
+  const box = $('tmResult');
+  try {
+    const r = await api('/toast/sync/menus', { method: 'POST', body: JSON.stringify({ location_id }) });
+    const d = await api('/toast/menu?location_id=' + location_id);
+    toast('✓ Menu synced from Toast.');
+    const items = (d.items || []).filter(i => i.visible);
+    if (box) box.innerHTML = `<p class="sub" style="color:var(--muted);margin:.1rem 0 .5rem"><strong>${r.items}</strong> items · ${r.groups} groups · ${r.menus} menus</p>
+      <div class="table-wrap" style="max-height:340px;overflow:auto"><table><thead><tr><th>Group</th><th>Item</th><th class="num">Price</th></tr></thead>
+        <tbody>${items.map(i => `<tr><td class="sub" style="color:var(--muted)">${esc(i.group_name || '—')}</td><td>${esc(i.name)}</td><td class="num">${i.price != null ? money(i.price) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
+// Compare item prices across all mapped locations; show items priced differently.
+async function runToastMenuCompare(maps, btn) {
+  if (btn) { btn.disabled = true; var old = btn.textContent; btn.textContent = 'Comparing…'; }
+  const box = $('tmResult');
+  try {
+    const d = await api('/toast/menu/compare');
+    const cols = maps.slice();  // location columns
+    if (!d.items.length) { if (box) box.innerHTML = '<p class="sub" style="color:var(--ok)">No price differences across locations — every shared item is priced the same. ✓</p>'; return; }
+    const cell = (it, locId) => { const p = it.prices[locId]; if (p == null) return '<td class="num sub" style="color:var(--muted)">—</td>'; const cls = p === it.min_price ? 'ok' : p === it.max_price ? 'warn' : ''; return `<td class="num ${cls}">${money(p)}</td>`; };
+    if (box) box.innerHTML = `<p class="sub" style="color:var(--muted);margin:.1rem 0 .5rem"><strong>${d.differing}</strong> shared items are priced differently across locations (green = lowest, amber = highest).</p>
+      <div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>Item</th>${cols.map(c => `<th class="num">${esc(shortLoc(c.location_name))}</th>`).join('')}<th class="num">Spread</th></tr></thead>
+        <tbody>${d.items.map(it => `<tr><td>${esc(it.name)}</td>${cols.map(c => cell(it, c.location_id)).join('')}<td class="num"><strong>${money(it.spread)}</strong></td></tr>`).join('')}</tbody></table></div>`;
+  } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
 // Pull the Toast roster and show the match summary + any unmatched employees.
 async function runToastLabor(location_id, btn) {
