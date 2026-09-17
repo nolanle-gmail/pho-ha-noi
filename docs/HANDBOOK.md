@@ -1051,10 +1051,11 @@ seven days):
   for anything unassigned (sorted last). Each entry is either a **standard** role duty
   (Server, Line Cook, Host, Barista …) picked when building shifts, or a **specific**
   day-task (Opening Checklist, Clean Restrooms, Sanitize Prep Line …) the manager assigns
-  on the **Day Tasks** board. Front House, Kitchen and **Bar** each carry day-tasks — the
-  Bar set covers restocking the bar, washing &amp; polishing glassware, cleaning/sanitizing
-  the bar top &amp; stations, ice wells, garnish prep, the coffee/espresso machine, and
-  kegs/draft lines.
+  on the **Day Tasks** board. All four working departments carry day-tasks — the **Bar**
+  set covers restocking the bar, glassware, the bar top &amp; stations, ice wells, garnish
+  prep, the coffee/espresso machine and kegs/draft lines, and the **Management** set covers
+  cash-drawer reconciliation, bank deposit, the daily sales/labor review, timesheet
+  approval, line check &amp; walk-through, and the opening/closing manager checklists.
 - Click **+** on a day → set start/end, pick one or more **jobs** from the catalog
   (the picker shows just the job name under its department), add paid **breaks** (10 min
   each; unlocked once a shift is ≥ 3.5 h; max 2/day unless the day tops 10 h).
