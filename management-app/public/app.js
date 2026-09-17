@@ -1697,7 +1697,6 @@ const LEAVE_META = { sick: { label: 'Sick', icon: '🤒', chip: 'low' }, vacatio
 // saturation/lightness keeps white chip text legible for every hue.
 function jobHue(name) { let h = 0; const s = String(name || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
 function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%)`, bd: `hsl(${h} 55% 30%)` }; }
-function jobChip(name) { const c = jobColor(name); return `<span class="job-chip" style="background:${c.bg};border-color:${c.bd}" title="${esc(name)}">${esc(name)}</span>`; }
 const shiftWorkedHours = (s) => isLeaveShift(s) ? 0 : shiftHours(s.start_time, s.end_time);
 // Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
 // as the manager needs, each within the shift).
@@ -1798,11 +1797,16 @@ async function renderLocSchedule() {
       ? `<div class="shift-breaks">${s.breaks.map(b => `<span class="brk-chip" title="Break">☕ ${esc(fmtBreak(b))}</span>`).join('')}</div>` : '';
     const taskLine = (s) => (s.tasks && s.tasks.length)
       ? `<div class="shift-tasks">${s.tasks.map(t => `<span class="task-chip${t.done ? ' done' : ''}" data-tip="${esc(chipTip(t, t.task_time ? 'at ' + t.task_time : ''))}">📋 ${t.task_time ? esc(to12h(t.task_time)) + ' ' : ''}${esc(t.name)}</span>`).join('')}</div>` : '';
-    const hereCards = here.filter(s => !isLeaveShift(s)).map(s => `<div class="shift-card${canEdit ? ' editable' : ''}" data-shift="${s.id}">
+    const hereCards = here.filter(s => !isLeaveShift(s)).map(s => {
+      // Colour the whole block by the job (the first one when several are assigned).
+      const c = s.jobs.length ? jobColor(s.jobs[0].name) : null;
+      const st = c ? ` style="background:${c.bg};border-color:${c.bd}"` : '';
+      return `<div class="shift-card${canEdit ? ' editable' : ''}${c ? ' has-job' : ''}"${st} data-shift="${s.id}">
         <div class="shift-time">${to12h(s.start_time)}–${to12h(s.end_time)}</div>
-        <div class="shift-jobs">${s.jobs.length ? s.jobs.map(j => jobChip(j.name)).join('') : '<span class="job-chip none">no jobs</span>'}</div>
+        <div class="shift-jobs">${s.jobs.length ? s.jobs.map(j => esc(j.name)).join(', ') : 'no jobs'}</div>
         ${taskLine(s)}${brkLine(s)}
-      </div>`).join('');
+      </div>`;
+    }).join('');
     const leaveCards = here.filter(isLeaveShift).map(s => {
       const m = LEAVE_META[s.kind] || { label: s.kind, icon: '', chip: 'gray' };
       const dur = s.all_day ? 'all day' : `${fmtH(leaveHoursOf(s))}h${s.start_time ? ` · ${s.start_time}–${s.end_time}` : ''}`;

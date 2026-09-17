@@ -151,10 +151,11 @@ td.sched-name { font-size: .86rem; }
 .add-done-msg { font-size: 1.05rem; margin: 0 0 1rem; }
 .add-done-actions { display: flex; gap: .6rem; flex-wrap: wrap; }
 .sched-cell { position: relative; min-height: 3rem; padding: .3rem !important; }
-/* Work-shift card: neutral so the per-job colour chips inside stand out. */
-.shift-card { background: var(--surface, #fff); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
+/* Work-shift card: the whole block is coloured by its job (colour set inline per
+   job); a shift with no job falls back to a neutral grey. Text is white either way. */
+.shift-card { background: #6b7280; color: #fff; border: 1px solid #4b5563; border-radius: 8px; padding: .3rem .4rem; margin-bottom: .3rem; }
 .shift-card.editable { cursor: pointer; }
-.shift-card.editable:hover { border-color: var(--gold-strong, #b45309); box-shadow: 0 0 0 2px var(--gold-soft, #fbe9c7); }
+.shift-card.editable:hover { filter: brightness(1.06); box-shadow: 0 0 0 2px rgba(0,0,0,.18); }
 .shift-card.away { background: repeating-linear-gradient(45deg, #f4f4f4, #f4f4f4 6px, #eee 6px, #eee 12px); border-color: var(--line); color: var(--ink); opacity: .8; }
 /* Leave entries (sick / vacation / on-leave) on the schedule grid */
 .leave-card { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; border: 1px solid; border-radius: 8px; padding: .3rem .45rem; margin-bottom: .3rem; font-size: .78rem; }
@@ -167,10 +168,6 @@ td.sched-name { font-size: .86rem; }
 .shift-time { font-weight: 700; font-size: .78rem; color: inherit; }
 .shift-away-loc { font-size: .72rem; color: var(--muted); }
 .shift-jobs { font-size: .74rem; font-weight: 600; color: inherit; margin-top: .15rem; line-height: 1.25; }
-/* Per-job colour chips inside a shift card. Colour is set inline per job. */
-.shift-card .shift-jobs { display: flex; flex-wrap: wrap; gap: .2rem; }
-.job-chip { display: inline-block; font-size: .7rem; font-weight: 700; color: #fff; background: var(--shift-green, #4a9c2d); border: 1px solid rgba(0,0,0,.18); border-radius: 6px; padding: .05rem .35rem; line-height: 1.35; }
-.job-chip.none { background: var(--surface-2, #eee); color: var(--muted); border-color: var(--line); font-weight: 600; }
 .jchip { display: inline-block; font-size: .68rem; padding: .05rem .35rem; border-radius: 6px; font-weight: 700; border: 1px solid transparent; }
 .jchip.ok { background: #e6f4ea; color: #1e7e34; } .jchip.blue { background: #e7eefc; color: #2b5bd7; }
 .jchip.low { background: #fdecd8; color: #b4630b; } .jchip.gray { background: #eee; color: var(--muted); }
