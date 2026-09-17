@@ -29,9 +29,11 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sched-seen.unread { opacity: .4; }
 .sched-seen.unread::after { content: ""; position: absolute; left: -2px; right: -2px; top: 46%; height: 2px; background: #b91c1c; transform: rotate(-18deg); border-radius: 2px; }
 .sched-time { font-weight: 700; color: var(--red); white-space: nowrap; }
-.sched-jobs { color: var(--ink); display: inline-flex; flex-wrap: wrap; gap: .25rem; }
-/* Per-job colour chip on the schedule (colour set inline per job). */
-.sched-job-chip { display: inline-block; font-size: .72rem; font-weight: 700; color: #fff; border: 1px solid rgba(0,0,0,.18); border-radius: 6px; padding: .05rem .4rem; line-height: 1.4; }
+.sched-jobs { color: var(--ink); }
+/* Work-shift row is a full colour block (colour set inline per job; no-job → grey). */
+.sched-shift.work { background: #6b7280; border: 1px solid #4b5563; border-radius: 8px; color: #fff; padding: .3rem .5rem; margin-bottom: .35rem; }
+.sched-shift.work .sched-time, .sched-shift.work .sched-jobs, .sched-shift.work .sched-who { color: #fff; }
+.sched-shift.work .sched-brk, .sched-shift.work .sched-loc { color: rgba(255,255,255,.85); }
 .sched-leave { font-weight: 600; color: var(--gold, #b45309); }
 .sched-brk, .sched-loc { color: var(--muted); font-size: .82rem; }
 .sched-off { color: var(--muted); font-size: .85rem; }

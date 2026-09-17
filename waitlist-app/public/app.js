@@ -842,10 +842,10 @@ function schedNav(dir) {
 }
 // Leads/managers (roles with the 'manage' cap) can switch to the whole location.
 const canViewTeam = () => !!(S.user && Array.isArray(S.user.caps) && S.user.caps.includes('manage'));
-// Per-job colour chip — same hash as the Management schedule so a given job reads the
-// same colour in both apps. Hash → hue; white text on a mid-dark background.
+// Per-job colour — same hash as the Management schedule so a given job reads the same
+// colour in both apps. Hash → hue; the whole shift block takes this colour (white text).
 function jobHue(name) { let h = 0; const s = String(name || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
-function jobChip(name) { const h = jobHue(name); return `<span class="sched-job-chip" style="background:hsl(${h} 55% 40%);border-color:hsl(${h} 55% 30%)" title="${esc(name)}">${esc(name)}</span>`; }
+function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%)`, bd: `hsl(${h} 55% 30%)` }; }
 
 // Read/unread eye for the Team schedule — has this person opened their own schedule
 // since it last changed? (schedule_seen comes from the Management team endpoint.)
@@ -871,10 +871,13 @@ async function renderMySchedule() {
   const shiftLine = (s) => {
     const who = team ? `<span class="sched-who">${esc(s.user_name)}</span>${schedSeenEye(s)} ` : '';
     if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift">${who}<span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
-    const jobs = (s.jobs || []).map(j => jobChip(j.name)).join('');
+    const jobs = (s.jobs || []).map(j => esc(j.name)).join(', ');
     const brk = (s.breaks || []).length ? ` · <span class="sched-brk">${s.breaks.length} break${s.breaks.length > 1 ? 's' : ''}</span>` : '';
     const loc = (!team && s.location_name) ? ` <span class="sched-loc">${esc(s.location_name.replace('Pho Ha Noi — ', ''))}</span>` : '';
-    return `<div class="sched-shift">${who}<span class="sched-time">${schedTo12h(s.start_time)} – ${schedTo12h(s.end_time)}</span>${jobs ? ` <span class="sched-jobs">${jobs}</span>` : ''}${brk}${loc}</div>`;
+    // Colour the whole shift block by the job (the first when several are assigned).
+    const c = s.jobs && s.jobs.length ? jobColor(s.jobs[0].name) : null;
+    const st = c ? ` style="background:${c.bg};border-color:${c.bd}"` : '';
+    return `<div class="sched-shift work${c ? ' has-job' : ''}"${st}>${who}<span class="sched-time">${schedTo12h(s.start_time)} – ${schedTo12h(s.end_time)}</span>${jobs ? ` <span class="sched-jobs">${jobs}</span>` : ''}${brk}${loc}</div>`;
   };
   const dayCard = (iso) => {
     const dd = new Date(iso + 'T00:00:00');
