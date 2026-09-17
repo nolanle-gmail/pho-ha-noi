@@ -1250,6 +1250,12 @@ video** control (multi-select). Attachments are stored as bytes in `message_atta
 images as tap-to-zoom thumbnails, videos as inline players. Only the message's sender can
 attach; every participant can view. A media-only message auto-captions (e.g. "📷 Photo").
 
+**Read receipts.** On your **Sent** list and under each of your own messages in a thread, a
+**✓ / ✓✓ Read by `<n>` of `<m>`** line shows how many recipients have opened it. **Tap it**
+to see the breakdown — who has **read** it (and how long ago) and who **hasn't yet**
+(sender-only). Read state is tracked per recipient (`message_recipients.is_read` / `read_at`),
+and works on both apps.
+
 **Deleting.** In a thread, a message's own sender — or any **manager** (owner, admin,
 general manager, manager), for moderation — can **delete** a whole message (its 🗑 button)
 or remove a single **attachment** (its ✕). Deleting removes just that message (replies in
@@ -1272,7 +1278,9 @@ read any group for review — read-only unless they're a member. The **group's c
 leadership** can **edit membership** from the group's 👥 Members panel (add staff — with
 the same by-location / by-role builders — or remove a member with their ✕). **Owner/admin**
 can **delete** a group; it's a soft-delete (deactivated and hidden from members) so all
-messages are **retained for audit**. A group lives until then.
+messages are **retained for audit**. A group lives until then. Each message you post shows a
+**✓ Seen by `<n>` of `<m>`** line (**✓✓ Seen by everyone** once all have), with the names on
+hover — computed from each member's read cursor (`chat_reads`).
 
 **Pictures & videos in chat.** Like direct messages, the chat composer carries a **📎**
 control (multi-select): members can attach images and videos to a group message — same
