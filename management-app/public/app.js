@@ -2511,7 +2511,7 @@ async function renderLocTimeClock() {
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const sm = data.summary;
   const statusChip = (r) => r.status === 'in' ? '<span class="badge ok">🟢 On clock</span>'
-    : `<span class="badge gray">Checked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
+    : `<span class="badge gray">Clocked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
   const canEditTc = myCap('manage');
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
   // Colour chip for the role a person is scheduled as — same colours as the schedule.
@@ -2525,7 +2525,7 @@ async function renderLocTimeClock() {
   const notInRows = data.not_in.map(r => `<tr class="task-unassigned">
     <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}</td>
     <td>—</td><td>—</td><td>${fmtDur(r.scheduled_minutes)}</td><td>—</td>
-    <td><span class="badge low">Not checked in</span></td></tr>`).join('');
+    <td><span class="badge low">Not clocked in</span></td></tr>`).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
   const overruns = S.tcOverruns || [];
@@ -2551,7 +2551,7 @@ async function renderLocTimeClock() {
     </div>
     <div class="tc-summary">
       <span class="badge ok">${sm.on_clock} on the clock</span>
-      <span class="badge gray">${sm.done} checked out</span>
+      <span class="badge gray">${sm.done} clocked out</span>
       <span class="badge ${sm.not_in ? 'low' : 'gray'}">${sm.not_in} not in</span>
       ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}
       ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
@@ -2559,10 +2559,10 @@ async function renderLocTimeClock() {
     ${policyBar}
     ${overrunCards}
     ${alertCards}
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Checked in</th><th>Checked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Clocked in</th><th>Clocked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
       ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
-    <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff check in/out on the tablet kiosk (⏱). A short check-out raises an alert here for follow-up.</p>
+    <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff clock in/out on the tablet kiosk (⏱). A short clock-out raises an alert here for follow-up.</p>
     ${breakSection(S.tcBreaks)}
     ${payrollSection(payroll)}`;
   const go = (iso) => { S.tcDate = iso; renderLocTimeClock(); };
