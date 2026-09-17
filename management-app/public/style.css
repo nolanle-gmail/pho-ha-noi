@@ -484,6 +484,8 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .tsale-card .tsale-sub { font-size: .78rem; color: var(--muted); }
 .tsale-card .tsale-total { font-size: .82rem; font-weight: 700; color: var(--ink); }
 .tsale-card .tsale-total span { font-weight: 400; color: var(--muted); font-size: .74rem; }
+.tsale-pulled { font-size: .78rem; color: var(--muted); margin: 0 0 .8rem; }
+.tsale-pulled strong { color: var(--ink); }
 .section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 1.25rem; }
 .section h3 { margin: 0 0 .8rem; font-size: 1.02rem; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }

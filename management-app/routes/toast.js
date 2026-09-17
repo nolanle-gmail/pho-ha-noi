@@ -344,16 +344,19 @@ router.get('/sales', MANAGE, (req, res) => {
 // its sales summary. Scoped to what the caller can see (managers: their own store).
 router.get('/sales/overview', MANAGE, (req, res) => {
   const all = seesAllLocations(req.user.role);
-  let maps = db.prepare(`SELECT tl.location_id, tl.toast_name, l.name AS location_name
+  let maps = db.prepare(`SELECT tl.location_id, tl.toast_name, tl.last_synced_at, l.name AS location_name
     FROM toast_locations tl JOIN locations l ON l.id=tl.location_id WHERE tl.active=1`).all();
   if (!all) maps = maps.filter(m => String(m.location_id) === String(req.user.location_id));
   const latest = db.prepare(`SELECT MAX(business_date) d FROM toast_orders WHERE location_id=?`);
   const rows = maps.map(m => {
     const d = (latest.get(m.location_id) || {}).d;
     return { location_id: m.location_id, location_name: m.location_name, toast_name: m.toast_name,
+      last_synced_at: m.last_synced_at || null,
       business_date: d || null, summary: d ? toastSync.salesSummary(m.location_id, d) : null };
   });
-  res.json({ locations: rows });
+  // Most recent pull across the shown locations (server local time; treated as UTC).
+  const lastPulled = rows.map(r => r.last_synced_at).filter(Boolean).sort().pop() || null;
+  res.json({ locations: rows, last_pulled_at: lastPulled });
 });
 
 // Toggle a location's automatic sync during operating hours.

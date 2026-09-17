@@ -1617,8 +1617,18 @@ async function fillToastSales(elId) {
   </div>`; };
   el.innerHTML = `<div class="section"><div class="row-between"><h3>🔌 Toast sales <span style="font-weight:400;color:var(--muted);font-size:.82rem">— latest synced day per location</span></h3>
       ${myCap('org') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
+    <div class="tsale-pulled">${d.last_pulled_at ? `⏱ Last pulled from Toast: <strong>${esc(fmtPulled(d.last_pulled_at))}</strong>` : 'Not pulled yet'}</div>
     <div class="kpis tsale-grid">${rows.map(card).join('')}</div></div>`;
   el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+}
+// Format a stored UTC 'YYYY-MM-DD HH:MM:SS' timestamp as friendly Pacific local time.
+function fmtPulled(s) {
+  const t = Date.parse(String(s).replace(' ', 'T') + 'Z'); if (!Number.isFinite(t)) return s;
+  const d = new Date(t), now = Date.now(); const mins = Math.round((now - t) / 60000);
+  const clock = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(d);
+  const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }).format(d);
+  const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : mins < 1440 ? `${Math.round(mins / 60)} h ago` : `${Math.round(mins / 1440)} d ago`;
+  return `${day}, ${clock} PT (${ago})`;
 }
 
 // ── Manager dashboard (the Overview a manager lands on) ──────────────────────
