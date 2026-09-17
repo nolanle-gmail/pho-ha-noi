@@ -5628,40 +5628,53 @@ async function openNewChatGroup() {
   const host = $('modalHost');
   const locs = [...new Map(recips.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
   const roles = [...new Set(recips.map(u => u.role))];
-  const memberRow = (u) => `<label class="chk" data-name="${esc((u.name || '').toLowerCase())}"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
+  // Same type-ahead recipient picker + chips as the message composer.
+  const picked = new Map();
+  const byId = new Map(recips.map(u => [u.id, u]));
+  const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide">
     <div class="row-between"><h3 style="margin:0">New chat group</h3><button class="btn sm ghost" id="cgCancel">Cancel</button></div>
     <div class="err" id="cgErr"></div>
     <label class="fld-label">Group name</label><input id="cgName" class="fld" placeholder="e.g. San Jose Servers" />
-    <input type="search" id="cgSearch" class="cg-search" placeholder="🔍 Search members by name…" autocomplete="off">
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="cgLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
-      <select id="cgRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
-      <button class="btn sm ghost" id="cgClear">Clear</button></div>` : ''}
-    <div class="cg-members">${recips.map(memberRow).join('')}<div class="cg-none hidden" id="cgNone">No one matches that name.</div></div>
+      <select id="cgRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select></div>` : ''}
+    <label class="fld-label">Members</label>
+    <div id="cgChips" class="recip-chips"></div>
+    <input id="cgSearch" class="fld" placeholder="🔍 Type a name to add… (e.g. “Na” → Nam, Nalan)" autocomplete="off" />
+    <div id="cgList" class="recip-list hidden"></div>
     <div class="actions" style="margin-top:1rem"><span id="cgCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="cgCreate">Create group</button></div>
   </div></div>`;
   const close = () => host.innerHTML = '';
-  const boxes = () => [...host.querySelectorAll('.cg-mem')];
-  const updateCount = () => $('cgCount').textContent = `${boxes().filter(b => b.checked).length} selected`;
-  const pick = (pred) => { recips.forEach(u => { if (pred(u)) { const b = host.querySelector(`.cg-mem[value="${u.id}"]`); if (b) b.checked = true; } }); updateCount(); };
+  const updateCount = () => $('cgCount').textContent = `${picked.size} selected`;
+  const drawChips = () => {
+    $('cgChips').innerHTML = picked.size
+      ? `${[...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('')} <button type="button" class="recip-clear" data-clearall>Clear all (${picked.size})</button>`
+      : '<span class="recip-empty">No one selected yet — type a name to add.</span>';
+    $('cgChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
+    const clr = $('cgChips').querySelector('[data-clearall]'); if (clr) clr.onclick = () => { picked.clear(); drawChips(); };
+    updateCount();
+  };
+  const drawList = (q) => {
+    const list = $('cgList');
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = recips.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</span></button>`).join('') : '<div class="recip-none">No one matches that name.</div>';
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = byId.get(parseInt(b.dataset.add, 10)); if (u) picked.set(u.id, u); drawChips(); $('cgSearch').value = ''; drawList(''); $('cgSearch').focus(); });
+  };
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('cgCancel').onclick = close;
-  boxes().forEach(b => b.onchange = updateCount);
-  const nameMatch = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
-  $('cgSearch').oninput = () => {
-    const q = $('cgSearch').value.trim().toLowerCase(); let shown = 0;
-    host.querySelectorAll('.cg-members label').forEach(l => { const ok = !q || nameMatch(l.dataset.name, q); l.style.display = ok ? '' : 'none'; if (ok) shown++; });
-    $('cgNone').classList.toggle('hidden', shown > 0);
-  };
+  $('cgSearch').oninput = () => drawList($('cgSearch').value.trim().toLowerCase());
+  drawChips();
   if (bulk) {
-    $('cgLoc').onchange = () => { const v = $('cgLoc').value; if (v) pick(u => String(u.location_id) === v); $('cgLoc').value = ''; };
-    $('cgRole').onchange = () => { const v = $('cgRole').value; if (v) pick(u => u.role === v); $('cgRole').value = ''; };
-    $('cgClear').onclick = () => { boxes().forEach(b => b.checked = false); updateCount(); };
+    const bulkAdd = (pred) => { recips.forEach(u => { if (pred(u)) picked.set(u.id, u); }); drawChips(); };
+    $('cgLoc').onchange = () => { const v = $('cgLoc').value; if (v) bulkAdd(u => String(u.location_id) === v); $('cgLoc').value = ''; };
+    $('cgRole').onchange = () => { const v = $('cgRole').value; if (v) bulkAdd(u => u.role === v); $('cgRole').value = ''; };
   }
   $('cgCreate').onclick = async () => {
     const name = $('cgName').value.trim();
-    const member_ids = boxes().filter(b => b.checked).map(b => parseInt(b.value, 10));
+    const member_ids = [...picked.keys()];
     if (!name) { $('cgErr').textContent = 'Enter a group name.'; return; }
     if (!member_ids.length) { $('cgErr').textContent = 'Pick at least one member.'; return; }
     try { const r = await api('/chat/groups', { method: 'POST', body: JSON.stringify({ name, member_ids }) }); toast('Group created'); close(); S.chatGroup = r.id; renderMessages(); }
@@ -5686,40 +5699,52 @@ async function openAddChatMembers(gid, existingIds) {
   const host = $('modalHost');
   const locs = [...new Map(candidates.filter(u => u.location).map(u => [String(u.location_id), u.location])).entries()];
   const roles = [...new Set(candidates.map(u => u.role))];
-  const memberRow = (u) => `<label class="chk" data-name="${esc((u.name || '').toLowerCase())}"><input type="checkbox" class="cg-mem" value="${u.id}"> ${esc(u.name)} <span class="badge ${ROLE_CHIP[u.role] || 'gray'}" style="font-size:.7rem">${esc(roleLabel(u.role))}</span>${u.location ? ` <span style="color:var(--muted);font-size:.75rem">${esc(shortLoc(u.location))}</span>` : ''}</label>`;
+  // Type-ahead recipient picker + chips — identical UX to the message composer's
+  // "A specific person…": type a letter and a dropdown of matching names appears;
+  // click to add one or many as removable chips.
+  const picked = new Map();
+  const byId = new Map(candidates.map(u => [u.id, u]));
+  const wPrefix = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
   host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide">
     <div class="row-between"><h3 style="margin:0">Add members</h3><button class="btn sm ghost" id="amCancel">Cancel</button></div>
     <div class="err" id="amErr"></div>
-    <input type="search" id="amSearch" class="cg-search" placeholder="🔍 Search by name…" autocomplete="off">
     ${bulk ? `<div class="cg-bulk"><span class="fld-label" style="margin:0">Quick add:</span>
       <select id="amLoc"><option value="">— by location —</option>${locs.map(([id, name]) => `<option value="${id}">${esc(shortLoc(name))}</option>`).join('')}</select>
-      <select id="amRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select>
-      <button class="btn sm ghost" id="amClear">Clear</button></div>` : ''}
-    <div class="cg-members">${candidates.map(memberRow).join('')}<div class="cg-none hidden" id="amNone">No one matches that name.</div></div>
+      <select id="amRole"><option value="">— by role —</option>${roles.slice().sort((a, b) => roleLabel(a).localeCompare(roleLabel(b))).map(r => `<option value="${r}">${esc(roleLabel(r))}</option>`).join('')}</select></div>` : ''}
+    <div id="amChips" class="recip-chips"></div>
+    <input id="amSearch" class="fld" placeholder="🔍 Type a name to add… (e.g. “Na” → Nam, Nalan)" autocomplete="off" />
+    <div id="amList" class="recip-list hidden"></div>
     <div class="actions" style="margin-top:1rem"><span id="amCount" style="margin-right:auto;color:var(--muted);font-size:.85rem">0 selected</span><button class="btn" id="amAdd">Add to group</button></div>
   </div></div>`;
   const close = () => host.innerHTML = '';
-  const boxes = () => [...host.querySelectorAll('.cg-mem')];
-  const updateCount = () => $('amCount').textContent = `${boxes().filter(b => b.checked).length} selected`;
-  const pick = (pred) => { candidates.forEach(u => { if (pred(u)) { const b = host.querySelector(`.cg-mem[value="${u.id}"]`); if (b) b.checked = true; } }); updateCount(); };
+  const updateCount = () => $('amCount').textContent = `${picked.size} selected`;
+  const drawChips = () => {
+    $('amChips').innerHTML = picked.size
+      ? `${[...picked.values()].map(u => `<span class="recip-chip">${esc(u.name)}<button type="button" data-rm="${u.id}" aria-label="Remove">✕</button></span>`).join('')} <button type="button" class="recip-clear" data-clearall>Clear all (${picked.size})</button>`
+      : '<span class="recip-empty">No one selected yet — type a name to add.</span>';
+    $('amChips').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { picked.delete(parseInt(b.dataset.rm, 10)); drawChips(); });
+    const clr = $('amChips').querySelector('[data-clearall]'); if (clr) clr.onclick = () => { picked.clear(); drawChips(); };
+    updateCount();
+  };
+  const drawList = (q) => {
+    const list = $('amList');
+    if (!q) { list.classList.add('hidden'); list.innerHTML = ''; return; }
+    const m = candidates.filter(u => !picked.has(u.id) && wPrefix(u.name, q)).slice(0, 40);
+    list.innerHTML = m.length ? m.map(u => `<button type="button" class="recip-item" data-add="${u.id}">${esc(u.name)} <span class="recip-role">${esc(roleLabel(u.role))}${u.location ? ' · ' + esc(shortLoc(u.location)) : ''}</span></button>`).join('') : '<div class="recip-none">No one matches that name.</div>';
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-add]').forEach(b => b.onclick = () => { const u = byId.get(parseInt(b.dataset.add, 10)); if (u) picked.set(u.id, u); drawChips(); $('amSearch').value = ''; drawList(''); $('amSearch').focus(); });
+  };
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
   $('amCancel').onclick = close;
-  boxes().forEach(b => b.onchange = updateCount);
-  // Type-ahead name search (same prefix match as the message composer): filters the
-  // list live; selections are kept even while hidden.
-  const nameMatch = (name, q) => { name = (name || '').toLowerCase(); return name.startsWith(q) || name.split(/\s+/).some(w => w.startsWith(q)); };
-  $('amSearch').oninput = () => {
-    const q = $('amSearch').value.trim().toLowerCase(); let shown = 0;
-    host.querySelectorAll('.cg-members label').forEach(l => { const ok = !q || nameMatch(l.dataset.name, q); l.style.display = ok ? '' : 'none'; if (ok) shown++; });
-    $('amNone').classList.toggle('hidden', shown > 0);
-  };
+  $('amSearch').oninput = () => drawList($('amSearch').value.trim().toLowerCase());
+  drawChips();
   if (bulk) {
-    $('amLoc').onchange = () => { const v = $('amLoc').value; if (v) pick(u => String(u.location_id) === v); $('amLoc').value = ''; };
-    $('amRole').onchange = () => { const v = $('amRole').value; if (v) pick(u => u.role === v); $('amRole').value = ''; };
-    $('amClear').onclick = () => { boxes().forEach(b => b.checked = false); updateCount(); };
+    const bulkAdd = (pred) => { candidates.forEach(u => { if (pred(u)) picked.set(u.id, u); }); drawChips(); };
+    $('amLoc').onchange = () => { const v = $('amLoc').value; if (v) bulkAdd(u => String(u.location_id) === v); $('amLoc').value = ''; };
+    $('amRole').onchange = () => { const v = $('amRole').value; if (v) bulkAdd(u => u.role === v); $('amRole').value = ''; };
   }
   $('amAdd').onclick = async () => {
-    const member_ids = boxes().filter(b => b.checked).map(b => parseInt(b.value, 10));
+    const member_ids = [...picked.keys()];
     if (!member_ids.length) { $('amErr').textContent = 'Pick at least one person.'; return; }
     try { const r = await api(`/chat/groups/${gid}/members`, { method: 'POST', body: JSON.stringify({ member_ids }) }); toast(`Added ${r.added} member${r.added === 1 ? '' : 's'}`); close(); renderChatGroup(); }
     catch (e) { $('amErr').textContent = e.message; }
