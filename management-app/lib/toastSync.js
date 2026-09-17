@@ -353,4 +353,17 @@ async function runBackfill({ days = 190, throttleMs = 300 } = {}) {
   return { started: true, total: tasks.length, days, target, status: backfillStatus() };
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill };
+// Resume the history backfill on server boot if any location isn't covered back to
+// the target yet — so a machine restart (deploy, idle) never leaves it half-done.
+function startToastBackfillResume() {
+  if (!toast.toastEnabled()) return;
+  const days = Math.max(1, Math.min(800, parseInt(process.env.TOAST_BACKFILL_DAYS, 10) || 190));
+  const target = addDaysIso(pacificToday(), -days);
+  let need = 0;
+  try { need = db.prepare(`SELECT COUNT(*) c FROM toast_locations WHERE active=1 AND (backfilled_from IS NULL OR backfilled_from > ?)`).get(target).c; } catch { return; }
+  if (!need) { console.log('[toast-backfill] history complete — nothing to resume.'); return; }
+  console.log(`[toast-backfill] ${need} location(s) not yet back to ${target}; resuming in 60s.`);
+  setTimeout(() => { runBackfill({ days }).then((r) => console.log('[toast-backfill] auto-resume started:', r.total, 'day-pulls')).catch((e) => console.error('[toast-backfill] resume:', e.message)); }, 60000);
+}
+
+module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume };

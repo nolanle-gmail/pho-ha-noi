@@ -66,6 +66,8 @@ if (require.main === module) {
   try { require('./routes/schedule').startScheduleRoll(); } catch { /* optional */ }
   // Automatic Toast sales sync during each mapped location's operating hours.
   try { require('./lib/toastSync').startToastSweep(); } catch { /* optional */ }
+  // Resume the history backfill if it was interrupted (survives restarts/deploys).
+  try { require('./lib/toastSync').startToastBackfillResume(); } catch { /* optional */ }
 }
 
 module.exports = app;

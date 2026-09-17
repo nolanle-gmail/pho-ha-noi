@@ -464,6 +464,16 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .card .value { font-size: 1.9rem; font-weight: 800; margin-top: .3rem; }
 .card .value.warn { color: var(--low); }
 .card .value.bad { color: var(--out); }
+/* Toast sales cards (dashboard) — readable at any width; the big number can't spill */
+.tsale-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.tsale-card { display: flex; flex-direction: column; gap: .1rem; overflow: hidden; min-width: 0; }
+.tsale-card .tsale-head { display: flex; justify-content: space-between; align-items: baseline; gap: .4rem; }
+.tsale-card .tsale-loc { font-weight: 700; font-size: .9rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tsale-card .tsale-date { font-size: .72rem; color: var(--muted); white-space: nowrap; flex: none; }
+.tsale-card .tsale-net { font-size: 1.5rem; font-weight: 800; color: var(--brand); line-height: 1.12; margin: .15rem 0 .1rem; overflow-wrap: anywhere; }
+.tsale-card .tsale-sub { font-size: .78rem; color: var(--muted); }
+.tsale-card .tsale-total { font-size: .82rem; font-weight: 700; color: var(--ink); }
+.tsale-card .tsale-total span { font-weight: 400; color: var(--muted); font-size: .74rem; }
 .section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 1.25rem; }
 .section h3 { margin: 0 0 .8rem; font-size: 1.02rem; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }

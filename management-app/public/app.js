@@ -1501,9 +1501,10 @@ async function fillToastSales(elId) {
   const rows = (d.locations || []).filter(r => r.summary);
   if (!rows.length) return;
   const card = (r) => { const s = r.summary; return `<div class="card tsale-card">
-    <div class="label">${esc(shortLoc(r.location_name))} <span class="sub" style="color:var(--muted)">· ${esc(fmtDay(r.business_date))}</span></div>
-    <div class="value">${money(s.net_sales)}</div>
-    <div class="sub" style="color:var(--muted);font-size:.78rem">${s.orders} orders · ${s.guests} guests · ${money(s.total)} total</div>
+    <div class="tsale-head"><span class="tsale-loc">${esc(shortLoc(r.location_name))}</span><span class="tsale-date">${esc(fmtDay(r.business_date))}</span></div>
+    <div class="tsale-net" title="Net sales (pre-tax)">${money(s.net_sales)}</div>
+    <div class="tsale-sub">${(s.orders || 0).toLocaleString()} orders · ${(s.guests || 0).toLocaleString()} guests</div>
+    <div class="tsale-total">${money(s.total)} <span>with tax &amp; tips</span></div>
   </div>`; };
   el.innerHTML = `<div class="section"><div class="row-between"><h3>🔌 Toast sales <span style="font-weight:400;color:var(--muted);font-size:.82rem">— latest synced day per location</span></h3>
       ${myCap('org') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
