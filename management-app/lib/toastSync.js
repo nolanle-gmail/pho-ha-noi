@@ -113,4 +113,58 @@ function salesSummary(locationId, businessDate) {
     WHERE o.location_id=? AND o.business_date=? AND o.voided=0`).get(locationId, businessDate);
 }
 
-module.exports = { syncOrders, salesSummary };
+// ── Automatic sync during operating hours ─────────────────────────────────────
+// A background sweep keeps each mapped location's sales current: it finalizes the
+// prior business day once per local day, and re-pulls "today" every interval while
+// the store is open (plus a grace window after close for closeout). Read-only,
+// idempotent, and per-location opt-out via toast_locations.auto_sync.
+const { localDate, localTime, DEFAULT_TZ } = require('./tz');
+const toMin = (hhmm) => { const m = /^(\d{2}):(\d{2})/.exec(hhmm || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+// day_of_week 0=Mon…6=Sun for a local YYYY-MM-DD.
+const weekdayMon0 = (iso) => (new Date(iso + 'T12:00:00Z').getUTCDay() + 6) % 7;
+
+const _swState = {};  // { [locId]: { lastLive: ms, settled: 'YYYY-MM-DD' } }
+
+// Is the store open now (or within the post-close grace), per its operating hours?
+function openWindow(locId, weekday, nowMin, graceMin) {
+  const h = db.prepare(`SELECT open_time, close_time, open_time2, close_time2, is_closed FROM location_hours WHERE location_id=? AND day_of_week=?`).get(locId, weekday);
+  if (!h || h.is_closed) return false;
+  const opens = [toMin(h.open_time), toMin(h.open_time2)].filter((x) => x != null);
+  const closes = [toMin(h.close_time), toMin(h.close_time2)].filter((x) => x != null);
+  if (!opens.length || !closes.length) return false;
+  return nowMin >= Math.min(...opens) && nowMin <= Math.max(...closes) + graceMin;
+}
+
+async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
+  if (!toast.toastEnabled()) return;
+  const maps = db.prepare(`SELECT tl.location_id, COALESCE(l.timezone,?) AS tz
+    FROM toast_locations tl JOIN locations l ON l.id=tl.location_id
+    WHERE tl.active=1 AND tl.auto_sync=1`).all(DEFAULT_TZ);
+  for (const m of maps) {
+    const st = _swState[m.location_id] || (_swState[m.location_id] = { lastLive: 0, settled: null });
+    const today = localDate(m.tz), nowMin = toMin(localTime(m.tz));
+    try {
+      // Finalize yesterday once at the first sweep of a new local day.
+      if (st.settled !== today) { await syncOrders(m.location_id, addDaysIso(today, -1)); st.settled = today; }
+      // Keep today fresh while open (throttled).
+      if (openWindow(m.location_id, weekdayMon0(today), nowMin, graceMin) && (Date.now() - st.lastLive) >= liveThrottleMin * 60000) {
+        await syncOrders(m.location_id, today); st.lastLive = Date.now();
+      }
+    } catch (e) { console.error(`[toast-sweep] loc ${m.location_id}:`, e.message); }
+  }
+}
+
+let _sweepTimer = null;
+function startToastSweep() {
+  if (_sweepTimer) return;
+  if (!toast.toastEnabled()) { console.log('[toast-sweep] Toast not configured — auto-sync off.'); return; }
+  const intervalMin = Math.max(5, parseInt(process.env.TOAST_SYNC_INTERVAL_MIN, 10) || 20);
+  const graceMin = parseInt(process.env.TOAST_CLOSE_GRACE_MIN, 10) || 90;
+  const run = () => sweepOnce({ graceMin, liveThrottleMin: intervalMin }).catch((e) => console.error('[toast-sweep]', e.message));
+  setTimeout(run, 30000);                       // first pass shortly after boot
+  _sweepTimer = setInterval(run, intervalMin * 60000);
+  console.log(`[toast-sweep] auto-sync every ${intervalMin} min (grace ${graceMin} min).`);
+}
+
+module.exports = { syncOrders, salesSummary, sweepOnce, startToastSweep };

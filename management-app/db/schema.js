@@ -1091,6 +1091,8 @@ function migrate() {
     // lunch 11:00–15:00). Null when the day has only one period.
     `ALTER TABLE location_hours ADD COLUMN open_time2 TEXT`,
     `ALTER TABLE location_hours ADD COLUMN close_time2 TEXT`,
+    // Per-location opt-out of the automatic Toast sync during operating hours.
+    `ALTER TABLE toast_locations ADD COLUMN auto_sync INTEGER NOT NULL DEFAULT 1`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

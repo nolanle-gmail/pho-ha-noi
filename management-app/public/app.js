@@ -374,18 +374,20 @@ async function renderIntegrations() {
     <div class="section" style="margin-bottom:1rem">
       <h3>Locations ↔ Toast restaurants</h3>
       <div class="table-wrap"><table>
-        <thead><tr><th>Location</th><th>Toast restaurant</th><th>GUID</th><th>Last synced</th><th></th></tr></thead>
+        <thead><tr><th>Location</th><th>Toast restaurant</th><th>GUID</th><th>Last synced</th><th title="Automatically pull sales during this store's operating hours">Auto</th><th></th></tr></thead>
         <tbody>${maps.length ? maps.map(m => `<tr>
           <td><strong>${esc(m.location_name)}</strong></td>
           <td>${esc(m.toast_name || '—')}</td>
           <td class="mono" style="font-size:.75rem">${esc(m.toast_guid)}</td>
           <td class="sub" style="color:var(--muted)">${m.last_synced_at ? esc(m.last_synced_at.replace('T', ' ').slice(0, 16)) : 'never'}</td>
+          <td><label class="chk" title="Auto-sync during operating hours"><input type="checkbox" data-autosync="${m.id}" ${m.auto_sync ? 'checked' : ''}/></label></td>
           <td style="white-space:nowrap">
             <button class="btn sm ghost" data-ping="${esc(m.toast_guid)}" title="Test the connection">Ping</button>
             <button class="btn sm" data-sync="${m.location_id}" title="Pull yesterday's sales">Sync ${fmtDay(yday)}</button>
             <button class="btn sm ghost danger" data-unmap="${m.id}" title="Remove mapping">✕</button>
-          </td></tr>`).join('') : '<tr><td colspan="5" class="empty">No locations mapped yet. Add one below.</td></tr>'}
+          </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No locations mapped yet. Add one below.</td></tr>'}
         </tbody></table></div>
+      <p class="sub" style="color:var(--muted);font-size:.78rem;margin:.4rem 0 0">“Auto” pulls each store's sales automatically during its operating hours (plus a short grace after close). Turn it off to sync only on demand.</p>
       ${unmapped.length ? `<div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;margin-top:.6rem">
         <label style="margin:0">Location<select id="tiLoc">${unmapped.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></label>
         <label style="margin:0;flex:1;min-width:260px">Toast restaurant GUID<input id="tiGuid" placeholder="e.g. 4721e7a9-b4ae-4fef-9230-b3dae186e0a4" /></label>
@@ -430,6 +432,10 @@ async function renderIntegrations() {
     catch (e) { toast(e.message, true); } finally { b.disabled = false; b.textContent = old; }
   });
   $('view').querySelectorAll('[data-sync]').forEach(b => b.onclick = () => runToastSync(+b.dataset.sync, yday, yday, b));
+  $('view').querySelectorAll('[data-autosync]').forEach(c => c.onchange = async () => {
+    try { await api('/toast/map/' + c.dataset.autosync + '/autosync', { method: 'POST', body: JSON.stringify({ auto_sync: c.checked }) }); toast(c.checked ? 'Auto-sync on.' : 'Auto-sync off.'); }
+    catch (e) { c.checked = !c.checked; toast(e.message, true); }
+  });
   if ($('tsRun')) $('tsRun').onclick = () => runToastSync(+$('tsLoc').value, $('tsFrom').value, $('tsTo').value, $('tsRun'));
 }
 // Trigger an orders pull and show the resulting daily sales summary.

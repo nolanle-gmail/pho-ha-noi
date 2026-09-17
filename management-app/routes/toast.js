@@ -135,6 +135,15 @@ router.get('/sales/overview', MANAGE, (req, res) => {
   res.json({ locations: rows });
 });
 
+// Toggle a location's automatic sync during operating hours.
+router.post('/map/:id/autosync', ADMIN, (req, res) => {
+  const on = req.body.auto_sync ? 1 : 0;
+  const r = db.prepare(`UPDATE toast_locations SET auto_sync=? WHERE id=?`).run(on, req.params.id);
+  if (!r.changes) return res.status(404).json({ error: 'Mapping not found.' });
+  auditLog(req, 'toast_autosync', 'toast', req.params.id, { auto_sync: on });
+  res.json({ success: true, auto_sync: on });
+});
+
 // Remove a mapping.
 router.delete('/map/:id', ADMIN, (req, res) => {
   const row = db.prepare(`SELECT * FROM toast_locations WHERE id=?`).get(req.params.id);

@@ -64,6 +64,8 @@ if (require.main === module) {
   try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
   // Weekly schedule auto-roll for locations that opted in.
   try { require('./routes/schedule').startScheduleRoll(); } catch { /* optional */ }
+  // Automatic Toast sales sync during each mapped location's operating hours.
+  try { require('./lib/toastSync').startToastSweep(); } catch { /* optional */ }
 }
 
 module.exports = app;
