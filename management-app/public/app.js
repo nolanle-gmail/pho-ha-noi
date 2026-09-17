@@ -207,6 +207,7 @@ const SECTIONS = [
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
   ['menu', '🍽️', 'Menu/Recipes', 'manage'],
   ['reports', '📈', 'Reports', 'reports'],
+  ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
 const allowedSections = () => SECTIONS.filter(s => myCap(s[3]));
@@ -343,8 +344,107 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
+}
+
+// ── Integrations: Toast POS (owner/admin) ────────────────────────────────────
+// Map each location to its Toast restaurant GUID, verify the connection, and pull
+// sales. All Toast access is read-only; credentials live in Fly secrets.
+async function renderIntegrations() {
+  let status, locs;
+  try { [status, locs] = await Promise.all([api('/toast/status'), api('/locations')]); }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const maps = status.mappings || [];
+  const mapped = new Set(maps.map(m => String(m.location_id)));
+  const unmapped = (locs || []).filter(l => !mapped.has(String(l.id)));
+  const yday = addDaysIso(todayIso(), -1);
+  const syncRow = (s) => `<tr><td>${esc(s.domain)}</td><td>${esc((maps.find(m => m.location_id === s.location_id) || {}).location_name || s.location_id || '—')}</td>
+    <td><span class="badge ${s.status === 'ok' ? 'ok' : s.status === 'error' ? 'out' : 'gray'}">${esc(s.status)}</span></td>
+    <td class="num">${s.record_count || 0}</td><td>${esc(s.detail || '')}</td><td class="sub" style="color:var(--muted)">${esc((s.finished_at || s.started_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`;
+  $('view').innerHTML = `
+    <h2 class="page">🔌 Toast POS <span style="font-weight:400;color:var(--muted);font-size:.9rem">— sync sales & operations from Toast (read-only)</span></h2>
+    <div class="section" style="margin-bottom:1rem">
+      <div class="row-between"><h3>Connection</h3>
+        <span class="badge ${status.configured ? 'ok' : 'out'}">${status.configured ? 'Connected' : 'Not configured'}</span></div>
+      <div class="profile-row"><span>API host</span><strong>${esc(status.host)}</strong></div>
+      ${status.configured ? '' : `<p class="sub" style="color:var(--muted)">Set your Toast API keys as Fly secrets to connect:<br><code>flyctl secrets set TOAST_CLIENT_ID=… TOAST_CLIENT_SECRET=… -a pho-ha-noi-management</code></p>`}
+    </div>
+
+    <div class="section" style="margin-bottom:1rem">
+      <h3>Locations ↔ Toast restaurants</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Location</th><th>Toast restaurant</th><th>GUID</th><th>Last synced</th><th></th></tr></thead>
+        <tbody>${maps.length ? maps.map(m => `<tr>
+          <td><strong>${esc(m.location_name)}</strong></td>
+          <td>${esc(m.toast_name || '—')}</td>
+          <td class="mono" style="font-size:.75rem">${esc(m.toast_guid)}</td>
+          <td class="sub" style="color:var(--muted)">${m.last_synced_at ? esc(m.last_synced_at.replace('T', ' ').slice(0, 16)) : 'never'}</td>
+          <td style="white-space:nowrap">
+            <button class="btn sm ghost" data-ping="${esc(m.toast_guid)}" title="Test the connection">Ping</button>
+            <button class="btn sm" data-sync="${m.location_id}" title="Pull yesterday's sales">Sync ${fmtDay(yday)}</button>
+            <button class="btn sm ghost danger" data-unmap="${m.id}" title="Remove mapping">✕</button>
+          </td></tr>`).join('') : '<tr><td colspan="5" class="empty">No locations mapped yet. Add one below.</td></tr>'}
+        </tbody></table></div>
+      ${unmapped.length ? `<div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;margin-top:.6rem">
+        <label style="margin:0">Location<select id="tiLoc">${unmapped.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></label>
+        <label style="margin:0;flex:1;min-width:260px">Toast restaurant GUID<input id="tiGuid" placeholder="e.g. 4721e7a9-b4ae-4fef-9230-b3dae186e0a4" /></label>
+        <button class="btn" id="tiAdd">Add mapping</button>
+      </div>` : ''}
+    </div>
+
+    ${maps.length ? `<div class="section" style="margin-bottom:1rem">
+      <h3>Pull sales</h3>
+      <div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap">
+        <label style="margin:0">Location<select id="tsLoc">${maps.map(m => `<option value="${m.location_id}">${esc(m.location_name)}</option>`).join('')}</select></label>
+        <label style="margin:0">From<input id="tsFrom" type="date" value="${yday}" max="${todayIso()}" /></label>
+        <label style="margin:0">To<input id="tsTo" type="date" value="${yday}" max="${todayIso()}" /></label>
+        <button class="btn" id="tsRun">Pull sales</button>
+      </div>
+      <div id="tsResult" style="margin-top:.7rem"></div>
+    </div>` : ''}
+
+    <div class="section">
+      <h3>Recent syncs</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Domain</th><th>Location</th><th>Status</th><th class="num">Records</th><th>Detail</th><th>When</th></tr></thead>
+        <tbody>${(status.recent_syncs || []).length ? status.recent_syncs.map(syncRow).join('') : '<tr><td colspan="6" class="empty">No syncs yet.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+
+  if ($('tiAdd')) $('tiAdd').onclick = async () => {
+    const location_id = +$('tiLoc').value, toast_guid = $('tiGuid').value.trim();
+    if (!toast_guid) return toast('Enter the Toast restaurant GUID.', true);
+    $('tiAdd').disabled = true;
+    try { const r = await api('/toast/map', { method: 'POST', body: JSON.stringify({ location_id, toast_guid }) }); toast(`Mapped${r.toast_name ? ' to ' + r.toast_name : ''}.`); renderIntegrations(); }
+    catch (e) { toast(e.message, true); $('tiAdd').disabled = false; }
+  };
+  $('view').querySelectorAll('[data-unmap]').forEach(b => b.onclick = async () => {
+    if (!confirm('Remove this Toast mapping?')) return;
+    try { await api('/toast/map/' + b.dataset.unmap, { method: 'DELETE' }); toast('Mapping removed.'); renderIntegrations(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $('view').querySelectorAll('[data-ping]').forEach(b => b.onclick = async () => {
+    b.disabled = true; const old = b.textContent; b.textContent = 'Pinging…';
+    try { const r = await api('/toast/ping', { method: 'POST', body: JSON.stringify({ guid: b.dataset.ping }) }); toast(`✓ ${r.name || 'Connected'} (${r.timeZone || 'ok'})`); }
+    catch (e) { toast(e.message, true); } finally { b.disabled = false; b.textContent = old; }
+  });
+  $('view').querySelectorAll('[data-sync]').forEach(b => b.onclick = () => runToastSync(+b.dataset.sync, yday, yday, b));
+  if ($('tsRun')) $('tsRun').onclick = () => runToastSync(+$('tsLoc').value, $('tsFrom').value, $('tsTo').value, $('tsRun'));
+}
+// Trigger an orders pull and show the resulting daily sales summary.
+async function runToastSync(location_id, from, to, btn) {
+  if (btn) { btn.disabled = true; var old = btn.textContent; btn.textContent = 'Pulling…'; }
+  const box = $('tsResult');
+  try {
+    const r = await api('/toast/sync/orders', { method: 'POST', body: JSON.stringify({ location_id, date_from: from, date_to: to }) });
+    toast('✓ Sales pulled from Toast.');
+    if (box) box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Business date</th><th class="num">Orders</th><th class="num">Guests</th><th class="num">Net sales</th><th class="num">Tax</th><th class="num">Tips</th><th class="num">Total</th></tr></thead>
+      <tbody>${r.days.map(d => { const s = d.summary || {}; return `<tr><td>${esc(fmtDay(d.business_date))}</td><td class="num">${s.orders || 0}</td><td class="num">${s.guests || 0}</td><td class="num">${money(s.net_sales || 0)}</td><td class="num">${money(s.tax || 0)}</td><td class="num">${money(s.tips || 0)}</td><td class="num"><strong>${money(s.total || 0)}</strong></td></tr>`; }).join('')}</tbody></table></div>`;
+    // Refresh the mappings' "last synced" without wiping the result box.
+    try { const st = await api('/toast/status'); const m = (st.mappings || []).find(x => x.location_id === location_id); if (m && m.last_synced_at) { /* left as-is; full refresh on next open */ } } catch { /* ignore */ }
+  } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
 
 // ── Service: the live guest-visit board (six lists) ──────────────────────────
