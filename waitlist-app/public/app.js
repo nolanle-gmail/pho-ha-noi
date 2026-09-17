@@ -468,11 +468,19 @@ async function renderChatGroupView(silent) {
   try { d = await api(`/chat/groups/${gid}/messages`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   refreshChatUnread();
   const me = d.me;
+  const others = (d.reads || []).filter(r => String(r.user_id) !== String(me));
+  const seenReceipt = (mid) => {
+    if (!others.length) return '';
+    const seen = others.filter(r => r.last_read_id >= mid);
+    const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" title="${seen.length ? 'Seen by ' + esc(seen.map(r => r.name).join(', ')) : 'Not seen yet'}">${label}</div>`;
+  };
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
       ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
+      ${m.sender_id === me ? seenReceipt(m.id) : ''}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   v.innerHTML = `
     <div class="section-head"><h2>💬 ${esc(d.name)}${d.is_audit ? ' <span class="msg-role">audit</span>' : ''}${!d.is_active ? ' <span class="msg-role bc">deleted</span>' : ''}</h2>
@@ -661,6 +669,23 @@ async function deleteMessage(messageId, threadCount) {
   } catch (e) { toast(e.message, true); }
 }
 
+// Who has read a message I sent, and when — read-receipt detail popup.
+async function showReceipts(msgId) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Read receipts</h3><div id="rcpBody" class="empty">Loading…</div><div class="actions"><button class="btn ghost" id="rcpClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('rcpClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  try {
+    const d = await api('/messages/' + msgId + '/receipts');
+    const readList = d.receipts.filter(r => r.is_read), pending = d.receipts.filter(r => !r.is_read);
+    const row = (r, t) => `<div class="rcp-row"><span>${esc(r.name)} <span class="msg-role">${esc(roleWord(r.role))}</span></span>${t && r.read_at ? `<span class="muted">${msgAgo(r.read_at)}</span>` : ''}</div>`;
+    $('rcpBody').innerHTML = `<p class="muted" style="margin:.1rem 0 .6rem">Read by <strong>${d.read_count}</strong> of ${d.total}.</p>
+      ${readList.length ? `<div class="rcp-sec"><div class="rcp-h">✓✓ Read</div>${readList.map(r => row(r, true)).join('')}</div>` : ''}
+      ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(r => row(r, false)).join('')}</div>` : ''}`;
+  } catch (e) { $('rcpBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
 async function renderThreadView() {
   revokeMsgAtts();
   const v = $('view');
@@ -683,6 +708,7 @@ async function renderThreadView() {
         <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
+        ${m.sender_id === me && m.recipient_count ? `<div class="msg-receipt${m.read_count >= m.recipient_count ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipient_count ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipient_count}</div>` : ''}
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea>
       <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="rFiles"></label>
@@ -690,6 +716,7 @@ async function renderThreadView() {
     <div id="rFileNames" class="msg-attach-names"></div>`;
   v.querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThreadView }));
   v.querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
+  v.querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
   const rFiles = $('rFiles'); if (rFiles) rFiles.onchange = () => { $('rFileNames').textContent = rFiles.files.length ? `📎 ${rFiles.files.length} file${rFiles.files.length > 1 ? 's' : ''} attached` : ''; };
   const backToList = () => { S.msgThread = null; renderMessages(); };
   $('msgBack').onclick = backToList;
