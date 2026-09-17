@@ -242,6 +242,39 @@ async function syncMenus(locationId) {
   }
 }
 
+// ── Config: tables, dining options, service areas, revenue centers ────────────
+const insConfig = db.prepare(`INSERT INTO toast_config (location_id,type,guid,name,synced_at)
+  VALUES (?,?,?,?,datetime('now'))
+  ON CONFLICT(location_id,type,guid) DO UPDATE SET name=excluded.name, synced_at=datetime('now')`);
+
+// Pull Toast config reference data so order GUIDs (table, dining option, …) can be
+// shown as names. Read-only; replaces each type's snapshot per location.
+async function syncConfig(locationId) {
+  const map = mapping(locationId);
+  if (!map) throw new Error('That location is not mapped to a Toast restaurant.');
+  const guid = map.toast_guid;
+  const log = db.prepare(`INSERT INTO toast_sync_log (domain,location_id,toast_guid,status) VALUES ('config',?,?, 'running')`).run(locationId, guid);
+  const logId = log.lastInsertRowid;
+  try {
+    const sets = [['table', '/config/v2/tables'], ['dining_option', '/config/v2/diningOptions'], ['service_area', '/config/v2/serviceAreas'], ['revenue_center', '/config/v2/revenueCenters']];
+    let total = 0;
+    db.exec('BEGIN');
+    try {
+      for (const [type, path] of sets) {
+        const rows = await toast.toastGetAll(path, { guid, pageSize: 100 });
+        db.prepare(`DELETE FROM toast_config WHERE location_id=? AND type=?`).run(locationId, type);
+        for (const r of rows) { insConfig.run(locationId, type, r.guid, r.name || null); total++; }
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    db.prepare(`UPDATE toast_sync_log SET status='ok', record_count=?, detail=?, finished_at=datetime('now') WHERE id=?`).run(total, `${total} config records`, logId);
+    return { records: total };
+  } catch (e) {
+    db.prepare(`UPDATE toast_sync_log SET status='error', detail=?, finished_at=datetime('now') WHERE id=?`).run(String(e.message).slice(0, 500), logId);
+    throw e;
+  }
+}
+
 // ── Automatic sync during operating hours ─────────────────────────────────────
 // A background sweep keeps each mapped location's sales current: it finalizes the
 // prior business day once per local day, and re-pulls "today" every interval while
@@ -284,6 +317,7 @@ async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
         await syncOrders(m.location_id, addDaysIso(today, -1));
         try { await syncLabor(m.location_id); } catch (e) { console.error(`[toast-sweep] labor loc ${m.location_id}:`, e.message); }
         try { await syncMenus(m.location_id); } catch (e) { console.error(`[toast-sweep] menus loc ${m.location_id}:`, e.message); }
+        try { await syncConfig(m.location_id); } catch (e) { console.error(`[toast-sweep] config loc ${m.location_id}:`, e.message); }
         st.settled = today;
       }
       // Keep today fresh while open (throttled).
@@ -366,4 +400,4 @@ function startToastBackfillResume() {
   setTimeout(() => { runBackfill({ days }).then((r) => console.log('[toast-backfill] auto-resume started:', r.total, 'day-pulls')).catch((e) => console.error('[toast-backfill] resume:', e.message)); }, 60000);
 }
 
-module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume };
+module.exports = { syncOrders, salesSummary, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume };

@@ -1078,6 +1078,17 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_toast_menu_loc ON toast_menu_items(location_id, group_name, name);
     CREATE INDEX IF NOT EXISTS idx_toast_menu_mli ON toast_menu_items(multi_location_id);
+
+    -- Toast config reference data (per location): tables, dining options, service areas,
+    -- revenue centers — used to resolve the GUIDs on orders into human-readable names.
+    CREATE TABLE IF NOT EXISTS toast_config (
+      location_id  INTEGER NOT NULL,
+      type         TEXT NOT NULL,      -- 'table' | 'dining_option' | 'service_area' | 'revenue_center'
+      guid         TEXT NOT NULL,
+      name         TEXT,
+      synced_at    TEXT,
+      PRIMARY KEY (location_id, type, guid)
+    );
   `);
 
   // Migrations for databases created before these columns existed.
@@ -1171,6 +1182,10 @@ function migrate() {
     `ALTER TABLE toast_locations ADD COLUMN auto_sync INTEGER NOT NULL DEFAULT 1`,
     // Earliest business date backfilled for this location (how far history goes back).
     `ALTER TABLE toast_locations ADD COLUMN backfilled_from TEXT`,
+    // Order-level lookups for the order browser + service flow (join by order_guid).
+    `CREATE INDEX IF NOT EXISTS idx_toast_checks_order ON toast_checks(order_guid)`,
+    `CREATE INDEX IF NOT EXISTS idx_toast_payments_order ON toast_payments(order_guid)`,
+    `CREATE INDEX IF NOT EXISTS idx_toast_selections_order ON toast_selections(order_guid)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

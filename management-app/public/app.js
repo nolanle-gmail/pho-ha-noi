@@ -208,6 +208,7 @@ const SECTIONS = [
   ['menu', '🍽️', 'Menu/Recipes', 'manage'],
   ['reports', '📈', 'Reports', 'reports'],
   ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
+  ['toastorders', '🧾', 'Orders', 'manage'],
   ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
@@ -345,7 +346,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -470,6 +471,70 @@ async function loadAnalytics() {
   } catch (e) {
     if (S.section === 'salesanalytics') $('view').querySelectorAll('.empty').forEach(el => el.textContent = e.message);
   }
+}
+
+// ── Orders browser (Toast order detail; owner/admin/manager) ──────────────────
+const ORD_STATUS = { open: ['🟢 Open', 'ok'], paid: ['✅ Paid', 'blue'], voided: ['⛔ Voided', 'out'] };
+function ordTime(iso) { if (!iso) return '—'; const d = new Date(String(iso).slice(0, 19) + 'Z'); return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(d); }
+async function renderToastOrders() {
+  const isAdmin = roleScopeOf(S.user.role) === 'all';
+  const F = S.ordFilters || (S.ordFilters = { date: pacificTodayIso(), loc: isAdmin ? String((S.locations[0] || {}).id || '') : String(S.user.location_id), status: '' });
+  if (!F.loc && isAdmin) F.loc = String((S.locations[0] || {}).id || '');
+  const locOpts = isAdmin ? `<label class="sched-filter-role">Location <select id="ordLoc">${(S.locations || []).map(l => `<option value="${l.id}" ${String(F.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></label>` : '';
+  $('view').innerHTML = `
+    <h2 class="page">🧾 Orders <span style="font-weight:400;color:var(--muted);font-size:.9rem">— order detail from your stored Toast history</span></h2>
+    <div class="sched-filters">
+      ${locOpts}
+      <label class="sched-filter-role">Date <input type="date" id="ordDate" value="${F.date}" max="${pacificTodayIso()}"></label>
+      <label class="sched-filter-role">Status <select id="ordStatus"><option value="">All</option><option value="open" ${F.status === 'open' ? 'selected' : ''}>Open</option><option value="paid" ${F.status === 'paid' ? 'selected' : ''}>Paid</option><option value="voided" ${F.status === 'voided' ? 'selected' : ''}>Voided</option></select></label>
+      <span class="sched-filter-total" id="ordCount"></span>
+    </div>
+    <div id="ordList"><div class="empty">Loading…</div></div>`;
+  const reload = () => { try { localStorage.setItem('phn_ord_filters', JSON.stringify(F)); } catch { /* ignore */ } loadToastOrders(); };
+  if ($('ordLoc')) $('ordLoc').onchange = (e) => { F.loc = e.target.value; reload(); };
+  $('ordDate').onchange = (e) => { F.date = e.target.value; reload(); };
+  $('ordStatus').onchange = (e) => { F.status = e.target.value; reload(); };
+  loadToastOrders();
+}
+async function loadToastOrders() {
+  const F = S.ordFilters; if (!F.loc) { $('ordList').innerHTML = '<div class="empty">Pick a location.</div>'; return; }
+  let d; try { d = await api(`/toast/orders?location_id=${F.loc}&date=${F.date}${F.status ? '&status=' + F.status : ''}`); }
+  catch (e) { $('ordList').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.section !== 'toastorders') return;
+  const o = d.orders;
+  if ($('ordCount')) $('ordCount').innerHTML = `<strong>${o.length}</strong> order${o.length === 1 ? '' : 's'} on ${fmtDay(F.date)}`;
+  $('ordList').innerHTML = o.length ? `<div class="table-wrap"><table class="sched-table"><thead><tr>
+      <th>Time</th><th>Table</th><th>Server</th><th class="num">Guests</th><th class="num">Items</th><th class="num">Net</th><th class="num">Tips</th><th>Status</th></tr></thead>
+    <tbody>${o.map(r => { const [lbl, chip] = ORD_STATUS[r.status] || ['—', 'gray']; return `<tr class="ord-row" data-ord="${esc(r.guid)}" style="cursor:pointer">
+      <td>${ordTime(r.opened_at)}</td><td>${r.table_name ? esc(r.table_name) : '—'}</td><td>${r.server_name ? esc(r.server_name) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="num">${r.num_guests ?? '—'}</td><td class="num">${r.items}</td><td class="num">${money(r.net)}</td><td class="num">${r.tips ? money(r.tips) : '—'}</td>
+      <td><span class="badge ${chip}">${lbl}</span></td></tr>`; }).join('')}</tbody></table></div>`
+    : '<div class="empty">No orders for this day.</div>';
+  $('ordList').querySelectorAll('[data-ord]').forEach(row => row.onclick = () => showOrderDetail(row.dataset.ord));
+}
+async function showOrderDetail(guid) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><div id="ordDetail" class="empty">Loading…</div><div class="actions"><button class="btn ghost" id="odClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = ''; $('odClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  try {
+    const d = await api('/toast/orders/' + guid); const o = d.order;
+    const [lbl, chip] = ORD_STATUS[o.status] || ['—', 'gray'];
+    const money2 = (n) => n == null ? '—' : money(n);
+    $('ordDetail').innerHTML = `
+      <h3 style="margin:0 0 .2rem">Order · ${o.table_name ? 'Table ' + esc(o.table_name) : 'No table'} <span class="badge ${chip}" style="font-size:.7rem;vertical-align:middle">${lbl}</span></h3>
+      <div class="rcp-row"><span>Server</span><strong>${o.server_name ? esc(o.server_name) + (o.server_user_id ? '' : ' <span class="badge gray">Toast only</span>') : '—'}</strong></div>
+      <div class="rcp-row"><span>Dining option</span><strong>${esc(o.dining_option_name || '—')}</strong></div>
+      <div class="rcp-row"><span>Guests</span><strong>${o.num_guests ?? '—'}</strong></div>
+      <div class="rcp-row"><span>Opened</span><strong>${ordTime(o.opened_at)}</strong></div>
+      <div class="rcp-row"><span>Paid</span><strong>${o.paid_at ? ordTime(o.paid_at) : 'not paid'}</strong></div>
+      <div class="rcp-row"><span>Tips</span><strong>${money2(d.checks.reduce((t, c) => t + (c.tip_amount || 0), 0))}</strong></div>
+      <div class="rcp-h" style="margin-top:.7rem">Items</div>
+      <div class="table-wrap"><table><tbody>${d.items.length ? d.items.map(i => `<tr${i.voided ? ' style="opacity:.5;text-decoration:line-through"' : ''}><td>${i.quantity > 1 ? i.quantity + '× ' : ''}${esc(i.item_name || '—')}</td><td class="num">${money2(i.price)}</td></tr>`).join('') : '<tr><td class="empty">No items.</td></tr>'}</tbody></table></div>
+      <div class="rcp-h" style="margin-top:.7rem">Checks</div>
+      ${d.checks.map(c => `<div class="rcp-row"><span>Subtotal ${money2(c.amount)} + tax ${money2(c.tax_amount)}${c.tip_amount ? ' + tip ' + money2(c.tip_amount) : ''} <span class="badge ${c.payment_status === 'OPEN' ? 'gold' : 'ok'}" style="font-size:.66rem">${esc(c.payment_status || '')}</span></span><strong>${money2(c.total_amount + (c.tip_amount || 0))}</strong></div>`).join('')}
+      ${d.payments.length ? `<div class="rcp-h" style="margin-top:.7rem">Payments</div>${d.payments.map(p => `<div class="rcp-row"><span>${esc(p.type || 'Payment')}${p.card_type ? ' · ' + esc(p.card_type) : ''}</span><strong>${money2(p.amount)}${p.tip_amount ? ' + ' + money2(p.tip_amount) + ' tip' : ''}</strong></div>`).join('')}` : ''}`;
+  } catch (e) { $('ordDetail').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
 // ── Integrations: Toast POS (owner/admin) ────────────────────────────────────

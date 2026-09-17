@@ -214,6 +214,65 @@ router.post('/sync/menus', ADMIN, async (req, res) => {
   } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
 });
 
+// Pull Toast config (tables, dining options, service areas, revenue centers).
+router.post('/sync/config', ADMIN, async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  try { const r = await toastSync.syncConfig(location_id); auditLog(req, 'toast_sync_config', 'location', location_id, r); res.json({ ok: true, ...r }); }
+  catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+});
+
+// Order status derived from the mirror (Toast has no single status field).
+function orderStatus(o) { return o.voided ? 'voided' : (o.paid_at ? 'paid' : 'open'); }
+
+// Browse orders for a location + business date, with resolved server / table names.
+router.get('/orders', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : toastSync.pacificToday();
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const where = ['o.location_id=?', 'o.business_date=?']; const args = [location_id, date];
+  if (req.query.status === 'open') where.push('o.paid_at IS NULL AND o.voided=0');
+  else if (req.query.status === 'paid') where.push('o.paid_at IS NOT NULL');
+  else if (req.query.status === 'voided') where.push('o.voided=1');
+  // Aggregate this day's checks / items once (indexed by location+date), then join by
+  // order — far cheaper than a correlated subquery per order.
+  const rows = db.prepare(`SELECT o.guid, o.opened_at, o.paid_at, o.voided, o.num_guests, o.table_guid, o.server_guid,
+      tbl.name AS table_name,
+      COALESCE(NULLIF(TRIM(COALESCE(u.name,'')),''), NULLIF(TRIM(COALESCE(e.chosen_name, e.first_name)||' '||COALESCE(e.last_name,'')),'')) AS server_name,
+      ck.net, ck.total, ck.tips, COALESCE(sel.items,0) items
+    FROM toast_orders o
+    LEFT JOIN (SELECT order_guid, ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips
+      FROM toast_checks WHERE location_id=? AND business_date=? GROUP BY order_guid) ck ON ck.order_guid=o.guid
+    LEFT JOIN (SELECT order_guid, COUNT(*) items FROM toast_selections WHERE location_id=? AND business_date=? AND voided=0 GROUP BY order_guid) sel ON sel.order_guid=o.guid
+    LEFT JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
+    LEFT JOIN toast_employees e ON e.guid=o.server_guid
+    LEFT JOIN users u ON u.id=e.user_id
+    WHERE ${where.join(' AND ')} ORDER BY o.opened_at DESC LIMIT ${limit}`).all(location_id, date, location_id, date, ...args);
+  res.json({ date, orders: rows.map(o => ({ ...o, status: orderStatus(o) })) });
+});
+
+// Full detail for one order (checks, payments/tips, line items, resolved names).
+router.get('/orders/:guid', MANAGE, (req, res) => {
+  const o = db.prepare(`SELECT o.*, tbl.name AS table_name, dopt.name AS dining_option_name,
+      COALESCE(NULLIF(TRIM(COALESCE(u.name,'')),''), NULLIF(TRIM(COALESCE(e.chosen_name, e.first_name)||' '||COALESCE(e.last_name,'')),'')) AS server_name,
+      u.id AS server_user_id
+    FROM toast_orders o
+    LEFT JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
+    LEFT JOIN toast_config dopt ON dopt.location_id=o.location_id AND dopt.type='dining_option' AND dopt.guid=o.dining_option_guid
+    LEFT JOIN toast_employees e ON e.guid=o.server_guid
+    LEFT JOIN users u ON u.id=e.user_id
+    WHERE o.guid=?`).get(req.params.guid);
+  if (!o) return res.status(404).json({ error: 'Order not found.' });
+  if (!canSeeLoc(req, o.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const checks = db.prepare(`SELECT guid, amount, tax_amount, total_amount, tip_amount, discount_amount, service_charge_amount, payment_status, voided FROM toast_checks WHERE order_guid=?`).all(o.guid);
+  const payments = db.prepare(`SELECT amount, tip_amount, type, card_type, refund_amount FROM toast_payments WHERE order_guid=?`).all(o.guid);
+  const items = db.prepare(`SELECT item_name, quantity, price, voided FROM toast_selections WHERE order_guid=? ORDER BY voided, item_name`).all(o.guid);
+  res.json({ order: { ...o, status: orderStatus(o) }, checks, payments, items });
+});
+
 // Read a location's mirrored menu (price book).
 router.get('/menu', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);
