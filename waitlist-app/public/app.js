@@ -473,7 +473,7 @@ async function renderChatGroupView(silent) {
     if (!others.length) return '';
     const seen = others.filter(r => r.last_read_id >= mid);
     const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
-    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" title="${seen.length ? 'Seen by ' + esc(seen.map(r => r.name).join(', ')) : 'Not seen yet'}">${label}</div>`;
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="${seen.length ? 'Seen by ' + esc(seen.map(r => r.name).join(', ')) : 'Not seen yet'}">${label}</div>`;
   };
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
@@ -539,6 +539,7 @@ async function renderChatGroupView(silent) {
     $('cgSend').onclick = send;
     $('cgBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   }
+  pollReceipts();
 }
 
 async function openNewChatGroupStaff() {
@@ -669,6 +670,40 @@ async function deleteMessage(messageId, threadCount) {
   } catch (e) { toast(e.message, true); }
 }
 
+// Update a "Read by / Seen by" chip in place (no re-render, so drafts/scroll stay).
+function setMsgReceipt(el, read, total) {
+  if (!el) return;
+  el.classList.toggle('all', read >= total);
+  el.textContent = `${read >= total ? '✓✓' : '✓'} Read by ${read} of ${total}`;
+}
+function setChatSeen(el, seen, others) {
+  if (!el) return;
+  const all = seen.length >= others.length;
+  el.classList.toggle('all', all);
+  el.title = seen.length ? 'Seen by ' + seen.map(r => r.name).join(', ') : 'Not seen yet';
+  el.textContent = all ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+}
+// While the sender stays on a thread / chat, poll every ~10s and refresh the read/seen
+// chips in place — status flips from unread→read without leaving and coming back.
+function pollReceipts() {
+  clearTimeout(S._rcptTimer);
+  const run = async () => {
+    if (S.view !== 'messages') return;
+    if ($('modalHost') && $('modalHost').innerHTML) { S._rcptTimer = setTimeout(run, 10000); return; }
+    try {
+      if (S.msgThread) {
+        const t = await api('/messages/thread/' + S.msgThread);
+        for (const m of t.messages) setMsgReceipt($('view').querySelector(`.msg-receipt[data-receipts="${m.id}"]`), m.read_count, m.recipient_count);
+      } else if (S.chatGroup) {
+        const d = await api('/chat/groups/' + S.chatGroup + '/messages');
+        const others = (d.reads || []).filter(r => String(r.user_id) !== String(d.me));
+        $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => { const mid = +el.dataset.cmid; setChatSeen(el, others.filter(r => r.last_read_id >= mid), others); });
+      } else return;
+    } catch { /* transient — keep polling */ }
+    S._rcptTimer = setTimeout(run, 10000);
+  };
+  S._rcptTimer = setTimeout(run, 10000);
+}
 // Who has read a message I sent, and when — read-receipt detail popup.
 async function showReceipts(msgId) {
   const host = $('modalHost');
@@ -736,6 +771,7 @@ async function renderThreadView() {
       renderThreadView();
     } catch (e) { toast(e.message, true); $('rSend').disabled = false; }
   };
+  pollReceipts();
 }
 
 async function composeModal() {

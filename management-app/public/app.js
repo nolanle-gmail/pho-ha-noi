@@ -4613,6 +4613,7 @@ async function renderThread() {
       renderThread();
     } catch (e) { toast(e.message, true); $('thSend').disabled = false; }
   };
+  pollReceipts();
 }
 // Who has read a message I sent, and when — the read-receipt detail popup.
 async function showReceipts(msgId) {
@@ -4630,6 +4631,43 @@ async function showReceipts(msgId) {
       ${readList.length ? `<div class="rcp-sec"><div class="rcp-h">✓✓ Read</div>${readList.map(r => row(r, true)).join('')}</div>` : ''}
       ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(r => row(r, false)).join('')}</div>` : ''}`;
   } catch (e) { $('rcpBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+// Update a "Read by / Seen by" chip in place (no full re-render, so drafts/scroll stay).
+function setMsgReceipt(el, read, total) {
+  if (!el) return;
+  el.classList.toggle('all', read >= total);
+  el.textContent = `${read >= total ? '✓✓' : '✓'} Read by ${read} of ${total}`;
+}
+function setChatSeen(el, seen, others) {
+  if (!el) return;
+  const all = seen.length >= others.length;
+  el.classList.toggle('all', all);
+  el.title = seen.length ? 'Seen by ' + seen.map(r => r.name).join(', ') : 'Not seen yet';
+  el.textContent = all ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+}
+// While the sender stays on a thread / Sent / chat view, poll every ~10s and refresh
+// the read/seen chips in place — so status flips from unread→read without re-entering.
+function pollReceipts() {
+  clearTimeout(S._rcptTimer);
+  const run = async () => {
+    if (S.section !== 'messages') return;                                   // left the module → stop
+    if ($('modalHost') && $('modalHost').innerHTML) { S._rcptTimer = setTimeout(run, 10000); return; }
+    try {
+      if (S.msgThread) {
+        const t = await api('/messages/thread/' + S.msgThread);
+        for (const m of t.messages) setMsgReceipt($('view').querySelector(`.msg-receipt[data-receipts="${m.id}"]`), m.read_count, m.recipient_count);
+      } else if (S.msgTab === 'chat' && S.chatGroup) {
+        const d = await api('/chat/groups/' + S.chatGroup + '/messages');
+        const others = (d.reads || []).filter(r => String(r.user_id) !== String(d.me));
+        $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => { const mid = +el.dataset.cmid; setChatSeen(el, others.filter(r => r.last_read_id >= mid), others); });
+      } else if (S.msgTab === 'sent' && !S.msgThread) {
+        const msgs = await api('/messages/sent');
+        for (const m of msgs) setMsgReceipt($('view').querySelector(`.msg-receipt[data-receipts="${m.id}"]`), m.read_count, m.recipients);
+      } else return;                                                        // some other messages view → stop
+    } catch { /* transient — keep polling */ }
+    S._rcptTimer = setTimeout(run, 10000);
+  };
+  S._rcptTimer = setTimeout(run, 10000);
 }
 function msgTime(iso) {
   const d = new Date((iso || '').replace(' ', 'T') + 'Z');
@@ -4678,6 +4716,7 @@ async function renderSent() {
         <div class="msg-meta msg-receipt${m.read_count >= m.recipients ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipients ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipients}</div>
       </div>`).join('')}</div>` : '<div class="empty">You haven’t sent any messages.</div>'}`;
   $('view').querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
+  pollReceipts();
 }
 
 const MSG_LEADERSHIP = ['owner', 'admin', 'hr', 'general_manager'];
@@ -4807,7 +4846,7 @@ async function renderChatGroup(silent) {
     const seen = others.filter(r => r.last_read_id >= mid);
     const names = seen.map(r => r.name).join(', ');
     const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
-    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" title="${seen.length ? 'Seen by ' + esc(names) : 'Not seen yet'}">${label}</div>`;
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="${seen.length ? 'Seen by ' + esc(names) : 'Not seen yet'}">${label}</div>`;
   };
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
@@ -4872,6 +4911,7 @@ async function renderChatGroup(silent) {
     $('chatSend').onclick = send;
     $('chatBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   }
+  pollReceipts();
 }
 
 // New-group modal: name + member picker. Managers and above also get quick
