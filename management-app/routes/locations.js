@@ -39,7 +39,7 @@ router.get('/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   const loc = db.prepare(`SELECT * FROM locations WHERE id=?`).get(req.params.id);
   if (!loc) return res.status(404).json({ error: 'Location not found' });
-  const hours = db.prepare(`SELECT day_of_week, open_time, close_time, is_closed FROM location_hours WHERE location_id=? ORDER BY day_of_week`).all(loc.id);
+  const hours = db.prepare(`SELECT day_of_week, open_time, close_time, open_time2, close_time2, is_closed FROM location_hours WHERE location_id=? ORDER BY day_of_week`).all(loc.id);
   const manager = db.prepare(`SELECT name, email FROM users WHERE role='manager' AND location_id=? AND is_active=1 LIMIT 1`).get(loc.id);
   res.json({ ...loc, hours, manager });
 });
@@ -98,9 +98,10 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
     name, req.body.address || null, req.body.city || null, req.body.state || null, req.body.zip || null,
     req.body.phone || null, req.body.email || null, req.body.timezone || 'America/Los_Angeles',
     req.body.opening_date || null, parseInt(req.body.seats) || 0, status, status === 'active' ? 1 : 0, slug);
-  // Default operating hours: 10:00–22:00 every day.
-  const ih = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);
-  for (let d = 0; d < 7; d++) ih.run(r.lastInsertRowid, d, '10:00', '22:00');
+  // Default operating hours: two service periods every day —
+  // lunch 11:00–15:00 and dinner 17:00–21:00.
+  const ih = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,open_time2,close_time2,is_closed) VALUES (?,?,?,?,?,?,0)`);
+  for (let d = 0; d < 7; d++) ih.run(r.lastInsertRowid, d, '11:00', '15:00', '17:00', '21:00');
   auditLog(req, 'location_create', 'location', r.lastInsertRowid, { name });
   res.json({ success: true, id: r.lastInsertRowid });
 });
@@ -131,8 +132,8 @@ router.put('/:id/hours', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
   const hours = Array.isArray(req.body.hours) ? req.body.hours : [];
   db.prepare(`DELETE FROM location_hours WHERE location_id=?`).run(req.params.id);
-  const ins = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,?)`);
-  hours.forEach(h => ins.run(req.params.id, parseInt(h.day_of_week), h.open_time || null, h.close_time || null, h.is_closed ? 1 : 0));
+  const ins = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,open_time2,close_time2,is_closed) VALUES (?,?,?,?,?,?,?)`);
+  hours.forEach(h => ins.run(req.params.id, parseInt(h.day_of_week), h.open_time || null, h.close_time || null, h.open_time2 || null, h.close_time2 || null, h.is_closed ? 1 : 0));
   res.json({ success: true });
 });
 

@@ -1590,7 +1590,7 @@ async function renderLocInfo(loc) {
         <div class="profile-row"><span>Break reminder lead</span><strong>${loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10} min before break${(canEditLead && !canEdit) ? ' <button class="btn sm ghost" id="editLead" style="margin-left:.5rem">Edit</button>' : ''}</strong></div>
       </div>
       <div class="section"><div class="row-between"><h3>Operating hours</h3>${canEditHours ? '<button class="btn sm ghost" id="editHours">Edit</button>' : ''}</div>
-        ${days.map((d, i) => { const h = hoursMap[i]; return `<div class="profile-row"><span>${d}</span><strong>${h && !h.is_closed ? `${h.open_time}–${h.close_time}` : 'Closed'}</strong></div>`; }).join('')}
+        ${days.map((d, i) => `<div class="profile-row"><span>${d}</span><strong>${fmtLocHours(hoursMap[i])}</strong></div>`).join('')}
       </div>
     </div>
     ${canViewFloor ? `<div class="section" id="locFloorSnap" style="margin-top:1rem"><div class="row-between"><h3>Floor status <span style="font-weight:400;color:var(--muted);font-size:.82rem">— live, right now</span></h3><div style="display:flex;gap:.4rem;align-items:center">${guestsToggleBtn('locFloorGuests')}<button class="btn sm ghost" id="locFloorOpen">Open Floor Plan →</button></div></div>
@@ -1628,20 +1628,39 @@ function fpSnapshotHtml(fp) {
   return `<div class="row-between" style="margin-bottom:.2rem"><div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div></div>${legend}${board}`;
 }
 
+// A day's operating hours as text — one or two service periods, or "Closed".
+function fmtLocHours(h) {
+  if (!h || h.is_closed) return 'Closed';
+  const p1 = h.open_time && h.close_time ? `${h.open_time}–${h.close_time}` : '';
+  const p2 = h.open_time2 && h.close_time2 ? `${h.open_time2}–${h.close_time2}` : '';
+  return [p1, p2].filter(Boolean).join(', ') || 'Closed';
+}
 function editHoursModal(loc) {
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
   const host = $('modalHost');
+  // Each day has two service periods; leave the second one blank for a single period.
+  const dft = { open_time: '11:00', close_time: '15:00', open_time2: '17:00', close_time2: '21:00', is_closed: 0 };
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Operating hours</h3><div class="err" id="mErr"></div>
-    ${days.map((d, i) => { const h = hoursMap[i] || { open_time: '10:00', close_time: '22:00', is_closed: 0 }; return `<div class="hours-row"><span>${d}</span>
-      <input type="time" data-open="${i}" value="${h.open_time || '10:00'}"><input type="time" data-close="${i}" value="${h.close_time || '22:00'}">
-      <label><input type="checkbox" data-closed="${i}" ${h.is_closed ? 'checked' : ''}> Closed</label></div>`; }).join('')}
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Two service periods per day (e.g. lunch then dinner). Leave the second period blank for a single period.</p>
+    ${days.map((d, i) => { const h = hoursMap[i] || dft; return `<div class="hours-row"><span>${d}</span>
+      <div class="hours-periods">
+        <div class="hours-pair"><span class="hours-pn">1</span><input type="time" data-open="${i}" value="${h.open_time || ''}"> – <input type="time" data-close="${i}" value="${h.close_time || ''}"></div>
+        <div class="hours-pair"><span class="hours-pn">2</span><input type="time" data-open2="${i}" value="${h.open_time2 || ''}"> – <input type="time" data-close2="${i}" value="${h.close_time2 || ''}"></div>
+      </div>
+      <label class="hours-cl"><input type="checkbox" data-closed="${i}" ${h.is_closed ? 'checked' : ''}> <span>Closed</span></label></div>`; }).join('')}
     <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save hours</button></div></div></div>`;
   const close = () => host.innerHTML = '';
   $('mCancel').onclick = close;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const val = (sel) => host.querySelector(sel).value || null;
   $('mOk').onclick = async () => {
-    const hours = days.map((d, i) => ({ day_of_week: i, open_time: host.querySelector(`[data-open="${i}"]`).value, close_time: host.querySelector(`[data-close="${i}"]`).value, is_closed: host.querySelector(`[data-closed="${i}"]`).checked ? 1 : 0 }));
+    const hours = days.map((d, i) => ({
+      day_of_week: i,
+      open_time: val(`[data-open="${i}"]`), close_time: val(`[data-close="${i}"]`),
+      open_time2: val(`[data-open2="${i}"]`), close_time2: val(`[data-close2="${i}"]`),
+      is_closed: host.querySelector(`[data-closed="${i}"]`).checked ? 1 : 0,
+    }));
     try { await api('/locations/' + loc.id + '/hours', { method: 'PUT', body: JSON.stringify({ hours }) }); toast('Hours updated'); close(); renderLocDetail(); }
     catch (e) { $('mErr').textContent = e.message; }
   };

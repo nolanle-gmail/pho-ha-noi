@@ -82,8 +82,14 @@ const LOCATIONS = [
   ['Pho Ha Noi — Oakland', '426 Broadway', 'Oakland', 'CA', '94607', '(510) 555-0170', 72, '2024-06-01'],
 ];
 
-// Weekly hours (index 0=Mon … 6=Sun): [open, close]
-const HOURS = [['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '22:00'], ['10:00', '23:00'], ['09:00', '23:00'], ['09:00', '21:00']];
+// Weekly hours (index 0=Mon … 6=Sun): [open1, close1, open2, close2] — two service
+// periods (lunch + dinner). The second period is optional (null,null for one period).
+const HOURS = [
+  ['11:00', '15:00', '17:00', '21:00'], ['11:00', '15:00', '17:00', '21:00'],
+  ['11:00', '15:00', '17:00', '21:00'], ['11:00', '15:00', '17:00', '21:00'],
+  ['11:00', '15:00', '17:00', '22:00'], ['11:00', '15:00', '17:00', '22:00'],
+  ['11:00', '15:00', '17:00', '21:00'],
+];
 
 // Standard restaurant equipment template: [name, category, vendor, vendor_phone, model, maintenance_freq]
 const EQUIPMENT = [
@@ -127,11 +133,11 @@ function run() {
 
   const { slugify } = require('../lib/slug');
   const insLoc = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active,slug) VALUES (?,?,?,?,?,?,?,?,?,?, 'active',1,?)`);
-  const insHours = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,is_closed) VALUES (?,?,?,?,0)`);
+  const insHours = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,open_time2,close_time2,is_closed) VALUES (?,?,?,?,?,?,0)`);
   const locIds = LOCATIONS.map(([name, addr, city, state, zip, phone, seats, opening]) => {
     const email = city.toLowerCase().replace(/[^a-z]/g, '') + '@phohanoi.com';
     const id = insLoc.run(name, addr, city, state, zip, phone, email, 'America/Los_Angeles', opening, seats, slugify(name)).lastInsertRowid;
-    HOURS.forEach((h, d) => insHours.run(id, d, h[0], h[1]));
+    HOURS.forEach((h, d) => insHours.run(id, d, h[0], h[1], h[2] || null, h[3] || null));
     return id;
   });
 

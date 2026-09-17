@@ -52,13 +52,17 @@ function migrate() {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
-    -- Operating hours per location (day_of_week 0=Mon … 6=Sun).
+    -- Operating hours per location (day_of_week 0=Mon … 6=Sun). Each day may have
+    -- up to two service periods: period 1 (open_time/close_time) and an optional
+    -- period 2 (open_time2/close_time2), e.g. lunch 11:00–15:00 + dinner 17:00–21:00.
     CREATE TABLE IF NOT EXISTS location_hours (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       location_id INTEGER NOT NULL REFERENCES locations(id),
       day_of_week INTEGER NOT NULL,
       open_time TEXT,
       close_time TEXT,
+      open_time2 TEXT,
+      close_time2 TEXT,
       is_closed INTEGER NOT NULL DEFAULT 0,
       UNIQUE(location_id, day_of_week)
     );
@@ -995,6 +999,10 @@ function migrate() {
     // Last time a shift row was edited — drives the read/unread eye (a change after
     // the staffer last viewed their schedule flips them back to unread).
     `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,
+    // A second, optional service period per day (e.g. dinner 17:00–21:00 alongside
+    // lunch 11:00–15:00). Null when the day has only one period.
+    `ALTER TABLE location_hours ADD COLUMN open_time2 TEXT`,
+    `ALTER TABLE location_hours ADD COLUMN close_time2 TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
 
   // Backfill a URL slug for every location that doesn't have one (used by the

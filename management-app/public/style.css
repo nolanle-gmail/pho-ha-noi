@@ -394,6 +394,10 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .hours-row input[type=time] { width: auto; margin: 0; padding: .35rem .5rem; }
 .hours-row label { font-size: .82rem; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; }
 .hours-row input[type=checkbox] { width: auto; margin: 0; }
+.hours-periods { display: flex; flex-direction: column; gap: .35rem; flex: 1; }
+.hours-pair { display: inline-flex; align-items: center; gap: .3rem; font-size: .82rem; color: var(--muted); }
+.hours-pn { display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; background: var(--line, #e3e3e3); color: var(--muted); font-size: .7rem; font-weight: 700; margin-right: .1rem; }
+.hours-row .hours-cl { width: 62px; justify-content: flex-end; }
 
 /* Central Kitchen */
 .ck-low { color: var(--out); font-weight: 700; }
