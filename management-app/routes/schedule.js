@@ -170,19 +170,23 @@ router.get('/leave-requests', svcKeyOrJwt, (req, res) => {
   if (!roleHasCap(u.role, 'manage')) return res.status(403).json({ error: 'Not allowed to review time-off requests.' });
   const status = ['pending', 'approved', 'rejected', 'all'].includes(req.query.status) ? req.query.status : 'pending';
   const all = seesAllLocations(u.role);
+  // All-location approvers may narrow to one store (e.g. the Schedule tab's Time-off
+  // filter, which is scoped to the location being viewed).
+  const wantLoc = parseInt(req.query.location_id, 10) || 0;
+  const scopeLoc = all ? (wantLoc || 0) : u.location_id;
   const where = [], args = [];
   if (status !== 'all') { where.push('lr.status=?'); args.push(status); }
-  if (!all) { where.push('lr.location_id=?'); args.push(u.location_id); }
+  if (scopeLoc) { where.push('lr.location_id=?'); args.push(scopeLoc); }
   const sql = `SELECT lr.*, u.name AS user_name, u.role AS user_role, l.name AS location_name, d.name AS decided_by_name
     FROM leave_requests lr JOIN users u ON u.id=lr.user_id
     LEFT JOIN locations l ON l.id=lr.location_id LEFT JOIN users d ON d.id=lr.decided_by
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY CASE lr.status WHEN 'pending' THEN 0 ELSE 1 END, lr.created_at DESC LIMIT 300`;
   const requests = db.prepare(sql).all(...args);
-  const pending_count = all
-    ? db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending'`).get().c
-    : db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND location_id=?`).get(u.location_id).c;
-  res.json({ requests, pending_count, scope: all ? 'all' : 'location' });
+  const pending_count = scopeLoc
+    ? db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending' AND location_id=?`).get(scopeLoc).c
+    : db.prepare(`SELECT COUNT(*) c FROM leave_requests WHERE status='pending'`).get().c;
+  res.json({ requests, pending_count, scope: scopeLoc ? 'location' : 'all' });
 });
 
 // Approvers: count of pending requests they can act on (for the Requests badge).

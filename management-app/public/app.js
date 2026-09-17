@@ -1774,7 +1774,7 @@ const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.la
 
 // Schedule view filters, remembered per viewer in this browser. showPay defaults on.
 function loadSchedFilters() {
-  const def = { scheduledOnly: false, thisLocOnly: false, role: '', showPay: true };
+  const def = { scheduledOnly: false, thisLocOnly: false, role: '', showPay: true, timeOff: false };
   try { return Object.assign(def, JSON.parse(localStorage.getItem('phn_sched_filters') || '{}')); }
   catch { return def; }
 }
@@ -1809,11 +1809,16 @@ async function renderLocSchedule() {
   const dayMode = period === 'day';
   const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
   const weekParam = dayMode ? (S.schedDay || '') : (S.schedWeek || '');
-  let data, jobs;
+  // Read filters up front so we can also pull pending time-off requests when the
+  // "Time off & requests" filter is on (managers/owner/HR only).
+  const F = S.schedFilters || (S.schedFilters = loadSchedFilters());
+  const wantReqs = F.timeOff && myCap('manage');
+  let data, jobs, reqData;
   try {
-    [data, jobs] = await Promise.all([
+    [data, jobs, reqData] = await Promise.all([
       api('/schedule/week?location_id=' + S.locDetailId + (weekParam ? '&week=' + weekParam : '')),
       api('/schedule/jobs?active=1'),
+      wantReqs ? api('/schedule/leave-requests?status=pending&location_id=' + S.locDetailId).catch(() => ({ requests: [] })) : Promise.resolve(null),
     ]);
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.schedWeek = data.week_start;
@@ -1822,8 +1827,7 @@ async function renderLocSchedule() {
     S.schedDay = (data.today && days.includes(data.today)) ? data.today : days[0];
   }
   const viewDays = dayMode ? [S.schedDay] : days;
-  // View filters (persisted per viewer). scopeDay narrows to the selected day in Day view.
-  const F = S.schedFilters || (S.schedFilters = loadSchedFilters());
+  // View filters were loaded above. scopeDay narrows to the selected day in Day view.
   const inThisLoc = (s) => String(s.location_id) === String(data.location.id);
   const scopeDay = (arr) => dayMode ? arr.filter(s => s.shift_date === S.schedDay) : arr;
   // The name total is THIS location's hours/pay; the all-locations total is a
@@ -1912,17 +1916,40 @@ async function renderLocSchedule() {
   // filtered list of staff to actually show.
   const rolesPresent = [...new Set(data.staff.map(s => s.role))].sort();
   if (F.role && !rolesPresent.includes(F.role)) F.role = '';   // role no longer here
+  const hasLeaveHere = (st) => hereShifts(st).some(isLeaveShift);   // any leave (PTO / sick / unpaid) in view
   let shownStaff = data.staff;
   if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
-  if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0);   // scheduled at this location
+  if (F.timeOff) shownStaff = shownStaff.filter(hasLeaveHere);                  // only staff on leave this view
+  else if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0); // scheduled at this location
   // Order rows by assigned job (leads first … cleanup last, everything else after),
   // then alphabetically by name within the same tier.
   shownStaff = shownStaff.slice().sort((a, b) => staffJobRank(a) - staffJobRank(b) || (a.name || '').localeCompare(b.name || ''));
   const totH = shownStaff.reduce((t, s) => t + paidHere(s), 0);
   const totLeave = shownStaff.reduce((t, s) => t + leaveHere(s), 0);
   const totPay = shownStaff.reduce((t, s) => t + paidHere(s) * (Number(s.hourly_rate) || 0), 0);
-  const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role;
+  const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role || F.timeOff;
   const colspan = viewDays.length + 1;
+  // Time-off & requests panel: when the filter is on, show pending time-off requests
+  // for this location that leaders can approve/reject inline (staff rows are already
+  // narrowed to those scheduled as leave above).
+  let timeOffPanel = '';
+  if (F.timeOff) {
+    if (!myCap('manage')) {
+      timeOffPanel = `<div class="sched-timeoff"><div class="sto-h">🏖 Time off</div>
+        <p class="sub" style="color:var(--muted);margin:.2rem 0 0">Showing staff scheduled as time off. Pending requests are reviewed by managers, owners and HR.</p></div>`;
+    } else {
+      const reqs = (reqData && reqData.requests) || [];
+      const kindL = (k) => k === 'sick' ? '🤒 Paid Sick Leave' : '🏖 PTO';
+      const spanL = (r) => r.all_day ? (r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`) : `${fmtDay(r.start_date)} · ${r.hours}h`;
+      const cards = reqs.map(r => `<div class="sto-req">
+        <div class="sto-req-main"><strong>${esc(r.user_name)}</strong> <span class="badge ${ROLE_CHIP[r.user_role] || 'gray'}">${esc(r.user_role)}</span>
+          <span class="sto-what">${kindL(r.kind)} · <strong>${spanL(r)}</strong></span>${r.reason ? ` <span class="sto-reason">📝 ${esc(r.reason)}</span>` : ''}</div>
+        <div class="sto-req-act"><button class="btn sm" data-approve="${r.id}">Approve</button><button class="btn sm ghost danger" data-reject="${r.id}">Reject</button></div>
+      </div>`).join('');
+      timeOffPanel = `<div class="sched-timeoff"><div class="sto-h">⏳ Pending time-off requests <span class="badge ${reqs.length ? 'gold' : 'gray'}">${reqs.length}</span></div>
+        ${reqs.length ? cards : '<p class="sub" style="color:var(--muted);margin:.2rem 0 0">No pending requests for this location.</p>'}</div>`;
+    }
+  }
 
   const dayLabel = () => { const d = S.schedDay, wd = WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]; return `${wd}, <strong>${fmtDay(d)}</strong>, ${d.slice(0, 4)}${d === data.today ? ' · <span class="badge blue">Today</span>' : ''}`; };
   const weekLabel = `Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}`;
@@ -1947,10 +1974,12 @@ async function renderLocSchedule() {
       <label class="chk" title="Hide staff with no scheduled hours in this view."><input type="checkbox" id="fScheduled" ${F.scheduledOnly ? 'checked' : ''}/> Scheduled only</label>
       <label class="chk" title="Show only shifts at this location; hide shifts staff work at other locations."><input type="checkbox" id="fThisLoc" ${F.thisLocOnly ? 'checked' : ''}/> This location only</label>
       <label class="chk" title="Show total hours and pay under each name."><input type="checkbox" id="fShowPay" ${F.showPay ? 'checked' : ''}/> Show hours &amp; pay</label>
+      <label class="chk" title="Show only staff scheduled as time off (PTO, Paid Sick Leave or Unpaid Time Off), and list pending time-off requests awaiting approval."><input type="checkbox" id="fTimeOff" ${F.timeOff ? 'checked' : ''}/> Time off &amp; requests</label>
       <label class="sched-filter-role">Role <select id="fRole"><option value="">All roles</option>${rolesPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
       ${anyFilter ? '<button class="btn sm ghost" id="fClear" title="Clear all filters">Clear</button>' : ''}
       <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid leave (Paid Sick Leave + PTO); Unpaid Time Off is not counted">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} paid leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
     </div>
+    ${timeOffPanel}
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
       ${viewDays.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
@@ -1977,10 +2006,15 @@ async function renderLocSchedule() {
   $('fScheduled').onchange = (e) => { F.scheduledOnly = e.target.checked; saveF(); };
   $('fThisLoc').onchange = (e) => { F.thisLocOnly = e.target.checked; saveF(); };
   $('fShowPay').onchange = (e) => { F.showPay = e.target.checked; saveF(); };
+  if ($('fTimeOff')) $('fTimeOff').onchange = (e) => { F.timeOff = e.target.checked; saveF(); };
   $('fRole').onchange = (e) => { F.role = e.target.value; saveF(); };
-  const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; saveF(); };
+  const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; F.timeOff = false; saveF(); };
   if ($('fClear')) $('fClear').onclick = clearF;
   if ($('fClear2')) $('fClear2').onclick = clearF;
+  // Inline approve/reject on the Time-off panel; re-render the schedule afterwards so
+  // the request list and the newly written leave shifts both refresh.
+  $('locBody').querySelectorAll('[data-approve]').forEach(b => b.onclick = () => decideRequest(b.dataset.approve, 'approve', renderLocSchedule));
+  $('locBody').querySelectorAll('[data-reject]').forEach(b => b.onclick = () => decideRequest(b.dataset.reject, 'reject', renderLocSchedule));
   if (!dayMode && canEdit && $('wkCopy')) $('wkCopy').onclick = () => copyWeekModal(data.week_start, data.location);
   if (!dayMode && canEdit && $('schAutoRoll')) $('schAutoRoll').onchange = async (e) => {
     const enabled = e.target.checked;
@@ -4484,7 +4518,7 @@ async function renderRequests() {
   v.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => decideRequest(b.dataset.approve, 'approve'));
   v.querySelectorAll('[data-reject]').forEach(b => b.onclick = () => decideRequest(b.dataset.reject, 'reject'));
 }
-function decideRequest(id, decision) {
+function decideRequest(id, decision, after) {
   const host = $('modalHost');
   const approve = decision === 'approve';
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${approve ? 'Approve' : 'Reject'} time-off request</h3>
@@ -4500,7 +4534,7 @@ function decideRequest(id, decision) {
     try {
       await api(`/schedule/leave-requests/${id}/decide`, { method: 'POST', body: JSON.stringify({ decision, note: $('drNote').value.trim() }) });
       close(); toast(approve ? 'Approved — schedule updated, staff notified.' : 'Rejected — staff notified.');
-      await refreshReqPending(); renderRequests();
+      await refreshReqPending(); (after || renderRequests)();
     } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
   };
 }

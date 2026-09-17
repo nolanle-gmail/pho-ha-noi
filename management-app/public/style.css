@@ -103,6 +103,15 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sched-filter-role select { font-size: .85rem; padding: .2rem .4rem; margin: 0; width: auto; }
 .sched-filter-total { margin-left: auto; color: var(--muted); white-space: nowrap; }
 .sched-filter-total strong { color: var(--ink); }
+/* Time-off & requests panel (shown when the schedule's Time-off filter is on) */
+.sched-timeoff { border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); padding: .7rem .9rem; margin: 0 0 .9rem; }
+.sched-timeoff .sto-h { font-weight: 700; font-size: .9rem; display: flex; align-items: center; gap: .4rem; margin-bottom: .5rem; }
+.sto-req { display: flex; justify-content: space-between; align-items: center; gap: .8rem; flex-wrap: wrap; padding: .5rem .1rem; border-top: 1px solid var(--line-soft, #f0e8da); }
+.sto-req:first-of-type { border-top: none; }
+.sto-req-main { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: .86rem; }
+.sto-what { color: var(--ink); }
+.sto-reason { color: var(--muted); }
+.sto-req-act { display: flex; gap: .4rem; flex-shrink: 0; }
 .sched-period { width: auto; margin: 0; padding: .3rem .5rem; font: inherit; font-weight: 600; border-radius: 8px; }
 
 /* ── Month calendar ─────────────────────────────────────── */
