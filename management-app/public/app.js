@@ -892,9 +892,13 @@ async function renderService() {
 
   const single = SVC.loc && SVC.loc !== 'all';
   const q = '/visits?' + (single ? `location_id=${SVC.loc}&` : '') + 'include=done';
-  let data, report;
-  try { [data, report] = await Promise.all([api(q), api('/visits/reports/servers' + (single ? `?location_id=${SVC.loc}` : ''))]); }
-  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  let data, report, wlActive;
+  try {
+    [data, report, wlActive] = await Promise.all([
+      api(q), api('/visits/reports/servers' + (single ? `?location_id=${SVC.loc}` : '')),
+      api('/waitlistfeed/active' + (single ? `?location_id=${SVC.loc}` : '')).catch(() => ({ parties: [], _err: true })),
+    ]);
+  } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   SVC.byId = {}; SVC_STAGES.forEach(([k]) => (data.lists[k] || []).forEach(v => SVC.byId[v.id] = v));
 
   const sm = data.summary;
@@ -911,12 +915,15 @@ async function renderService() {
     </div>`;
   }).join('');
 
-  // Active-waitlist view: just the parties still waiting, longest wait first.
-  const waiting = (data.lists.waiting || []).slice().sort((a, b) => (b.waited_min || 0) - (a.waited_min || 0));
-  const srcLabel = (v) => v.source === 'walkin' ? '🚶 Walk-in' : v.source === 'self' ? '📱 Self check-in' : '🧑‍💼 Staff-added';
+  // Active-waitlist view: the Front Desk queue (from the Waitlist app), longest wait
+  // first. waited = minutes since the party joined.
+  const nowMs = Date.now();
+  const waitMins = (iso) => { const t = Date.parse(String(iso).replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(iso || '') ? '' : 'Z')); return Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 60000)) : 0; };
+  const waiting = (wlActive.parties || []).map(p => ({ ...p, waited_min: waitMins(p.created_at) })).sort((a, b) => b.waited_min - a.waited_min);
+  const srcLabel = (v) => v.source === 'kiosk' || v.source === 'self' ? '📱 Self check-in' : v.source === 'walkin' ? '🚶 Walk-in' : '🧑‍💼 Staff-added';
   const tabs = `<div class="svc-tabs">
       <button class="svc-tab ${SVC.view === 'waitlist' ? '' : 'active'}" data-svcview="board">🛎️ Live board</button>
-      <button class="svc-tab ${SVC.view === 'waitlist' ? 'active' : ''}" data-svcview="waitlist">⏳ Active waitlist${sm.waiting ? ` <span class="svc-tab-n">${sm.waiting}</span>` : ''}</button>
+      <button class="svc-tab ${SVC.view === 'waitlist' ? 'active' : ''}" data-svcview="waitlist">⏳ Active waitlist${waiting.length ? ` <span class="svc-tab-n">${waiting.length}</span>` : ''}</button>
     </div>`;
   const boardMid = `
     <div class="svc-kpis">
@@ -941,21 +948,22 @@ async function renderService() {
     </div>`;
   const waitMid = `
     <div class="svc-kpis">
-      <div class="card"><div class="label">Parties waiting</div><div class="value">${sm.waiting}</div></div>
+      <div class="card"><div class="label">Parties waiting</div><div class="value">${waiting.length}</div></div>
       <div class="card"><div class="label">Guests waiting</div><div class="value">${waiting.reduce((t, v) => t + (v.party_size || 0), 0)}</div></div>
       ${waiting.length ? `<div class="card"><div class="label">Longest wait</div><div class="value${(waiting[0].waited_min || 0) >= 20 ? ' warn' : ''}">${waiting[0].waited_min || 0}m</div></div>` : ''}
     </div>
-    <div class="section"><h3>Active waitlist${single ? '' : ' — all locations'}</h3>
-      ${waiting.length ? `<div class="table-wrap"><table class="wl-table"><thead><tr><th>#</th><th>Guest</th><th class="num">Party</th><th class="num">Waited</th><th class="num">Quoted</th><th>Source</th>${single ? '' : '<th>Location</th>'}<th></th></tr></thead>
+    <div class="section"><h3>Active waitlist${single ? '' : ' — all locations'} <span style="font-weight:400;color:var(--muted);font-size:.82rem">— Front Desk queue</span></h3>
+      ${wlActive._err ? '<div class="empty">Could not reach the Waitlist app right now.</div>' : waiting.length ? `<div class="table-wrap"><table class="wl-table"><thead><tr><th>#</th><th>Guest</th><th class="num">Party</th><th class="num">Waited</th><th class="num">Quoted</th><th>Phone</th><th>Source</th><th>Notified</th>${single ? '' : '<th>Location</th>'}</tr></thead>
         <tbody>${waiting.map((v, i) => `<tr class="${v.quoted_minutes && (v.waited_min || 0) >= v.quoted_minutes ? 'wl-over' : ''}">
           <td class="num">${i + 1}</td>
           <td><strong>${esc(v.guest_name || 'Guest')}</strong>${v.notes ? `<div class="svc-note">${esc(v.notes)}</div>` : ''}</td>
           <td class="num">${v.party_size}👤</td>
           <td class="num"><strong>${v.waited_min ?? 0}m</strong></td>
           <td class="num">${v.quoted_minutes ? v.quoted_minutes + 'm' : '—'}</td>
+          <td>${v.phone ? esc(fmtPhone(v.phone)) : '<span style="color:var(--muted)">—</span>'}${v.phone && !v.sms_consent ? ' <span class="badge gray" title="No SMS consent">no SMS</span>' : ''}</td>
           <td>${srcLabel(v)}</td>
+          <td>${v.notified_at ? '✅ ' + (v.notify_count || 1) : (v.notify_count ? '✉️ ' + v.notify_count : '<span style="color:var(--muted)">—</span>')}</td>
           ${single ? '' : `<td>${esc(svcLocName(v.location_id))}</td>`}
-          <td style="white-space:nowrap"><button class="btn xs" data-act="seat" data-vid="${v.id}">Seat</button> <button class="btn xs ghost" data-act="cancel" data-vid="${v.id}">Left</button></td>
         </tr>`).join('')}</tbody></table></div>` : '<div class="empty">No one is waiting right now. 🎉</div>'}
     </div>`;
   $('view').innerHTML = `
@@ -1598,6 +1606,14 @@ function msgHeroLink() {
 }
 
 async function renderOverview() {
+  // Auto-refresh the dashboard every 2 minutes so KPIs and the Toast "last pulled"
+  // figure stay current without a manual reload. Pauses while a modal is open.
+  clearTimeout(S._ovTimer);
+  S._ovTimer = setTimeout(function tick() {
+    if (S.section !== 'overview') return;
+    if ($('modalHost') && $('modalHost').innerHTML) { S._ovTimer = setTimeout(tick, 120000); return; }
+    renderOverview();
+  }, 120000);
   const scope = roleScopeOf(S.user.role);
   if (scope === 'self') return renderSelfOverview();
   if (myCap('manage') && scope === 'location' && S.user.location_id) return renderManagerDashboard();
@@ -4583,17 +4599,19 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['waitlist', 'Waitlist']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
 function renderReportTabs() {
-  $('tabs').innerHTML = REPORT_TABS.map(([k, l]) => `<button data-rtab="${k}" class="${S.reportTab === k ? 'active' : ''}">${l}</button>`).join('');
+  const tabs = REPORT_TABS.filter(([k]) => k !== 'waitlist' || myCap('manage'));   // waitlist history needs manage cap
+  if (!tabs.some(([k]) => k === S.reportTab)) S.reportTab = tabs[0][0];
+  $('tabs').innerHTML = tabs.map(([k, l]) => `<button data-rtab="${k}" class="${S.reportTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.reportTab = b.dataset.rtab; renderReportTabs(); renderReportModule(); });
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 function reportFilters(withDates) {
@@ -4727,6 +4745,49 @@ async function renderRepBreaks() {
       </tr>`).join('') : '<tr><td colspan="7" class="empty">No break reminders in range.</td></tr>'}
     </tbody></table></div>`;
   wireReportFilters(true);
+}
+
+// Waitlist history — every guest who was ever on the Front Desk waitlist, with phone
+// (for later promotions) and how many notifications they were sent. Reads the Waitlist
+// app via the management proxy; scoped per role.
+const WL_STATUS = { waiting: ['Waiting', 'gold'], seated: ['Seated', 'ok'], left: ['Left / no-show', 'gray'] };
+async function renderRepWaitlist() {
+  const qs = new URLSearchParams();
+  if (reportFilter.loc) qs.set('location_id', reportFilter.loc);
+  if (reportFilter.start) qs.set('from', reportFilter.start);
+  if (reportFilter.end) qs.set('to', reportFilter.end);
+  let d; try { d = await api('/waitlistfeed/history' + (qs.toString() ? '?' + qs.toString() : '')); }
+  catch (e) { $('view').innerHTML = `${reportFilters(true)}<div class="empty">${esc(e.message)}</div>`; wireReportFilters(true); return; }
+  const g = d.guests || [];
+  const seated = g.filter(x => x.status === 'seated').length, left = g.filter(x => x.status === 'left').length;
+  const joined = (iso) => { if (!iso) return '—'; const t = Date.parse(String(iso).replace(' ', 'T') + 'Z'); return Number.isFinite(t) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(t)) : iso; };
+  S._wlHistory = g;   // for CSV export
+  $('view').innerHTML = `${reportFilters(true)}
+    <p class="sub" style="margin:0 0 .8rem;color:var(--muted)">Every party that was ever on the Front Desk waitlist, with their phone number and how many texts they were sent (join confirmation + “table ready”). Contactable guests (phone + SMS opt-in) can be used for promotions later.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Guests</div><div class="value">${d.total}</div></div>
+      <div class="card"><div class="label">Contactable (opted-in)</div><div class="value ok">${d.contactable}</div></div>
+      <div class="card"><div class="label">Seated</div><div class="value">${seated}</div></div>
+      <div class="card"><div class="label">Left / no-show</div><div class="value">${left}</div></div>
+    </div>
+    <div class="row-between" style="margin-bottom:.5rem"><h3 style="margin:0">Waitlist history</h3><button class="btn sm ghost" id="wlExport" title="Download as CSV (opens in Excel)">⬇ Export CSV</button></div>
+    <div class="table-wrap" style="max-height:520px;overflow:auto"><table><thead><tr><th>Guest</th><th>Phone</th><th class="num">Party</th><th>Status</th><th>Joined</th><th>Location</th><th class="num">Texts</th></tr></thead><tbody>
+      ${g.length ? g.map(x => { const [lbl, chip] = WL_STATUS[x.status] || [x.status, 'gray']; return `<tr>
+        <td><strong>${esc(x.guest_name || 'Guest')}</strong></td>
+        <td>${x.phone ? esc(fmtPhone(x.phone)) : '<span style="color:var(--muted)">—</span>'}${x.phone ? (x.sms_consent ? ' <span class="badge green" title="Opted in to SMS">✓</span>' : ' <span class="badge gray" title="No SMS consent">no SMS</span>') : ''}</td>
+        <td class="num">${x.party_size}</td>
+        <td><span class="badge ${chip}">${lbl}</span></td>
+        <td>${joined(x.created_at)}</td>
+        <td>${esc(shortLoc(x.location_name || ''))}</td>
+        <td class="num">${x.notify_count || 0}</td>
+      </tr>`; }).join('') : '<tr><td colspan="7" class="empty">No waitlist guests in range.</td></tr>'}
+    </tbody></table></div>`;
+  wireReportFilters(true);
+  if ($('wlExport')) $('wlExport').onclick = () => {
+    const rows = [['Guest', 'Phone', 'SMS opt-in', 'Party', 'Status', 'Joined', 'Location', 'Texts sent']];
+    for (const x of (S._wlHistory || [])) rows.push([x.guest_name || '', x.phone || '', x.sms_consent ? 'yes' : 'no', x.party_size, (WL_STATUS[x.status] || [x.status])[0], (x.created_at || '').replace('T', ' ').slice(0, 16), shortLoc(x.location_name || ''), x.notify_count || 0]);
+    downloadCsv(`phn-waitlist-history-${reportFilter.start || 'all'}_${reportFilter.end || 'all'}.csv`, rows);
+  };
 }
 
 // ── Messages module (horizontal tabs) ──────────────────────────────────────

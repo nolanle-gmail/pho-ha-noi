@@ -37,6 +37,7 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/timeclock', require('./routes/timeclock'));
 app.use('/api/translate', require('./routes/translate'));
 app.use('/api/stream', require('./routes/stream'));
+app.use('/api/wl-feed', require('./routes/wl-feed'));   // read feed for the Management app (service key)
 
 const PORT = process.env.PORT || 4002;
 if (require.main === module) app.listen(PORT, () => console.log(`Pho Ha Noi Waitlist running on http://localhost:${PORT}`));
