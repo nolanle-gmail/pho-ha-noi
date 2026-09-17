@@ -195,6 +195,8 @@ td.sched-week { vertical-align: middle; text-align: center; }
 .tc-overrun-acts { display: flex; gap: .4rem; flex-shrink: 0; }
 .tc-autoout { color: var(--out); font-weight: 600; }
 .tc-unscheduled { background: var(--gold-soft, #fbe9c7); }
+/* Role colour chip on the Time Clock board (colour set inline per job). */
+.tc-job { display: inline-block; font-size: .7rem; font-weight: 700; color: #fff; border: 1px solid rgba(0,0,0,.18); border-radius: 6px; padding: .04rem .4rem; line-height: 1.35; vertical-align: middle; }
 .tc-policy { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; border: 1px solid var(--line); background: var(--surface); border-radius: 11px; padding: .6rem .85rem; margin: 0 0 1rem; font-size: .86rem; }
 .tc-policy-h { font-weight: 700; }
 .tc-policy-tog { display: inline-flex; align-items: center; gap: .35rem; }

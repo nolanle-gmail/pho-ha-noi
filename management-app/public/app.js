@@ -2514,14 +2514,16 @@ async function renderLocTimeClock() {
     : `<span class="badge gray">Checked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
   const canEditTc = myCap('manage');
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
+  // Colour chip for the role a person is scheduled as — same colours as the schedule.
+  const tcJob = (job) => job ? ` <span class="tc-job" style="background:${jobColor(job).bg};border-color:${jobColor(job).bd}" title="${esc(job)}">${esc(job)}</span>` : '';
   const entryRows = data.entries.map(r => `<tr${r.unscheduled || r.carryover ? ' class="tc-unscheduled"' : ''}>
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
     <td>${r.clock_in || '—'}</td><td>${r.clock_out || '—'}</td>
     <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
     <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');
   const notInRows = data.not_in.map(r => `<tr class="task-unassigned">
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span></td>
+    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}</td>
     <td>—</td><td>—</td><td>${fmtDur(r.scheduled_minutes)}</td><td>—</td>
     <td><span class="badge low">Not checked in</span></td></tr>`).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `

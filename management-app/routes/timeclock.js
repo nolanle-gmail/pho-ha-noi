@@ -443,6 +443,11 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   for (const s of db.prepare(`SELECT user_id, MIN(start_time) AS start_time, MAX(end_time) AS end_time FROM shifts WHERE location_id=? AND shift_date=? AND kind='work' GROUP BY user_id`).all(locId, date)) shiftBy[s.user_id] = s;
   const hhmm = (iso) => { const d = new Date(iso); return `${String(localMinutesOfDay(tz, d) / 60 | 0).padStart(2, '0')}:${String(localMinutesOfDay(tz, d) % 60).padStart(2, '0')}`; };
   const shiftFor = db.prepare(`SELECT MIN(start_time) AS start_time, MAX(end_time) AS end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`);
+  // The role a person is scheduled for that day (first job of their work shift) —
+  // drives the colour chip on the board so it matches the schedule's colours.
+  const jobForStmt = db.prepare(`SELECT j.name FROM shifts s JOIN shift_jobs sj ON sj.shift_id=s.id JOIN jobs j ON j.id=sj.job_id
+    WHERE s.user_id=? AND s.location_id=? AND s.shift_date=? AND s.kind='work' ORDER BY s.start_time IS NULL, s.start_time, j.name LIMIT 1`);
+  const jobFor = (uid, d) => (jobForStmt.get(uid, locId, d) || {}).name || null;
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
@@ -461,6 +466,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       unscheduled: sh ? 0 : 1,
       shift_start: sh ? sh.start_time : null, shift_end: sh ? sh.end_time : null,
       work_date: e.work_date, carryover: e.work_date !== date ? 1 : 0,
+      job: jobFor(e.user_id, e.work_date),
     };
   });
   // Scheduled today but no punch yet → "not in".
@@ -471,6 +477,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const notIn = scheduled.filter(s => !byUser[s.id]).map(s => ({
     user_id: s.id, name: s.name, employee_code: s.employee_code,
     scheduled_minutes: spanMin(s.start_time, s.end_time), start_time: s.start_time, end_time: s.end_time,
+    job: jobFor(s.id, date),
   }));
   res.json({
     location: loc, date, today, timezone: tz, entries: rows, not_in: notIn,
