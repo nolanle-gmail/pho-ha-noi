@@ -1352,7 +1352,7 @@ async function renderMyLeaveRequests() {
   const reqs = d.requests || [];
   if (!reqs.length) { host.innerHTML = ''; return; }
   const chip = (s) => `<span class="badge ${s === 'approved' ? 'ok' : s === 'rejected' ? 'out' : 'gray'}">${s}</span>`;
-  const kindLabel = (k) => k === 'sick' ? '🤒 Sick leave' : '🏖 Vacation';
+  const kindLabel = (k) => k === 'sick' ? '🤒 Paid Sick Leave' : '🏖 PTO';
   const span = (r) => r.all_day ? (r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`) : `${fmtDay(r.start_date)} · ${r.hours}h`;
   host.innerHTML = `<h3 style="margin:1.4rem 0 .5rem">My time-off requests</h3>
     <div class="twrap"><table><thead><tr><th>Type</th><th>Dates</th><th>Status</th><th>Note</th></tr></thead><tbody>
@@ -1368,8 +1368,8 @@ function leaveRequestModal() {
     <div class="err" id="mErr"></div>
     <div class="form-grid">
       <label style="grid-column:1/-1">Type<select id="lrKind">
-        <option value="vacation">🏖 Vacation</option>
-        <option value="sick">🤒 Sick leave</option>
+        <option value="vacation">🏖 PTO</option>
+        <option value="sick">🤒 Paid Sick Leave</option>
       </select></label>
       <label>From<input id="lrStart" type="date" value="${today}" min="${today}" /></label>
       <label>To<input id="lrEnd" type="date" value="${today}" min="${today}" /></label>
@@ -1691,7 +1691,10 @@ const shiftHours = (start, end) => minutesBetween(start, end) / 60;
 // A schedule entry is a work shift, or a leave entry (sick / vacation / on-leave).
 const isLeaveShift = (s) => !!(s && s.kind && s.kind !== 'work');
 const leaveHoursOf = (s) => s.leave_hours != null ? s.leave_hours : (s.all_day ? 8 : shiftHours(s.start_time, s.end_time));
-const LEAVE_META = { sick: { label: 'Sick', icon: '🤒', chip: 'low' }, vacation: { label: 'Vacation', icon: '🏖️', chip: 'blue' }, leave: { label: 'On-leave', icon: '🗓️', chip: 'gold' } };
+// Leave kinds. Paid = counted toward pay (sick, vacation); unpaid = shown on the
+// schedule but NOT paid (leave). Labels are the staff-facing names.
+const LEAVE_META = { sick: { label: 'Paid Sick Leave', icon: '🤒', chip: 'low', paid: true }, vacation: { label: 'PTO', icon: '🏖️', chip: 'blue', paid: true }, leave: { label: 'Unpaid Time Off', icon: '🚫', chip: 'gold', paid: false } };
+const PAID_LEAVE_KINDS = ['sick', 'vacation'];   // vacation = PTO, sick = paid sick leave
 // A stable, distinct colour per job name so the same role reads the same colour across
 // the schedule — makes it easy to spot who's doing what at a glance. Hash → hue; fixed
 // saturation/lightness keeps white chip text legible for every hue.
@@ -1709,6 +1712,9 @@ const addMinutes = (t, m) => { if (!t) return ''; const [h, mm] = t.split(':').m
 const sumHours = (shifts) => shifts.reduce((t, s) => t + shiftWorkedHours(s), 0);
 // Paid leave (sick / vacation / on-leave) hours — counted toward pay, not worked hours.
 const sumLeaveHours = (shifts) => shifts.reduce((t, s) => t + (isLeaveShift(s) ? (Number(leaveHoursOf(s)) || 0) : 0), 0);
+// PAID leave only (Paid Sick Leave + PTO). Unpaid Time Off is excluded from pay.
+const isPaidLeave = (s) => PAID_LEAVE_KINDS.includes(s && s.kind);
+const sumPaidLeaveHours = (shifts) => shifts.reduce((t, s) => t + (isPaidLeave(s) ? (Number(leaveHoursOf(s)) || 0) : 0), 0);
 const breakMinutes = (s) => (s.breaks || []).reduce((t, b) => t + minutesBetween(b.start_time, b.end_time), 0);
 const sumBreakMinutes = (shifts) => shifts.reduce((t, s) => t + breakMinutes(s), 0);
 // Total estimated minutes of the day tasks assigned to a person that day (deduped —
@@ -1783,10 +1789,10 @@ async function renderLocSchedule() {
   const hereShifts = (st) => scopeDay(st.shifts.filter(inThisLoc));
   const allShifts = (st) => scopeDay(st.shifts);
   const workedHere = (st) => sumHours(hereShifts(st));                 // worked hours here (OT basis)
-  const leaveHere = (st) => sumLeaveHours(hereShifts(st));             // paid sick / vacation / leave here
-  const paidHere = (st) => workedHere(st) + leaveHere(st);            // total paid hours here
+  const leaveHere = (st) => sumPaidLeaveHours(hereShifts(st));         // PAID leave here (sick + PTO); Unpaid Time Off excluded
+  const paidHere = (st) => workedHere(st) + leaveHere(st);            // total PAID hours here (worked + paid leave)
   const workedAll = (st) => sumHours(allShifts(st));                   // worked hours across all locations
-  const paidAll = (st) => workedAll(st) + sumLeaveHours(allShifts(st));
+  const paidAll = (st) => workedAll(st) + sumPaidLeaveHours(allShifts(st));
   const otherLocCount = (st) => new Set(allShifts(st).filter(s => !inThisLoc(s)).map(s => s.location_id)).size;
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
@@ -1836,7 +1842,7 @@ async function renderLocSchedule() {
       const allPaid = paidAll(st), allOver = workedAll(st) > max;
       allLine = `<div class="sched-alllocs${allOver ? ' over' : ''}" title="Total across every location this ${dayMode ? 'day' : 'week'}${allOver ? ` — over the ${max}h limit combined` : ''}">(${allPaid.toFixed(2)} hrs, all locations)</div>`;
     }
-    return `<div class="sched-name-total${over ? ' over' : ''}" title="${title}">${paid.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}${leave > 0 ? `<span class="sched-leave-inc">incl. ${leave.toFixed(2)}h leave</span>` : ''}</div>${allLine}`;
+    return `<div class="sched-name-total${over ? ' over' : ''}" title="${title}">${paid.toFixed(2)} hrs / $${pay.toFixed(2)}${over ? ' ⚠' : ''}${leave > 0 ? `<span class="sched-leave-inc">incl. ${leave.toFixed(2)}h paid leave</span>` : ''}</div>${allLine}`;
   };
   // Read/unread eye: has the staffer opened their own schedule for this week since it
   // last changed? Shown only when they actually have shifts to review.
@@ -1885,7 +1891,7 @@ async function renderLocSchedule() {
       <label class="chk" title="Show total hours and pay under each name."><input type="checkbox" id="fShowPay" ${F.showPay ? 'checked' : ''}/> Show hours &amp; pay</label>
       <label class="sched-filter-role">Role <select id="fRole"><option value="">All roles</option>${rolesPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
       ${anyFilter ? '<button class="btn sm ghost" id="fClear" title="Clear all filters">Clear</button>' : ''}
-      <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid sick / vacation / leave">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
+      <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid leave (Paid Sick Leave + PTO); Unpaid Time Off is not counted">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} paid leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
     </div>
     <div class="table-wrap"><table class="sched-table"><thead><tr>
       <th class="sched-name">Staff</th>
@@ -2053,10 +2059,10 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">${wd} ${fmtDay(dayIso)} · ${esc(shortLoc(location.name))}</p>
     <div class="err" id="mErr"></div>
     <div class="form-grid"><label style="grid-column:1/-1">Type<select id="s_kind">
-        <option value="work">Work shift</option>
-        <option value="sick">🤒 Sick</option>
-        <option value="vacation">🏖️ Vacation</option>
-        <option value="leave">🗓️ On-leave</option>
+        <option value="work">Work Shift</option>
+        <option value="sick">🤒 Paid Sick Leave</option>
+        <option value="vacation">🏖️ PTO</option>
+        <option value="leave">🚫 Unpaid Time Off</option>
       </select></label></div>
     <div class="form-grid" id="leaveDur" hidden>
       <label>Duration<select id="s_leave_mode">
@@ -2713,7 +2719,7 @@ function payrollSection(pr) {
   const otc = (h, pend) => `${h ? `<strong style="color:#b4630b">${h}</strong>` : '0'}${pend ? ` <span class="badge out" title="pending approval">+${pend}?</span>` : ''}`;
   const lateCell = (s) => s.late_days ? `<span class="badge low" title="${fmtDur(s.late_minutes)} late total">${s.late_days}d</span>` : '—';
   const shortCell = (s) => s.short_days ? `<span class="badge out">${s.short_days}d</span>` : '—';
-  const leaveCell = (s) => { const tot = Math.round(((s.sick_hours || 0) + (s.vacation_hours || 0) + (s.leave_hours || 0)) * 10) / 10; return tot ? `<span class="badge blue" title="Sick ${s.sick_hours || 0}h · Vacation ${s.vacation_hours || 0}h · On-leave ${s.leave_hours || 0}h">${tot}h</span>` : '—'; };
+  const leaveCell = (s) => { const paid = Math.round(((s.sick_hours || 0) + (s.vacation_hours || 0)) * 10) / 10; const unpaid = Math.round((s.leave_hours || 0) * 10) / 10; if (!paid && !unpaid) return '—'; return `<span class="badge blue" title="Paid Sick Leave ${s.sick_hours || 0}h · PTO ${s.vacation_hours || 0}h · Unpaid Time Off ${s.leave_hours || 0}h (not paid)">${paid}h${unpaid ? ` <span style="color:var(--muted)">+${unpaid}h unpaid</span>` : ''}</span>`; };
   const leaveTotal = Math.round((((t.sick_hours || 0) + (t.vacation_hours || 0) + (t.leave_hours || 0))) * 10) / 10;
   const rows = pr.staff.map(s => `<tr>
     <td><strong>${esc(s.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.72rem">${esc(s.employee_code || '')}</span></td>
@@ -2763,7 +2769,7 @@ function payrollSection(pr) {
       <div class="week-nav"><button class="btn sm ghost" data-paynav="-1">‹ Prev</button><span class="week-label" style="margin:0 .4rem">${payRange(period, S.payAnchor).label}</span><button class="btn sm ghost" data-paynav="1">Next ›</button></div>
     </div>
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem;font-size:.8rem">Scheduled vs clocked. <span class="badge low">late</span> &gt;${R.late_grace_min}m past start · <span class="badge out">short</span> under scheduled · <span class="badge blue">OT</span> ${R.ot_mult}× after ${R.ot_after_h}h/day (counts on pay once approved). “Round” a day up; “✓ Approve” signs off the ${period} total.</p>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Sched</th><th class="num">Worked</th><th>Late</th><th>Short</th><th class="num">OT</th><th class="num" title="Sick + Vacation + On-leave hours">Leave</th><th class="num">Gross</th><th>Approve total</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th class="num">Sched</th><th class="num">Worked</th><th>Late</th><th>Short</th><th class="num">OT</th><th class="num" title="Paid leave (Paid Sick Leave + PTO) shown; Unpaid Time Off listed separately and not paid">Leave</th><th class="num">Gross</th><th>Approve total</th></tr></thead><tbody>
       ${rows || '<tr><td colspan="9" class="empty">No completed shifts clocked in this period.</td></tr>'}
       ${pr.staff.length ? `<tr style="font-weight:700;background:#fafafa"><td>Total · ${t.staff} staff</td><td class="num">${t.scheduled_hours}</td><td class="num">${t.total_hours}</td><td colspan="2">${t.late_minutes ? fmtDur(t.late_minutes) + ' late' : ''}</td><td class="num">${t.ot_hours}${t.ot_pending_hours ? ` <span class="badge out">+${t.ot_pending_hours}?</span>` : ''}</td><td class="num">${leaveTotal ? leaveTotal + 'h' : '—'}</td><td class="num">${t.gross_pay != null ? money(t.gross_pay) : '—'}</td><td></td></tr>` : ''}
     </tbody></table></div>
@@ -2881,7 +2887,7 @@ function exportPayrollCSV(pr) {
   const R = pr.rules;
   const headers = ['Employee', 'Code', 'Role', 'Days', 'Scheduled hours', 'Clocked hours', 'Regular hours',
     `Approved OT hours (${R.ot_mult}x)`, `Approved double-time hours (${R.dt_mult}x)`, 'Pending OT hours (unapproved, not paid)',
-    'Sick hours', 'Vacation hours', 'On-leave hours', 'Hourly rate', 'Gross pay'];
+    'Paid Sick Leave hours', 'PTO hours', 'Unpaid Time Off hours', 'Hourly rate', 'Gross pay'];
   const lines = [
     [`Payroll ${pr.start} to ${pr.end}`, pr.location.name || ''].map(csvCell).join(','),
     headers.join(','),
@@ -4399,7 +4405,7 @@ async function renderRequests() {
   try { d = await api('/schedule/leave-requests?status=' + _reqStatus); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   S.reqPending = d.pending_count || 0; renderMsgTabs();
   const reqs = d.requests || [];
-  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const kindLabel = (k) => k === 'sick' ? '🤒 Paid Sick Leave' : '🏖 PTO';
   const span = (r) => r.all_day ? (r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`) : `${fmtDay(r.start_date)} · ${r.hours}h`;
   const chip = (s) => `<span class="badge ${s === 'approved' ? 'ok' : s === 'rejected' ? 'out' : 'gray'}">${s}</span>`;
   const seg = (k, l) => `<button class="btn sm ${_reqStatus === k ? '' : 'ghost'}" data-rs="${k}">${l}</button>`;

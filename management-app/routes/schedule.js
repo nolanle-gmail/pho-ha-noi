@@ -112,7 +112,7 @@ function schedActor(req) {
   return null;
 }
 const isValidDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')) ? String(s) : null;
-const LEAVE_LABEL = { vacation: 'vacation', sick: 'sick leave' };
+const LEAVE_LABEL = { vacation: 'PTO', sick: 'paid sick leave' };
 const MAX_LEAVE_DAYS = 60;
 // Location-scoped leaders to ping when a request lands (all-location leadership
 // review from the Requests tab instead, so they aren't pinged per store).
@@ -129,7 +129,7 @@ router.post('/leave-requests', svcKeyOrJwt, (req, res) => {
   const u = schedActor(req);
   if (!u) return res.status(401).json({ error: 'Unknown staff member.' });
   const kind = ['vacation', 'sick'].includes(req.body.kind) ? req.body.kind : null;
-  if (!kind) return res.status(400).json({ error: 'Choose vacation or sick leave.' });
+  if (!kind) return res.status(400).json({ error: 'Choose PTO or paid sick leave.' });
   const start = isValidDate(req.body.start_date);
   const end = isValidDate(req.body.end_date || req.body.start_date);
   if (!start || !end) return res.status(400).json({ error: 'Pick valid start and end dates.' });

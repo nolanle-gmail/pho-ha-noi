@@ -813,9 +813,9 @@ async function renderMyHours() {
       <div class="stat"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
       <div class="stat"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="muted" style="font-size:.8rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
       <div class="stat"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
-      ${t.sick_hours ? `<div class="stat"><div class="label">Sick</div><div class="value">${t.sick_hours}h</div></div>` : ''}
-      ${t.vacation_hours ? `<div class="stat"><div class="label">Vacation</div><div class="value">${t.vacation_hours}h</div></div>` : ''}
-      ${t.leave_hours ? `<div class="stat"><div class="label">On-leave</div><div class="value">${t.leave_hours}h</div></div>` : ''}
+      ${t.sick_hours ? `<div class="stat"><div class="label">Paid Sick Leave</div><div class="value">${t.sick_hours}h</div></div>` : ''}
+      ${t.vacation_hours ? `<div class="stat"><div class="label">PTO</div><div class="value">${t.vacation_hours}h</div></div>` : ''}
+      ${t.leave_hours ? `<div class="stat"><div class="label">Unpaid Time Off</div><div class="value">${t.leave_hours}h <span class="muted" style="font-size:.7rem">unpaid</span></div></div>` : ''}
     </div>
     ${d.approved ? `<p class="sub" style="color:var(--ok)">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
     <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th></tr></thead><tbody>${dayRows || '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
@@ -867,7 +867,7 @@ async function renderMySchedule() {
   const byDay = {}; (d.shifts || []).forEach(s => { (byDay[s.shift_date] = byDay[s.shift_date] || []).push(s); });
   const work = (d.shifts || []).filter(s => s.kind === 'work');
   const totalMin = Math.round(work.reduce((n, s) => n + schedSpanH(s.start_time, s.end_time), 0) * 60);
-  const kindLabel = (k) => ({ sick: '🤒 Sick', vacation: '🏖 Vacation', leave: '📋 On leave' }[k] || k);
+  const kindLabel = (k) => ({ sick: '🤒 Paid Sick Leave', vacation: '🏖 PTO', leave: '🚫 Unpaid Time Off' }[k] || k);
   const shiftLine = (s) => {
     const who = team ? `<span class="sched-who">${esc(s.user_name)}</span>${schedSeenEye(s)} ` : '';
     if (s.kind !== 'work') { const hrs = s.all_day ? 'all day' : (s.leave_hours ? `${s.leave_hours}h` : ''); return `<div class="sched-shift">${who}<span class="sched-leave">${kindLabel(s.kind)}${hrs ? ` · ${hrs}` : ''}</span></div>`; }
@@ -913,7 +913,7 @@ async function renderMyLeaveReqs() {
   let d; try { d = await api('/myschedule/leave-requests/mine'); } catch { return; }
   const reqs = d.requests || [];
   if (!reqs.length) { host.innerHTML = ''; return; }
-  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const kindLabel = (k) => k === 'sick' ? '🤒 Paid Sick Leave' : '🏖 PTO';
   const stChip = (s) => `<span class="sched-status ${s}">${s}</span>`;
   const dd = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const span = (r) => r.all_day ? (r.start_date === r.end_date ? dd(r.start_date) : `${dd(r.start_date)} – ${dd(r.end_date)}`) : `${dd(r.start_date)} · ${r.hours}h`;
@@ -927,7 +927,7 @@ function staffLeaveModal() {
   const today = new Date().toISOString().slice(0, 10);
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Request time off</h3>
     <div class="err" id="mErr" style="display:none"></div>
-    <label class="fld">Type<select id="lrKind"><option value="vacation">🏖 Vacation</option><option value="sick">🤒 Sick leave</option></select></label>
+    <label class="fld">Type<select id="lrKind"><option value="vacation">🏖 PTO</option><option value="sick">🤒 Paid Sick Leave</option></select></label>
     <label class="fld">From<input id="lrStart" type="date" value="${today}" min="${today}" /></label>
     <label class="fld" id="lrEndWrap">To<input id="lrEnd" type="date" value="${today}" min="${today}" /></label>
     <label class="chk" style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0"><input type="checkbox" id="lrAllDay" checked /> Full day(s)</label>
@@ -964,7 +964,7 @@ async function renderStaffRequests() {
   let d; try { d = await api('/myschedule/leave-requests?status=' + _staffReqStatus); } catch (e) { v.innerHTML = msgSegment('requests') + `<div class="empty">${esc(e.message)}</div>`; return; }
   S.reqPending = d.pending_count || 0; renderNav();
   const reqs = d.requests || [];
-  const kindLabel = (k) => k === 'sick' ? '🤒 Sick' : '🏖 Vacation';
+  const kindLabel = (k) => k === 'sick' ? '🤒 Paid Sick Leave' : '🏖 PTO';
   const dd = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const span = (r) => r.all_day ? (r.start_date === r.end_date ? dd(r.start_date) : `${dd(r.start_date)} – ${dd(r.end_date)}`) : `${dd(r.start_date)} · ${r.hours}h`;
   const seg = (k, l) => `<button class="navbtn ${_staffReqStatus === k ? 'active' : ''}" data-rs="${k}">${l}</button>`;
