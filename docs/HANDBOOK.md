@@ -687,7 +687,7 @@ erDiagram
 | `shifts` | Schedule | Weekly shift: person × day × store, start/end |
 | `shift_jobs` | Schedule | Jobs attached to a shift |
 | `shift_breaks` | Schedule | Paid 10-min breaks within a shift |
-| `jobs` | Schedule | Shared job/task catalog by department |
+| `jobs` | Schedule | Shared job/task catalog by department (Front House / Kitchen / Bar / Management; empty = Department Not Set) — `kind` = standard role or specific day-task |
 | `task_assignments` | Schedule | A specific day-task pinned to a working person, with Start/Done timestamps |
 | `task_photos` | Schedule | Optional proof photos for a day task — many per task, one row per image (image bytes in the DB) |
 | `task_comments` | Schedule | Comments / feedback on a day task — staff notes and manager replies (many per task) |
@@ -1046,9 +1046,15 @@ seven days):
     **8 h/day** limit.
   - The **view filters** (below) apply in Week and Day; the Month calendar is a
     location-wide roll-up and has its own hours summary instead.
-- Click **+** on a day → set start/end, pick one or more **jobs** from the catalog,
-  add paid **breaks** (10 min each; unlocked once a shift is ≥ 3.5 h; max 2/day
-  unless the day tops 10 h).
+- The **Jobs catalog** (Staff → **Jobs**) holds what you can assign, grouped by
+  **department** — **Front House · Kitchen · Bar · Management**, plus **Department Not Set**
+  for anything unassigned (sorted last). Each entry is either a **standard** role duty
+  (Server, Line Cook, Host, Barista …) picked when building shifts, or a **specific**
+  day-task (Opening Checklist, Clean Restrooms, Sanitize Prep Line …) the manager assigns
+  on the **Day Tasks** board.
+- Click **+** on a day → set start/end, pick one or more **jobs** from the catalog
+  (the picker shows just the job name under its department), add paid **breaks** (10 min
+  each; unlocked once a shift is ≥ 3.5 h; max 2/day unless the day tops 10 h).
 - A day can hold multiple work periods (e.g. 8–12 and 12–16), each with its own
   break.
 - Soft limits: **8 h/day** and **40 h/week** turn the cell red ⚠ and block the save
