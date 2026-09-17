@@ -586,6 +586,15 @@ tr:hover .order-hover { opacity: 1; }
 .svc-kpis .card .value { font-size: 1.5rem; margin-top: .15rem; }
 .svc-top .live-badge { margin-left: auto; }
 .svc-top .btn.sm { margin-left: .1rem; }
+/* Service tabs (Live board / Active waitlist) */
+.svc-tabs { display: inline-flex; gap: .25rem; background: var(--surface-2, #f2ede4); border-radius: 10px; padding: .2rem; }
+.svc-tab { border: none; background: transparent; font: inherit; font-weight: 600; font-size: .85rem; padding: .35rem .7rem; border-radius: 8px; cursor: pointer; color: var(--muted); }
+.svc-tab.active { background: var(--surface, #fff); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.svc-tab-n { background: var(--brand, #b91c1c); color: #fff; border-radius: 999px; padding: 0 .4rem; font-size: .72rem; margin-left: .15rem; }
+/* Active waitlist table */
+.wl-table td, .wl-table th { vertical-align: middle; }
+.wl-table tr.wl-over td { background: color-mix(in srgb, var(--low, #b4630b) 9%, transparent); }
+.wl-table tr.wl-over .num strong { color: var(--low, #b4630b); }
 /* Live-push status pill. Empty when unset (no EventSource) so it takes no room. */
 .live-badge { display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .55rem; border-radius: 999px; font-size: .72rem; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
 .live-badge:empty { display: none; }

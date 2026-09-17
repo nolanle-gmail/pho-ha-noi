@@ -839,7 +839,7 @@ async function runToastSync(location_id, from, to, btn) {
 // ── Service: the live guest-visit board (six lists) ──────────────────────────
 // Owner/GM see every location (with an "All locations" option); a manager is
 // pinned to their own store. Auto-refreshes so the floor stays current.
-const SVC = { loc: null, timer: null, byId: {}, scroll: 0, es: null, esLoc: undefined, pushT: null, live: '' };
+const SVC = { loc: null, view: 'board', timer: null, byId: {}, scroll: 0, es: null, esLoc: undefined, pushT: null, live: '' };
 
 // Live-push status pill shown on the board. Reflects the EventSource state so
 // the floor staff can trust that seatings/claims are arriving in real time.
@@ -911,12 +911,14 @@ async function renderService() {
     </div>`;
   }).join('');
 
-  $('view').innerHTML = `
-    <div class="svc-top">
-      <div class="svc-loc">${locSelect}</div>
-      <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
-      <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
-    </div>
+  // Active-waitlist view: just the parties still waiting, longest wait first.
+  const waiting = (data.lists.waiting || []).slice().sort((a, b) => (b.waited_min || 0) - (a.waited_min || 0));
+  const srcLabel = (v) => v.source === 'walkin' ? '🚶 Walk-in' : v.source === 'self' ? '📱 Self check-in' : '🧑‍💼 Staff-added';
+  const tabs = `<div class="svc-tabs">
+      <button class="svc-tab ${SVC.view === 'waitlist' ? '' : 'active'}" data-svcview="board">🛎️ Live board</button>
+      <button class="svc-tab ${SVC.view === 'waitlist' ? 'active' : ''}" data-svcview="waitlist">⏳ Active waitlist${sm.waiting ? ` <span class="svc-tab-n">${sm.waiting}</span>` : ''}</button>
+    </div>`;
+  const boardMid = `
     <div class="svc-kpis">
       <div class="card"><div class="label">Waiting</div><div class="value">${sm.waiting}</div></div>
       <div class="card"><div class="label">Seated</div><div class="value">${sm.seated}</div></div>
@@ -937,9 +939,37 @@ async function renderService() {
         ${report.servers.map(s => `<tr><td><strong>${esc(s.server_name || '—')}</strong></td><td class="num">${s.tables_served}</td><td class="num">${s.guests_served || 0}</td><td class="num">${s.checks_done || 0}</td><td class="num">${s.avg_service_min != null ? s.avg_service_min + 'm' : '—'}</td><td class="num">$${(s.tips_total || 0).toFixed(2)}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No servers have picked up tables yet.</div>'}
     </div>`;
+  const waitMid = `
+    <div class="svc-kpis">
+      <div class="card"><div class="label">Parties waiting</div><div class="value">${sm.waiting}</div></div>
+      <div class="card"><div class="label">Guests waiting</div><div class="value">${waiting.reduce((t, v) => t + (v.party_size || 0), 0)}</div></div>
+      ${waiting.length ? `<div class="card"><div class="label">Longest wait</div><div class="value${(waiting[0].waited_min || 0) >= 20 ? ' warn' : ''}">${waiting[0].waited_min || 0}m</div></div>` : ''}
+    </div>
+    <div class="section"><h3>Active waitlist${single ? '' : ' — all locations'}</h3>
+      ${waiting.length ? `<div class="table-wrap"><table class="wl-table"><thead><tr><th>#</th><th>Guest</th><th class="num">Party</th><th class="num">Waited</th><th class="num">Quoted</th><th>Source</th>${single ? '' : '<th>Location</th>'}<th></th></tr></thead>
+        <tbody>${waiting.map((v, i) => `<tr class="${v.quoted_minutes && (v.waited_min || 0) >= v.quoted_minutes ? 'wl-over' : ''}">
+          <td class="num">${i + 1}</td>
+          <td><strong>${esc(v.guest_name || 'Guest')}</strong>${v.notes ? `<div class="svc-note">${esc(v.notes)}</div>` : ''}</td>
+          <td class="num">${v.party_size}👤</td>
+          <td class="num"><strong>${v.waited_min ?? 0}m</strong></td>
+          <td class="num">${v.quoted_minutes ? v.quoted_minutes + 'm' : '—'}</td>
+          <td>${srcLabel(v)}</td>
+          ${single ? '' : `<td>${esc(svcLocName(v.location_id))}</td>`}
+          <td style="white-space:nowrap"><button class="btn xs" data-act="seat" data-vid="${v.id}">Seat</button> <button class="btn xs ghost" data-act="cancel" data-vid="${v.id}">Left</button></td>
+        </tr>`).join('')}</tbody></table></div>` : '<div class="empty">No one is waiting right now. 🎉</div>'}
+    </div>`;
+  $('view').innerHTML = `
+    <div class="svc-top">
+      <div class="svc-loc">${locSelect}</div>
+      ${tabs}
+      <span id="svcLive" class="live-badge" data-state="${SVC.live}" title="Real-time push connection">${LIVE_LABEL[SVC.live] || ''}</span>
+      <button class="btn sm ghost" id="svcRefresh">↻ Refresh</button>
+    </div>
+    ${SVC.view === 'waitlist' ? waitMid : boardMid}`;
 
   const bd = $('svcBoard'); if (bd) bd.scrollLeft = SVC.scroll;
   if (seesAll) $('svcLocSel').onchange = (e) => { SVC.loc = e.target.value; SVC.scroll = 0; renderService(); };
+  $('view').querySelectorAll('[data-svcview]').forEach(b => b.onclick = () => { SVC.view = b.dataset.svcview; SVC.scroll = 0; renderService(); });
   $('svcRefresh').onclick = () => renderService();
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => svcAction(b.dataset.act, parseInt(b.dataset.vid, 10)));
 
