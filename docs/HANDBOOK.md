@@ -671,7 +671,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 59 tables
+### Management database — 60 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -738,6 +738,7 @@ erDiagram
 | `toast_employees` | Toast | Toast staff roster, each matched to an app user (by email / phone / name) |
 | `toast_jobs` | Toast | Toast job catalog (title, tipped, wage) |
 | `toast_menu_items` | Toast | Published Toast menu flattened to one row per item per location (price book; cross-location price compare) |
+| `toast_selections` | Toast | Line items on each check (item, category, qty, price) — the item-level detail for sales analysis |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -773,7 +774,8 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
-| **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, and toggle auto-sync (read-only) | Owner/Admin |
+| **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix) and day/time patterns from the stored Toast history — no live pull | Manager+ (own store) · Owner/Admin all |
+| **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, backfill history, and toggle auto-sync (read-only) | Owner/Admin |
 | **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
@@ -853,6 +855,20 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   items across these stores, so the compare matches by **item name** using each store's
   **base (lowest) price**, $0 items excluded — a strong "worth checking" signal, not an exact
   key.
+- **Historical store & backfill.** Every sync stores the full order detail — orders →
+  checks → payments **→ line items** (`toast_selections`). A **backfill** (Integrations →
+  Historical data) pulls **months of past sales** (default ~190 days) for all mapped
+  locations into these local tables. It runs in the **background**, is **throttled** and
+  **resumable** (`toast_locations.backfilled_from` records how far back each store goes), so
+  re-running continues where it left off. Everything is reviewed from the local mirror — Toast
+  is only touched to *fill* it.
+
+**Sales Analytics (💹).** A separate section reads only the stored history — no live Toast
+call — with a **From / To / granularity / location** filter (managers see their own store;
+owner/admin all). It shows **headline KPIs** (net sales, orders, guests, avg check, items,
+tips), a **sales-trend** chart (day / week / month), a **by-location** comparison (net, orders,
+avg check, guests), **top items** (menu mix, by revenue, from line items), and **day-of-week +
+hour-of-day patterns** for staffing/planning. Hours are shown in approximate Pacific time.
 
 ### Front Desk / Waitlist app (port 4002)
 
