@@ -882,6 +882,11 @@ The board **auto-refreshes about every 20 seconds** while it's open (it pauses w
 open and stops when you leave the tab), so a staffer's **clock-in / clock-out appears on the
 leaders' board on its own** — no manual reload needed.
 
+The board columns read **Clocked in** and **Clocked out**, and each person carries a **colour
+chip of their scheduled role** — the **same colours as the schedule** — so you can tell roles
+apart at a glance. (The same **Clocked in / Clocked out** wording is used on the manager
+dashboard's clock summary.)
+
 **Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
 to punch out, the system can **automatically clock a staffer out at their scheduled end** once
 they're a **grace window** past it with no approval. On the location's **Time Clock** tab, a
@@ -1011,7 +1016,7 @@ flowchart TB
 4. **Close out** — Move to paying, then done; the table is flagged for a busser, who
    clears it back to available.
 
-### 6.2 Staff check-in / check-out & payroll
+### 6.2 Staff clock-in / clock-out & payroll
 
 ```mermaid
 flowchart LR
