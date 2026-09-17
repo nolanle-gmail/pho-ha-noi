@@ -869,6 +869,8 @@ owner/admin all). It shows **headline KPIs** (net sales, orders, guests, avg che
 tips), a **sales-trend** chart (day / week / month), a **by-location** comparison (net, orders,
 avg check, guests), **top items** (menu mix, by revenue, from line items), and **day-of-week +
 hour-of-day patterns** for staffing/planning. Hours are shown in approximate Pacific time.
+Each section has a **⬇ CSV** button that exports exactly what's on screen for the current
+filter (opens directly in Excel; a UTF-8 BOM keeps accented item names intact).
 
 ### Front Desk / Waitlist app (port 4002)
 
