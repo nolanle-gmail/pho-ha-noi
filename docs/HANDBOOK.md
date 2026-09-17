@@ -844,9 +844,10 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   the store is open** (using its operating hours + a post-close grace), so the numbers stay
   current on their own.
 - **On the dashboard.** A **Toast sales** panel on the Overview and manager dashboards shows
-  each mapped location's latest synced day — net sales, orders, guests, total. Sales reads
-  are manager-capable and **scoped** (a manager sees only their own store); mapping, syncing
-  and config stay owner/admin.
+  each mapped location's latest synced day — net sales, orders, guests, total — with a
+  **"⏱ Last pulled from Toast"** timestamp (Pacific, plus a relative "ago") so it's clear how
+  fresh the numbers are. Sales reads are manager-capable and **scoped** (a manager sees only
+  their own store); mapping, syncing and config stay owner/admin.
 - **Staff & jobs.** **Sync roster** pulls the Toast employee list and job catalog and
   **matches each Toast employee to a person in this app** (by email → phone → name), so Toast
   sales can be attributed to a real staffer. Unmatched people are listed to reconcile in
