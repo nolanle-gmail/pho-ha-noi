@@ -6,6 +6,7 @@ const db = require('../db/database');
 const { verifyToken, requireRole, ROLES } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const toast = require('../lib/toast');
+const toastSync = require('../lib/toastSync');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -76,6 +77,41 @@ router.post('/map', async (req, res) => {
     .run(location_id, toast_guid, toast_name);
   auditLog(req, 'toast_map', 'location', location_id, { toast_guid, toast_name });
   res.json({ success: true, toast_name });
+});
+
+// Pull sales orders for a location and business date (YYYY-MM-DD) into the mirror.
+// Optional date_from/date_to pulls a range (capped at 31 days). Read-only.
+router.post('/sync/orders', async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  const from = req.body.date_from || req.body.business_date;
+  const to = req.body.date_to || req.body.business_date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from || '') || !/^\d{4}-\d{2}-\d{2}$/.test(to || '')) {
+    return res.status(400).json({ error: 'Provide business_date, or date_from + date_to (YYYY-MM-DD).' });
+  }
+  const dates = [];
+  for (let d = new Date(from + 'T00:00:00Z'); d <= new Date(to + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+    if (dates.length > 31) return res.status(400).json({ error: 'Range is capped at 31 days.' });
+  }
+  try {
+    const results = [];
+    for (const bd of dates) {
+      const r = await toastSync.syncOrders(location_id, bd);
+      results.push({ business_date: bd, ...r, summary: toastSync.salesSummary(location_id, bd) });
+    }
+    auditLog(req, 'toast_sync_orders', 'location', location_id, { from, to, days: dates.length });
+    res.json({ ok: true, days: results });
+  } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
+});
+
+// Read the mirrored per-day sales summary (no Toast call).
+router.get('/sales', (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  const business_date = String(req.query.business_date || '');
+  if (!location_id || !/^\d{4}-\d{2}-\d{2}$/.test(business_date)) return res.status(400).json({ error: 'location_id and business_date (YYYY-MM-DD) are required.' });
+  res.json(toastSync.salesSummary(location_id, business_date));
 });
 
 // Remove a mapping.

@@ -946,6 +946,62 @@ function migrate() {
       finished_at  TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_toast_sync ON toast_sync_log(domain, location_id, id);
+
+    -- Mirror of Toast sales data (read-only copy; Toast stays the source of record).
+    -- Orders → checks → payments, keyed by Toast GUIDs so re-syncing is idempotent.
+    CREATE TABLE IF NOT EXISTS toast_orders (
+      guid                 TEXT PRIMARY KEY,
+      location_id          INTEGER,
+      business_date        TEXT,               -- 'YYYY-MM-DD'
+      opened_at            TEXT,
+      closed_at            TEXT,
+      paid_at             TEXT,
+      source               TEXT,               -- 'In Store' / 'Online' / 'API' …
+      voided               INTEGER NOT NULL DEFAULT 0,
+      deleted              INTEGER NOT NULL DEFAULT 0,
+      num_guests           INTEGER,
+      dining_option_guid   TEXT,
+      revenue_center_guid  TEXT,
+      service_area_guid    TEXT,
+      table_guid           TEXT,
+      server_guid          TEXT,
+      synced_at            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_orders_loc_date ON toast_orders(location_id, business_date);
+
+    CREATE TABLE IF NOT EXISTS toast_checks (
+      guid                 TEXT PRIMARY KEY,
+      order_guid           TEXT,
+      location_id          INTEGER,
+      business_date        TEXT,
+      amount               REAL,               -- pre-tax subtotal
+      tax_amount           REAL,
+      total_amount         REAL,               -- amount + tax − discounts + service charges
+      tip_amount           REAL,
+      discount_amount      REAL,
+      service_charge_amount REAL,
+      payment_status       TEXT,               -- OPEN / PAID / CLOSED …
+      voided               INTEGER NOT NULL DEFAULT 0,
+      synced_at            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_checks_loc_date ON toast_checks(location_id, business_date);
+
+    CREATE TABLE IF NOT EXISTS toast_payments (
+      guid                 TEXT PRIMARY KEY,
+      check_guid           TEXT,
+      order_guid           TEXT,
+      location_id          INTEGER,
+      business_date        TEXT,
+      amount               REAL,
+      tip_amount           REAL,
+      type                 TEXT,               -- CREDIT / CASH / GIFTCARD / OTHER …
+      card_type            TEXT,
+      card_entry_mode      TEXT,
+      refund_amount        REAL NOT NULL DEFAULT 0,
+      paid_at              TEXT,
+      synced_at            TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_payments_loc_date ON toast_payments(location_id, business_date);
   `);
 
   // Migrations for databases created before these columns existed.
