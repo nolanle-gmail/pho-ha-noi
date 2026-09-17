@@ -54,6 +54,7 @@ app.use('/api/reports', require('./routes/reports'));
 app.use('/api/locations', require('./routes/locations'));
 app.use('/api/central', require('./routes/central'));
 app.use('/api/distribution', require('./routes/distribution'));
+app.use('/api/toast', require('./routes/toast'));
 
 const PORT = process.env.PORT || 4001;
 if (require.main === module) {

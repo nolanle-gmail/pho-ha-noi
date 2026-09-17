@@ -916,6 +916,38 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_staff_docs ON staff_documents(user_id, id);
   `);
 
+  // ── Toast POS integration (read-only) ──────────────────────────────────────
+  // Maps each of our locations to a Toast restaurant GUID, and records every data
+  // pull so a sync can resume and be audited. The Toast API client itself is
+  // configured via env / Fly secrets (lib/toast.js); no credentials live here.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS toast_locations (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id   INTEGER NOT NULL UNIQUE REFERENCES locations(id) ON DELETE CASCADE,
+      toast_guid    TEXT NOT NULL UNIQUE,     -- Toast restaurant external GUID
+      toast_name    TEXT,                     -- cached restaurant name (from Toast)
+      active        INTEGER NOT NULL DEFAULT 1,
+      last_synced_at TEXT,
+      created_at    TEXT DEFAULT (datetime('now'))
+    );
+    -- One row per sync attempt per domain (orders / labor / menus / config / …),
+    -- so pulls are auditable and incremental syncs know where they left off.
+    CREATE TABLE IF NOT EXISTS toast_sync_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain       TEXT NOT NULL,             -- 'orders' | 'labor' | 'menus' | 'config' | 'ping' …
+      location_id  INTEGER REFERENCES locations(id),
+      toast_guid   TEXT,
+      window_start TEXT,                      -- business-date / time window covered
+      window_end   TEXT,
+      status       TEXT NOT NULL DEFAULT 'running', -- running | ok | error
+      record_count INTEGER NOT NULL DEFAULT 0,
+      detail       TEXT,
+      started_at   TEXT DEFAULT (datetime('now')),
+      finished_at  TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_sync ON toast_sync_log(domain, location_id, id);
+  `);
+
   // Migrations for databases created before these columns existed.
   for (const stmt of [
     `ALTER TABLE staff_profiles ADD COLUMN personal_id TEXT`,
