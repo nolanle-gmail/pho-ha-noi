@@ -1070,7 +1070,9 @@ seven days):
 - Each work shift is a **colour-coded block** — the whole block takes the assigned job's
   colour (white text), and every job keeps the **same colour everywhere**, so roles are
   easy to tell apart at a glance across the grid. A multi-job shift uses the first job's
-  colour; a shift with no job is a neutral grey.
+  colour; a shift with no job is a neutral grey. The **Staff app** schedule (My Schedule
+  and the lead Team view) shows the **same per-job colours as chips**, so a job reads the
+  same colour in both apps.
 - Under each staff member's name the grid shows their **total as `<hours> hrs / $<pay>`**
   **for this location** (the week, or the day in Day view). The hours and pay **include
   paid sick / vacation / on-leave hours** as well as worked hours — pay = (worked +
