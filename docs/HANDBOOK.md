@@ -671,7 +671,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 58 tables
+### Management database — 59 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -737,6 +737,7 @@ erDiagram
 | `toast_orders` · `toast_checks` · `toast_payments` | Toast | Read-only mirror of Toast sales: orders → checks → payments, keyed by Toast GUID |
 | `toast_employees` | Toast | Toast staff roster, each matched to an app user (by email / phone / name) |
 | `toast_jobs` | Toast | Toast job catalog (title, tipped, wage) |
+| `toast_menu_items` | Toast | Published Toast menu flattened to one row per item per location (price book; cross-location price compare) |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -845,6 +846,13 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   sales can be attributed to a real staffer. Unmatched people are listed to reconcile in
   Staff. **Note:** clock-in/out is tracked **in this app, not Toast**, so there are no Toast
   time entries to import — the timesheet stays authoritative here.
+- **Menu & pricing.** **Sync menu** pulls each location's published Toast menu into a
+  **price book** (`toast_menu_items`, a full snapshot replaced each sync). **Compare prices
+  across locations** flags every shared item priced differently between stores (green =
+  lowest, amber = highest, sorted by spread). Toast's `multiLocationId` does **not** link
+  items across these stores, so the compare matches by **item name** using each store's
+  **base (lowest) price**, $0 items excluded — a strong "worth checking" signal, not an exact
+  key.
 
 ### Front Desk / Waitlist app (port 4002)
 
