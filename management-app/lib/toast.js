@@ -96,4 +96,11 @@ async function getRestaurantInfo(guid) {
   return body;
 }
 
-module.exports = { toastEnabled, toastHost, getToken, toastGet, toastGetAll, getRestaurantInfo };
+// Every Toast restaurant this API client can access (across its management group).
+// Each row has restaurantGuid, restaurantName, locationName (address), etc.
+async function listRestaurants() {
+  const { body } = await toastGet('/partners/v1/restaurants', {});
+  return Array.isArray(body) ? body : [];
+}
+
+module.exports = { toastEnabled, toastHost, getToken, toastGet, toastGetAll, getRestaurantInfo, listRestaurants };

@@ -64,6 +64,58 @@ router.post('/ping', ADMIN, async (req, res) => {
 // List the current location↔restaurant mappings.
 router.get('/mappings', ADMIN, (req, res) => res.json(mappingsWithLoc()));
 
+// City key for matching a Toast restaurant name to one of our locations, ignoring
+// punctuation and the shared "Pho Ha Noi" prefix (e.g. "Pho Ha Noi - Cupertino " and
+// "Pho Ha Noi — Cupertino" both → "cupertino").
+const cityKey = (s) => String(s || '').toLowerCase().replace(/pho ha noi/g, '').replace(/[^a-z0-9]/g, '');
+
+// Every Toast restaurant this API client can access, with its mapping status and a
+// suggested app-location match (by name) for the ones not yet mapped.
+router.get('/discover', ADMIN, async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  try {
+    const list = await toast.listRestaurants();
+    const locs = db.prepare(`SELECT id, name FROM locations`).all();
+    const byGuid = {}; db.prepare(`SELECT location_id, toast_guid FROM toast_locations`).all().forEach(m => (byGuid[m.toast_guid] = m.location_id));
+    const takenLoc = new Set(Object.values(byGuid).map(String));
+    const restaurants = list.filter(r => !r.deleted).map(r => {
+      const guid = r.restaurantGuid, name = (r.restaurantName || '').trim();
+      const mappedLoc = byGuid[guid] || null;
+      let suggested = null;
+      if (!mappedLoc) { const m = locs.find(l => cityKey(l.name) === cityKey(name) && !takenLoc.has(String(l.id))); if (m) suggested = { location_id: m.id, location_name: m.name }; }
+      return { guid, name, address: r.locationName || null, mapped: !!mappedLoc,
+        location_name: mappedLoc ? (locs.find(l => l.id === mappedLoc) || {}).name : null, suggested };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ restaurants, total: restaurants.length, mapped: restaurants.filter(r => r.mapped).length, suggestable: restaurants.filter(r => !r.mapped && r.suggested).length });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// One-click: map every accessible, not-yet-mapped restaurant that confidently matches
+// an app location by name.
+router.post('/discover/map', ADMIN, async (req, res) => {
+  if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
+  try {
+    const list = await toast.listRestaurants();
+    const locs = db.prepare(`SELECT id, name FROM locations`).all();
+    const already = new Set(db.prepare(`SELECT toast_guid FROM toast_locations`).all().map(m => m.toast_guid));
+    const takenLoc = new Set(db.prepare(`SELECT location_id FROM toast_locations`).all().map(m => String(m.location_id)));
+    const ins = db.prepare(`INSERT INTO toast_locations (location_id, toast_guid, toast_name) VALUES (?,?,?)
+      ON CONFLICT(location_id) DO UPDATE SET toast_guid=excluded.toast_guid, toast_name=excluded.toast_name, active=1`);
+    const mapped = [];
+    for (const r of list) {
+      if (r.deleted || already.has(r.restaurantGuid)) continue;
+      const name = (r.restaurantName || '').trim();
+      const m = locs.find(l => cityKey(l.name) === cityKey(name) && !takenLoc.has(String(l.id)));
+      if (!m) continue;
+      ins.run(m.id, r.restaurantGuid, name);
+      takenLoc.add(String(m.id)); already.add(r.restaurantGuid);
+      mapped.push({ location_id: m.id, location_name: m.name, toast_name: name });
+    }
+    if (mapped.length) auditLog(req, 'toast_discover_map', 'toast', null, { count: mapped.length });
+    res.json({ ok: true, mapped, count: mapped.length });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
 // Map (or re-map) one of our locations to a Toast restaurant GUID. Best-effort:
 // also caches the restaurant name from Toast when reachable.
 router.post('/map', ADMIN, async (req, res) => {

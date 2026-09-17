@@ -391,6 +391,8 @@ async function renderIntegrations() {
           </td></tr>`).join('') : '<tr><td colspan="6" class="empty">No locations mapped yet. Add one below.</td></tr>'}
         </tbody></table></div>
       <p class="sub" style="color:var(--muted);font-size:.78rem;margin:.4rem 0 0">“Auto” pulls each store's sales automatically during its operating hours (plus a short grace after close). Turn it off to sync only on demand.</p>
+      <div style="margin-top:.6rem"><button class="btn sm ghost" id="tiDiscover" title="List every restaurant your Toast API client can access and map the unmapped ones">🔍 Discover from Toast</button></div>
+      <div id="tiDiscoverResult"></div>
       ${unmapped.length ? `<div class="row" style="display:flex;gap:.5rem;align-items:flex-end;flex-wrap:wrap;margin-top:.6rem">
         <label style="margin:0">Location<select id="tiLoc">${unmapped.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('')}</select></label>
         <label style="margin:0;flex:1;min-width:260px">Toast restaurant GUID<input id="tiGuid" placeholder="e.g. 4721e7a9-b4ae-4fef-9230-b3dae186e0a4" /></label>
@@ -438,6 +440,7 @@ async function renderIntegrations() {
       </table></div>
     </div>`;
 
+  if ($('tiDiscover')) $('tiDiscover').onclick = () => runToastDiscover($('tiDiscover'));
   if ($('tiAdd')) $('tiAdd').onclick = async () => {
     const location_id = +$('tiLoc').value, toast_guid = $('tiGuid').value.trim();
     if (!toast_guid) return toast('Enter the Toast restaurant GUID.', true);
@@ -492,6 +495,35 @@ async function runToastMenuCompare(maps, btn) {
     if (box) box.innerHTML = `<p class="sub" style="color:var(--muted);margin:.1rem 0 .5rem"><strong>${d.differing}</strong> shared items are priced differently across locations (green = lowest, amber = highest).</p>
       <div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>Item</th>${cols.map(c => `<th class="num">${esc(shortLoc(c.location_name))}</th>`).join('')}<th class="num">Spread</th></tr></thead>
         <tbody>${d.items.map(it => `<tr><td>${esc(it.name)}</td>${cols.map(c => cell(it, c.location_id)).join('')}<td class="num"><strong>${money(it.spread)}</strong></td></tr>`).join('')}</tbody></table></div>`;
+  } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
+// List every restaurant the Toast client can access, with map status + suggestions.
+async function runToastDiscover(btn) {
+  if (btn) { btn.disabled = true; var old = btn.textContent; btn.textContent = 'Discovering…'; }
+  const box = $('tiDiscoverResult');
+  try {
+    const d = await api('/toast/discover');
+    const row = (r) => `<tr>
+      <td><strong>${esc(r.name)}</strong>${r.address ? `<div class="sub" style="color:var(--muted);font-size:.76rem">${esc(r.address)}</div>` : ''}</td>
+      <td class="mono" style="font-size:.72rem">${esc(r.guid)}</td>
+      <td>${r.mapped ? `<span class="badge ok">Mapped → ${esc(shortLoc(r.location_name))}</span>`
+        : r.suggested ? `<button class="btn sm" data-mapguid="${esc(r.guid)}" data-maploc="${r.suggested.location_id}">Map → ${esc(shortLoc(r.suggested.location_name))}</button>`
+        : '<span class="badge gray">No app location match</span>'}</td></tr>`;
+    box.innerHTML = `<div style="margin:.6rem 0 .3rem"><strong>${d.total}</strong> restaurant${d.total === 1 ? '' : 's'} your Toast client can access · ${d.mapped} mapped${d.suggestable ? ` · ${d.suggestable} ready to map` : ''}
+      ${d.suggestable ? `<button class="btn sm" id="tiMapAll" style="margin-left:.5rem">Map all ${d.suggestable} matched</button>` : ''}</div>
+      <div class="table-wrap"><table><thead><tr><th>Toast restaurant</th><th>GUID</th><th>Status</th></tr></thead><tbody>${d.restaurants.map(row).join('')}</tbody></table></div>
+      ${d.total && !d.suggestable && d.mapped === d.total ? '<p class="sub" style="color:var(--ok);margin:.3rem 0 0">Every restaurant your client can access is mapped. To add more stores, grant this API client access to them in Toast Web, then Discover again.</p>' : ''}`;
+    if ($('tiMapAll')) $('tiMapAll').onclick = async () => {
+      $('tiMapAll').disabled = true;
+      try { const r = await api('/toast/discover/map', { method: 'POST', body: JSON.stringify({}) }); toast(`✓ Mapped ${r.count} location${r.count === 1 ? '' : 's'}.`); renderIntegrations(); }
+      catch (e) { toast(e.message, true); $('tiMapAll').disabled = false; }
+    };
+    box.querySelectorAll('[data-mapguid]').forEach(b => b.onclick = async () => {
+      b.disabled = true;
+      try { await api('/toast/map', { method: 'POST', body: JSON.stringify({ location_id: +b.dataset.maploc, toast_guid: b.dataset.mapguid }) }); toast('✓ Mapped.'); renderIntegrations(); }
+      catch (e) { toast(e.message, true); b.disabled = false; }
+    });
   } catch (e) { toast(e.message, true); if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
 }
