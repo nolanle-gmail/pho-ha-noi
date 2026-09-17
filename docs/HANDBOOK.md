@@ -1387,10 +1387,12 @@ the thread stay); its recipients and attachments go with it.
 
 **Chat groups.** The Messages page also has a **💬 Chat** tab: persistent, membership-
 scoped group conversations (like channels), stored in `chat_groups` / `chat_group_members`
-/ `chat_messages`. **Everyone** can create a group from the staff list; a **🔍 search-by-name**
-box (type-ahead, like the message recipient search) filters the member picker in both the
-**New group** and **Add members** dialogs. **Managers and above** additionally get quick
-**add-by-location** and **add-by-role** builders. Only a
+/ `chat_messages`. **Everyone** can create a group from the staff list; the **New group** and
+**Add members** dialogs use the same **type-ahead recipient picker** as the message composer's
+"A specific person" — type a letter and a **dropdown of matching names** appears (prefix match
+on any word), click to add one or more as removable **chips**. **Managers and above**
+additionally get quick **add-by-location** and **add-by-role** builders (which feed the same
+chips). Only a
 group's **members** see and post in it; the whole thread is delivered live over the SSE
 stream (both apps). Everyone sees the groups they belong to, with unread counts
 (`chat_reads`). **Leadership (owner/admin/GM)** can switch to **All groups (audit)** to
