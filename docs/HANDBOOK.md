@@ -671,7 +671,7 @@ erDiagram
 
 ## 4. Table catalog
 
-### Management database — 51 tables
+### Management database — 58 tables
 
 | Table | Domain | Purpose |
 |---|---|---|
@@ -732,6 +732,11 @@ erDiagram
 | `sms_messages` | Messaging | One row per SMS blast a manager/owner composes (target, body, recipient & sent counts, provider) |
 | `sms_recipients` | Messaging | Per-person delivery record for a blast (phone + status: sent / logged / failed / no_phone) |
 | `push_subscriptions` | Messaging | Web Push subscriptions — one row per device a user enabled notifications on (endpoint + keys); dead endpoints auto-pruned |
+| `toast_locations` | Toast | Maps each location to its Toast restaurant GUID (+ cached name, auto-sync flag) |
+| `toast_sync_log` | Toast | One row per Toast pull (ping / orders / labor) — status, record count, window, timing |
+| `toast_orders` · `toast_checks` · `toast_payments` | Toast | Read-only mirror of Toast sales: orders → checks → payments, keyed by Toast GUID |
+| `toast_employees` | Toast | Toast staff roster, each matched to an app user (by email / phone / name) |
+| `toast_jobs` | Toast | Toast job catalog (title, tipped, wage) |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -767,6 +772,7 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
+| **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, and toggle auto-sync (read-only) | Owner/Admin |
 | **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
@@ -812,6 +818,33 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 > the **second period blank** for a single continuous period, or tick **Closed** for a dark
 > day. New locations default to the two-period lunch/dinner template. Stored per day in
 > `location_hours` (`open_time`/`close_time` + optional `open_time2`/`close_time2`).
+
+### Toast POS integration (🔌 Integrations)
+
+The platform pulls live data from **Toast** (the POS the restaurants run on) so sales
+and staff line up with everything else here. It is **read-only** — Toast stays the
+system of record; nothing is ever written back — and every pull is recorded in
+`toast_sync_log`. Credentials are a Toast **Standard API access** client
+(`TOAST_CLIENT_ID` / `TOAST_CLIENT_SECRET`, held as Fly secrets, never in code); each
+call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` GUID.
+
+- **Setup (owner/admin).** In **Integrations**, map each location to its Toast restaurant
+  GUID, **Ping** to verify the connection, then **Pull sales** for a day or range. Data
+  lands in mirror tables (`toast_orders` → `toast_checks` → `toast_payments`), idempotent
+  by Toast GUID so a re-pull just refreshes.
+- **Auto-sync.** Each mapped location has an **Auto** toggle (on by default): a background
+  sweep finalizes the prior business day once a day and re-pulls **today every ~20 min while
+  the store is open** (using its operating hours + a post-close grace), so the numbers stay
+  current on their own.
+- **On the dashboard.** A **Toast sales** panel on the Overview and manager dashboards shows
+  each mapped location's latest synced day — net sales, orders, guests, total. Sales reads
+  are manager-capable and **scoped** (a manager sees only their own store); mapping, syncing
+  and config stay owner/admin.
+- **Staff & jobs.** **Sync roster** pulls the Toast employee list and job catalog and
+  **matches each Toast employee to a person in this app** (by email → phone → name), so Toast
+  sales can be attributed to a real staffer. Unmatched people are listed to reconcile in
+  Staff. **Note:** clock-in/out is tracked **in this app, not Toast**, so there are no Toast
+  time entries to import — the timesheet stays authoritative here.
 
 ### Front Desk / Waitlist app (port 4002)
 
