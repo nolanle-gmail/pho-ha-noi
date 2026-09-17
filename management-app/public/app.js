@@ -358,6 +358,42 @@ function defaultAnFilters() {
 const moneyK = (n) => { n = Number(n) || 0; return n >= 1000 ? '$' + (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : '$' + Math.round(n); };
 const WD_SUN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// CSV export: build a matrix (array of rows) → download as a .csv (opens in Excel).
+function toCsv(matrix) {
+  const esc = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return '﻿' + matrix.map(r => r.map(esc).join(',')).join('\r\n');   // BOM so Excel reads UTF-8
+}
+function downloadCsv(filename, matrix) {
+  const blob = new Blob([toCsv(matrix)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+}
+function exportAnalytics(which) {
+  const d = S.anData; if (!d) return toast('Nothing to export yet — let the data load.', true);
+  const F = S.anFilters, tag = `${F.from}_${F.to}${F.loc ? '_loc' + F.loc : ''}`;
+  if (which === 'trend') {
+    const m = [['Period start', 'Net sales', 'Total', 'Tips', 'Orders', 'Guests']];
+    for (const r of d.trend.series) m.push([r.start, r.net, r.total, r.tips, r.orders, r.guests]);
+    downloadCsv(`phn-sales-trend-${d.trend.granularity}-${tag}.csv`, m);
+  } else if (which === 'locations') {
+    const m = [['Location', 'Net sales', 'Total', 'Tips', 'Orders', 'Avg check', 'Guests']];
+    for (const l of (d.locations || [])) m.push([shortLoc(l.name), l.net, l.total, l.tips, l.orders, l.avg_check, l.guests]);
+    downloadCsv(`phn-sales-by-location-${tag}.csv`, m);
+  } else if (which === 'items') {
+    const m = [['Item', 'Quantity', 'Revenue', 'Checks']];
+    for (const i of d.items.items) m.push([i.item_name, i.qty, i.revenue, i.checks]);
+    downloadCsv(`phn-top-items-${tag}.csv`, m);
+  } else if (which === 'patterns') {
+    const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const m = [['Day of week', 'Net sales', 'Days', 'Orders', 'Avg per day']];
+    for (const r of d.patterns.dow) m.push([wd[r.dow], r.net, r.days, r.orders, r.avg]);
+    m.push([], ['Hour (approx. PT)', 'Orders']);
+    for (const h of d.patterns.hours) m.push([h.hour, h.orders]);
+    downloadCsv(`phn-day-time-patterns-${tag}.csv`, m);
+  }
+}
+
 async function renderToastAnalytics() {
   const F = S.anFilters || (S.anFilters = defaultAnFilters());
   const isAdmin = roleScopeOf(S.user.role) === 'all';
@@ -372,17 +408,18 @@ async function renderToastAnalytics() {
       <span class="sched-filter-total" id="anRangeInfo"></span>
     </div>
     <div id="anKpis" class="kpis"></div>
-    <div class="section"><h3>Sales trend</h3><div id="anTrend"><div class="empty">Loading…</div></div></div>
-    ${isAdmin ? '<div class="section"><h3>By location</h3><div id="anLocs"><div class="empty">Loading…</div></div></div>' : ''}
+    <div class="section"><div class="row-between"><h3>Sales trend</h3><button class="btn sm ghost" data-anexport="trend" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anTrend"><div class="empty">Loading…</div></div></div>
+    ${isAdmin ? '<div class="section"><div class="row-between"><h3>By location</h3><button class="btn sm ghost" data-anexport="locations" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anLocs"><div class="empty">Loading…</div></div></div>' : ''}
     <div class="grid two" style="align-items:start">
-      <div class="section"><h3>Top items</h3><div id="anItems"><div class="empty">Loading…</div></div></div>
-      <div class="section"><h3>Day &amp; time patterns</h3><div id="anPatterns"><div class="empty">Loading…</div></div></div>
+      <div class="section"><div class="row-between"><h3>Top items</h3><button class="btn sm ghost" data-anexport="items" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anItems"><div class="empty">Loading…</div></div></div>
+      <div class="section"><div class="row-between"><h3>Day &amp; time patterns</h3><button class="btn sm ghost" data-anexport="patterns" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anPatterns"><div class="empty">Loading…</div></div></div>
     </div>`;
   const save = () => { try { localStorage.setItem('phn_an_filters', JSON.stringify(F)); } catch { /* ignore */ } loadAnalytics(); };
   $('anFrom').onchange = (e) => { F.from = e.target.value; save(); };
   $('anTo').onchange = (e) => { F.to = e.target.value; save(); };
   $('anGran').onchange = (e) => { F.gran = e.target.value; save(); };
   if ($('anLoc')) $('anLoc').onchange = (e) => { F.loc = e.target.value; save(); };
+  $('view').querySelectorAll('[data-anexport]').forEach(b => b.onclick = () => exportAnalytics(b.dataset.anexport));
   loadAnalytics();
 }
 
@@ -395,9 +432,10 @@ async function loadAnalytics() {
   try {
     const [sum, trend, items, pat] = await Promise.all([
       api('/toast/analytics/summary?' + qs), api('/toast/analytics/trends?' + qs + '&granularity=' + F.gran),
-      api('/toast/analytics/items?' + qs + '&limit=25'), api('/toast/analytics/patterns?' + qs),
+      api('/toast/analytics/items?' + qs + '&limit=100'), api('/toast/analytics/patterns?' + qs),
     ]);
     if (S.section !== 'salesanalytics') return;
+    S.anData = { summary: sum, trend, items, patterns: pat, locations: null };   // for CSV export
     if ($('anRangeInfo')) $('anRangeInfo').innerHTML = `${sum.days} day${sum.days === 1 ? '' : 's'} with sales · avg <strong>${money(sum.avg_per_day)}</strong>/day`;
     $('anKpis').innerHTML = [
       ['Net sales', money(sum.net)], ['Orders', (sum.orders || 0).toLocaleString()], ['Guests', (sum.guests || 0).toLocaleString()],
@@ -412,6 +450,7 @@ async function loadAnalytics() {
     if ($('anLocs')) {
       try {
         const d = await api('/toast/analytics/locations?' + qs);
+        if (S.anData) S.anData.locations = d.locations;
         const max = Math.max(1, ...d.locations.map(l => l.net));
         $('anLocs').innerHTML = d.locations.length ? `<div class="table-wrap"><table><thead><tr><th>Location</th><th>Net sales</th><th class="num">Orders</th><th class="num">Avg check</th><th class="num">Guests</th></tr></thead>
           <tbody>${d.locations.map(l => `<tr><td><strong>${esc(shortLoc(l.name))}</strong></td>
