@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 16, 2026_
+_Last updated: September 17, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -192,6 +192,8 @@ erDiagram
     int day_of_week
     text open_time
     text close_time
+    text open_time2
+    text close_time2
   }
 ```
 
@@ -679,7 +681,7 @@ erDiagram
 | `staff_documents` | People | Per-staff document holder — contracts, certificates, licenses, scans (bytes in the DB, each with a note) |
 | `staff_locations` | People | Additional stores a person can work at |
 | `locations` | Org | Restaurants + the central kitchen |
-| `location_hours` | Org | Per-day opening / closing times |
+| `location_hours` | Org | Per-day opening / closing times — up to two service periods (lunch + dinner) |
 | `floor_areas` | Floor | Named areas (Dining, Bar, Patio) per store |
 | `restaurant_tables` | Floor | Numbered tables with position, seats & live status |
 | `service_visits` | Service | The guest-visit spine: waiting → seated → done |
@@ -802,6 +804,14 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 > certificates, licenses and scans (images, PDF, Word/Excel/PowerPoint or text, 25 MB
 > each), each with a note; open, re-note or remove them later. Files are stored in
 > `staff_documents`; the same people who can edit a person can manage their documents.
+>
+> **Operating hours.** A location's **Details** tab lists opening hours for each day, and
+> owner/admin (or the store's manager) can **Edit** them. Each day supports **two service
+> periods** — e.g. lunch **11:00–15:00** and dinner **17:00–21:00** — shown as
+> `11:00–15:00, 17:00–21:00`. In the editor each day has two numbered time ranges; leave
+> the **second period blank** for a single continuous period, or tick **Closed** for a dark
+> day. New locations default to the two-period lunch/dinner template. Stored per day in
+> `location_hours` (`open_time`/`close_time` + optional `open_time2`/`close_time2`).
 
 ### Front Desk / Waitlist app (port 4002)
 
