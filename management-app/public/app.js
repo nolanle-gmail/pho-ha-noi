@@ -4585,6 +4585,7 @@ async function renderThread() {
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
+        ${m.sender_id === me && m.recipient_count ? `<div class="msg-receipt${m.read_count >= m.recipient_count ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipient_count ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipient_count}</div>` : ''}
       </div>`).join('')}</div>
     <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
       <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="thFiles"></label>
@@ -4592,6 +4593,7 @@ async function renderThread() {
     <div id="thFileNames" class="msg-attach-names"></div>`;
   $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThread }));
   $('view').querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
+  $('view').querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
   wireAttachInput('thFiles', 'thFileNames');
   const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
   $('thBack').onclick = backToList;
@@ -4611,6 +4613,23 @@ async function renderThread() {
       renderThread();
     } catch (e) { toast(e.message, true); $('thSend').disabled = false; }
   };
+}
+// Who has read a message I sent, and when — the read-receipt detail popup.
+async function showReceipts(msgId) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Read receipts</h3><div id="rcpBody" class="empty">Loading…</div><div class="actions"><button class="btn ghost" id="rcpClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('rcpClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  try {
+    const d = await api('/messages/' + msgId + '/receipts');
+    const readList = d.receipts.filter(r => r.is_read), pending = d.receipts.filter(r => !r.is_read);
+    const row = (r, showTime) => `<div class="rcp-row"><span>${esc(r.name)} <span class="badge ${ROLE_CHIP[r.role] || 'gray'}">${esc(roleLabel(r.role))}</span></span>${showTime && r.read_at ? `<span class="sub" style="color:var(--muted)">${msgTime(r.read_at)}</span>` : ''}</div>`;
+    $('rcpBody').innerHTML = `
+      <p class="sub" style="margin:.1rem 0 .6rem;color:var(--muted)">Read by <strong>${d.read_count}</strong> of ${d.total}.</p>
+      ${readList.length ? `<div class="rcp-sec"><div class="rcp-h">✓✓ Read</div>${readList.map(r => row(r, true)).join('')}</div>` : ''}
+      ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(r => row(r, false)).join('')}</div>` : ''}`;
+  } catch (e) { $('rcpBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 function msgTime(iso) {
   const d = new Date((iso || '').replace(' ', 'T') + 'Z');
@@ -4656,8 +4675,9 @@ async function renderSent() {
         </div>
         <div class="msg-subj">${esc(m.subject || '(no subject)')}</div>
         <div class="msg-body">${esc(m.body)}</div>
-        <div class="msg-meta">Read by ${m.read_count} of ${m.recipients}</div>
+        <div class="msg-meta msg-receipt${m.read_count >= m.recipients ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipients ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipients}</div>
       </div>`).join('')}</div>` : '<div class="empty">You haven’t sent any messages.</div>'}`;
+  $('view').querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
 }
 
 const MSG_LEADERSHIP = ['owner', 'admin', 'hr', 'general_manager'];
@@ -4780,11 +4800,21 @@ async function renderChatGroup(silent) {
   catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   refreshChatUnread();
   const me = d.me;
+  // "Seen by" receipts: other members whose read cursor has reached a given message.
+  const others = (d.reads || []).filter(r => String(r.user_id) !== String(me));
+  const seenReceipt = (mid) => {
+    if (!others.length) return '';
+    const seen = others.filter(r => r.last_read_id >= mid);
+    const names = seen.map(r => r.name).join(', ');
+    const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" title="${seen.length ? 'Seen by ' + esc(names) : 'Not seen yet'}">${label}</div>`;
+  };
   const stream = d.messages.map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
       ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
+      ${m.sender_id === me ? seenReceipt(m.id) : ''}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">💬 ${esc(d.name)}${d.is_audit ? ' <span class="badge gray">audit view</span>' : ''}${!d.is_active ? ' <span class="badge out">deleted</span>' : ''}</h2>

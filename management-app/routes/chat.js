@@ -122,7 +122,14 @@ router.get('/groups/:id/messages', (req, res) => {
     FROM chat_messages c JOIN users u ON u.id=c.sender_id
     WHERE c.group_id=? ORDER BY c.id ASC LIMIT 500`).all(g.id);
   if (member && messages.length) markRead(g.id, req.user.id, messages[messages.length - 1].id);
-  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, me: req.user.id, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), can_manage: canManageGroup(req.user, g), messages });
+  // Per-member read cursor (last_read_id) so the client can show "seen by" on each
+  // message the sender posted. Computed BEFORE this open bumps my own cursor above,
+  // but that only affects my row, which the client excludes for its own messages.
+  const reads = db.prepare(`SELECT m.user_id, u.name, u.role, COALESCE(r.last_read_id,0) AS last_read_id
+    FROM chat_group_members m JOIN users u ON u.id=m.user_id
+    LEFT JOIN chat_reads r ON r.group_id=m.group_id AND r.user_id=m.user_id
+    WHERE m.group_id=? ORDER BY u.name`).all(g.id);
+  res.json({ id: g.id, name: g.name, is_active: !!g.is_active, me: req.user.id, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), can_manage: canManageGroup(req.user, g), messages, reads });
 });
 
 // Post a message to a group. Members only (leadership audit is read-only).

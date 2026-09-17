@@ -557,6 +557,14 @@ tr:hover .order-hover { opacity: 1; }
 .thread-msg.mine { align-self: flex-end; background: var(--gold-soft); border-color: #f2d9a8; }
 .thread-meta { font-size: .76rem; color: var(--muted); font-weight: 600; margin-bottom: .25rem; display: flex; align-items: center; gap: .4rem; }
 .thread-body { white-space: pre-wrap; font-size: .95rem; }
+/* Read / seen receipts under a sender's own message */
+.msg-receipt { margin-top: .3rem; font-size: .72rem; font-weight: 600; color: var(--muted); cursor: default; }
+.msg-receipt[data-receipts] { cursor: pointer; }
+.msg-receipt[data-receipts]:hover { text-decoration: underline; }
+.msg-receipt.all { color: var(--ok, #15803d); }
+.rcp-sec { margin: .5rem 0 0; }
+.rcp-h { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .25rem; }
+.rcp-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .25rem 0; border-top: 1px solid var(--line-soft, #f0e8da); font-size: .86rem; }
 .reply-box { display: flex; gap: .6rem; align-items: flex-end; max-width: 720px; }
 .reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; }
 /* Message attachments (pictures & videos) */

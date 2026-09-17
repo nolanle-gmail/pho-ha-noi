@@ -143,7 +143,9 @@ router.get('/thread/:id', (req, res) => {
   const msgs = db.prepare(`
     SELECT m.id, m.subject, m.body, m.audience, m.created_at, m.sender_id,
            u.name AS sender_name, u.role AS sender_role,
-           (SELECT COUNT(*) FROM message_attachments a WHERE a.message_id=m.id) AS attachment_count
+           (SELECT COUNT(*) FROM message_attachments a WHERE a.message_id=m.id) AS attachment_count,
+           (SELECT COUNT(*) FROM message_recipients r WHERE r.message_id=m.id) AS recipient_count,
+           (SELECT COUNT(*) FROM message_recipients r WHERE r.message_id=m.id AND r.is_read=1) AS read_count
     FROM messages m JOIN users u ON m.sender_id=u.id
     WHERE COALESCE(m.thread_id, m.id)=?
       AND (m.sender_id=? OR m.id IN (SELECT message_id FROM message_recipients WHERE user_id=?))
@@ -193,6 +195,17 @@ router.get('/sent', (req, res) => {
 router.post('/:id/read', (req, res) => {
   db.prepare(`UPDATE message_recipients SET is_read=1, read_at=datetime('now') WHERE message_id=? AND user_id=? AND is_read=0`).run(req.params.id, req.user.id);
   res.json({ success: true });
+});
+
+// Read receipts for a message I sent — who has read it and when (sender only).
+router.get('/:id/receipts', (req, res) => {
+  const m = db.prepare(`SELECT sender_id FROM messages WHERE id=?`).get(req.params.id);
+  if (!m) return res.status(404).json({ error: 'No such message.' });
+  if (m.sender_id !== req.user.id) return res.status(403).json({ error: 'Only the sender can see read receipts.' });
+  const receipts = db.prepare(`SELECT u.name, u.role, mr.is_read, mr.read_at
+    FROM message_recipients mr JOIN users u ON u.id=mr.user_id WHERE mr.message_id=?
+    ORDER BY mr.is_read DESC, mr.read_at, u.name`).all(req.params.id);
+  res.json({ receipts, read_count: receipts.filter(r => r.is_read).length, total: receipts.length });
 });
 
 // Deliver a message to a set of recipients. Returns the message id.
