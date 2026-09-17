@@ -770,13 +770,13 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | Module | What's inside | Who |
 |---|---|---|
 | **Overview** | KPI tiles, today's roster, schedule health, needs-attention panel | All (manager dashboard for managers) |
-| **Service** | 🛎️ Live guest-visit board (waitlist → seated → in service → paying → done) + servers-today report, and an **⏳ Active waitlist** tab (parties still waiting, longest first, with Seat/Left). All-location roles get an All/by-location selector; location roles are pinned to their store | Owner/Admin/HR/GM all · Manager+ own store |
+| **Service** | 🛎️ Live guest-visit board (waitlist → seated → in service → paying → done) + servers-today report, and an **⏳ Active waitlist** tab showing the **Front Desk app queue** (guest, party, waited, quoted, phone, source, notified). All-location roles get an All/by-location selector; location roles are pinned to their store | Owner/Admin/HR/GM all · Manager+ own store |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
 | **Staff** | Directory (A–Z, searchable by name / phone — **including a person's previous login numbers** — / code / email / role), full HR-profile edit, **Jobs** tab (job/task catalog), Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
 | **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
-| **Reports** | Items, sales, analytics, timesheets, payments — location + date filters | Reports tier |
+| **Reports** | Items, sales, analytics, timesheets, payments, **breaks**, and **Waitlist** (every guest ever on the Front Desk waitlist — phone, SMS opt-in, status, texts sent — with CSV export for promotions; manage cap) — location + date filters | Reports tier |
 | **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix) and day/time patterns from the stored Toast history — no live pull | Manager+ (own store) · Owner/Admin all |
 | **Orders** | 🧾 Browse a day's Toast orders (time, table, server, guests, items, net, tips, status) and open any order's full detail | Manager+ (own store) · Owner/Admin all |
 | **Service Flow** | ⏱️ Live table state from open Toast orders (in service / check-on-table), auto-pulled every 5 min | Manager+ (own store) · Owner/Admin all |
@@ -848,7 +848,9 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   each mapped location's latest synced day — net sales, orders, guests, total — with a
   **"⏱ Last pulled from Toast"** timestamp (Pacific, plus a relative "ago") so it's clear how
   fresh the numbers are. Sales reads are manager-capable and **scoped** (a manager sees only
-  their own store); mapping, syncing and config stay owner/admin.
+  their own store); mapping, syncing and config stay owner/admin. The whole dashboard
+  **auto-refreshes every 2 minutes** (pausing while a modal is open) so KPIs and this
+  timestamp stay current without a manual reload.
 - **Staff & jobs.** **Sync roster** pulls the Toast employee list and job catalog and
   **matches each Toast employee to a person in this app** (by email → phone → name), so Toast
   sales can be attributed to a real staffer. Unmatched people are listed to reconcile in
@@ -902,7 +904,16 @@ The authenticated host station, scoped to the signed-in host's store (owners get
 store switcher). Runs the live queue with waited time and quoted wait, add-party,
 notify/page, seat (onto a table) and mark-left, plus live stats, "handled today"
 history, guest history & daily reports (owner/admin), and an access/activity log
-(owner).
+(owner). Every guest notification (the join confirmation when they opt in, and each
+"table ready" page) is logged in `notify_log`.
+
+> **Management view of the queue.** The Front Desk queue lives in this app's own database.
+> A read-only **service-key feed** (`/api/wl-feed`: active queue, full history, per-guest
+> notifications) lets the **Management** app show it — the Service → Active Waitlist tab
+> (live queue) and the Reports → Waitlist history (every guest, phone, SMS opt-in, texts
+> sent, with CSV export for promotions). Location IDs are aligned across both apps, and the
+> Management side is role-scoped; only guests who gave a phone **and** opted in count as
+> contactable, so the marketing export respects SMS consent.
 
 ### Guest Check-in kiosk (no login)
 
