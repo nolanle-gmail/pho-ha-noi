@@ -1203,12 +1203,32 @@ async function renderOverview() {
       <div class="card"><div class="label">Below minimum</div><div class="value ${dash.low_stock ? 'warn' : ''}">${dash.low_stock}</div></div>
       <div class="card"><div class="label">Expiring ≤ 7 days</div><div class="value ${dash.expiring_7d ? 'bad' : ''}">${dash.expiring_7d}</div></div>` : ''}
     </div>
+    <div id="toastSalesPanel"></div>
     <div class="section"><h3>Jump to a section</h3>
       <div class="quick-grid">
         ${quick.map(([k, icon, label]) => `<button class="quick-card" data-goto="${k}"><span class="q-icon">${icon}</span><span>${esc(label)}</span></button>`).join('')}
       </div>
     </div>`;
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+  fillToastSales('toastSalesPanel');
+}
+
+// Toast sales panel for a dashboard: each mapped location's latest synced day.
+// Silently renders nothing if Toast isn't set up / no location is mapped.
+async function fillToastSales(elId) {
+  const el = $(elId); if (!el) return;
+  let d; try { d = await api('/toast/sales/overview'); } catch { return; }
+  const rows = (d.locations || []).filter(r => r.summary);
+  if (!rows.length) return;
+  const card = (r) => { const s = r.summary; return `<div class="card tsale-card">
+    <div class="label">${esc(shortLoc(r.location_name))} <span class="sub" style="color:var(--muted)">· ${esc(fmtDay(r.business_date))}</span></div>
+    <div class="value">${money(s.net_sales)}</div>
+    <div class="sub" style="color:var(--muted);font-size:.78rem">${s.orders} orders · ${s.guests} guests · ${money(s.total)} total</div>
+  </div>`; };
+  el.innerHTML = `<div class="section"><div class="row-between"><h3>🔌 Toast sales <span style="font-weight:400;color:var(--muted);font-size:.82rem">— latest synced day per location</span></h3>
+      ${myCap('org') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
+    <div class="kpis tsale-grid">${rows.map(card).join('')}</div></div>`;
+  el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
 }
 
 // ── Manager dashboard (the Overview a manager lands on) ──────────────────────
@@ -1286,6 +1306,7 @@ async function renderManagerDashboard() {
       ${stat('Low stock', reorder.length, reorder.length ? 'warn' : '', 'inventory')}
       ${stat('Equipment issues', equipIssues.length + serviceDue.length, (equipIssues.length + serviceDue.length) ? 'warn' : '')}
     </div>
+    <div id="toastSalesPanel"></div>
 
     ${otPending.length ? `<div class="section" style="border-left:4px solid var(--red)">
       <div class="row-between"><h3 style="margin:0;color:var(--red)">⏱ Overtime needs approval</h3>
@@ -1373,6 +1394,7 @@ async function renderManagerDashboard() {
   $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
   $('view').querySelectorAll('[data-daytasks]').forEach(b => b.onclick = () => openLocationDetail(loc, 'daytasks'));
   $('view').querySelectorAll('[data-timeclock]').forEach(b => b.onclick = () => openLocationDetail(loc, 'timeclock'));
+  fillToastSales('toastSalesPanel');
 }
 
 // ── My Schedule (a staff member's own week, read-only, with OT warnings) ─────

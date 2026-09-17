@@ -3,14 +3,18 @@
 // read-only; credentials live in env / Fly secrets (see lib/toast.js), never here.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const toast = require('../lib/toast');
 const toastSync = require('../lib/toastSync');
 
 const router = express.Router();
 router.use(verifyToken);
-router.use(requireRole(ROLES.ADMIN));   // owner / admin only — this is financial config
+// Config, mapping and sync triggers are owner/admin only (financial config);
+// read-only sales endpoints allow managers too, scoped to their own location.
+const ADMIN = requireRole(ROLES.ADMIN);
+const MANAGE = requireRole(ROLES.MANAGE);
+const canSeeLoc = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
 
 // Pull a human-readable restaurant name out of Toast's restaurant-info response,
 // whose shape can vary (general.name / locationName / name).
@@ -26,7 +30,7 @@ const mappingsWithLoc = () => db.prepare(`
   ORDER BY l.name`).all();
 
 // Whether Toast is configured, the target host, current mappings, and recent syncs.
-router.get('/status', (req, res) => {
+router.get('/status', ADMIN, (req, res) => {
   res.json({
     configured: toast.toastEnabled(),
     host: toast.toastHost(),
@@ -39,7 +43,7 @@ router.get('/status', (req, res) => {
 // Verify connectivity: authenticate and fetch a restaurant's general info. Proves the
 // credentials + a restaurant GUID work, WITHOUT importing any operational data.
 // Body: { guid } — or omit to ping the first configured mapping.
-router.post('/ping', async (req, res) => {
+router.post('/ping', ADMIN, async (req, res) => {
   if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured. Set TOAST_CLIENT_ID and TOAST_CLIENT_SECRET as Fly secrets.' });
   const guid = String(req.body.guid || (mappingsWithLoc()[0] || {}).toast_guid || '').trim();
   if (!guid) return res.status(400).json({ error: 'No restaurant GUID given and none mapped yet. Pass { "guid": "…" } or add a mapping first.' });
@@ -58,11 +62,11 @@ router.post('/ping', async (req, res) => {
 });
 
 // List the current location↔restaurant mappings.
-router.get('/mappings', (req, res) => res.json(mappingsWithLoc()));
+router.get('/mappings', ADMIN, (req, res) => res.json(mappingsWithLoc()));
 
 // Map (or re-map) one of our locations to a Toast restaurant GUID. Best-effort:
 // also caches the restaurant name from Toast when reachable.
-router.post('/map', async (req, res) => {
+router.post('/map', ADMIN, async (req, res) => {
   const location_id = parseInt(req.body.location_id, 10);
   const toast_guid = String(req.body.toast_guid || '').trim();
   if (!location_id || !toast_guid) return res.status(400).json({ error: 'location_id and toast_guid are required.' });
@@ -81,7 +85,7 @@ router.post('/map', async (req, res) => {
 
 // Pull sales orders for a location and business date (YYYY-MM-DD) into the mirror.
 // Optional date_from/date_to pulls a range (capped at 31 days). Read-only.
-router.post('/sync/orders', async (req, res) => {
+router.post('/sync/orders', ADMIN, async (req, res) => {
   if (!toast.toastEnabled()) return res.status(400).json({ error: 'Toast is not configured.' });
   const location_id = parseInt(req.body.location_id, 10);
   if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
@@ -106,16 +110,33 @@ router.post('/sync/orders', async (req, res) => {
   } catch (e) { res.status(502).json({ ok: false, error: e.message }); }
 });
 
-// Read the mirrored per-day sales summary (no Toast call).
-router.get('/sales', (req, res) => {
+// Read the mirrored per-day sales summary for one location (no Toast call).
+router.get('/sales', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);
   const business_date = String(req.query.business_date || '');
   if (!location_id || !/^\d{4}-\d{2}-\d{2}$/.test(business_date)) return res.status(400).json({ error: 'location_id and business_date (YYYY-MM-DD) are required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
   res.json(toastSync.salesSummary(location_id, business_date));
 });
 
+// Dashboard roll-up: each mapped location's most recently synced business day and
+// its sales summary. Scoped to what the caller can see (managers: their own store).
+router.get('/sales/overview', MANAGE, (req, res) => {
+  const all = seesAllLocations(req.user.role);
+  let maps = db.prepare(`SELECT tl.location_id, tl.toast_name, l.name AS location_name
+    FROM toast_locations tl JOIN locations l ON l.id=tl.location_id WHERE tl.active=1`).all();
+  if (!all) maps = maps.filter(m => String(m.location_id) === String(req.user.location_id));
+  const latest = db.prepare(`SELECT MAX(business_date) d FROM toast_orders WHERE location_id=?`);
+  const rows = maps.map(m => {
+    const d = (latest.get(m.location_id) || {}).d;
+    return { location_id: m.location_id, location_name: m.location_name, toast_name: m.toast_name,
+      business_date: d || null, summary: d ? toastSync.salesSummary(m.location_id, d) : null };
+  });
+  res.json({ locations: rows });
+});
+
 // Remove a mapping.
-router.delete('/map/:id', (req, res) => {
+router.delete('/map/:id', ADMIN, (req, res) => {
   const row = db.prepare(`SELECT * FROM toast_locations WHERE id=?`).get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Mapping not found.' });
   db.prepare(`DELETE FROM toast_locations WHERE id=?`).run(row.id);
