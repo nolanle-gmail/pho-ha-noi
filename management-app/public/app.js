@@ -1719,6 +1719,29 @@ const PAID_LEAVE_KINDS = ['sick', 'vacation'];   // vacation = PTO, sick = paid 
 // saturation/lightness keeps white chip text legible for every hue.
 function jobHue(name) { let h = 0; const s = String(name || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
 function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%)`, bd: `hsl(${h} 55% 30%)` }; }
+// Schedule row ordering. Staff are grouped by the job they're assigned, front-of-house
+// leadership first through kitchen and cleanup last, then everything else. Each tier's
+// keywords are matched (case-insensitive substring) against a job or role name; the
+// first tier that matches wins, so more specific tiers are listed before broader ones.
+const SCHED_ROLE_ORDER = [
+  ['shift lead', 'lead', 'leader'],                                                     // 1 Shift lead / Lead
+  ['host'],                                                                             // 2 Host
+  ['server', 'back service', 'back server', 'food runner', 'runner', 'waiter', 'waitstaff', 'serve', 'food'], // 3 Server / Back Server / Food Runner
+  ['barista', 'bartender', 'backbar'],                                                  // 4 Barista / Bartender
+  ['busser', 'bus'],                                                                    // 5 Busser / Bus
+  ['dishwasher', 'dish'],                                                               // 6 Dishwasher
+  ['line cook', 'cook line', 'cook', 'kitchen', 'pho', 'nuong', 'cuon', 'expo', 'pastry'], // 7 Cook line / Line Cook
+  ['clean up', 'cleanup'],                                                              // 8 Clean up / Clean Up LB
+];
+function schedJobRank(name) {
+  const n = String(name || '').toLowerCase().trim();
+  if (!n) return 99;
+  if (n === 'ser') return 3;                                    // "Ser" is a server shorthand
+  for (let i = 0; i < SCHED_ROLE_ORDER.length; i++) {
+    if (SCHED_ROLE_ORDER[i].some(k => n.includes(k))) return i + 1;
+  }
+  return 99;                                                    // everything else, after
+}
 const shiftWorkedHours = (s) => isLeaveShift(s) ? 0 : shiftHours(s.start_time, s.end_time);
 // Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
 // as the manager needs, each within the shift).
@@ -1813,6 +1836,19 @@ async function renderLocSchedule() {
   const workedAll = (st) => sumHours(allShifts(st));                   // worked hours across all locations
   const paidAll = (st) => workedAll(st) + sumPaidLeaveHours(allShifts(st));
   const otherLocCount = (st) => new Set(allShifts(st).filter(s => !inThisLoc(s)).map(s => s.location_id)).size;
+  // Sort key for a staff row: the highest-priority job they're assigned at THIS
+  // location in view (leads first … cleanup last; unlisted jobs sort after as
+  // "everything else"). Only when they have no job assigned here do we fall back to
+  // their account role — so an assigned "everything else" job still sorts last.
+  const staffJobRank = (st) => {
+    const jobbed = hereShifts(st).filter(s => !isLeaveShift(s) && (s.jobs || []).length);
+    if (jobbed.length) {
+      let best = 99;
+      for (const s of jobbed) for (const j of s.jobs) { const r = schedJobRank(j.name); if (r < best) best = r; }
+      return best;
+    }
+    return schedJobRank([st.role, roleLabel(st.role)].join(' '));   // no assigned job → use role
+  };
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -1879,6 +1915,9 @@ async function renderLocSchedule() {
   let shownStaff = data.staff;
   if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
   if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0);   // scheduled at this location
+  // Order rows by assigned job (leads first … cleanup last, everything else after),
+  // then alphabetically by name within the same tier.
+  shownStaff = shownStaff.slice().sort((a, b) => staffJobRank(a) - staffJobRank(b) || (a.name || '').localeCompare(b.name || ''));
   const totH = shownStaff.reduce((t, s) => t + paidHere(s), 0);
   const totLeave = shownStaff.reduce((t, s) => t + leaveHere(s), 0);
   const totPay = shownStaff.reduce((t, s) => t + paidHere(s) * (Number(s.hourly_rate) || 0), 0);
