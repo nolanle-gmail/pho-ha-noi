@@ -30,10 +30,13 @@ async function fwd(req, res, method, path, body) {
 
 router.get('/staff', (req, res) => fwd(req, res, 'GET', '/staff' + (req.query.location_id ? `?location_id=${encodeURIComponent(req.query.location_id)}` : '')));
 router.get('/active', (req, res) => fwd(req, res, 'GET', '/active'));
+router.get('/inbox', (req, res) => fwd(req, res, 'GET', '/inbox'));
 router.get('/sent', (req, res) => fwd(req, res, 'GET', '/sent'));
 router.get('/:id/acks', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.id)}/acks`));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));
 router.post('/:id/ack', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/ack`, {}));
+router.post('/:id/claim', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/claim`, {}));
+router.post('/:id/flow', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/flow`, { action: req.body && req.body.action }));
 router.post('/:id/complete', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/complete`, {}));
 router.post('/:id/close', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/close`, {}));
 

@@ -6,18 +6,15 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
-const { emitMessages, onMessages, onAlert, onAlertAck, onChat, onTaskComment } = require('../lib/events');
+const { emitMessages, onMessages, onAlert, onAlertAck, onChat, onTaskComment, emitReaction, onReaction } = require('../lib/events');
 const { pushToUsers } = require('../lib/push');
+const { attachReactions, toggleReaction, markReactionUnseen, clearReactionUnseen, unseenReactionCount } = require('../lib/reactions');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
-// Message attachments (pictures & videos) — stored as bytes, with per-kind caps.
-const MAX_IMG = parseInt(process.env.MESSAGE_IMG_MAX || '', 10) || 10 * 1024 * 1024; // 10 MB
-const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024; // 25 MB
-const MAX_ATTACH = parseInt(process.env.MESSAGE_ATTACH_MAX || '', 10) || 10;          // per message
-const OK_IMG = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
-const OK_VID = /^video\/(mp4|quicktime|webm|ogg|3gpp|x-m4v|x-matroska)$/i;
+// Message attachments — images, videos, and general files (docs/PDF/etc.) — stored as bytes.
+const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG } = require('../lib/attachments');
 
 // Resolve the acting user from a service key (+ ?as=email) or a query JWT.
 // EventSource can't send headers, so the live stream authenticates this way.
@@ -69,8 +66,14 @@ router.get('/stream', (req, res) => {
       try { res.write(`data: ${JSON.stringify({ type: 'task_comment', task_id: t.task_id })}\n\n`); } catch { /* closed */ }
     }
   });
+  // Someone reacted to a message/chat I'm part of → live toast + the bubble updates.
+  const unsubRxn = onReaction((p) => {
+    if ((p.user_ids || []).map(Number).includes(Number(user.id))) {
+      try { res.write(`data: ${JSON.stringify({ type: 'reaction', kind: p.kind, target_id: p.target_id, thread_id: p.thread_id, group_id: p.group_id, emoji: p.emoji, by_name: p.by_name })}\n\n`); } catch { /* closed */ }
+    }
+  });
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
-  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); unsubTaskComment(); });
+  req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); unsubTaskComment(); unsubRxn(); });
 });
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>
@@ -100,7 +103,8 @@ router.get('/recipients', (req, res) => {
 
 // Unread count (drives the badge) — archived conversations don't count.
 router.get('/unread-count', (req, res) => {
-  res.json({ count: db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0 AND archived=0`).get(req.user.id).c });
+  const msgs = db.prepare(`SELECT COUNT(*) c FROM message_recipients WHERE user_id=? AND is_read=0 AND archived=0`).get(req.user.id).c;
+  res.json({ count: msgs + unseenReactionCount('message', req.user.id) });   // + conversations with an unseen reaction
 });
 
 // Inbox — one row per conversation (collapsed), showing the latest message I
@@ -155,7 +159,33 @@ router.get('/thread/:id', (req, res) => {
   db.prepare(`UPDATE message_recipients SET is_read=1, read_at=datetime('now')
               WHERE user_id=? AND is_read=0 AND message_id IN (SELECT id FROM messages WHERE COALESCE(thread_id, id)=?)`)
     .run(req.user.id, tid);
+  clearReactionUnseen('message', tid, req.user.id);   // opening the thread clears its reaction badge
+  attachReactions('message', msgs, req.user.id);
   res.json({ thread_id: tid, subject: msgs[0].subject, messages: msgs, me: req.user.id });
+});
+
+// Toggle an emoji reaction on a direct message (tapback). Only a participant (the
+// sender or a recipient) may react. Returns the message's updated reaction summary.
+router.post('/:id/react', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const emoji = String(req.body.emoji || '');
+  const m = id && db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(id);
+  if (!m) return res.status(404).json({ error: 'Message not found.' });
+  const part = Number(m.sender_id) === Number(req.user.id) ||
+    db.prepare(`SELECT 1 FROM message_recipients WHERE message_id=? AND user_id=?`).get(id, req.user.id);
+  if (!part) return res.status(403).json({ error: 'Not your conversation.' });
+  let reacted; try { reacted = toggleReaction('message', id, req.user.id, emoji); } catch (e) { return res.status(400).json({ error: e.message }); }
+  if (reacted) {   // notify the conversation (sender + everyone in it), not the reactor
+    const recips = db.prepare(`SELECT user_id FROM message_recipients WHERE message_id=?`).all(id).map(r => Number(r.user_id));
+    const audience = [...new Set([Number(m.sender_id), ...recips])].filter(uid => uid !== Number(req.user.id));
+    const meta = db.prepare(`SELECT COALESCE(thread_id,id) AS tid FROM messages WHERE id=?`).get(id);
+    markReactionUnseen('message', meta.tid, audience);   // bump each person's Messages badge
+    try { emitReaction({ user_ids: audience, kind: 'message', target_id: id, thread_id: meta.tid, emoji, by_name: req.user.name }); } catch { /* best-effort */ }
+    // OS push to EVERYONE in the conversation, formatted like a message, deep-linking to it.
+    try { pushToUsers(audience, { title: `${emoji} ${req.user.name} reacted`, body: 'reacted to a message — tap to open', tag: 'rxn-message-' + meta.tid, url: '/?n=msg&t=' + meta.tid }); } catch { /* best-effort */ }
+  }
+  const rows = [{ id }]; attachReactions('message', rows, req.user.id);
+  res.json({ success: true, reacted, reactions: rows[0].reactions });
 });
 
 // Mark a conversation unread again (its latest message I received).
@@ -316,25 +346,24 @@ function canSeeMessage(userId, msgId) {
   return db.prepare(`SELECT 1 FROM message_recipients WHERE message_id=? AND user_id=?`).get(msgId, userId) ? m : false;
 }
 
-// Attach an image or video to a message you sent (raw bytes; Content-Type = the
-// file's type). Up to MAX_ATTACH per message; images and videos have size caps.
-router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_VID }), (req, res) => {
+// Attach an image, video or file to a message you sent (raw bytes; Content-Type = the
+// file's type, ?filename=…). Up to MAX_ATTACH per message; each kind has its own size cap.
+router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_ANY }), (req, res) => {
   const m = db.prepare(`SELECT id, sender_id FROM messages WHERE id=?`).get(req.params.id);
   if (!m) return res.status(404).json({ error: 'Message not found.' });
   if (String(m.sender_id) !== String(req.user.id)) return res.status(403).json({ error: 'You can only attach to your own message.' });
   const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-  const kind = OK_IMG.test(mime) ? 'image' : OK_VID.test(mime) ? 'video' : null;
-  if (!kind) return res.status(415).json({ error: 'Attach an image (JPG, PNG, WEBP, HEIC, GIF) or video (MP4, MOV, WEBM).' });
+  const filename = String(req.query.filename || '').slice(0, 200) || null;
+  const cls = classify(mime, filename);
+  if (!cls) return res.status(415).json({ error: REJECT_MSG });
   const bytes = req.body;
   if (!Buffer.isBuffer(bytes) || !bytes.length) return res.status(400).json({ error: 'No file received.' });
-  const cap = kind === 'video' ? MAX_VID : MAX_IMG;
-  if (bytes.length > cap) return res.status(413).json({ error: `${kind === 'video' ? 'Video' : 'Image'} too large (max ${Math.round(cap / 1048576)} MB).` });
+  if (bytes.length > cls.cap) return res.status(413).json({ error: `That ${cls.kind} is too large (max ${Math.round(cls.cap / 1048576)} MB).` });
   const count = db.prepare(`SELECT COUNT(*) n FROM message_attachments WHERE message_id=?`).get(m.id).n;
   if (count >= MAX_ATTACH) return res.status(409).json({ error: `Up to ${MAX_ATTACH} attachments per message.` });
-  const filename = String(req.query.filename || '').slice(0, 200) || null;
   const info = db.prepare(`INSERT INTO message_attachments (message_id, kind, mime, bytes, byte_size, filename) VALUES (?,?,?,?,?,?)`)
-    .run(m.id, kind, mime, bytes, bytes.length, filename);
-  res.json({ success: true, id: Number(info.lastInsertRowid), kind, count: count + 1, byte_size: bytes.length });
+    .run(m.id, cls.kind, mime, bytes, bytes.length, filename);
+  res.json({ success: true, id: Number(info.lastInsertRowid), kind: cls.kind, count: count + 1, byte_size: bytes.length });
 });
 
 // List a message's attachments (metadata only). Any participant.
@@ -351,12 +380,15 @@ router.get('/:id/attachment/:aid', (req, res) => {
   const m = canSeeMessage(req.user.id, req.params.id);
   if (m === null) return res.status(404).json({ error: 'Message not found.' });
   if (!m) return res.status(403).json({ error: 'Not part of this conversation.' });
-  const a = db.prepare(`SELECT mime, bytes FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
+  const a = db.prepare(`SELECT kind, mime, bytes, filename FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
   if (!a) return res.status(404).json({ error: 'No such attachment.' });
   const buf = Buffer.from(a.bytes);
   res.setHeader('Content-Type', a.mime);
   res.setHeader('Content-Length', buf.length);
   res.setHeader('Cache-Control', 'private, max-age=300');
+  // Documents download (with their name); images/videos render inline.
+  const dispo = a.kind === 'file' ? 'attachment' : 'inline';
+  res.setHeader('Content-Disposition', `${dispo}${a.filename ? `; filename="${a.filename.replace(/[\r\n"]/g, '')}"` : ''}`);
   res.end(buf);
 });
 

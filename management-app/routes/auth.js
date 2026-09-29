@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { signToken, verifyToken, publicRoles, ROLE_DEFS } = require('../lib/auth');
+const { signToken, verifyToken, publicRoles, ROLE_DEFS, seesAllLocations } = require('../lib/auth');
 const roleCaps = (role) => (ROLE_DEFS[role] && Array.isArray(ROLE_DEFS[role].caps)) ? ROLE_DEFS[role].caps : [];
 const { logLogin } = require('../lib/activity');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
@@ -55,6 +55,27 @@ router.post('/change-password', verifyToken, (req, res) => {
   }
   db.prepare(`UPDATE users SET password_hash=? WHERE id=?`).run(bcrypt.hashSync(String(new_password), 10), req.user.id);
   res.json({ success: true });
+});
+
+// Service-key: validate an employee code for the no-login kiosks (Front Desk / Service Flow) and
+// return the user, plus whether they're assigned to a given location. No password — the physical
+// tablet + employee code is the trust model, same as the clock/scanner kiosks. Used by the
+// Waitlist app to mint a Front-Desk session for the combined /sflow page.
+const KIOSK_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+router.post('/verify-code', (req, res) => {
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (!key || key !== KIOSK_KEY) return res.status(401).json({ ok: false, error: 'unauthorized' });
+  const code = String((req.body && req.body.code) || '').trim();
+  if (!/^[A-Za-z0-9-]{6,20}$/.test(code)) return res.json({ ok: false });
+  const u = db.prepare(`SELECT id, name, email, role, location_id FROM users WHERE employee_code=? AND is_active=1`).get(code);
+  if (!u) return res.json({ ok: false });
+  let authorized = true;
+  const locId = parseInt(req.body && req.body.location_id, 10);
+  if (locId) {
+    authorized = seesAllLocations(u.role) || String(u.location_id) === String(locId)
+      || !!db.prepare(`SELECT 1 FROM staff_locations WHERE user_id=? AND location_id=?`).get(u.id, locId);
+  }
+  res.json({ ok: true, user: u, authorized });
 });
 
 module.exports = router;

@@ -39,6 +39,7 @@ router.post('/thread/:id/archive', (req, res) => fwd(req, res, 'POST', `/thread/
 router.post('/thread/:id/unarchive', (req, res) => fwd(req, res, 'POST', `/thread/${encodeURIComponent(req.params.id)}/unarchive`));
 router.post('/:id/read', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/read`));
 router.post('/:id/reply', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/reply`, req.body));
+router.post('/:id/react', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.id)}/react`, { emoji: req.body && req.body.emoji }));
 router.post('/', (req, res) => fwd(req, res, 'POST', '/', req.body));
 
 // Attachments (pictures & videos). List is JSON; upload and download stream bytes.

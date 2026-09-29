@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 17, 2026_
+_Last updated: September 29, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -328,10 +328,42 @@ erDiagram
 
 ### 3.4 Time clock, overtime & approvals
 
+**Punch photos.** The clock kiosk captures a still from the tablet's front camera when a
+staffer clocks **in or out** (a `getUserMedia` frame → ~40 KB JPEG), stored per entry in
+`time_entry_photos` (`kind` = in/out, image `bytes` in the DB, like task photos) to deter
+buddy-punching. It's **best-effort** — if the camera is unavailable or access is denied, the
+punch still succeeds without a photo, so a broken camera never blocks a shift. The kiosk
+shows a live preview and the notice *"A photo is taken when you clock in or out."* Managers
+review them two ways: a **📷 thumbnail on each Time Clock board entry** (in and out), and a
+**📷 per-staff drill-in on the Timesheet report** showing that person's punches over the
+range. Photos serve JWT-protected and location-scoped via `GET /api/timeclock/photo/:id`;
+`GET /api/timeclock/punch-photos?user_id&start&end&location_id` lists them. A background
+sweep **auto-purges photos older than 90 days** (override via `PUNCH_PHOTO_RETENTION_DAYS`;
+runs at startup then daily) so image bytes don't accumulate — the time entries themselves
+(hours) are kept for payroll history.
+
 A `time_entries` row is one work day: clock-in snapshots the scheduled span,
 clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager's
 `ot_approvals` sign-off (which can be escalated to Owner / GM / Admin); managers can
 `time_adjustments` (rounding) and finally `timesheet_approvals` a whole period.
+
+**Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
+`time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
+filterable by **location or all locations** + a date range. A **Run report** button
+refreshes it, and **CSV** / **Excel** (`.xls`) export buttons hand the finance team a
+per-staff sheet — name, employee code, role, location, days, total/regular/OT/double-time
+hours, hourly rate and gross pay — plus a **gross-pay-by-location** summary with a grand
+total, for running payroll.
+
+**Overtime** follows the platform's California daily rule (identical to the Time Clock
+payroll export's `daySplit`): regular ≤ 8h/day, **OT 1.5×** for 8–12h, **double-time 2×**
+beyond 12h — computed per day, then rolled up. The **OT hrs** column combines OT+DT hours;
+gross pay applies the correct multipliers. Each day's pay is attributed to the location it
+was worked at, so a staffer who covers two stores contributes to each store's total (their
+row shows their primary store). Gross pay is 0 where a staffer's `hourly_rate` is unset.
+`GET /api/reports/timesheets?location_id&start&end` → `by_staff`, `by_location`,
+`total_hours`, `total_ot_hours`, `total_labor_cost`. (The legacy `timesheets` table is
+unused — the clock never wrote to it, which is why the report was previously blank.)
 
 ```mermaid
 erDiagram
@@ -446,6 +478,214 @@ erDiagram
     real variance
   }
 ```
+
+### 3.5b Barcode scanning
+
+Each inventory item carries an optional `barcode` (the retail **UPC-A / EAN-13
+GTIN** printed on the product). We **reuse the existing manufacturer barcode** — no
+in-house label system — so any item bought from a supermarket, Costco or a supplier
+can be scanned straight into stock.
+
+**A barcode is scoped per location, not global.** The *same* barcode (e.g. one bottle of
+soy sauce's UPC) is a **separate inventory record at the Central Kitchen and at each of the 10
+stores** — 11 rows sharing that GTIN, each with its own on-hand, cost and lots — and a scan
+at a location resolves to that location's record. What's enforced is **no two items with the
+same barcode inside one location**: create, edit and link all reject a same-location barcode
+clash (`WHERE location_id=? AND barcode=?`) with a message pointing you to scan the existing
+item instead. Central Kitchen barcodes replicate to store copies with the rest of the master
+catalog.
+
+**The Glossary — a shared product dictionary (2026-09-23 redesign).** There are now two
+distinct things, on two tabs:
+
+- **Items** (formerly the "Glossary" tab) — the **per-location stock list** (the `inventory`
+  table for the selected location: on-hand, cost, lots, supplier).
+- **Glossary** (new tab) — the **group-wide product dictionary** (`product_catalog`), **one row
+  per GTIN, shared across the Central Kitchen and every location**. Managed by hand (search /
+  **+ Add product** / edit / delete) and used to **pre-fill the scan-to-receive form**. Fields:
+  **GTIN, Name, Brand, Category, Unit of measure, Description, Notes, Pack size, Default unit
+  cost, Barcode type, Supplier code, Deli scale code**, plus two behaviour flags:
+  - **Stackable** (default yes) — a repeat scan of this barcode just **adds to the count**
+    (e.g. a soy-sauce bottle: always the same barcode, so pooling the count is correct).
+  - **Catch-weight** (default no) — a **variable-weight** item (meat, produce): stock is
+    tracked **by weight** and every scan captures the label's net weight.
+  - **Deli scale code** — the item number (PLU / "LF code") programmed on the in-store
+    **AvaWeigh** price-computing scale. That scale prints a price/weight-embedded **EAN-13**
+    (prefix `2`) whose layout is `DD department (2) + CODE (6) + price-or-weight + check`; the
+    scanner reads the **CODE** to resolve the item name on a scale-label scan. Set **Barcode
+    Type 7** on the scale to embed **weight** (Type 2 embeds price). Codes match canonically
+    (leading zeros ignored). *Weight-embedded scan decoding is being finalized against a real
+    Type-7 label.*
+
+  API `GET/POST /api/glossary`, `DELETE /api/glossary/:gtin` (manager/ops). The dictionary is
+  still auto-filled from external lookups (below), but a manual entry is authoritative and is
+  never overwritten by an external cache.
+
+**Smart scan-to-receive (`lib/receive.js`).** One flow at both the Central Kitchen and every
+location:
+
+1. A GS1 **serial `(21)` already on hand here** = the exact same physical box → a **true
+   duplicate**: warn and **do not add** (a confirm can force it).
+2. Barcode **already in stock here** → just add to it — **weight** for a catch-weight item,
+   otherwise **count**.
+3. Barcode **new to stock** → look it up in the **Glossary** and pre-fill the add form
+   (name, description, unit, category from the glossary; weight/lot/serial/dates from the
+   label). Saving **creates the stock item** and, unless you untick it, **writes the item into
+   the Glossary** too — so the next scan anywhere pre-fills everything.
+
+Per-received-box detail (serial + net weight) is stored on the `inventory_lots` row; the stock
+item carries the `is_catch_weight` / `stackable` flags inherited from its glossary entry.
+Endpoints — console: `GET /inventory/barcode/resolve/:code`, `POST /inventory/barcode/receive`,
+`POST /inventory/barcode/create`. Staff: `GET /invscan/resolve/:code`,
+`POST /invscan/receive`, `POST /invscan/receive-create`. The standalone kiosk shares the same
+glossary-aware core: `POST /api/scannerkiosk/kiosk/:slug/{resolve,receive,create}` (all three
+consult the Glossary too).
+
+**All barcode types (`lib/barcode.js`).** Every scanned code is parsed before use:
+- **UPC-A / UPC-E / EAN-8 / EAN-13** — the digits, with leading-zero padding normalised so
+  `0602569000493` and `602569000493` are one key.
+- **GS1-128 / GS1 DataMatrix** (case & meat labels, e.g. Central Valley Meat) — an
+  Application-Identifier payload like `(01)96063000120625(3202)004294(11)260818(21)…`. We
+  extract the **GTIN (01)** as the stable barcode key, and read the **net weight** (310x/320x),
+  **production / pack / expiry dates** (11/13/15/17) and **lot** (10). The per-case **serial
+  (21) is ignored for matching**, so every case of the same product resolves to one item
+  (this was the bug: previously the whole varying string was stored, so each case looked new).
+- **Code 39 / Code 128** alphanumeric SKUs — kept verbatim.
+
+On a scan, the extracted weight pre-fills the receive quantity (a 42.94 lb case → 42.94), and
+the label's date + lot flow into the received **`inventory_lots`** row for **expiry / FIFO /
+batch tracking**. The create form captures the full item record — name/description, category,
+SKU, unit, unit cost, quantity, **reorder (min) & par levels**, expiry/lot, and the
+**supplier + supplier product code** (`inventory.vendor_id` / `vendor_code`; pick an existing
+vendor or type a new name to quick-add one at that location) — pre-filled from the label where
+possible.
+
+The **supplier is a first-class field on every item**, not just scanned ones: it shows as a
+**Supplier** column on both the **Stock** and **Glossary** tables and is set/edited in the item
+editor (free-text name → find-or-create the vendor at that location, case-insensitive so no
+duplicates). The item list API returns the joined `vendor_name` alongside `vendor_code`.
+
+The **Stock** table has a dedicated **Unit** (of measure) column — the On-hand column shows just
+the number, not "5 units". **Stock Edit and Glossary Add/Edit share one full item editor** (name,
+category, unit, SKU, barcode, description, notes, min, par, unit cost, supplier + supplier code).
+**Category** and **Unit of measure** are visible **dropdowns** pre-populated with a comprehensive
+list (categories by storage zone; ~85 units) — each ending in an **"✏️ Other…"** choice that
+reveals a text box for anything not listed. The **Supplier** field is a type-or-pick datalist of
+this location's vendors. The same dropdowns appear on the scanner's **Create item** form (console,
+staff app and kiosk).
+
+**Reusing the GTIN — scan once, then just update.** The **GTIN** is the number that stays the
+same across every box/batch of a product (the whole UPC/EAN, or the `(01)` on a GS1 label);
+lot/serial/dates change, the GTIN doesn't. It's stored as the item's `barcode`, so re-scanning
+any later box resolves straight to the existing item and opens a quick **receive** panel —
+edit just the **quantity, expiry date and lot** (pre-filled from the label) and apply; no
+re-entering name, category, supplier, etc.
+
+The scanned **GTIN is always captured** on the item (`inventory.barcode`) — the receive flow
+finds items by it, ship resolves/copies it, and it's now an **editable field in the item
+editor** (so you can add a GTIN to a manually-created item, or confirm one). Ship carries the
+GTIN onto any destination copy it creates, so the item stays scannable there too.
+
+**Every scan's full detail is kept.** On each meaningful scan (receive / count / ship / create /
+link) a `scan_events` row records the GTIN, **net weight**, **production / pack / expiry dates**,
+**lot** and **serial**, plus a **JSON of every GS1 Application Identifier found** (`lib/barcode.js`
+`logScan`) — so nothing a box's label carried is lost, even AIs we don't otherwise use.
+
+**Duplicate-scan protection** (`lib/barcode.js` `recentDuplicate`). To avoid receiving or
+shipping the same box twice, each receive/ship is checked against the scan history first:
+- **GS1 label with a serial `(21)`** — the serial uniquely identifies the physical box. If that
+  exact GTIN+serial was already received/shipped (last 14 days) it's flagged as a duplicate; a
+  **different** serial is a genuinely different box and always counts (never falsely blocked).
+- **Plain UPC (no serial)** — can't tell two identical boxes apart, so it only guards a genuine
+  accidental double-scan: the same item+action(+qty) within ~10 s. **Deliberate repeat receiving
+  always just adds to the count** — you buy the same item many times, and each scan adds stock.
+
+A flagged scan returns a **confirm prompt** ("This exact box … was already received — receive it
+again anyway?"); the staffer confirms only if it's genuinely a second box, and the app re-sends
+with `confirm:true`. Apply/Ship buttons also disable on tap to stop double-submits.
+
+**Where to view it:** a **📜 Scan history** button on every row of the **Stock** and **Glossary**
+tables opens a per-item log — each scan's date/time, action, quantity, weight, packed & expiry
+dates, lot, serial, who scanned it, and an "all barcode data" line listing every AI. (Also
+`GET /inventory/:id/scan-history`; the **Check** mode shows the item's most recent scan detail.)
+The **net weight drives the quantity**: it pre-fills the amount on receive (added) and on ship
+(subtracted), so a 42.94 lb case adds/removes 42.94 with one tap.
+
+**Scan modes.** The **console scanner**, the **staff app**, and the **per-location kiosk**
+(`/scanner/<slug>`) have a mode toggle:
+- **📥 Receive** — the smart glossary-aware receive above (add count/weight, or create + write
+  the glossary for a new barcode); the console/kiosk also keep a **🔢 Set count** option (cycle
+  count → `cycle_counts`, FIFO draw-down on a negative variance).
+- **📋 Check** — read-only: scan an item to see **how much every location is holding**
+  (per-location on-hand + total), so staff can look up stock **anywhere** (their own store is
+  flagged). Console `GET /inventory/barcode/stock/:code`, staff `GET /invscan/check/:code`,
+  kiosk `POST /kiosk/:slug/stock`.
+- **📤 Ship / transfer** — pick a destination, then scan items to transfer them there
+  (decrements here via FIFO, adds/creates at the destination, logged as `transfer_sent`). For
+  the Central Kitchen (or a manager) this is **order fulfillment**: if the destination store has
+  open order lines (`distribution_orders`), they show as a fill-list and **scanning fills the
+  matching line** (bumps `ck_qty`, marks it `shipped` when complete); anything else ships ad-hoc.
+  A location staffer can view every location's stock but **acts only at their own store** (they
+  ship *from* their store — by request or in an emergency). Shared core `lib/transfer.js`.
+  Console: `GET /inventory/ship/{targets,orders}`, `POST /inventory/barcode/transfer`.
+  Staff: `GET /invscan/ship/{targets,orders}`, `POST /invscan/ship`.
+  Kiosk: `POST /api/scannerkiosk/kiosk/:slug/{targets,orders,transfer}`.
+- **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
+  staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
+
+Both apps scan with a phone camera via the `html5-qrcode` library (lazy-loaded on
+first open; works on iOS Safari and Android). Decode → resolve → act:
+
+- **Management console** — a **📷 Scan** button on Inventory → Stock and Glossary
+  (and in the Central Kitchen, scoped to CK). Uses the JWT inventory API scoped by the
+  selected location.
+- **Staff app** — a **📷 Scan** nav item for store staff (hidden for all-location
+  leadership), with **Receive / Check / Ship / Use** modes. Calls the `/api/invscan/*` proxy,
+  which forwards to Management with the service key + `?as=<staff email>` so every **action** is
+  pinned to the staffer's own store (Check is read-only across all locations).
+- **Standalone scanner kiosk** — a public per-location link, `/(S)canner/<slug>`
+  (e.g. `pho-ha-noi-management.fly.dev/scanner/san-jose` or `/scanner/central-kitchen`;
+  slugs are case- and punctuation-insensitive, so `/Scanner/SanJose` also works). Bare
+  `/scanner` shows a location picker. Same trust model as the `/clock/<slug>` kiosk: no
+  login — a staffer identifies with their **employee code** (writes are attributed to
+  them, and they must be assigned to that location — home store, an additional store, or
+  all-location leadership — or the scan is refused). Served by `routes/scannerkiosk.js`
+  under `/api/scannerkiosk/kiosk/:slug/*` (`identify`, `resolve`, `scan`, `link`,
+  `create`, `items`, `lookup/:code`), with a per-IP throttle.
+
+Flow after a scan:
+
+| Outcome | Action |
+| --- | --- |
+| Barcode **matches** an item | Add stock (`in`, → `receiveLot` + transaction) or set a cycle count (`count`, → `cycle_counts`, FIFO draw-down on a negative variance) |
+| Barcode **unknown** | Resolve a name/brand/size (see below), then **create** a new item pre-filled with it, or **link** the barcode to an existing item |
+
+**Product resolution (`lib/productLookup.js`).** A scanned barcode is resolved through a
+chain, first hit wins, so coverage is far higher than a single food database:
+
+1. **`product_catalog`** — a **group-wide dictionary** keyed by barcode, shared across every
+   location. The first time anyone names a barcode (create or link) it's stored here as
+   `source='staff'` (authoritative); when an external source resolves one it's cached as
+   `source='external'`. So a Kirkland/private-label item named once at any store auto-fills
+   everywhere after, and repeat scans are instant.
+2. **Open Food Facts** + its non-food sister DBs (**Open Products / Beauty / Pet Food
+   Facts**) — free, community.
+3. **UPCitemdb** free trial — broad general-merchandise catalog (name / brand / size); this
+   is what catches the non-food items Open Food Facts misses.
+
+External hits are cached back into `product_catalog` (a staff name is never downgraded by a
+later external hit). **Price is deliberately not fetched** — a GTIN carries no price, and
+online-listing APIs return wildly varying figures; item cost is `unit_cost`, entered once.
+The one exception: **weighed / price-embedded in-store barcodes** (Type-2 UPC-A beginning
+with `2`) are detected locally and their embedded price is decoded (no lookup — that number
+is store-specific), pre-filling the cost field.
+
+Endpoints — Management (JWT, location-scoped): `GET /inventory/barcode/{:code,resolve/:code}`,
+`POST /inventory/barcode/{link,scan,receive,create}`, `GET /inventory/lookup/:code`,
+`GET /api/glossary`, `POST /api/glossary`, `DELETE /api/glossary/:gtin`. Staff proxy (service
+key, own store): `GET /invscan/{:code,resolve/:code,check/:code}`,
+`POST /invscan/{scan,link,create,receive,receive-create,ship,use}`,
+`GET /invscan/{lookup/:code,items/list,ship/targets,ship/orders}`.
 
 ### 3.6 Central kitchen
 
@@ -679,7 +919,7 @@ erDiagram
 | `roles` | People | Access-level registry (Roles): label, access level (scope) & capabilities; Owner/Admin-managed |
 | `staff_profiles` | People | Full HR record, 1:1 with users — incl. a transformed 9-digit **Personal ID** (no SSN / bank data) |
 | `staff_documents` | People | Per-staff document holder — contracts, certificates, licenses, scans (bytes in the DB, each with a note) |
-| `staff_locations` | People | Additional stores a person can work at |
+| `staff_locations` | People | Additional stores a person can work at — a person appears on the roster (Locations → store → **Staff**) of their home store **and** every store here, flagged **"also works here"**, and is included in each of those stores' **Staff count** (active only). Per-store counts therefore differ from the true headcount (double-count multi-store staff, miss unassigned ones); the **Locations** header shows the deduplicated org total — **distinct active people** — for all-location roles, and an expandable **"N active people have no store assigned"** panel lists active staff with no home store and no coverage (typically org-level roles) so they can be given one (`GET /api/locations/headcount` → `{active,total,unassigned[]}`) |
 | `locations` | Org | Restaurants + the central kitchen |
 | `location_hours` | Org | Per-day opening / closing times — up to two service periods (lunch + dinner) |
 | `floor_areas` | Floor | Named areas (Dining, Bar, Patio) per store |
@@ -700,10 +940,10 @@ erDiagram
 | `timesheet_approvals` | Time | Sign-off on a period's total hours |
 | `staff_alerts` | Time | Alerts to a manager (e.g. left early) |
 | `break_reminders` | Time | Audit archive of "your break is in 10 min" alerts sent to staff (sent + acknowledged times) |
-| `inventory` | Inventory | Stock per item per location with min/par/cost |
+| `inventory` | Inventory | Stock per item per location with min/par/cost. `source_id` links a store copy back to the Central Kitchen master item it was replicated from (CK edits propagate to those copies) |
 | `inventory_transactions` | Inventory | Immutable in/out/transfer movement ledger |
 | `inventory_lots` | Inventory | Received batches with expiry, drawn FIFO |
-| `vendors` | Inventory | Supplier master records |
+| `vendors` | Inventory | Supplier records, now **per-location** (`location_id`); the Central Kitchen's vendors replicate one-way to every store (`source_id` links each copy for edit propagation) |
 | `supply_orders` | Inventory | Purchase orders with a lifecycle |
 | `transfer_requests` | Inventory | Inter-location transfers with approval |
 | `waste_log` | Inventory | Spoilage / write-offs with reason |
@@ -721,13 +961,15 @@ erDiagram
 | `equipment` | Assets | Equipment register with maintenance schedule |
 | `daily_sales` | Reporting | Per-day revenue & covers by location |
 | `messages` · `message_recipients` | Messaging | Threaded team messaging + per-person read state |
-| `message_attachments` | Messaging | Pictures & videos on a message (bytes in the DB; per-kind size caps) |
+| `message_attachments` | Messaging | Photos, videos & files (PDF/Office/CSV/ZIP…) on a message — bytes in the DB, per-kind caps; kind = image/video/file |
 | `chat_groups` | Chat | Persistent staff chat groups (channels); `is_active=0` when deleted (kept for audit) |
 | `chat_group_members` | Chat | Who belongs to each chat group |
 | `chat_messages` | Chat | Messages posted in a chat group (retained for audit) |
-| `chat_message_attachments` | Chat | Pictures & videos on a chat message (bytes in the DB; per-kind size caps) |
+| `chat_message_attachments` | Chat | Photos, videos & files on a chat message — bytes in the DB, per-kind caps; kind = image/video/file |
 | `chat_reads` | Chat | Per-member read cursor for unread counts |
-| `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone) |
+| `msg_reactions` | Messaging | Emoji reactions (tapbacks) on a direct message or chat message — one row per person per emoji (`kind` + `target_id` + `user_id` + `emoji`); toggling the same emoji removes it |
+| `reaction_unseen` | Messaging | Per-person unseen-reaction flag per conversation (`kind` + `conv_id`) so a reaction bumps that person's Messages/Chat unread badge like a new message; cleared when they open the conversation |
+| `floor_alerts` | Messaging | Urgent on-screen pings a manager pushes to working staff (person / role / everyone). Service Flow alerts add a claim-and-track lifecycle: `flow_guid` / `flow_kind` tie the alert to a table, `claimed_by` / `claimed_at` lock it to the staffer who tapped **On It**, `status` walks open → claimed → waiting → resolved |
 | `floor_alert_acks` | Messaging | One row per staff member who acknowledged ("On it") an alert, plus when they marked it **done** (`completed_at`) |
 | `sms_messages` | Messaging | One row per SMS blast a manager/owner composes (target, body, recipient & sent counts, provider) |
 | `sms_recipients` | Messaging | Per-person delivery record for a blast (phone + status: sent / logged / failed / no_phone) |
@@ -741,6 +983,9 @@ erDiagram
 | `toast_selections` | Toast | Line items on each check (item, category, qty, price) — the item-level detail for sales analysis |
 | `toast_config` | Toast | Reference data per location — tables, dining options, service areas, revenue centers — to resolve order GUIDs into names |
 | `toast_service_alerts` | Toast | "Check on this table" events (dry-run = logged only, live = staff notified); one per order |
+| `toast_flow_state` | Toast | Service Flow manual state per order — **Served** / **Paid** / **Bussed (Done)** timestamps + who tapped (Paid can be staff-marked as well as from Toast; Toast has no served/bussed signal) |
+| `toast_flow_alerts` | Toast | One row per (order, escalation type) — `food_late` / `lingering` / `ready_to_bus` — the re-fire marker: `next_at` schedules the next ping, `mode` (`unclaimed` ~3 min vs `waiting` ~5/7 min) picks the cadence |
+| `toast_flow_events` | Toast | Audit trail of every staff action on a Service Flow alert (On it / Served / Paid / Not yet / Waiting / Bussed) — who, when, what, which table — for manager review |
 
 Plus `audit_log`, `activity_log` and the legacy `timesheets` table.
 
@@ -773,15 +1018,15 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Service** | 🛎️ Live guest-visit board (waitlist → seated → in service → paying → done) + servers-today report, and an **⏳ Active waitlist** tab showing the **Front Desk app queue** (guest, party, waited, quoted, phone, source, notified). All-location roles get an All/by-location selector; location roles are pinned to their store | Owner/Admin/HR/GM all · Manager+ own store |
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register | Owner/Admin all · Manager own |
 | **Staff** | Directory (A–Z, searchable by name / phone — **including a person's previous login numbers** — / code / email / role), full HR-profile edit, **Jobs** tab (job/task catalog), Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields) | Owner/Admin/Manager |
-| **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, reports, glossary | Ops+ (own location) |
-| **Central Kitchen** | Demand, production, **distribution** (raw-food warehouse → stores), recipes, fulfillment, CK staff & PIN clock | Owner/Admin/GM |
+| **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, **reports** (on-hand valuation — counts **active items only**, so removed items drop out — plus 30-day COGS &amp; value-by-category), glossary | Ops+ (own location) |
+| **Central Kitchen** | The CK's own **inventory hub** — the same tools as Inventory (Glossary, Stock, Orders & Reorder, Lots & Expiry, Vendors, Reports) scoped to the CK location — plus **Distribution** (raw-food warehouse → stores), **Fulfillment**, and CK staff & PIN clock. The CK **Glossary & Vendors are the master catalog**: adding or editing an item/vendor there **copies it one-way to every restaurant** (stores can also keep their own local items/vendors, which never push up) | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments, **breaks**, and **Waitlist** (every guest ever on the Front Desk waitlist — phone, SMS opt-in, status, texts sent — with CSV export for promotions; manage cap) — location + date filters | Reports tier |
-| **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix) and day/time patterns from the stored Toast history — no live pull | Manager+ (own store) · Owner/Admin all |
+| **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix), day/time patterns and **avg time to pay** from the stored Toast history — no live pull; **each report runs manually via its own ▶ Run button** | Manager+ (own store) · Owner/Admin all |
 | **Orders** | 🧾 Browse a day's Toast orders (time, table, server, guests, items, net, tips, status) and open any order's full detail | Manager+ (own store) · Owner/Admin all |
-| **Service Flow** | ⏱️ Live table state from open Toast orders (in service / check-on-table), auto-pulled every 5 min | Manager+ (own store) · Owner/Admin all |
+| **Service Flow** | ⏱️ Live dine-in board — each table's ordered / served / paid / bussed state with escalating alerts (food runner → server → busser); staff tap **Served / Done**; auto-pulled every 3 min. **Per-location On/Off** — on the board **and** as a **⏱️ Service Flow tab** in each location's manage view (next to Details; renders that store's board + toggle inline). **Any manager can turn their own store on/off** (`…/toggle`, own location); going live stays Owner/Admin. Off / not-Toast-connected shows a clear state with no board and no alerts | Manager toggles own store · Owner/Admin all |
 | **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, backfill history, and toggle auto-sync (read-only) | Owner/Admin |
-| **Messages** | Inbox, sent, compose (direct or broadcast) with **picture & video attachments**, **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
+| **Messages** | Inbox, sent, compose (direct or broadcast). Inside a conversation, the **newest message shows at the top** with the composer pinned at the top, so new messages/chat are visible without scrolling down; with **picture, video & file attachments** (PDF/Office/CSV/ZIP…) and a **😊 emoji picker** in every composer, **emoji reactions** on any message or chat bubble — iMessage-style tapbacks shown at the bubble's **top-left corner** (❤️ 👍 🙏 😮 😢 👎 **plus a "Haha" bubble graphic**); hover a reaction to see who reacted; reacting notifies **everyone in the conversation** — a live toast, an **OS push**, and a **+1 on their Messages/Chat unread badge** (like a new message) that clears when they open the conversation and deep-links straight to it), **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
@@ -844,13 +1089,28 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
   sweep finalizes the prior business day once a day and re-pulls **today every ~20 min while
   the store is open** (using its operating hours + a post-close grace), so the numbers stay
   current on their own.
+- **Pull window (10am–10pm Pacific).** Every **automatic** pull only hits Toast **between
+  10:00am and 10:00pm Pacific** — nothing is pulled before 10am or after 10pm. This covers the
+  sales sweep, the 5-min service-flow sweep, and the history backfill (which **pauses overnight
+  and resumes at 10am**). Yesterday's day therefore finalizes at the first sweep after 10am.
+  Hours are configurable via `TOAST_PULL_START_HOUR` / `TOAST_PULL_END_HOUR`. A manual **Pull
+  sales** is an explicit admin override and still runs on demand.
 - **On the dashboard.** A **Toast sales** panel on the Overview and manager dashboards shows
   each mapped location's latest synced day — net sales, orders, guests, total — with a
   **"⏱ Last pulled from Toast"** timestamp (Pacific, plus a relative "ago") so it's clear how
   fresh the numbers are. Sales reads are manager-capable and **scoped** (a manager sees only
   their own store); mapping, syncing and config stay owner/admin. The whole dashboard
   **auto-refreshes every 2 minutes** (pausing while a modal is open) so KPIs and this
-  timestamp stay current without a manual reload.
+  timestamp stay current without a manual reload. **Click (or tap) any sales card** for a
+  **dining-option breakdown** popup — that day's orders, guests, pre-tax sales, sales with
+  tax and tips split by **dining type** (Dine In, Take Out, then third-party services like
+  DoorDash / Uber Eats), sorted Dine In → Take Out → others, with a reconciling total row.
+  The popup also shows a **By payment type** table — payments, amount collected and tips per
+  tender, with **credit broken down by card brand** (Visa / Mastercard / Amex / Discover …)
+  alongside Cash, Gift card and Other, sorted by amount — plus a **Payment type by dining
+  option** cross-tab (amount collected per tender — Credit card / Cash / Gift card / Other —
+  for each dining type, with row and column totals). The card totals are the sum of all dining
+  types. Scoped like the card (a manager only opens their own store's breakdown).
 - **Staff & jobs.** **Sync roster** pulls the Toast employee list and job catalog and
   **matches each Toast employee to a person in this app** (by email → phone → name), so Toast
   sales can be attributed to a real staffer. Unmatched people are listed to reconcile in
@@ -875,12 +1135,29 @@ call carries a Bearer token plus the location's `Toast-Restaurant-External-ID` G
 
 **Sales Analytics (💹).** A separate section reads only the stored history — no live Toast
 call — with a **From / To / granularity / location** filter (managers see their own store;
-owner/admin all). It shows **headline KPIs** (net sales, orders, guests, avg check, items,
-tips), a **sales-trend** chart (day / week / month), a **by-location** comparison (net, orders,
-avg check, guests), **top items** (menu mix, by revenue, from line items), and **day-of-week +
-hour-of-day patterns** for staffing/planning. Hours are shown in approximate Pacific time.
-Each section has a **⬇ CSV** button that exports exactly what's on screen for the current
-filter (opens directly in Excel; a UTF-8 BOM keeps accented item names intact).
+owner/admin all). **Reports run manually, not on open:** each report has its own **▶ Run**
+button (plus a **▶ Run all reports** button in the filter bar), so opening the page fires no
+queries — you load exactly the reports you want. Changing a filter marks any loaded report
+**stale** and waits for you to re-run; nothing auto-refetches. The reports are **Summary**
+(headline KPIs: net sales, orders, guests, avg check, items, tips, and **avg time to pay** —
+the average open→paid duration — plus a **By dining type** table under the KPIs: orders,
+guests, pre-tax sales, sales with tax and tips split by dining option — Dine In, Take Out, then
+third-party services like DoorDash / Uber Eats — a **By payment type** table (payments, amount
+and tips per tender, with **credit split by card brand** — Visa / Mastercard / Amex / Discover
+— alongside Cash, Gift card and Other), and a **Payment type by dining option** cross-tab
+(amount per tender for each dining type) — all over the selected range and location, with
+reconciling totals), a **sales-trend** chart (day / week / month), a **by-location**
+comparison (net, orders, avg check, guests, **avg pay**), **top items** (menu mix, by revenue,
+from line items), and **day-of-week + hour-of-day patterns** for staffing/planning. Hours are
+shown in approximate Pacific time. Each report has a **⬇ CSV** button that exports exactly
+what's on screen for the current filter (opens directly in Excel; a UTF-8 BOM keeps accented
+item names intact).
+
+*Avg time to pay* comes from a precomputed `pay_minutes` column on `toast_orders` (open→paid
+duration, stored once at sync time), averaged over a 0–600-min window so forgotten/employee
+tabs left open for hours don't skew it. Across the stored 6-month history the fleet average is
+~**32 min** (Cupertino fastest ~27, Fountain Valley slowest ~38). Date-leading covering indexes
+keep every report sub-second to a few seconds even over the full 6 months.
 
 **Orders (🧾).** Browse the stored Toast orders for a location + date — each row shows the
 time, **table**, **server**, guests, item count, net, **tips** and a derived **status**
@@ -888,15 +1165,134 @@ time, **table**, **server**, guests, item count, net, **tips** and a derived **s
 tips, **line items**, checks and payments. GUIDs are resolved to names via `toast_config`
 (tables/dining options) and the matched staff roster (server). Read-only from the local store.
 
-**Service Flow (⏱️).** A live board that derives each **table's state** from open Toast orders,
-refreshed by a **5-minute background sweep** (per open location). A table with an open, unpaid
-order is **🟢 in service**; once it has been open past a per-location threshold
-(`service_alert_min`, default **40 min**) it becomes **⚠ check on table**. Non-dining orders —
-those with **no table** (to-go / delivery / online) and staff **"Employee" tabs** — are excluded
-so they don't false-alert. "Check on table" events are recorded in `toast_service_alerts`;
-by default they are **dry-run (logged only, no staff pinged)** so the threshold can be validated
-against real data before going live (`service_alerts_live`). The board self-refreshes and is
-scoped per location (managers see their own store).
+**Service Flow (⏱️).** A live board of each **dine-in table** (an order with a real table —
+to-go / delivery / online and staff **"Employee" tabs** are excluded), refreshed by a
+**3-minute background sweep** per open location (within the 10am–10pm pull window). Ordered
+time, **Paid** and **cleared** come straight from Toast; **Served** and **Bussed (Done)** are
+tapped by staff on the board (Toast has no such signal), stored in `toast_flow_state`. Each
+table sits in one state with its own **escalation** (each fires once, logged in
+`toast_flow_alerts`). **On phones (≤640px) the active-tables table floats to the top** of the
+board (above the KPI cards, banner and alert timing) so floor staff act on tables without
+scrolling; tablet/desktop keep the original layout exactly (the wrapper is explicitly block above 640px).
+
+- **🪑 Seated** — the **first** status, *before* a Toast order exists. When a host seats a party
+  from the **Front Desk** floor-map (or a walk-in is seated), that `service_visits` row
+  (`stage='seated'`, its real floor table) shows here so the whole team sees the table is filling
+  even though nothing's rung in yet. It carries **no** Served/Bus actions — it **clears itself**
+  the moment a Toast order opens for that same table number (`opened_at ≥ seated_at`, turnover-safe),
+  then flows on as **⏳ Awaiting food**. Sourced live inside `computeServiceFlow` as its own
+  `seated[]` array + `counts.seated` (kept out of `tables[]`, so alerts are untouched); no sweep,
+  no alerts, no DB writes — purely a display bridge between host-seating and Toast pickup.
+- **⏳ Awaiting food** — not served; past `flow_served_min` → alert the **food runner / back
+  server**, then re-alert every `flow_food_renudge_min` until served.
+- **🍜 In service** — served, not paid; past `flow_pay_min` **counted from when the food was
+  *served*** (not from order-open) → alert the **server / back server**, then re-alert every
+  `flow_pay_renudge_min` until paid.
+- **🧽 Ready to bus** — paid, not yet bussed → alert the **busser**; tapping **Done** clears it.
+
+The **Seated** count leads the KPI row and seated cards render first on every board — the
+Management console, the location **⏱️ Service Flow** tab, the **/sflow** kiosk, and the Staff app.
+The **Cleanup** busser board is unaffected (it only ever shows Ready-to-bus).
+
+**Per-location On/Off lives in two places, and store managers control their own store.** The
+**Turn ON / Turn OFF** toggle is on the standalone Service Flow board (location picker) **and** on
+each location's **manage view** as its own **⏱️ Service Flow tab** (right next to Details) —
+Locations → *(a store)* → **Service Flow** — which renders that store's live board (status banner,
+timing, tables, alert log) with the toggle inline. A location not yet connected to Toast shows a
+clear **"needs a Toast connection"** state. **Any manage-capability role (Owner/Admin/GM/Regional
+and single-store Manager/Assistant/Kitchen Manager) can turn its own store's Service Flow on/off**
+via `POST /api/toast/service-flow/toggle` (own location only — `canSeeLoc`; flips just
+`service_flow_on`). Going **live** (routing alerts to a user) stays Owner/Admin via `…/settings`.
+Status without computing the board: `GET /api/toast/service-flow/status`.
+
+**Public Service Flow kiosk (no login).** Same trust model as the `/scanner` and `/clock` kiosks:
+a staffer opens the link, enters their **employee code**, and works the live board (tap **✅ Served**
+/ **🧽 Bussed — clear**). Two link forms:
+- **Per-location: `/sflow/<slug>`** (e.g. `pho-ha-noi-management.fly.dev/sflow/fountain-valley` —
+  slugs are case/hyphen-insensitive, so `/sflow/fountainvalley` also works). The URL **pins** the
+  store: enter code → straight to that store's board (no picker). A staffer not assigned to that
+  store, or one that isn't running Service Flow, gets a clear message. This is the one to post at
+  each restaurant, like the clock kiosk.
+- **Bare `/sflow`**: resolves the staffer's own ON stores (home + `staff_locations`; all-location
+  roles get every mapped store) — cover one → its board, cover several → a **store picker** (+ a
+  **Switch store** button on the board).
+
+Served/Done are attributed to that staffer and allowed only at a store they belong to. Backed by
+`routes/sfkiosk.js` (`POST /api/sfkiosk/identify` {code, slug?}, `GET /api/sfkiosk/board?code=&slug=|&location_id=`,
+`POST /api/sfkiosk/{served,done}/:guid`); the page keeps the code in `sessionStorage` for the tab
+(Sign out clears it). Staff work the board only — turning Service Flow on/off stays a manager/admin
+action in the console.
+
+**Two tabs — Front Desk + Service Flow (one page, no two apps).** When the staffer's role is
+front-desk-capable (owner/manager/host/frontdesk/server/cashier…), the `/sflow` page shows a
+**🍜 Front Desk** tab beside **⏱️ Service Flow**, so a host-stand/kitchen tablet manages the waitlist
+*and* the floor from one no-login page. The Front Desk tab is a **full parity port of the staff-app
+board**: 5 stats (waiting / longest wait / quote / seated today / walk-ins today), the queue with
+**🔔 Notify · Seat · Left**, **+ Add party** (modal: name / phone / SMS-consent / party size),
+**🚶 Walk-in**, and a **live floor-map picker** for both Seat and Walk-in (tap a free green table —
+same `roomSvg`/tables as the staff app, seats onto the Management floor plan + marks the party
+seated), plus **Handled today** and **Activity log** tables. Auto-refreshes every 15s. It calls the
+**Waitlist app** cross-origin: on code entry the page mints a Front-Desk session via waitlist
+`POST /api/auth/kiosk` {code, location_id} (validated through management `POST /api/auth/verify-code`,
+service key; JWT pinned to the store), then uses the existing
+`/api/waitlist/*`, `/api/floormap/*` and `/api/service` endpoints. Same employee-code trust model.
+If the staffer isn't a front-desk role (or the waitlist app is unreachable), the page falls back to
+Service Flow only.
+
+**Busser Cleanup board (no login) — `/cleanup/<slug>`** (e.g.
+`pho-ha-noi-management.fly.dev/cleanup/palo-alto`; bare `/cleanup` shows a store picker). A
+stripped-down, **always-on kitchen tablet** view meant to run unattended: **no employee code** (the
+tablet is pinned to a store by its URL, like the clock kiosk). It shows **only tables that are
+ready to bus** (paid, not yet bussed) as big glanceable cards. A busser taps **🙌 On It** to claim a
+table (stored in `toast_flow_state.bus_claimed_at`, so other bussers/tablets see it's being handled;
+"not me — release" un-claims), then **✅ Done** to clear it — which sets `bussed_at` and removes it
+from **every** Service Flow board too. The page auto-refreshes every 10s, **chimes + pulses** when a
+new table appears, and holds a **screen wake-lock** so the tablet stays on. Only shows a board where
+the store's Service Flow is **ON**. Backed by `routes/cleanup.js`
+(`GET /api/cleanup/{locations,board?slug=}`, `POST /api/cleanup/{claim,release,done}/:guid`) +
+`public/cleanup.html`. **It's public** (link + tablet = the trust model) — post it on the kitchen
+tablet, don't share it widely.
+
+**Alert timing is a per-store setting** a manager edits on the **Service Flow** page (own store;
+owners any) — the food threshold + its re-alert cadence, and the pay threshold (from served) +
+its cadence (`POST /api/toast/service-flow/timing`). Trial store **Cupertino**: food **after 12 min,
+re-alert every 5**; pay **17 min after served, re-alert every 7**; unclaimed alerts re-pop every 3.
+
+**Claim-and-track alerts.** A Service Flow alert isn't just a ping — it's a small assignable
+task with a status the floor works until it's resolved. Each alert is tied to its table
+(`floor_alerts.flow_guid` / `flow_kind`). The lifecycle:
+
+1. **On It (claim)** — the first staffer to tap it **claims** it (`claimed_by`); the alert then
+   **drops off every other targeted staffer's Active list** (someone's already on it), and its
+   3-min re-pop stops.
+2. **Status action** — the claimer checks the table, then taps the alert's resolve action:
+   **✅ Mark Served** (food-late), **💳 Paid** (pay-check) or **🧽 Mark Bussed** (ready-to-bus).
+   These write straight to `toast_flow_state` (`served_at` / `paid_at` / `bussed_at`), so **the
+   table moves on the board at once**. A staffer can mark a table **Paid** as well as Toast —
+   and **Paid immediately fires the busser (ready-to-bus) alert**, no waiting for the next sweep.
+3. **Snooze / re-nudge** — if it's not ready, the claimer taps **⏳ Waiting** (food) / **⏳ Not yet**
+   (pay). That **archives the current alert to History** (they've checked the table) and re-alerts the
+   floor after the kind's window — **~5 min for food, ~7 min for pay** — recurring at that cadence until
+   the table advances (served / paid — by staff or Toast) or drops off via staleness.
+4. **Unclaimed re-pop** — an alert that nobody claims re-pops **every ~3 min** so it's never missed,
+   until someone taps On It. (The marker's `mode` — `unclaimed` vs `waiting` — picks which cadence
+   applies; `next_at` schedules the next fire.)
+
+Every staff action on an alert — **On it, Served, Paid, Not yet, Waiting, Bussed** — is written to
+`toast_flow_events` (who / when / what / which table), reviewable by a manager in the **📋 Alert
+activity** panel on the Service Flow page (`GET /api/toast/service-flow/log`) to audit and coach.
+
+Staleness cutoffs keep the board to the live floor: an order open past ~2 h with no payment
+(stale) or paid more than ~20 min ago (assumed already bussed) drops off, and the food-late
+alert only fires in a 10–30-min window. Alerts are delivered as **in-app floor alerts (no SMS)**;
+by default a location is **dry-run** (`service_alerts_live=0`, logged only, no one pinged). Set
+`flow_alert_user_id` to route a location's alerts to **one person** for a controlled trial (the
+claim / re-nudge lifecycle all works single-recipient; the "drops off others' lists" only shows
+once alerts are role-targeted to several staff).
+The board is on the **management console** (managers) *and* the **Staff app** (floor staff tap
+Served/Done on their phone). Scoped per store — a trial recipient sees the store they were
+assigned even if their home store differs. **Live now on Cupertino → nolanle** (single-recipient
+trial); every other store stays dry-run.
 
 ### Front Desk / Waitlist app (port 4002)
 
@@ -905,7 +1301,9 @@ store switcher). Runs the live queue with waited time and quoted wait, add-party
 notify/page, seat (onto a table) and mark-left, plus live stats, "handled today"
 history, guest history & daily reports (owner/admin), and an access/activity log
 (owner). Every guest notification (the join confirmation when they opt in, and each
-"table ready" page) is logged in `notify_log`.
+"table ready" page) is logged in `notify_log`. The **join-confirmation text** ends with a
+link to that store's live waitlist — `…/checkin/<slug>/current` — so the guest can see
+their spot and who's ahead (only sent to guests who gave a phone **and** ticked SMS consent).
 
 > **Management view of the queue.** The Front Desk queue lives in this app's own database.
 > A read-only **service-key feed** (`/api/wl-feed`: active queue, full history, per-guest
@@ -923,6 +1321,15 @@ size and mobile number**, joins, and then **tracks their spot live** — the scr
 flips to "🔔 Your table is ready!" the moment the host pages them. Hardened with
 per-IP rate limits, a duplicate-submit guard and a 16 KB body cap.
 
+**Public "current waitlist" view — `/checkin/<slug>/current`.** A read-only page (the
+same URL with `/current` appended — e.g. `/checkin/milpitas/current`,
+`/checkin/san-jose/current`) that shows **who is waiting, in order**: position #, name
+(first name + last initial), party size and minutes waited. It **auto-refreshes** every
+15 s and **never shows phone numbers**. It's backed by the public
+`GET /api/public/waitlist/:slug` endpoint (slug resolved from the location name, so San
+Jose is `san-jose`). This is the link a guest gets in their **join-confirmation text**
+(below), so they can open it on their phone and see who's ahead of them.
+
 ### Staff app (PWA)
 
 The floor-facing phone app. Installs to the home screen — an **install banner**
@@ -937,7 +1344,9 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
-| ✉️ Messages | Team inbox with unread badge (**counts direct messages + 💬 Chat together**); send/reply with picture & video attachments; **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
+| ⏱️ Service Flow | The live dine-in board for the store — tap **✅ Served** / **🧽 Bussed — clear** per table; the tab appears for floor staff at **any store where Service Flow is ON** (live *or* dry-run). **Multi-store staff** (home + `staff_locations`) land on whichever of *their* stores is ON, and get a **store picker** when several are on; acting is allowed at any store they belong to. Via `/api/serviceflow/*` proxy → Management `/api/sf/*` (service key + `as=<email>`) | Floor staff at any ON store |
+| 🔔 Alerts | Inbox of every alert sent to you (manager floor alerts + **Service Flow** system pings), **Active / History** tabs; a **count badge** shows alerts awaiting action. Manager alerts use **On it / Done**; **Service Flow** alerts use the claim-and-track lifecycle — **🙋 On It** claims it (removing it from other staff), then **✅ Mark Served** / **💳 Paid** / **🧽 Mark Bussed** resolves it (and moves the board), or **⏳ Waiting** (food) / **⏳ Not yet** (pay) re-alerts the floor (~5 / ~7 min) until it advances. Unclaimed alerts re-pop every ~3 min. Resolved alerts move to History | Everyone |
+| ✉️ Messages | Team inbox with unread badge (**counts direct messages + 💬 Chat together**); send/reply with picture & video attachments and a **😊 emoji picker** in every composer; **emoji reactions** on any bubble — iMessage-style tapbacks shown at the **top-left corner** (❤️ 👍 🙏 😮 😢 👎 **plus a "Haha" bubble graphic**); hover/tap a reaction to see who reacted; reacting notifies **everyone in the conversation** — live toast, **OS push**, and a **+1 unread badge** that clears when they open it); **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |
 | ⚙️ Settings | Per-device preferences — **separate sound / vibration** for floor alerts and for messages, **new-message pop-ups**, a **10-min repeat reminder** for anything left unread, and **📲 device notifications** (Web Push — real OS alerts when the app is closed or the phone is on silent) | Everyone |
 | 🔔 Alert | Send an urgent floor alert (header button) | Managers / owner |
@@ -1112,7 +1521,9 @@ flowchart TB
 
 1. **Join the list** — Guest self-checks-in at the kiosk (lands tagged *SELF
    CHECK-IN*), or the host adds them. A pure walk-in the host seats immediately
-   skips waiting.
+   skips waiting. If the guest opted in to texts, the **join-confirmation SMS**
+   confirms their spot and links to the store's live waitlist
+   (`/checkin/<slug>/current`) so they can watch who's ahead from their phone.
 2. **Page & seat** — When a table frees, the host pages the guest (kiosk flips to
    "table ready") and seats them onto a specific table — creating the service visit.
 3. **Serve** — A server claims the table on the Staff app, works timed checks, and
@@ -1331,8 +1742,11 @@ The CK portion moves through a **ship → receive** lifecycle on the Central Kit
 store confirms receipt to land it in its own inventory (an `in` movement). Each order
 is one `distribution_orders` row carrying its `ck_qty` / `vendor_qty` split; the
 shortfall is an ordinary vendor `supply_orders` PO linked back to it. The CK curates
-which items it offers (`inventory.distributable`) and restocks itself from vendors
-through the normal inventory tools, scoped to the Central Kitchen.
+which items it offers (`inventory.distributable`) and **restocks itself from vendors,
+never from itself**: in the Central Kitchen section the Orders & Reorder page is
+**vendor-only** (plain below-par suggestions → "Create vendor PO"; no CK-first split, no
+"order from the Central Kitchen" source), and `POST /distribution/order` hard-refuses a
+CK-location order. Every store, by contrast, gets the CK-first split above.
 
 The CK warehouse is a real stock holding, so the **org-wide inventory report**
 (Reports → Items with no location selected) counts it alongside the ten stores — its
@@ -1362,11 +1776,15 @@ replies, mark-unread and archive. The **Messages menu badge counts unread direct
 messages and team chat together** (on both apps), so a badge shows whenever either is
 waiting; it updates in real time as messages or chat arrive.
 
-**Pictures & videos.** Both the composer and the reply box carry a **📎 Add photos /
-video** control (multi-select). Attachments are stored as bytes in `message_attachments`
-(images up to 10 MB, videos up to 25 MB, 10 per message) and shown inline in the thread —
-images as tap-to-zoom thumbnails, videos as inline players. Only the message's sender can
-attach; every participant can view. A media-only message auto-captions (e.g. "📷 Photo").
+**Attachments — photos, videos & files.** Both the composer and the reply box carry a
+**📎** control (multi-select). Beyond images and videos you can now attach **documents and
+files** — PDF, Word, Excel, PowerPoint, CSV/TXT, ZIP, and the like (`lib/attachments.js`
+classifies by MIME, with a safe-extension fallback; **executables, scripts and inline-web
+files such as .exe/.js/.html/.svg are refused**). Stored as bytes in `message_attachments`
+(images ≤ 10 MB, videos & files ≤ 25 MB, 10 per message). Images show as tap-to-zoom
+thumbnails and videos as inline players; a **file** shows as a **download card** (type icon +
+name + size) served with `Content-Disposition: attachment`. Only the sender can attach; every
+participant can view. An attachment-only message auto-captions (e.g. "📷 Photo", "📎 report.pdf").
 
 **Read receipts.** On your **Sent** list and under each of your own messages in a thread, a
 **✓ / ✓✓ Read by `<n>` of `<m>`** line shows how many recipients have opened it. **Tap it**
@@ -1401,14 +1819,17 @@ leadership** can **edit membership** from the group's 👥 Members panel (add st
 the same by-location / by-role builders — or remove a member with their ✕). **Owner/admin**
 can **delete** a group; it's a soft-delete (deactivated and hidden from members) so all
 messages are **retained for audit**. A group lives until then. Each message you post shows a
-**✓ Seen by `<n>` of `<m>`** line (**✓✓ Seen by everyone** once all have), with the names on
-hover — computed from each member's read cursor (`chat_reads`).
+**✓ Read by `<n>` of `<m>`** line (**✓✓ Read by everyone** once all have); **tap it** to open a
+**Read receipts** popup listing who has **read** it and who **hasn't yet**, each with their role
+(sender-only) — computed from every member's read cursor (`chat_reads`). Because chat tracks a
+per-member read *position* (not a per-message timestamp), the chat popup shows names but no
+read-time, unlike direct messages.
 
 **Pictures & videos in chat.** Like direct messages, the chat composer carries a **📎**
-control (multi-select): members can attach images and videos to a group message — same
-caps and formats (images up to 10 MB, videos up to 25 MB, 10 per message), stored as bytes
-in `chat_message_attachments` and shown inline in the thread (images tap-to-zoom, videos as
-inline players). Only the message's sender can attach to it; **members and auditing
+control (multi-select): members can attach images, videos **and files** to a group message —
+same rules as direct messages (images ≤ 10 MB, videos & files ≤ 25 MB, 10 per message; no
+executables/scripts), stored as bytes in `chat_message_attachments` and shown inline (images
+tap-to-zoom, videos as players, files as download cards). Only the message's sender can attach to it; **members and auditing
 leadership** can view. New media is pushed live over the SSE stream so the group sees it
 without reloading. Attachments are retained with their message for audit.
 

@@ -26,12 +26,35 @@ router.get('/', requireRole(ROLES.MANAGE), (req, res) => {
   const rows = db.prepare(`
     SELECT l.*,
       (SELECT name FROM users WHERE role='manager' AND location_id=l.id AND is_active=1 LIMIT 1) AS manager_name,
-      (SELECT COUNT(*) FROM users WHERE location_id=l.id AND is_active=1) AS staff_count,
+      (SELECT COUNT(*) FROM users u WHERE u.is_active=1
+        AND (u.location_id=l.id OR u.id IN (SELECT user_id FROM staff_locations WHERE location_id=l.id))) AS staff_count,
       (SELECT COUNT(*) FROM equipment WHERE location_id=l.id) AS equipment_count,
       (SELECT COUNT(*) FROM equipment WHERE location_id=l.id AND status<>'operational') AS equipment_issues
     FROM locations l ${where} ORDER BY l.name
   `).all(...args);
   res.json(rows);
+});
+
+// True org-wide headcount — DISTINCT active people (each person counted once, even if they cover
+// several stores), unlike the per-location Staff counts which sum higher. Org-scope roles only.
+// Declared before '/:id' so the literal path isn't captured as a location id.
+router.get('/headcount', requireRole(ROLES.MANAGE), (req, res) => {
+  if (!seesAllLocations(req.user.role)) return res.status(403).json({ error: 'Org-wide headcount is for all-location roles.' });
+  const active = db.prepare(`SELECT COUNT(*) c FROM users WHERE is_active=1`).get().c;
+  const total = db.prepare(`SELECT COUNT(*) c FROM users`).get().c;
+  // Unassigned = active people with NO home store AND not covering any store via staff_locations,
+  // so they appear on no location roster. Surfaced so they can be given a home store.
+  const orderRole = `ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'hr' THEN 2 ELSE 3 END, u.name`;
+  let unassigned = [];
+  try {
+    unassigned = db.prepare(`SELECT u.id, u.name, u.email, u.employee_code, u.role
+      FROM users u WHERE u.is_active=1 AND u.location_id IS NULL
+        AND u.id NOT IN (SELECT user_id FROM staff_locations) ${orderRole}`).all();
+  } catch {
+    unassigned = db.prepare(`SELECT u.id, u.name, u.email, u.employee_code, u.role
+      FROM users u WHERE u.is_active=1 AND u.location_id IS NULL ${orderRole}`).all();
+  }
+  res.json({ active, total, unassigned });
 });
 
 // ── Detail (info + hours + manager) ──────────────────────────────────────────
@@ -47,8 +70,24 @@ router.get('/:id', requireRole(ROLES.MANAGE), (req, res) => {
 // Staff at a location.
 router.get('/:id/staff', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, req.params.id)) return res.status(403).json({ error: 'Not your location.' });
-  res.json(db.prepare(`SELECT id, name, email, employee_code, role, is_active FROM users WHERE location_id=?
-    ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(req.params.id));
+  const locId = parseInt(req.params.id, 10);
+  // Roster = staff based here (home store) PLUS staff who also cover this store via
+  // staff_locations. is_home distinguishes the two; home_location names their base store.
+  // u.name must be qualified — locations also has a `name`, so a bare `name` is ambiguous after the join.
+  const order = `ORDER BY is_home DESC, CASE u.role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, u.name`;
+  let rows;
+  try {
+    rows = db.prepare(`SELECT u.id, u.name, u.email, u.employee_code, u.role, u.is_active,
+        CASE WHEN u.location_id=? THEN 1 ELSE 0 END AS is_home, hl.name AS home_location
+      FROM users u LEFT JOIN locations hl ON hl.id=u.location_id
+      WHERE u.location_id=? OR u.id IN (SELECT user_id FROM staff_locations WHERE location_id=?)
+      ${order}`).all(locId, locId, locId);
+  } catch {
+    // Older DB without staff_locations — fall back to the home-store roster only.
+    rows = db.prepare(`SELECT u.id, u.name, u.email, u.employee_code, u.role, u.is_active, 1 AS is_home, NULL AS home_location
+      FROM users u WHERE u.location_id=? ${order}`).all(locId);
+  }
+  res.json(rows);
 });
 
 // ── Activity trail for this location — merges the Management audit trail with

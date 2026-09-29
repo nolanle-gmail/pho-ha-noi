@@ -44,6 +44,10 @@
   .picker a:hover{ background:var(--bg); }
   .hint{ text-align:center; color:var(--muted); font-size:.82rem; margin-top:1rem; }
   .clock{ text-align:center; color:var(--muted); font-variant-numeric:tabular-nums; font-size:.95rem; margin-top:.3rem; }
+  .cam-wrap{ display:flex; justify-content:center; margin:.2rem 0 .6rem; }
+  #cam{ width:200px; height:150px; object-fit:cover; border-radius:14px; background:#000;
+    transform:scaleX(-1); border:2px solid var(--line); }
+  .cam-note{ text-align:center; color:var(--muted); font-size:.8rem; margin:0 0 1rem; }
   [hidden]{ display:none !important; }
 </style>
 </head>
@@ -59,6 +63,9 @@
 
     <!-- Code entry + actions (/clock/<slug>) -->
     <div id="kiosk" hidden>
+      <div class="cam-wrap" id="camWrap" hidden><video id="cam" autoplay muted playsinline></video></div>
+      <div class="cam-note" id="camNote" hidden>📷 A photo is taken when you clock in or out.</div>
+      <canvas id="canvas" hidden></canvas>
       <label for="code">Enter your employee code</label>
       <input id="code" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false"
              placeholder="######" aria-label="Employee code" />
@@ -90,6 +97,26 @@ const slug = decodeURIComponent(location.pathname.replace(/^\/clock\/?/, '')).tr
 function tick(){ const n=new Date(); $('now').textContent = n.toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'}) + ' · ' + n.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
 setInterval(tick, 1000); tick();
 
+// Punch-photo camera (best-effort: a broken/denied camera never blocks clocking).
+let camStream = null;
+async function startCamera(){
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
+    const v = $('cam'); v.srcObject = camStream; $('camWrap').hidden = false; $('camNote').hidden = false;
+  } catch { camStream = null; $('camWrap').hidden = true; }   // no camera / denied → clock still works
+}
+function capturePhoto(){
+  try {
+    const v = $('cam'); if (!camStream || !v || !v.videoWidth) return null;
+    const maxW = 480, scale = Math.min(1, maxW / v.videoWidth);
+    const w = Math.round(v.videoWidth*scale), h = Math.round(v.videoHeight*scale);
+    const c = $('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').drawImage(v, 0, 0, w, h);
+    return c.toDataURL('image/jpeg', 0.6);
+  } catch { return null; }
+}
+
 function showPanel(kind, html){ const p=$('panel'); p.className='panel show '+kind; p.innerHTML=html; }
 function hidePanel(){ $('panel').className='panel'; }
 
@@ -112,10 +139,11 @@ async function lookup(){
 
 async function punch(action){
   const code = $('code').value.trim(); if (!code) return;
-  let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action }) });
+  const photo = capturePhoto();   // best-effort snapshot; null if no camera
+  let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, photo }) });
   if (res.d && res.d.confirm){
     if (!confirm(res.d.message)) return;   // staff must accept the warning
-    res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, confirm: true }) });
+    res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, photo, confirm: true }) });
   }
   if (!res.ok){ showPanel('err', (res.d && res.d.error) || 'Something went wrong — please try again.'); return; }
   $('actions').hidden = true;
@@ -139,6 +167,7 @@ async function start(){
   document.title = `Clock — ${d.display}`;
   $('loc').textContent = d.display;
   $('kiosk').hidden = false;
+  startCamera();   // begin the punch-photo preview (best-effort)
   $('hint').textContent = 'Enter your 6-digit employee code to clock in or out.';
   $('go').onclick = lookup;
   $('code').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });

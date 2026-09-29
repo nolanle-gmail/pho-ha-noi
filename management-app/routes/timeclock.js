@@ -122,6 +122,21 @@ router.post('/kiosk/:slug/state', kioskThrottle, (req, res) => {
 });
 
 // Clock in / out (send {action:'in'|'out', confirm:true} to accept a warning).
+// Store a punch photo (data URL from the kiosk camera) against a time entry. Best-effort:
+// never throws into the punch flow — a shift is recorded even if the photo can't be saved.
+function savePunchPhoto(entryId, kind, dataUrl) {
+  try {
+    if (!entryId || !dataUrl || typeof dataUrl !== 'string') return;
+    const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!m) return;
+    const bytes = Buffer.from(m[2], 'base64');
+    if (!bytes.length || bytes.length > 900000) return;   // sanity cap ~0.9MB
+    db.prepare(`DELETE FROM time_entry_photos WHERE entry_id=? AND kind=?`).run(entryId, kind);
+    db.prepare(`INSERT INTO time_entry_photos (entry_id, kind, mime, bytes, byte_size) VALUES (?,?,?,?,?)`)
+      .run(entryId, kind, m[1], bytes, bytes.length);
+  } catch { /* best-effort — the punch is already recorded */ }
+}
+
 router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
   const ctx = clockContext(req.params.slug, req.body && req.body.employee_code);
   if (ctx.err === 404) return res.status(404).json({ error: ctx.msg });
@@ -141,6 +156,7 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     const sched = scheduledMinutes(staff.id, loc.id, date), late = lateMinutesFor(staff.id, loc.id, date, tz, now);
     const info = db.prepare(`INSERT INTO time_entries (user_id, location_id, work_date, clock_in, scheduled_minutes, late_minutes, opened_by) VALUES (?,?,?,?,?,?,?)`)
       .run(staff.id, loc.id, date, now.toISOString(), sched, late, staff.id);
+    savePunchPhoto(info.lastInsertRowid, 'in', req.body && req.body.photo);
     if (late > 0) db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(loc.id, staff.id, 'late', `${staff.name} clocked in ${fmtDurMin(late)} late.`, info.lastInsertRowid);
     if (reason) {
       const why = { early: 'more than 30 minutes early', wrong_location: 'at a location they’re not scheduled at today', no_schedule: 'without being scheduled today', no_schedule_wrong_location: 'without being scheduled today, and at an unusual location' }[reason];
@@ -156,6 +172,7 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     if (reason && !confirm) return res.json({ confirm: true, reason, message: `You’re clocking out more than 30 minutes before your ${ctx.endHere} end time. Clock out anyway?` });
     const worked = Math.max(0, Math.round((now.getTime() - new Date(ctx.open.clock_in).getTime()) / 60000));
     db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=? WHERE id=?`).run(now.toISOString(), worked, ctx.open.id);
+    savePunchPhoto(ctx.open.id, 'out', req.body && req.body.photo);
     if (reason) notifyLeaders(loc.id, staff.id, 'Early clock-out', `${staff.name} clocked out early at ${locDisplay(loc.name)} (${localTime(tz, now)}, worked ${fmtDurMin(worked)}). Please review it for their timesheet.`);
     return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.`, at: localTime(tz, now) });
   }
@@ -448,10 +465,14 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const jobForStmt = db.prepare(`SELECT j.name FROM shifts s JOIN shift_jobs sj ON sj.shift_id=s.id JOIN jobs j ON j.id=sj.job_id
     WHERE s.user_id=? AND s.location_id=? AND s.shift_date=? AND s.kind='work' ORDER BY s.start_time IS NULL, s.start_time, j.name LIMIT 1`);
   const jobFor = (uid, d) => (jobForStmt.get(uid, locId, d) || {}).name || null;
+  // Punch photos captured on the kiosk (best-effort), by entry + kind.
+  const photoStmt = db.prepare(`SELECT kind, id FROM time_entry_photos WHERE entry_id=?`);
+  const photosFor = (entryId) => { const o = { in: null, out: null }; for (const p of photoStmt.all(entryId)) o[p.kind] = p.id; return o; };
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
+    const ph = photosFor(e.id);
     // Their shift on the entry's OWN day (carryover entries look up their prior day).
     const rawSh = e.work_date === date ? shiftBy[e.user_id] : shiftFor.get(e.user_id, locId, e.work_date);
     const sh = rawSh && rawSh.start_time ? rawSh : null;
@@ -467,6 +488,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       shift_start: sh ? sh.start_time : null, shift_end: sh ? sh.end_time : null,
       work_date: e.work_date, carryover: e.work_date !== date ? 1 : 0,
       job: jobFor(e.user_id, e.work_date),
+      photo_in: ph.in, photo_out: ph.out,
     };
   });
   // Scheduled today but no punch yet → "not in".
@@ -489,6 +511,38 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       overtime: rows.filter(r => r.overtime_minutes > 0).length,
     },
   });
+});
+
+// Serve a punch photo (manager, scoped to their location). Returns the raw image bytes.
+router.get('/photo/:photoId', requireRole(ROLES.MANAGE), (req, res) => {
+  const p = db.prepare(`SELECT tp.mime, tp.bytes, te.location_id FROM time_entry_photos tp
+    JOIN time_entries te ON te.id=tp.entry_id WHERE tp.id=?`).get(req.params.photoId);
+  if (!p) return res.status(404).end();
+  if (!ownsLocation(req, p.location_id)) return res.status(403).end();
+  res.set('Content-Type', p.mime || 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=86400');
+  res.send(Buffer.from(p.bytes));
+});
+
+// A staff member's punch photos over a date range (for the timesheet report drill-in).
+router.get('/punch-photos', requireRole(ROLES.MANAGE), (req, res) => {
+  const userId = parseInt(req.query.user_id, 10);
+  if (!userId) return res.status(400).json({ error: 'user_id is required.' });
+  const start = validDate(req.query.start) || localDate(DEFAULT_TZ);
+  const end = validDate(req.query.end) || start;
+  const locId = req.query.location_id ? parseInt(req.query.location_id, 10) : null;
+  const conds = ['te.user_id=?', 'te.work_date>=?', 'te.work_date<=?'], args = [userId, start, end];
+  if (locId) { conds.push('te.location_id=?'); args.push(locId); }
+  else if (!seesAllLocations(req.user.role)) { conds.push('te.location_id=?'); args.push(req.user.location_id); }
+  const rows = db.prepare(`SELECT tp.id photo_id, tp.kind, te.id entry_id, te.work_date, te.clock_in, te.clock_out, te.location_id, l.name location, l.timezone
+    FROM time_entry_photos tp JOIN time_entries te ON te.id=tp.entry_id LEFT JOIN locations l ON l.id=te.location_id
+    WHERE ${conds.join(' AND ')} ORDER BY te.work_date DESC, tp.kind`).all(...args)
+    .filter(r => seesAllLocations(req.user.role) || String(r.location_id) === String(req.user.location_id))
+    .map(r => ({
+      photo_id: r.photo_id, kind: r.kind, work_date: r.work_date, location: r.location,
+      at: localTime(r.timezone || DEFAULT_TZ, new Date(r.kind === 'out' && r.clock_out ? r.clock_out : r.clock_in)),
+    }));
+  res.json({ user_id: userId, start, end, photos: rows });
 });
 
 // Convert a local wall-clock HH:MM on a date to a UTC instant in the given tz.
@@ -969,8 +1023,28 @@ router.post('/alerts/:id/resolve', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
+// Auto-purge old punch photos so image bytes don't accumulate forever. Retention defaults
+// to 90 days (override with PUNCH_PHOTO_RETENTION_DAYS). Deletes the photo rows only — the
+// time entries (hours) are kept for payroll history.
+const PHOTO_RETENTION_DAYS = Math.max(1, parseInt(process.env.PUNCH_PHOTO_RETENTION_DAYS, 10) || 90);
+function purgePunchPhotos() {
+  try {
+    const info = db.prepare(`DELETE FROM time_entry_photos WHERE created_at < datetime('now', ?)`).run(`-${PHOTO_RETENTION_DAYS} days`);
+    if (info.changes) console.log(`[punch-photos] purged ${info.changes} photo(s) older than ${PHOTO_RETENTION_DAYS} days`);
+    return info.changes;
+  } catch (e) { console.error('purgePunchPhotos failed:', e.message); return 0; }
+}
+
 module.exports = router;
 module.exports.sweepMissedClockOuts = sweepMissedClockOuts; // exported for tests/manual runs
+module.exports.purgePunchPhotos = purgePunchPhotos;
+// Purge punch photos past the retention window: once at startup, then daily.
+module.exports.startPunchPhotoPurge = function startPunchPhotoPurge() {
+  purgePunchPhotos();
+  const t = setInterval(purgePunchPhotos, 24 * 60 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
 // Start the missed-clock-out sweep (called by server.js when it's the entry point).
 module.exports.startClockSweep = function startClockSweep() {
   const t = setInterval(sweepMissedClockOuts, 10 * 60 * 1000);

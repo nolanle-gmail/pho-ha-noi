@@ -14,6 +14,15 @@ async function api(path, opts = {}) {
 
 const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null };
 
+// Route: /checkin/<slug> is the join form; /checkin/<slug>/current is the public
+// live waitlist (who's waiting, in order) linked from the confirmation text.
+const ROUTE = (() => {
+  const raw = decodeURIComponent(location.pathname.replace(/^\/checkin\/?/, '')).toLowerCase().replace(/\/+$/, '');
+  const current = raw === 'current' || raw.endsWith('/current');
+  const slug = current ? raw.replace(/\/?current$/, '').replace(/\/+$/, '') : raw;
+  return { current, slug };
+})();
+
 function stopPolling() { if (K.pollTimer) { clearInterval(K.pollTimer); K.pollTimer = null; } }
 // Kiosk: after a guest joins, show their confirmation briefly, then reset the
 // form (keeping this device's location) so it's ready for the next guest.
@@ -34,8 +43,7 @@ async function start() {
   // Pin the store from (in order): a /checkin/<slug> path, a ?loc=<id>, or a
   // location this device was set to before. That way each tablet / QR stays on
   // its own store's list.
-  const slug = decodeURIComponent(location.pathname.replace(/^\/checkin\/?/, '')).toLowerCase();
-  const chosen = (slug && K.locations.find(l => l.slug === slug))
+  const chosen = (ROUTE.slug && K.locations.find(l => l.slug === ROUTE.slug))
     || byId(params.get('loc'))
     || byId(localStorage.getItem(SAVED_LOC))
     || (K.locations.length === 1 ? K.locations[0] : null);
@@ -66,8 +74,8 @@ async function renderForm() {
       <label class="k-label">Mobile number <span class="k-opt">(optional)</span></label>
       <input id="kPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="tel" />
       <label class="k-consent" style="display:flex;gap:.6rem;align-items:flex-start;margin:.5rem 0 0;font-size:.82rem;line-height:1.4;color:#555;cursor:pointer">
-        <input type="checkbox" id="kConsent" style="margin-top:.15rem;flex:0 0 auto;width:1.1rem;height:1.1rem" />
-        <span>Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</span>
+        <input type="checkbox" id="kConsent" style="flex:0 0 auto;width:1.15rem;height:1.15rem;min-width:1.15rem;margin:.15rem 0 0;padding:0;border:0" />
+        <span style="flex:1 1 auto;min-width:0">Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</span>
       </label>
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>
@@ -147,9 +155,38 @@ function renderConfirm(ref, initial) {
   K.pollTimer = setInterval(poll, 12000);
 }
 
-// If the guest reopens the page with an active check-in, restore their status.
+// Public live waitlist view (/checkin/<slug>/current) — read-only, auto-refreshing.
+async function renderCurrent() {
+  let d; try { d = await api('/waitlist/' + encodeURIComponent(ROUTE.slug)); }
+  catch (e) { KV().innerHTML = `<div class="k-card"><div class="k-big">Waitlist unavailable</div><p class="k-note">${esc(e.message)}</p></div>`; return; }
+  const locName = (d.location.name || '').replace('Pho Ha Noi — ', '');
+  const rows = d.parties.map(p => `<div class="k-wl-row">
+      <span class="k-wl-pos">#${p.position}</span>
+      <span class="k-wl-name">${esc(p.name)}</span>
+      <span class="k-wl-meta">party of ${p.party_size}${p.waiting_min > 0 ? ` · ${p.waiting_min} min` : ''}</span>
+    </div>`).join('');
+  KV().innerHTML = `<div class="k-card">
+    <div class="k-loc-fixed">${esc(locName)}</div>
+    <div class="k-you">Current waitlist</div>
+    <p class="k-note" style="margin-top:.15rem">${d.count
+      ? `${d.count} ${d.count === 1 ? 'party' : 'parties'} waiting · about <strong>${d.quoted_minutes} min</strong> for the next table`
+      : 'No one is waiting right now.'}</p>
+    <div class="k-wl">${rows || '<p class="k-note">The list is empty right now.</p>'}</div>
+    <p class="k-note" style="margin-top:.9rem;font-size:.78rem;color:#888">Find your name to see your spot. This list updates automatically.</p>
+  </div>`;
+}
+async function startCurrent() {
+  KV().innerHTML = '<div class="k-loading">Loading…</div>';
+  await renderCurrent();
+  stopPolling();
+  K.pollTimer = setInterval(renderCurrent, 15000);
+}
+
+// Boot: the public live-list route, a restored check-in, or the join form.
 const savedRef = sessionStorage.getItem('phnw_ref');
-if (savedRef) {
+if (ROUTE.current) {
+  startCurrent();
+} else if (savedRef) {
   api('/position/' + savedRef).then(p => {
     if (p.status === 'waiting') renderConfirm(savedRef, { position: p.position, quoted_minutes: p.quoted_minutes, party_size: p.party_size, guest_name: p.guest_name });
     else { sessionStorage.removeItem('phnw_ref'); start(); }

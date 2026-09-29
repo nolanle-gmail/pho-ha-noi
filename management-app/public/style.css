@@ -127,6 +127,9 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; }
 .sf-card { padding: .8rem .9rem; border-left: 4px solid var(--ok); }
 .sf-card.attention { border-left-color: var(--out); background: color-mix(in srgb, var(--out) 7%, var(--surface)); }
+tr.sf-alert > td { background: color-mix(in srgb, var(--out, #b91c1c) 9%, transparent); }
+tr.sf-seated > td { background: color-mix(in srgb, var(--brand, #16a34a) 7%, transparent); }
+tr.sf-seated > td:first-child { border-left: 3px solid var(--brand, #16a34a); }
 .sf-top { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; }
 .sf-table { font-weight: 800; font-size: 1.05rem; }
 .sf-mins { font-weight: 800; font-size: 1.05rem; color: var(--ok); font-variant-numeric: tabular-nums; }
@@ -468,12 +471,17 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 }
 
 /* Cards / KPIs */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 1rem; margin-bottom: 1.5rem; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.2rem; }
 .card .label { color: var(--muted); font-size: .82rem; font-weight: 600; }
 .card .value { font-size: 1.9rem; font-weight: 800; margin-top: .3rem; }
 .card .value.warn { color: var(--low); }
 .card .value.bad { color: var(--out); }
+/* In a KPI grid the card can be as narrow as ~160px, so an 8-figure money value
+   (e.g. $6,011,741.92 net sales) would overflow the box. Scale the number down,
+   use tabular figures, and let it wrap as a last resort so it can never spill. */
+.kpis .card .value { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 /* Toast sales cards (dashboard) — readable at any width; the big number can't spill */
 .tsale-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
 .tsale-card { display: flex; flex-direction: column; gap: .1rem; overflow: hidden; min-width: 0; }
@@ -486,6 +494,11 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 .tsale-card .tsale-total span { font-weight: 400; color: var(--muted); font-size: .74rem; }
 .tsale-pulled { font-size: .78rem; color: var(--muted); margin: 0 0 .8rem; }
 .tsale-pulled strong { color: var(--ink); }
+/* Clickable card → dining-option breakdown popup. */
+.tsale-click { cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; }
+.tsale-click:hover, .tsale-click:focus-visible { border-color: var(--brand); box-shadow: 0 2px 10px rgba(0,0,0,.08); transform: translateY(-1px); outline: none; }
+.tsale-card .tsale-more { margin-top: .35rem; font-size: .72rem; font-weight: 600; color: var(--brand); opacity: .85; }
+.tsale-click:hover .tsale-more { opacity: 1; }
 .section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1rem 1.2rem; margin-bottom: 1.25rem; }
 .section h3 { margin: 0 0 .8rem; font-size: 1.02rem; }
 .row-between { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
@@ -509,6 +522,9 @@ td.num, th.num { text-align: right; }
 /* Modal */
 .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 1rem; z-index: 50; }
 .modal { background: #fff; border-radius: 16px; padding: 1.5rem; width: 100%; max-width: 420px; box-shadow: 0 24px 60px rgba(0,0,0,.3); }
+/* Compound selector so the wide variant beats the .modal max-width above (equal
+   specificity would otherwise let this later .modal rule win). */
+.modal.modal-wide { max-width: 640px; width: 92vw; }
 .modal h3 { margin: 0 0 1rem; }
 .modal label { display: block; font-size: .82rem; font-weight: 600; color: var(--muted); margin-bottom: .25rem; }
 .modal .actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .5rem; }
@@ -614,13 +630,13 @@ tr:hover .order-hover { opacity: 1; }
 .thread-body { white-space: pre-wrap; font-size: .95rem; }
 /* Read / seen receipts under a sender's own message */
 .msg-receipt { margin-top: .3rem; font-size: .72rem; font-weight: 600; color: var(--muted); cursor: default; }
-.msg-receipt[data-receipts] { cursor: pointer; }
-.msg-receipt[data-receipts]:hover { text-decoration: underline; }
+.msg-receipt[data-receipts], .msg-receipt[data-cmid] { cursor: pointer; }
+.msg-receipt[data-receipts]:hover, .msg-receipt[data-cmid]:hover { text-decoration: underline; }
 .msg-receipt.all { color: var(--ok, #15803d); }
 .rcp-sec { margin: .5rem 0 0; }
 .rcp-h { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .25rem; }
 .rcp-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .25rem 0; border-top: 1px solid var(--line-soft, #f0e8da); font-size: .86rem; }
-.reply-box { display: flex; gap: .6rem; align-items: flex-end; max-width: 720px; }
+.reply-box { display: flex; gap: .6rem; align-items: flex-end; max-width: 720px; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: .5rem 0; border-bottom: 1px solid var(--line); margin-bottom: .5rem; }
 .reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; }
 /* Message attachments (pictures & videos) */
 .msg-attach-btn { display: inline-flex; align-items: center; gap: .3rem; padding: .5rem .7rem; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: .85rem; font-weight: 600; white-space: nowrap; }
@@ -726,3 +742,124 @@ tr:hover .order-hover { opacity: 1; }
 .alert-pop-actions { display: flex; gap: .6rem; justify-content: center; }
 .alert-pop-actions .btn { padding: .7rem 1.4rem; font-size: 1rem; }
 .alert-pop-actions .btn:not(.ghost) { background: #16a34a; color: #fff; }
+
+/* ── Emoji picker (message / chat composers) ─────────────────────────────── */
+.emoji-btn { background: none; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+  font-size: 1.15rem; line-height: 1; padding: .28rem .45rem; margin: .35rem .4rem 0 0; }
+.emoji-btn:hover { background: var(--bg); }
+.emoji-panel { position: fixed; z-index: 1200; width: min(344px, 92vw); max-height: 300px; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.18); padding: .5rem .6rem; }
+.emoji-grp { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  margin: .55rem 0 .2rem; font-weight: 700; }
+.emoji-grp:first-child { margin-top: 0; }
+.emoji-row { display: flex; flex-wrap: wrap; gap: .08rem; }
+.emoji-item { background: none; border: none; cursor: pointer; font-size: 1.35rem; line-height: 1;
+  padding: .2rem; border-radius: 6px; }
+.emoji-item:hover { background: var(--bg); }
+
+/* ── Message / chat reactions (tapbacks) ─────────────────────────────────── */
+.rxn-bar { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-top: .35rem; }
+.rxn { background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: .08rem .45rem; font-size: .82rem; cursor: pointer; line-height: 1.5; }
+.rxn.mine { background: var(--gold-soft); border-color: var(--gold); }
+.rxn-add { background: none; border: 1px solid transparent; border-radius: 999px;
+  padding: .08rem .35rem; font-size: .85rem; cursor: pointer; opacity: .45; }
+.rxn-add:hover { opacity: 1; background: var(--bg); }
+.rxn-menu { position: fixed; z-index: 1300; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 10px 34px rgba(0,0,0,.18); padding: .4rem .5rem; max-width: min(280px, 92vw); }
+.rxn-pickrow { display: flex; gap: .15rem; }
+.rxn-pick { background: none; border: none; font-size: 1.5rem; cursor: pointer; padding: .15rem .25rem; border-radius: 8px; line-height: 1; }
+.rxn-pick:hover { background: var(--bg); }
+.rxn-pick.mine { background: var(--gold-soft); }
+.rxn-who { margin-top: .35rem; border-top: 1px solid var(--line); padding-top: .35rem; font-size: .8rem; color: var(--muted); max-height: 150px; overflow-y: auto; }
+.rxn-who div { padding: .1rem 0; }
+.rxn-who-e { margin-right: .3rem; }
+/* Word-style reactions (e.g. the "Haha" tapback) — bold text, not an oversized emoji. */
+.rxn.rxn-text { font-weight: 800; }
+.rxn-pick.rxn-pick-text { font-size: .98rem; font-weight: 800; letter-spacing: .02em; padding: .35rem .55rem; }
+/* Reactions float at the top-left corner of the bubble (iMessage tapback style). */
+.thread-msg { position: relative; }
+.thread-msg:has(.rxn-badges) { margin-top: 1rem; }
+.rxn-badges { position: absolute; top: -.8rem; left: .6rem; z-index: 2; display: flex; flex-wrap: wrap; gap: .2rem; }
+.rxn-badges .rxn { box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+/* The "Haha" reaction graphic (inline SVG bubble) sizing per context. */
+.rxn-svg { height: 1.15em; width: auto; vertical-align: -.28em; }
+.rxn-pick .rxn-svg { height: 1.7rem; vertical-align: middle; }
+.rxn-who-e .rxn-svg { height: 1.25em; vertical-align: -.3em; }
+/* Enlarge the HAHA reaction graphic so the "HA HA" is legible on the bubble. */
+.rxn-svg { height: 1.55em; vertical-align: -.42em; }
+.rxn-pick .rxn-svg { height: 2rem; vertical-align: middle; }
+.rxn-who-e .rxn-svg { height: 1.5em; vertical-align: -.4em; }
+.rxn-badges { top: -1rem; }
+.thread-msg:has(.rxn-badges) { margin-top: 1.4rem; }
+
+/* ── Barcode scanner overlay ─────────────────────────────────────────── */
+.scan-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(15,23,42,.72); display: flex; align-items: flex-start; justify-content: center; padding: 1rem; overflow-y: auto; }
+.scan-card { background: #fff; border-radius: 14px; width: 100%; max-width: 460px; margin-top: 4vh; padding: 1rem 1.1rem 1.2rem; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.scan-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .7rem; font-size: 1.05rem; }
+.scan-reader { width: 100%; border-radius: 10px; overflow: hidden; background: #0f172a; min-height: 200px; }
+.scan-reader video { width: 100% !important; border-radius: 10px; display: block; }
+.scan-msg { margin: .6rem 0; color: var(--muted); font-size: .9rem; text-align: center; }
+.scan-found, .scan-unknown { background: #f8fafc; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: .8rem; }
+.scan-found strong { font-size: 1.05rem; }
+.scan-act, .scan-row { display: flex; gap: .5rem; margin-top: .6rem; flex-wrap: wrap; }
+.scan-act input, .scan-row input, .scan-form input, .scan-form select { flex: 1; min-width: 0; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; }
+.scan-act input { max-width: 90px; }
+.scan-tabs { display: flex; gap: .5rem; margin: .7rem 0 .2rem; flex-wrap: wrap; }
+.scan-form { display: flex; flex-direction: column; gap: .5rem; margin-top: .6rem; }
+.scan-manual { display: flex; gap: .5rem; margin-top: .8rem; }
+.scan-manual input { flex: 1; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; }
+.scan-err { color: #b91c1c; padding: .6rem; }
+.scan-card .mono { font-family: ui-monospace, monospace; }
+
+.scan-gs1 { margin-top: .5rem; padding: .45rem .6rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: .85rem; color: #1e3a8a; }
+.scan-form .scan-row input { min-width: 0; }
+
+.scan-modes { display: flex; gap: .5rem; margin: .2rem 0 .7rem; }
+.scan-modes .btn { flex: 1; }
+.ship-bar { background: #f8fafc; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: .7rem .8rem; margin-bottom: .7rem; }
+.ship-lbl { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .3rem; }
+.ship-bar select { width: 100%; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; }
+.ship-ord-h { font-size: .78rem; color: var(--muted); margin: .6rem 0 .3rem; text-transform: uppercase; letter-spacing: .03em; }
+.ship-ord { display: flex; justify-content: space-between; gap: .5rem; padding: .3rem .5rem; border-radius: 6px; font-size: .88rem; background: #fff; border: 1px solid var(--line-soft, #f0e8da); margin-bottom: .25rem; }
+.ship-ord.done { opacity: .5; text-decoration: line-through; }
+
+.scan-stock { margin-top: .5rem; border: 1px solid var(--line, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.scan-stock-row { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem .6rem; font-size: .9rem; border-bottom: 1px solid var(--line-soft, #f0e8da); }
+.scan-stock-row:last-child { border-bottom: none; }
+.scan-stock-row .low { color: #b45309; font-weight: 600; }
+
+.sh-ais td { background: var(--surface-2, #f5eee2); font-size: .8rem; }
+.sh-ais code { margin-right: .3rem; }
+
+.scan-combo { display: flex; flex-direction: column; gap: .25rem; }
+.scan-lbl { font-size: .78rem; color: var(--muted, #6b6058); font-weight: 600; }
+.scan-combo select, .scan-combo input { width: 100%; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; background: #fff; }
+/* Modal combo select sits full-width like its inputs */
+.modal select[data-combo] { width: 100%; }
+
+/* File (document) attachment card in messages & chat */
+.msg-att-file { display: inline-flex; align-items: center; gap: .5rem; padding: .5rem .7rem; background: var(--surface, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 10px; text-decoration: none; color: var(--ink, #2a2320); max-width: 280px; }
+.msg-att-file:hover { background: var(--surface-2, #f5eee2); }
+.msg-att-file .af-ic { font-size: 1.4rem; line-height: 1; }
+.msg-att-file .af-meta { display: flex; flex-direction: column; min-width: 0; }
+.msg-att-file .af-name { font-weight: 600; font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-att-file .af-size { font-size: .72rem; color: var(--muted, #6b6058); }
+.msg-att-file .af-dl { margin-left: .3rem; color: var(--muted, #6b6058); }
+
+/* Attachment upload progress banner */
+.att-prog { position: fixed; left: 50%; bottom: 4.5rem; transform: translateX(-50%); z-index: 9500; background: var(--ink, #2a2320); color: #fff; padding: .6rem .9rem; border-radius: 12px; font-size: .85rem; box-shadow: 0 8px 24px rgba(0,0,0,.3); min-width: 220px; max-width: 90vw; }
+.att-prog-bar { margin-top: .4rem; height: 6px; background: rgba(255,255,255,.2); border-radius: 4px; overflow: hidden; }
+.att-prog-bar i { display: block; height: 100%; background: var(--gold, #cfa941); border-radius: 4px; transition: width .15s; }
+
+/* Service Flow board layout.
+   Desktop/tablet: plain block flow — byte-for-byte the same as before the mobile tweak (an
+   explicit display:block guarantees the wrapper never becomes flex outside a phone). */
+.sf-wrap { display: block; }
+/* Phones only: float the active-tables table to the top (above the KPI cards, banner and
+   alert timing) so floor staff act on tables first. Kept narrow so no desktop window matches. */
+@media (max-width: 640px) {
+  .sf-wrap.sf-top { display: flex; flex-direction: column; }
+  .sf-wrap.sf-top .sf-tables { order: -1; margin-bottom: 1rem; }
+}

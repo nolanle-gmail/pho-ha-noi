@@ -3,8 +3,15 @@ const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { receiveLot, consumeFIFO } = require('../lib/lots');
+const { lookupProduct, rememberProduct } = require('../lib/productLookup');
+const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
+const { resolveVendor } = require('../lib/vendors');
+const { shipByBarcode, openOrders } = require('../lib/transfer');
+const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
 
 const router = express.Router();
+// Reduce any scanned barcode (plain UPC/EAN or a GS1-128 case label) to its stable key.
+const scanKey = (raw) => { const p = parseScan(raw); return (p.gtin || p.code || '').toString().trim(); };
 router.use(verifyToken);
 
 // Resolve the location a request targets: owners may pass one; everyone else is
@@ -12,6 +19,47 @@ router.use(verifyToken);
 function scopeLoc(req, fromQuery) {
   if (seesAllLocations(req.user.role)) return (fromQuery ? req.query.location_id : req.body.location_id) || null;
   return req.user.location_id;
+}
+
+// ── Central Kitchen master catalog (one-way replication) ───────────────────
+// The Central Kitchen is the master: items/vendors added there fan out to every
+// restaurant location, and edits there propagate to those copies (matched via
+// `source_id`). Store-level adds stay local and never push back up to the CK.
+const ckLocId = () => (db.prepare(`SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1`).get() || {}).id || null;
+const restaurantLocs = () => db.prepare(`SELECT id FROM locations WHERE type='restaurant' AND is_active=1`).all().map(r => r.id);
+const isCk = (locId) => locId != null && String(locId) === String(ckLocId());
+
+function replicateItemFromCk(ckItem) {
+  const ins = db.prepare(`INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes, barcode, source_id)
+    VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?)`);
+  const exists = db.prepare(`SELECT id FROM inventory WHERE location_id=? AND item_name=? AND is_active=1`);
+  let n = 0;
+  for (const loc of restaurantLocs()) {
+    if (exists.get(loc, ckItem.item_name)) continue;   // store already has this item — leave it
+    try { ins.run(loc, ckItem.item_name, ckItem.category, ckItem.unit, ckItem.min_quantity, ckItem.par_level, ckItem.unit_cost, ckItem.sku, ckItem.description, ckItem.notes, ckItem.barcode, ckItem.id); n++; } catch { /* skip on conflict */ }
+  }
+  return n;
+}
+function propagateItemEdit(ckId) {
+  const ck = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(ckId); if (!ck) return;
+  const rows = db.prepare(`SELECT id FROM inventory WHERE source_id=? AND is_active=1`).all(ckId);
+  const upd = db.prepare(`UPDATE inventory SET item_name=@item_name, category=@category, unit=@unit, sku=@sku, description=@description, notes=@notes, min_quantity=@min_quantity, par_level=@par_level, unit_cost=@unit_cost, barcode=@barcode WHERE id=@id`);
+  for (const r of rows) { try { upd.run({ id: r.id, item_name: ck.item_name, category: ck.category, unit: ck.unit, sku: ck.sku, description: ck.description, notes: ck.notes, min_quantity: ck.min_quantity, par_level: ck.par_level, unit_cost: ck.unit_cost, barcode: ck.barcode }); } catch { /* name clash at a store — skip */ } }
+}
+function replicateVendorFromCk(ckVendor) {
+  const ins = db.prepare(`INSERT INTO vendors (name, contact_name, phone, email, lead_time_days, notes, location_id, source_id) VALUES (?,?,?,?,?,?,?,?)`);
+  const exists = db.prepare(`SELECT id FROM vendors WHERE location_id=? AND name=? AND is_active=1`);
+  let n = 0;
+  for (const loc of restaurantLocs()) {
+    if (exists.get(loc, ckVendor.name)) continue;
+    try { ins.run(ckVendor.name, ckVendor.contact_name, ckVendor.phone, ckVendor.email, ckVendor.lead_time_days, ckVendor.notes, loc, ckVendor.id); n++; } catch { /* skip */ }
+  }
+  return n;
+}
+function propagateVendorEdit(ckId) {
+  const ck = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(ckId); if (!ck) return;
+  try { db.prepare(`UPDATE vendors SET name=@name, contact_name=@contact_name, phone=@phone, email=@email, lead_time_days=@lead_time_days, notes=@notes WHERE source_id=@ckId AND is_active=1`)
+    .run({ ckId, name: ck.name, contact_name: ck.contact_name, phone: ck.phone, email: ck.email, lead_time_days: ck.lead_time_days, notes: ck.notes }); } catch { /* skip */ }
 }
 
 // ── Meta: locations & categories (for pickers) ─────────────────────────────
@@ -53,9 +101,9 @@ router.get('/audit', requireRole(ROLES.OPS), (req, res) => {
 router.get('/', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   if (!locId) {
-    return res.json(db.prepare(`SELECT i.*, l.name as location_name FROM inventory i JOIN locations l ON i.location_id=l.id WHERE i.is_active=1 ORDER BY l.name, i.category, i.item_name`).all());
+    return res.json(db.prepare(`SELECT i.*, l.name as location_name, v.name AS vendor_name FROM inventory i JOIN locations l ON i.location_id=l.id LEFT JOIN vendors v ON v.id=i.vendor_id WHERE i.is_active=1 ORDER BY l.name, i.category, i.item_name`).all());
   }
-  res.json(db.prepare(`SELECT * FROM inventory WHERE location_id=? AND is_active=1 ORDER BY category, item_name`).all(locId));
+  res.json(db.prepare(`SELECT i.*, v.name AS vendor_name FROM inventory i LEFT JOIN vendors v ON v.id=i.vendor_id WHERE i.location_id=? AND i.is_active=1 ORDER BY i.category, i.item_name`).all(locId));
 });
 
 // Warehouse view — one row per item, quantities across all locations.
@@ -85,24 +133,37 @@ router.post('/', requireRole(ROLES.OPS), (req, res) => {
   if (!name) return res.status(400).json({ error: 'Item name is required.' });
   const dup = db.prepare(`SELECT id FROM inventory WHERE item_name=? AND location_id=?`).get(name, locId);
   if (dup) return res.status(409).json({ error: 'That item already exists at this location.' });
+  // A barcode can repeat across locations, but not on two items at the SAME location.
+  const bcNew = scanKey(req.body.barcode);
+  if (bcNew) { const bcClash = db.prepare(`SELECT item_name FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(locId, bcNew); if (bcClash) return res.status(409).json({ error: `That barcode is already on “${bcClash.item_name}” at this location — scan it to receive that item instead.` }); }
   const qty = Math.max(0, parseFloat(req.body.quantity) || 0);
   const cost = Math.max(0, parseFloat(req.body.unit_cost) || 0);
+  const vendorId = resolveVendor(locId, req.body);
   const r = db.prepare(`
-    INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes, barcode, vendor_id, vendor_code)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(locId, name, req.body.category || 'Other', req.body.unit || 'units', qty,
          Math.max(0, parseFloat(req.body.min_quantity) || 0),
          req.body.par_level == null || req.body.par_level === '' ? null : Math.max(0, parseFloat(req.body.par_level) || 0),
          cost, (req.body.sku || '').toString().trim() || null,
          (req.body.description || '').toString().slice(0, 500) || null,
-         (req.body.notes || '').toString().slice(0, 500) || null);
+         (req.body.notes || '').toString().slice(0, 500) || null,
+         scanKey(req.body.barcode) || null,
+         vendorId, (req.body.vendor_code || '').toString().trim() || null);
   if (qty > 0) {
-    receiveLot({ item_id: r.lastInsertRowid, location_id: locId, quantity: qty, unit_cost: cost, user_id: req.user.id });
+    const pp = parseScan(req.body.barcode);
+    const openExpiry = req.body.expiry_date || pp.expiry || pp.packDate || pp.prodDate || null;
+    const openLot = req.body.lot_code || pp.lot || null;
+    receiveLot({ item_id: r.lastInsertRowid, location_id: locId, quantity: qty, unit_cost: cost, expiry_date: openExpiry, lot_code: openLot, user_id: req.user.id });
     db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`)
       .run(r.lastInsertRowid, locId, qty, req.user.id, 'Opening stock');
   }
-  auditLog(req, 'item_create', 'inventory', r.lastInsertRowid, { name, location_id: Number(locId) });
-  res.json({ success: true, id: r.lastInsertRowid });
+  const bc = scanKey(req.body.barcode);
+  if (bc) { rememberProduct(bc, name, req.user.id); logScan({ itemId: r.lastInsertRowid, locationId: locId, action: 'create', parsed: parseScan(req.body.barcode), quantity: qty, userId: req.user.id }); }
+  let replicated = 0;
+  if (isCk(locId)) { const ckItem = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(r.lastInsertRowid); replicated = replicateItemFromCk(ckItem); }
+  auditLog(req, 'item_create', 'inventory', r.lastInsertRowid, { name, location_id: Number(locId), replicated });
+  res.json({ success: true, id: r.lastInsertRowid, replicated });
 });
 
 // ── Waste / spoilage ───────────────────────────────────────────────────────
@@ -169,15 +230,20 @@ router.get('/counts', requireRole(ROLES.OPS), (req, res) => {
 
 // ── Vendors ────────────────────────────────────────────────────────────────
 router.get('/vendors', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, true);   // per-location vendor list (CK has its own master list)
+  if (locId) return res.json(db.prepare(`SELECT * FROM vendors WHERE is_active=1 AND location_id=? ORDER BY name`).all(locId));
   res.json(db.prepare(`SELECT * FROM vendors WHERE is_active=1 ORDER BY name`).all());
 });
 router.post('/vendors', requireRole(ROLES.MANAGE), (req, res) => {
   const { name, contact_name, phone, email, lead_time_days, notes } = req.body;
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Vendor name required' });
-  const r = db.prepare(`INSERT INTO vendors (name, contact_name, phone, email, lead_time_days, notes) VALUES (?,?,?,?,?,?)`)
-    .run(String(name).slice(0, 120), contact_name || null, phone || null, email || null, parseInt(lead_time_days) || 0, notes || null);
-  auditLog(req, 'vendor_create', 'vendor', r.lastInsertRowid, { name });
-  res.json({ success: true, id: r.lastInsertRowid });
+  const locId = scopeLoc(req, false);   // owner passes the location; others pinned to their own
+  const r = db.prepare(`INSERT INTO vendors (name, contact_name, phone, email, lead_time_days, notes, location_id) VALUES (?,?,?,?,?,?,?)`)
+    .run(String(name).slice(0, 120), contact_name || null, phone || null, email || null, parseInt(lead_time_days) || 0, notes || null, locId || null);
+  let replicated = 0;
+  if (isCk(locId)) { const ckVendor = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(r.lastInsertRowid); replicated = replicateVendorFromCk(ckVendor); }
+  auditLog(req, 'vendor_create', 'vendor', r.lastInsertRowid, { name, location_id: locId ? Number(locId) : null, replicated });
+  res.json({ success: true, id: r.lastInsertRowid, replicated });
 });
 router.put('/vendors/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const v = db.prepare(`SELECT * FROM vendors WHERE id=?`).get(req.params.id);
@@ -188,6 +254,7 @@ router.put('/vendors/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(req.params.id);
   db.prepare(`UPDATE vendors SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  if (isCk(v.location_id)) propagateVendorEdit(v.id);   // CK edit → update the store copies
   auditLog(req, 'vendor_update', 'vendor', v.id, { name: v.name, changes: req.body });
   res.json({ success: true });
 });
@@ -421,9 +488,17 @@ router.put('/:id', requireRole(ROLES.OPS), (req, res) => {
   if (req.body.min_quantity !== undefined) { fields.push('min_quantity=?'); vals.push(parseFloat(req.body.min_quantity) || 0); }
   if (req.body.unit_cost !== undefined) { fields.push('unit_cost=?'); vals.push(parseFloat(req.body.unit_cost) || 0); }
   if (req.body.par_level !== undefined) { fields.push('par_level=?'); vals.push(req.body.par_level === '' || req.body.par_level == null ? null : Math.max(0, parseFloat(req.body.par_level) || 0)); }
+  if (req.body.barcode !== undefined) {
+    const nb = scanKey(req.body.barcode) || null;
+    if (nb) { const bcClash = db.prepare(`SELECT item_name FROM inventory WHERE location_id=? AND barcode=? AND is_active=1 AND id<>?`).get(item.location_id, nb, item.id); if (bcClash) return res.status(409).json({ error: `That barcode is already on “${bcClash.item_name}” at this location.` }); }
+    fields.push('barcode=?'); vals.push(nb);
+  }
+  if (req.body.vendor_code !== undefined) { fields.push('vendor_code=?'); vals.push((req.body.vendor_code || '').toString().trim() || null); }
+  if (req.body.vendor_id !== undefined || req.body.vendor_name !== undefined) { fields.push('vendor_id=?'); vals.push(resolveVendor(item.location_id, req.body)); }
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(item.id);
   db.prepare(`UPDATE inventory SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  if (isCk(item.location_id)) propagateItemEdit(item.id);   // CK edit → update the store copies
   auditLog(req, 'item_update', 'inventory', item.id, { item: item.item_name, changes: req.body });
   res.json({ success: true });
 });
@@ -436,6 +511,163 @@ router.delete('/:id', requireRole(ROLES.OPS), (req, res) => {
   db.prepare(`UPDATE inventory SET is_active=0, last_updated=datetime('now') WHERE id=?`).run(item.id);
   auditLog(req, 'item_delete', 'inventory', item.id, { item: item.item_name });
   res.json({ success: true });
+});
+
+// ── Barcode scanning (reuse retail UPC/EAN GTINs) ──────────────────────────
+// Resolve a scanned barcode to an item at the acting location.
+router.get('/barcode/:code', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, true);
+  if (!locId) return res.status(400).json({ error: 'A location is required.' });
+  const p = parseScan(req.params.code);
+  const code = (p.gtin || p.code || '').toString().trim();
+  const item = code ? db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(locId, code) : null;
+  // Surface anything the label itself carries (GS1 case/meat barcodes): net weight, dates, lot.
+  res.json({ found: !!item, code, item: item || null,
+    gtin: p.gtin, is_gs1: p.isGs1, weight_lb: p.weightLb, weight_kg: p.weightKg,
+    prod_date: p.prodDate, pack_date: p.packDate, expiry: p.expiry, lot: p.lot, serial: p.serial });
+});
+
+// Link a barcode to an existing item. Rejects if another item at that location owns it.
+router.post('/barcode/link', requireRole(ROLES.OPS), (req, res) => {
+  const code = scanKey(req.body.code);
+  const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
+  if (!code || !item) return res.status(400).json({ error: 'A barcode and item are required.' });
+  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  const clash = db.prepare(`SELECT id FROM inventory WHERE location_id=? AND barcode=? AND is_active=1 AND id<>?`).get(item.location_id, code, item.id);
+  if (clash) return res.status(409).json({ error: 'That barcode is already linked to another item here.' });
+  db.prepare(`UPDATE inventory SET barcode=? WHERE id=?`).run(code, item.id);
+  rememberProduct(code, item.item_name, req.user.id);   // teach the group dictionary this name
+  logScan({ itemId: item.id, locationId: item.location_id, action: 'link', parsed: parseScan(req.body.code), userId: req.user.id });
+  if (isCk(item.location_id)) propagateItemEdit(item.id);   // CK barcode → propagate to the store copies
+  auditLog(req, 'barcode_link', 'inventory', item.id, { code, item: item.item_name });
+  res.json({ success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id) });
+});
+
+// Scan-to-ship: destinations a location can transfer to (everything but itself; stores first).
+router.get('/ship/targets', requireRole(ROLES.OPS), (req, res) => {
+  const from = seesAllLocations(req.user.role) ? (req.query.from_location_id || req.user.location_id) : req.user.location_id;
+  res.json(db.prepare(`SELECT id, name, type FROM locations WHERE is_active=1 AND id<>? ORDER BY (type='restaurant') DESC, name`).all(from || 0));
+});
+
+// Open order lines a destination store has waiting (store → Central Kitchen requests).
+router.get('/ship/orders', requireRole(ROLES.OPS), (req, res) => {
+  res.json(openOrders(req.query.to_location_id));
+});
+
+// Scan-to-ship: move the scanned item from here to a destination, and fill a matching open
+// order line if the destination has one. Decrements here (FIFO) and adds/creates there.
+router.post('/barcode/transfer', requireRole(ROLES.OPS), (req, res) => {
+  const from = seesAllLocations(req.user.role) ? (req.body.from_location_id || req.user.location_id) : req.user.location_id;
+  const r = shipByBarcode({ fromLoc: from, toLoc: req.body.to_location_id, code: req.body.code, quantity: req.body.quantity, userId: req.user.id, confirm: req.body.confirm });
+  if (!r.ok) {
+    if (r.duplicate) return res.json({ duplicate: true, message: r.message });
+    return res.status(r.status || 400).json({ error: r.error, found: r.found, code: r.code });
+  }
+  auditLog(req, 'transfer', 'inventory', r.src.id, { quantity: parseFloat(req.body.quantity), from: Number(from), to: r.to, via: 'scan', order_id: r.order ? r.order.id : null });
+  res.json({ success: true, item: r.item, to: r.to, order: r.order });
+});
+
+// Scan-to-check: how much of a scanned product every location is holding (read-only).
+router.get('/barcode/stock/:code', requireRole(ROLES.OPS), (req, res) => {
+  const p = parseScan(req.params.code);
+  const code = (p.gtin || p.code || '').toString().trim();
+  if (!code) return res.json({ found: false, code });
+  const seed = db.prepare(`SELECT item_name, unit FROM inventory WHERE barcode=? AND is_active=1 ORDER BY id LIMIT 1`).get(code);
+  if (!seed) return res.json({ found: false, code, gtin: p.gtin });
+  const rows = db.prepare(`SELECT l.name location, l.type, i.quantity, i.min_quantity, i.unit
+    FROM inventory i JOIN locations l ON l.id=i.location_id
+    WHERE i.item_name=? AND i.is_active=1 ORDER BY (l.type='central_kitchen') DESC, l.name`).all(seed.item_name);
+  const total = rows.reduce((a, r) => a + (r.quantity || 0), 0);
+  const last = code ? db.prepare(`SELECT weight_lb, prod_date, pack_date, expiry, lot, serial, created_at FROM scan_events WHERE gtin=? ORDER BY id DESC LIMIT 1`).get(code) : null;
+  res.json({ found: true, code, gtin: p.gtin, item_name: seed.item_name, unit: seed.unit,
+    total: Math.round(total * 1000) / 1000, last_scan: last || null,
+    by_location: rows.map(r => ({ location: r.location, type: r.type, quantity: r.quantity, min_quantity: r.min_quantity, unit: r.unit })) });
+});
+
+// A scanned item's full scan history — every GS1 payload kept (weight, dates, lot, serial, all AIs).
+router.get('/:id/scan-history', requireRole(ROLES.OPS), (req, res) => {
+  const rows = db.prepare(`SELECT s.action, s.gtin, s.quantity, s.weight_lb, s.weight_kg, s.prod_date, s.pack_date, s.expiry, s.lot, s.serial, s.ais, s.raw, s.created_at, u.name AS user_name, l.name AS location
+    FROM scan_events s LEFT JOIN users u ON u.id=s.user_id LEFT JOIN locations l ON l.id=s.location_id
+    WHERE s.item_id=? ORDER BY s.id DESC LIMIT 100`).all(req.params.id)
+    .map(r => { let ais = null; try { ais = r.ais ? JSON.parse(r.ais) : null; } catch { ais = null; } return { ...r, ais }; });
+  res.json(rows);
+});
+
+// Scan-to-adjust: add stock ('in') or set a cycle count on the item matching a barcode.
+router.post('/barcode/scan', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, false);
+  const p = parseScan(req.body.code);
+  const code = (p.gtin || p.code || '').toString().trim();
+  if (!locId || !code) return res.status(400).json({ error: 'A location and barcode are required.' });
+  const item = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(locId, code);
+  if (!item) return res.status(404).json({ error: 'No item is linked to that barcode here.', found: false, code });
+  // Expiry & lot: prefer what the operator entered, else what a GS1 label carried.
+  const expiry = req.body.expiry_date || p.expiry || p.packDate || p.prodDate || null;
+  const lot = req.body.lot_code || p.lot || null;
+  const mode = req.body.mode === 'count' ? 'count' : 'in';
+  const qty = parseFloat(req.body.quantity);
+  if (mode === 'count') {
+    if (!Number.isFinite(qty) || qty < 0) return res.status(400).json({ error: 'Enter a valid counted quantity.' });
+    const variance = Math.round((qty - item.quantity) * 1000) / 1000;
+    db.prepare(`UPDATE inventory SET quantity=?, last_updated=datetime('now') WHERE id=?`).run(qty, item.id);
+    if (variance < 0) consumeFIFO(item.id, -variance);
+    db.prepare(`INSERT INTO cycle_counts (item_id, location_id, system_qty, counted_qty, variance, user_id) VALUES (?,?,?,?,?,?)`).run(item.id, locId, item.quantity, qty, variance, req.user.id);
+    auditLog(req, 'cycle_count', 'inventory', item.id, { item: item.item_name, counted: qty, variance, via: 'scan' });
+    logScan({ itemId: item.id, locationId: locId, action: 'count', parsed: p, quantity: qty, userId: req.user.id });
+  } else {
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Enter a quantity to receive.' });
+    if (!req.body.confirm) {
+      const d = recentDuplicate({ itemId: item.id, gtin: p.gtin, serial: p.serial, actions: ['receive', 'create'], quantity: qty });
+      if (d.dup) return res.json({ duplicate: true, kind: d.kind, code, message: dupMessage(d, 'receive', item.item_name, p.serial) });
+    }
+    db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(qty, item.id);
+    receiveLot({ item_id: item.id, location_id: locId, quantity: qty, unit_cost: item.unit_cost, expiry_date: expiry, lot_code: lot, user_id: req.user.id });
+    db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`).run(item.id, locId, qty, req.user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${expiry ? ` · exp ${expiry}` : ''}`);
+    auditLog(req, 'stock_received', 'inventory', item.id, { item: item.item_name, qty, lot, expiry, via: 'scan' });
+    logScan({ itemId: item.id, locationId: locId, action: 'receive', parsed: p, quantity: qty, userId: req.user.id });
+  }
+  res.json({ success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id) });
+});
+
+// ── Smart scan-to-receive (glossary-aware) ─────────────────────────────────
+// One call per scan: what is this, is it in stock here, what does the Glossary/label know.
+router.get('/barcode/resolve/:code', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, true);
+  if (!locId) return res.status(400).json({ error: 'Pick a location first.' });
+  res.json(resolveScan({ locId, code: req.params.code }));
+});
+
+// Receive a scanned item that is already in stock here. If it's new to stock we return
+// { new_item:true } plus the glossary/label so the client shows a pre-filled add form.
+router.post('/barcode/receive', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, false);
+  if (!locId) return res.status(400).json({ error: 'Pick a location first.' });
+  const info = resolveScan({ locId, code: req.body.code });
+  if (!info.code) return res.status(400).json({ error: 'A barcode is required.' });
+  if (!info.in_stock) return res.status(404).json({ new_item: true, ...info });
+  const r = receiveExisting({ locId, item: info.item, body: req.body, user: req.user });
+  if (r.duplicate) return res.json({ duplicate: true, kind: r.kind, message: r.message });
+  if (r.error) return res.status(400).json({ error: r.error });
+  auditLog(req, 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, via: 'scan' });
+  res.json({ success: true, item: r.item, added: r.added, kind: r.kind });
+});
+
+// Create a new stock item from the scan form, write it into the Glossary, and receive opening stock.
+router.post('/barcode/create', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, false);
+  if (!locId) return res.status(400).json({ error: 'Pick a location first.' });
+  const r = createAndReceive({ locId, body: req.body, user: req.user });
+  if (r.error) return res.status(400).json({ error: r.error });
+  if (isCk(locId)) { const ckItem = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(r.id); try { replicateItemFromCk(ckItem); } catch { /* best effort */ } }
+  auditLog(req, 'item_create', 'inventory', r.id, { name: r.item.item_name, location_id: locId, received: r.received, via: 'scan' });
+  res.json({ success: true, id: r.id, item: r.item, received: r.received });
+});
+
+// Resolve a product from a scanned barcode: the group dictionary first, then Open Food
+// Facts + its non-food sister DBs + UPCitemdb (all free). Also flags weighed/produce codes.
+router.get('/lookup/:code', requireRole(ROLES.OPS), async (req, res) => {
+  const p = await lookupProduct(req.params.code, req.user.id);
+  res.json({ found: p.found, name: p.name, brand: p.brand, quantity: p.size, size: p.size, source: p.source, weighed: p.weighed, price: p.price });
 });
 
 // ── Lots & expiry ──────────────────────────────────────────────────────────
@@ -492,7 +724,7 @@ router.get('/valuation', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = scopeLoc(req, true);
   const end = req.query.end || new Date().toISOString().slice(0, 10);
   const start = req.query.start || new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10);
-  const cond = locId ? 'WHERE location_id=?' : '';
+  const cond = locId ? 'WHERE is_active=1 AND location_id=?' : 'WHERE is_active=1';   // exclude removed items
   const args = locId ? [locId] : [];
   const byCategory = db.prepare(`
     SELECT COALESCE(category,'Other') AS category, ROUND(SUM(quantity * unit_cost), 2) AS value

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#7f1414" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Cleanup — Phở Hà Nội</title>
+<style>
+  :root{ --brand:#B91C1C; --brand-deep:#7f1414; --ink:#241a15; --muted:#6e5f51; --line:#e7dccc;
+    --paper:#faf7f1; --bus:#1d4ed8; --busbg:#eaf0ff; --ok:#15803d; --okbg:#e4f6ea; --claim:#0e7490; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body{ margin:0; height:100%; }
+  body{ font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--paper); color:var(--ink); min-height:100vh; }
+  header{ background:linear-gradient(180deg,var(--brand-deep),var(--brand)); color:#fff;
+    padding:calc(.8rem + env(safe-area-inset-top)) 1.1rem .8rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
+  header img.logo{ height:40px; width:auto; }
+  header .h-t{ font-weight:800; font-size:1.5rem; display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
+  header .h-loc{ opacity:.9; font-weight:600; }
+  header .spacer{ flex:1; }
+  header .count{ background:rgba(255,255,255,.16); border-radius:999px; padding:.3rem .9rem; font-weight:800; font-size:1.1rem; }
+  header .upd{ opacity:.75; font-size:.78rem; margin-left:.6rem; }
+  header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:700; padding:.45rem .7rem; cursor:pointer; }
+  main{ padding:1rem; }
+  .grid{ display:grid; gap:1rem; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); }
+  .tbl{ background:#fff; border:1px solid var(--line); border-top:8px solid var(--bus); border-radius:16px;
+    padding:1rem 1rem 1.1rem; display:flex; flex-direction:column; box-shadow:0 2px 6px rgba(0,0,0,.05); }
+  .tbl.claimed{ border-top-color:var(--claim); background:#f2fbfd; }
+  .tbl.isnew{ animation:pop 1.4s ease 2; }
+  @keyframes pop{ 0%,100%{ box-shadow:0 2px 6px rgba(0,0,0,.05);} 50%{ box-shadow:0 0 0 4px var(--bus);} }
+  .tbl .num{ font-size:2.6rem; font-weight:800; line-height:1; letter-spacing:-.02em; }
+  .tbl .meta{ color:var(--muted); font-size:.95rem; margin:.35rem 0 .1rem; }
+  .tbl .claim{ color:var(--claim); font-weight:700; font-size:.95rem; margin:.35rem 0 0; }
+  .tbl .act{ margin-top:auto; padding-top:.9rem; display:flex; flex-direction:column; gap:.5rem; }
+  .big{ border:none; border-radius:12px; font:inherit; font-weight:800; font-size:1.25rem; padding:1rem; cursor:pointer; width:100%; }
+  .big.onit{ background:var(--bus); color:#fff; }
+  .big.done{ background:var(--ok); color:#fff; }
+  .big:active{ transform:translateY(1px); }
+  .big:disabled{ opacity:.55; }
+  .release{ background:none; border:none; color:var(--muted); font:inherit; font-size:.85rem; text-decoration:underline; cursor:pointer; padding:.2rem; }
+  .clear{ text-align:center; padding:5rem 1rem; color:var(--muted); }
+  .clear .big-emoji{ font-size:4rem; } .clear h2{ font-size:1.8rem; margin:.4rem 0 .2rem; color:var(--ink); }
+  .picks{ max-width:520px; margin:1rem auto; display:grid; gap:.7rem; }
+  .pick{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.2rem; font-size:1.25rem; font-weight:700;
+    display:flex; justify-content:space-between; align-items:center; cursor:pointer; text-decoration:none; color:var(--ink); }
+  .pick::after{ content:"›"; color:var(--muted); font-size:1.6rem; }
+  .note{ text-align:center; color:var(--muted); padding:3rem 1rem; }
+  .toast{ position:fixed; left:50%; bottom:1.4rem; transform:translateX(-50%); background:var(--ink); color:#fff;
+    padding:.7rem 1rem; border-radius:12px; font-size:1rem; opacity:0; transition:opacity .2s; z-index:50; }
+  .toast.show{ opacity:1; } .toast.bad{ background:var(--brand); }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="/brand.svg" alt="Phở Hà Nội" />
+  <div class="h-t">🧽 Cleanup <span class="h-loc" id="hLoc"></span></div>
+  <div class="spacer"></div>
+  <span class="count" id="count">0</span>
+  <span class="upd" id="upd"></span>
+  <button id="full" title="Fullscreen">⛶</button>
+</header>
+<main id="main"><div class="note">Loading…</div></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const shortLoc = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || n;
+const SLUG = decodeURIComponent((location.pathname.match(/^\/cleanup\/(.+?)\/?$/) || [, ''])[1] || '').trim();
+let timer = null, known = new Set(), booted = false;
+
+function toast(m, bad) { const t = $('toast'); t.textContent = m; t.className = 'toast show' + (bad ? ' bad' : ''); setTimeout(() => t.className = 'toast', 2000); }
+async function api(path, opts) {
+  const r = await fetch('/api/cleanup' + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok && !d.error) throw new Error('Something went wrong.');
+  return d;
+}
+// A short chime when a new table appears, so a busy busser notices without staring.
+let AC; function beep() {
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume();
+    const o = AC.createOscillator(), g = AC.createGain(); o.connect(g); g.connect(AC.destination);
+    o.type = 'sine'; o.frequency.value = 880; g.gain.setValueAtTime(.0001, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(.25, AC.currentTime + .02); g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime + .5);
+    o.start(); o.stop(AC.currentTime + .5);
+  } catch {}
+}
+
+// Keep the tablet screen awake while the board is open.
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { keepAwake(); load(); } });
+$('full').onclick = () => { const el = document.documentElement; if (!document.fullscreenElement) (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); else document.exitFullscreen && document.exitFullscreen(); };
+
+// ── Bare /cleanup: pick a store ─────────────────────────────────────────────
+async function pickStore() {
+  $('hLoc').textContent = ''; $('count').style.display = 'none'; $('upd').textContent = '';
+  let d; try { d = await api('/locations'); } catch { $('main').innerHTML = '<div class="note">Couldn’t load stores. Try again.</div>'; return; }
+  if (!d.locations || !d.locations.length) { $('main').innerHTML = '<div class="note">No stores are running Service Flow right now.</div>'; return; }
+  $('main').innerHTML = '<div class="note" style="padding:1.4rem 1rem 0">Pick your store — then bookmark it / add to the home screen.</div>'
+    + '<div class="picks">' + d.locations.map(l => `<a class="pick" href="/cleanup/${esc(l.slug)}">${esc(shortLoc(l.name))}</a>`).join('') + '</div>';
+}
+
+// ── Per-store board ─────────────────────────────────────────────────────────
+function render(d) {
+  $('hLoc').textContent = shortLoc(d.location_name || '');
+  document.title = 'Cleanup · ' + shortLoc(d.location_name || '');
+  if (!d.enabled) {
+    $('count').textContent = '0'; $('upd').textContent = '';
+    $('main').innerHTML = '<div class="note">This store isn’t running Service Flow right now. Ask a manager to turn it on.</div>';
+    known = new Set(); return;
+  }
+  $('count').style.display = ''; $('count').textContent = d.count;
+  $('upd').textContent = 'updated ' + new Date(d.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  // Chime + pulse for genuinely new tables (skip the very first paint).
+  const now = new Set(d.tables.map(t => t.order_guid));
+  const fresh = booted ? d.tables.filter(t => !known.has(t.order_guid)) : [];
+  if (fresh.length) beep();
+  known = now; booted = true;
+  if (!d.tables.length) {
+    $('main').innerHTML = '<div class="clear"><div class="big-emoji">✨</div><h2>All clear!</h2><div>No tables to bus right now.</div></div>';
+    return;
+  }
+  $('main').innerHTML = '<div class="grid">' + d.tables.map(t => {
+    const isNew = fresh.some(f => f.order_guid === t.order_guid);
+    const paid = t.minutes_paid != null ? `Paid ${t.minutes_paid}m ago` : 'Ready to bus';
+    const meta = paid + (t.server_name ? ' · ' + esc(t.server_name) : '');
+    if (t.claimed) return `<div class="tbl claimed">
+        <div class="num">${esc(t.table_name || '—')}</div>
+        <div class="meta">${meta}</div>
+        <div class="claim">🙌 On it${t.minutes_claimed != null ? ' · ' + t.minutes_claimed + 'm' : ''}</div>
+        <div class="act"><button class="big done" data-done="${esc(t.order_guid)}">✅ Done</button>
+          <button class="release" data-release="${esc(t.order_guid)}">not me — release</button></div>
+      </div>`;
+    return `<div class="tbl${isNew ? ' isnew' : ''}">
+        <div class="num">${esc(t.table_name || '—')}</div>
+        <div class="meta">${meta}</div>
+        <div class="act"><button class="big onit" data-claim="${esc(t.order_guid)}">🙌 On It</button></div>
+      </div>`;
+  }).join('') + '</div>';
+  $('main').querySelectorAll('[data-claim]').forEach(b => b.onclick = () => act(b, '/claim/' + b.dataset.claim, 'You’re on it'));
+  $('main').querySelectorAll('[data-done]').forEach(b => b.onclick = () => act(b, '/done/' + b.dataset.done, 'Table cleared'));
+  $('main').querySelectorAll('[data-release]').forEach(b => b.onclick = () => act(b, '/release/' + b.dataset.release, 'Released'));
+}
+function act(btn, path, okMsg) {
+  btn.disabled = true;
+  api(path, { method: 'POST', body: JSON.stringify({ slug: SLUG }) })
+    .then(r => { if (r && r.error) throw new Error(r.error); toast(okMsg); load(); })
+    .catch(e => { toast(e.message, true); btn.disabled = false; });
+}
+async function load() {
+  clearTimeout(timer);
+  if (!SLUG) return;
+  let d; try { d = await api('/board?slug=' + encodeURIComponent(SLUG)); }
+  catch (e) { $('main').innerHTML = `<div class="note">${esc(e.message)}</div>`; timer = setTimeout(load, 15000); return; }
+  if (!d.ok) { $('main').innerHTML = `<div class="note">${esc(d.error || 'Unavailable.')}</div>`; return; }
+  render(d);
+  timer = setTimeout(load, 10000);   // refresh every 10s
+}
+
+(function boot() {
+  keepAwake();
+  if (SLUG) load(); else pickStore();
+})();
+</script>
+</body>
+</html>

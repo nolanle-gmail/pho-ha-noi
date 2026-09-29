@@ -156,12 +156,27 @@ async function boot() {
     badge.textContent = '📍 ' + short(S.loc);
     badge.classList.remove('hidden');
   }
+  // Service Flow: surfaced for floor staff at any store where the board is turned ON (whether
+  // alerts are live or dry-run), so they can work the board — mark tables Served / Bussed.
+  // Stores with Service Flow off get no tab, so it stays out of the way fleet-wide.
+  S.sfOn = false;
+  try { const b = await api('/serviceflow/board'); S.sfOn = !!b.enabled; } catch { /* optional */ }
+  // A tapped push notification deep-links here — set the target view BEFORE the first
+  // render so nothing competes (?n=msg&t=<thread> / ?n=chat&g=<group>).
+  try {
+    const q = new URLSearchParams(location.search);
+    const dl = q.get('n');
+    if (dl === 'messages' || dl === 'msg') { S.view = 'messages'; S.msgView = 'inbox'; S.chatGroup = null; const t = q.get('t'); S.msgThread = t ? String(t) : null; }
+    else if (dl === 'chat') { S.view = 'messages'; S.msgView = 'chat'; S.msgThread = null; const g = q.get('g'); S.chatGroup = g ? String(g) : null; }
+    if (dl) history.replaceState(null, '', location.pathname);
+  } catch { /* no-op */ }
   renderNav();
   render();
   setupStaffStream();   // sub-second push (SSE) for live views
   refreshMsgUnread(); setInterval(refreshMsgUnread, 30000);   // messages badge
   refreshChatUnread(); setInterval(refreshChatUnread, 30000); // chat badge (+ pop-up comparisons)
   refreshReqPending(); setInterval(refreshReqPending, 60000); // time-off requests badge (leads only)
+  refreshAlertCount(); setInterval(refreshAlertCount, 30000); // received-alerts badge
   startRenag();          // 10-min re-nag for anything left unreviewed
   // Floor alerts: managers get a Send button; everyone gets any pending alert on load.
   const ab = $('alertBtn');
@@ -171,13 +186,6 @@ async function boot() {
   showInstallBanner();   // offer "add to home screen" once signed in (if not already installed)
   // Keep this device's push subscription fresh when notifications are already on.
   if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
-  // Deep-link from a tapped push notification → open the right screen.
-  try {
-    const n = new URLSearchParams(location.search).get('n');
-    if (n === 'messages') goMessages('inbox');
-    else if (n === 'chat') goMessages('chat');
-    if (n) history.replaceState(null, '', location.pathname);
-  } catch { /* no-op */ }
   // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
   // from the other app (e.g. a guest seated at the Front Desk) within a moment.
   setInterval(() => {
@@ -219,7 +227,7 @@ function setupStaffStream() {
     setStaffLive('live');   // any event means the pipe is healthy
     let d = null; try { d = JSON.parse(e.data); } catch { /* comment/heartbeat */ }
     const type = d && d.type;
-    if (type === 'alert') { NAG.alert = Date.now(); showAlertPopup(d.alert); return; }        // urgent floor ping → pop up
+    if (type === 'alert') { NAG.alert = Date.now(); showAlertPopup(d.alert); refreshAlertCount(); if (S.view === 'alerts') renderAlerts(); return; }   // urgent floor ping → pop up + badge/list
     if (type === 'alert_ack') { toast(`✓ ${d.user_name || 'Someone'} ${d.completed ? 'marked it done' : 'is on it'}`); return; }  // recipient acked/completed (I'm the sender)
     if (type === 'message') {   // a message arrived for me → badge + pop-up notification
       const prev = S.unread || 0;
@@ -249,6 +257,15 @@ function setupStaffStream() {
       }
       return;
     }
+    if (type === 'reaction') {   // someone reacted to my message/chat → badge + live update or a toast
+      const inGroup = d.kind === 'chat' && S.view === 'messages' && S.chatGroup && String(S.chatGroup) === String(d.group_id);
+      const inThread = d.kind !== 'chat' && S.view === 'messages' && S.msgThread && String(S.msgThread) === String(d.thread_id);
+      if (d.kind === 'chat') refreshChatUnread(); else refreshMsgUnread();   // bump the Messages/Chat badge
+      if (inGroup) renderChatGroupView(true);
+      else if (inThread) renderThreadView();
+      else if (msgNotifyOn()) toast(`${d.emoji} ${d.by_name || 'Someone'} reacted to a ${d.kind === 'chat' ? 'chat message' : 'message'}`);
+      return;
+    }
     if (type === 'task_comment') {   // a manager left feedback on my task → live update
       if (S.view === 'mytasks' && !$('modalHost').innerHTML) {
         const shown = refreshTaskComments(d.task_id);
@@ -274,6 +291,9 @@ function renderNav() {
   if (isSelfServiceRole(role)) items.push(['server', '🛎️ My Tables']);
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isSelfServiceRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
+  if (!isAllLocationRole(role)) items.push(['scan', '📷 Scan']);   // store-scoped inventory scanning
+  if (S.sfOn) items.push(['serviceflow', '⏱️ Service Flow']);   // only where the trial is live
+  items.push(['alerts', '🔔 Alerts']);       // received floor / system alerts (everyone)
   items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
   items.push(['myhours', '⏱ My Hours']);   // each staff member's own timesheet
   if (role === 'owner') items.push(['history', '📜 Guest History'], ['report', '📊 Daily Report'], ['activity', '🧾 Activity Log']);
@@ -281,10 +301,12 @@ function renderNav() {
   nav.classList.remove('hidden');
   const cur = items.find(([k]) => k === S.view) || items[0];
   const open = nav.classList.contains('open');
-  const btns = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${k === 'messages' && navUnread() ? ` <span class="nav-badge">${navUnread()}</span>` : ''}</button>`).join('');
+  const itemBadge = (k) => (k === 'messages' && navUnread()) ? navUnread() : (k === 'alerts' && S.alertCount ? S.alertCount : 0);
+  const btns = items.map(([k, l]) => `<button class="navbtn ${S.view === k ? 'active' : ''}" data-view="${k}">${l}${itemBadge(k) ? ` <span class="nav-badge">${itemBadge(k)}</span>` : ''}</button>`).join('');
   // Desktop/tablet keep the horizontal strip; mobile (CSS ≤560px) collapses these into a
   // hamburger that drops the same items down as a left-anchored menu.
-  nav.innerHTML = `<button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="${open}"><span class="nav-burger">${open ? '✕' : '☰'}</span><span class="nav-cur">${cur[1]}</span>${navUnread() && S.view !== 'messages' ? ` <span class="nav-badge">${navUnread()}</span>` : ''}</button><div class="nav-items" id="navItems">${btns}</div>`;
+  const toggleBadge = (navUnread() && S.view !== 'messages' ? navUnread() : 0) + (S.alertCount && S.view !== 'alerts' ? S.alertCount : 0);
+  nav.innerHTML = `<button class="nav-toggle" id="navToggle" aria-label="Menu" aria-expanded="${open}"><span class="nav-burger">${open ? '✕' : '☰'}</span><span class="nav-cur">${cur[1]}</span>${toggleBadge ? ` <span class="nav-badge">${toggleBadge}</span>` : ''}</button><div class="nav-items" id="navItems">${btns}</div>`;
   const toggle = $('navToggle'), burger = nav.querySelector('.nav-burger');
   toggle.onclick = (e) => { e.stopPropagation(); const o = nav.classList.toggle('open'); toggle.setAttribute('aria-expanded', o); burger.textContent = o ? '✕' : '☰'; };
   nav.querySelectorAll('.navbtn').forEach(b => b.onclick = () => { S.view = b.dataset.view; S.msgThread = null; S.msgArchived = false; nav.classList.remove('open'); renderNav(); render(); });
@@ -311,6 +333,9 @@ function render() {
   if (S.view === 'report') return renderReport();
   if (S.view === 'activity') return renderActivity();
   if (S.view === 'tables') return renderTables();
+  if (S.view === 'serviceflow') return renderStaffServiceFlow();
+  if (S.view === 'scan') return renderScan();
+  if (S.view === 'alerts') return renderAlerts();
   if (S.view === 'settings') return renderSettings();
   return renderBoard();
 }
@@ -469,18 +494,20 @@ async function renderChatGroupView(silent) {
   refreshChatUnread();
   const me = d.me;
   const others = (d.reads || []).filter(r => String(r.user_id) !== String(me));
+  S._chatReads = others;                        // for the "Read by" click-through popup
   const seenReceipt = (mid) => {
     if (!others.length) return '';
     const seen = others.filter(r => r.last_read_id >= mid);
-    const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
-    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="${seen.length ? 'Seen by ' + esc(seen.map(r => r.name).join(', ')) : 'Not seen yet'}">${label}</div>`;
+    const label = seen.length >= others.length ? '✓✓ Read by everyone' : (seen.length ? `✓ Read by ${seen.length} of ${others.length}` : '◍ Delivered · not read yet');
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="See who's read it">${label}</div>`;
   };
-  const stream = d.messages.map(m => `
+  const stream = d.messages.slice().reverse().map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}</div>
       ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
       ${m.sender_id === me ? seenReceipt(m.id) : ''}
+      ${rxnBar('chat', m)}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   v.innerHTML = `
     <div class="section-head"><h2>💬 ${esc(d.name)}${d.is_audit ? ' <span class="msg-role">audit</span>' : ''}${!d.is_active ? ' <span class="msg-role bc">deleted</span>' : ''}</h2>
@@ -490,15 +517,17 @@ async function renderChatGroupView(silent) {
         <button class="btn ghost" id="cgBack">← Back</button>
       </div></div>
     <div id="cgMemberList" class="hidden"></div>
-    <div class="thread" id="cgStream">${stream}</div>
     ${d.member && d.is_active
       ? `<div class="reply-box"><textarea id="cgBody" rows="2" placeholder="Message…"></textarea>
-          <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="cgFiles"></label>
+          <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="cgFiles"></label>
           <button class="btn" id="cgSend">Send</button></div>
          <div id="cgFileNames" class="msg-attach-names"></div>`
-      : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member.' : 'This group is no longer active.'}</div>`}`;
+      : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member.' : 'This group is no longer active.'}</div>`}
+    <div class="thread" id="cgStream">${stream}</div>`;
   v.querySelectorAll('[data-catts]').forEach(el => loadMsgAttachments(`/chat/groups/${gid}/messages/${el.dataset.catts}`, el, { canDelete: false }));
-  const st = $('cgStream'); if (st) st.scrollTop = st.scrollHeight;
+  v.querySelectorAll('.msg-receipt[data-cmid]').forEach(el => el.onclick = () => showChatSeen(+el.dataset.cmid));
+  wireReactions(v, Object.fromEntries(d.messages.map(x => [x.id, x])));
+  const st = $('cgStream'); if (st) st.scrollTop = 0;   // newest is at the top
   $('cgBack').onclick = () => { S.chatGroup = null; renderMessages(); };
   $('cgMembers').onclick = async () => {
     const el = $('cgMemberList');
@@ -522,6 +551,7 @@ async function renderChatGroupView(silent) {
   };
   if ($('cgSend')) {
     if (draft) $('cgBody').value = draft;
+    mountEmoji('cgBody');
     const cgFiles = $('cgFiles');
     if (cgFiles) cgFiles.onchange = () => { $('cgFileNames').textContent = cgFiles.files.length ? `📎 ${cgFiles.files.length} file${cgFiles.files.length > 1 ? 's' : ''} attached` : ''; };
     const send = async () => {
@@ -612,24 +642,70 @@ const _msgAttUrls = [];
 function revokeMsgAtts() { while (_msgAttUrls.length) URL.revokeObjectURL(_msgAttUrls.pop()); }
 function msgFilesCaption(files) {
   const a = [...files]; if (!a.length) return '';
-  if (a.length === 1) return /^video\//.test(a[0].type) ? '🎥 Video' : '📷 Photo';
-  const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
-  return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
+  const isVid = f => /^video\//.test(f.type), isImg = f => /^image\//.test(f.type);
+  if (a.length === 1) return isVid(a[0]) ? '🎥 Video' : isImg(a[0]) ? '📷 Photo' : `📎 ${a[0].name || 'File'}`;
+  const v = a.filter(isVid).length, i = a.filter(isImg).length, d = a.length - v - i;
+  const parts = [];
+  if (i) parts.push(`${i} photo${i > 1 ? 's' : ''}`);
+  if (v) parts.push(`${v} video${v > 1 ? 's' : ''}`);
+  if (d) parts.push(`${d} file${d > 1 ? 's' : ''}`);
+  return '📎 ' + parts.join(' + ');
+}
+function fileIcon(mime, name) {
+  const s = ((mime || '') + ' ' + (name || '')).toLowerCase();
+  if (/pdf/.test(s)) return '📕';
+  if (/(sheet|excel|csv|tsv|\.xls|\.numbers|\.ods)/.test(s)) return '📊';
+  if (/(word|wordprocessing|\.doc|\.pages|\.odt|rtf)/.test(s)) return '📝';
+  if (/(presentation|powerpoint|\.ppt|\.key|\.odp)/.test(s)) return '📈';
+  if (/(zip|rar|7z|gzip|x-tar|\.tar|\.gz)/.test(s)) return '🗜️';
+  if (/(text|\.txt|\.md|\.log|json|xml|calendar|\.ics)/.test(s)) return '📃';
+  return '📎';
+}
+function fmtBytes(n) { n = Number(n) || 0; if (n < 1024) return n + ' B'; if (n < 1048576) return Math.round(n / 1024) + ' KB'; return (n / 1048576).toFixed(1) + ' MB'; }
+async function downloadAttachment(base, a) {
+  try {
+    const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error('Download failed');
+    const url = URL.createObjectURL(await res.blob());
+    const el = document.createElement('a'); el.href = url; el.download = a.filename || 'file'; document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } catch (e) { toast(e.message, true); }
 }
 // `base` is the api path of the message or chat-message, e.g. "/messages/42" or
 // "/chat/groups/3/messages/9".
+function attachProgressStart() {
+  let el = $('attProg');
+  if (!el) { el = document.createElement('div'); el.id = 'attProg'; el.className = 'att-prog'; document.body.appendChild(el); }
+  el.style.display = 'block';
+  return {
+    set(total, idx, pct, name) { el.innerHTML = `📎 Uploading ${total > 1 ? `(${idx + 1}/${total}) ` : ''}${esc(name || 'file')} — ${pct}%<div class="att-prog-bar"><i style="width:${pct}%"></i></div>`; },
+    done(okCount, total) {
+      if (okCount) { el.innerHTML = `✓ ${okCount === total ? 'Attached' : okCount + ' of ' + total + ' attached'}`; setTimeout(() => { if ($('attProg')) $('attProg').style.display = 'none'; }, 1800); }
+      else if ($('attProg')) $('attProg').style.display = 'none';
+    },
+  };
+}
 async function uploadMsgAttachments(base, files) {
-  const list = [...files].filter(f => /^(image|video)\//.test(f.type));
+  const list = [...files].filter(f => f && f.size > 0);   // images, videos or documents — server validates the type
+  if (!list.length) return { ok: 0, err: '' };
   let ok = 0, err = '';
-  for (const f of list) {
+  const prog = attachProgressStart();
+  for (let idx = 0; idx < list.length; idx++) {
+    const f = list[idx];
     try {
-      const res = await fetch(`/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
-        method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`);
+        xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+        if (S.token) xhr.setRequestHeader('Authorization', 'Bearer ' + S.token);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) prog.set(list.length, idx, Math.round(e.loaded / e.total * 100), f.name); };
+        xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) { ok++; resolve(); } else { let d = {}; try { d = JSON.parse(xhr.responseText); } catch { /* non-JSON */ } reject(new Error(d.error || (xhr.status === 413 ? 'File too large.' : `Upload failed (${xhr.status}).`))); } };
+        xhr.onerror = () => reject(new Error('Network error during upload.'));
+        xhr.send(f);
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
-      ok++;
     } catch (e) { err = e.message; break; }
   }
+  prog.done(err ? null : ok, list.length);
   return { ok, err };
 }
 async function loadMsgAttachments(base, el, opts) {
@@ -645,6 +721,13 @@ async function loadMsgAttachments(base, el, opts) {
       const x = document.createElement('button'); x.type = 'button'; x.className = 'msg-att-rm'; x.textContent = '✕'; x.title = 'Remove attachment';
       x.onclick = async () => { if (!confirm('Remove this attachment?')) return; try { await api(`${base}/attachment/${a.id}`, { method: 'DELETE' }); toast('Attachment removed'); (opts.reload || (() => {}))(); } catch (e) { toast(e.message, true); } };
       wrap.appendChild(x);
+    }
+    if (a.kind === 'file') {   // a document — show a download card, don't fetch the bytes to render
+      const card = document.createElement('a'); card.className = 'msg-att-file'; card.href = '#';
+      card.innerHTML = `<span class="af-ic">${fileIcon(a.mime, a.filename)}</span><span class="af-meta"><span class="af-name">${esc(a.filename || 'File')}</span><span class="af-size">${fmtBytes(a.byte_size)}</span></span><span class="af-dl">⬇</span>`;
+      card.onclick = (e) => { e.preventDefault(); downloadAttachment(base, a); };
+      wrap.appendChild(card);
+      continue;
     }
     try {
       const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: { Authorization: 'Bearer ' + S.token } });
@@ -680,8 +763,8 @@ function setChatSeen(el, seen, others) {
   if (!el) return;
   const all = seen.length >= others.length;
   el.classList.toggle('all', all);
-  el.title = seen.length ? 'Seen by ' + seen.map(r => r.name).join(', ') : 'Not seen yet';
-  el.textContent = all ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+  el.title = "See who's read it";
+  el.textContent = all ? '✓✓ Read by everyone' : (seen.length ? `✓ Read by ${seen.length} of ${others.length}` : '◍ Delivered · not read yet');
 }
 // While the sender stays on a thread / chat, poll every ~10s and refresh the read/seen
 // chips in place — status flips from unread→read without leaving and coming back.
@@ -697,6 +780,7 @@ function pollReceipts() {
       } else if (S.chatGroup) {
         const d = await api('/chat/groups/' + S.chatGroup + '/messages');
         const others = (d.reads || []).filter(r => String(r.user_id) !== String(d.me));
+        S._chatReads = others;                    // keep the click-through popup current
         $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => { const mid = +el.dataset.cmid; setChatSeen(el, others.filter(r => r.last_read_id >= mid), others); });
       } else return;
     } catch { /* transient — keep polling */ }
@@ -720,6 +804,21 @@ async function showReceipts(msgId) {
       ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(r => row(r, false)).join('')}</div>` : ''}`;
   } catch (e) { $('rcpBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
+// Who in the group has read a chat message I posted, and who hasn't yet (members'
+// read cursors in S._chatReads, kept current by the render + the 10s poll).
+function showChatSeen(mid) {
+  const others = S._chatReads || [];
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Read receipts</h3><div id="rcpBody"></div><div class="actions"><button class="btn ghost" id="rcpClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = ''; $('rcpClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const readList = others.filter(r => r.last_read_id >= mid), pending = others.filter(r => r.last_read_id < mid);
+  const row = (r) => `<div class="rcp-row"><span>${esc(r.name)} <span class="msg-role">${esc(roleWord(r.role))}</span></span></div>`;
+  $('rcpBody').innerHTML = `<p class="muted" style="margin:.1rem 0 .6rem">Read by <strong>${readList.length}</strong> of ${others.length}.</p>
+    ${readList.length ? `<div class="rcp-sec"><div class="rcp-h">✓✓ Read</div>${readList.map(row).join('')}</div>` : ''}
+    ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(row).join('')}</div>` : ''}
+    ${!others.length ? '<div class="empty">No other members.</div>' : ''}`;
+}
 
 async function renderThreadView() {
   revokeMsgAtts();
@@ -738,21 +837,24 @@ async function renderThreadView() {
           : '<button class="btn ghost" id="msgUnread">◍ Mark unread</button><button class="btn ghost" id="msgArch">🗄️ Archive</button>'}
         <button class="btn ghost" id="msgBack">← Back</button>
       </div></div>
-    <div class="thread">${t.messages.map(m => `
+    <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea>
+      <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="rFiles"></label>
+      <button class="btn" id="rSend">Reply</button></div>
+    <div id="rFileNames" class="msg-attach-names"></div>
+    <div class="thread">${t.messages.slice().reverse().map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="msg-role">${esc(roleWord(m.sender_role))}</span> · ${msgAgo(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
         ${m.sender_id === me && m.recipient_count ? `<div class="msg-receipt${m.read_count >= m.recipient_count ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipient_count ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipient_count}</div>` : ''}
-      </div>`).join('')}</div>
-    <div class="reply-box"><textarea id="rBody" rows="2" placeholder="Write a reply…"></textarea>
-      <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="rFiles"></label>
-      <button class="btn" id="rSend">Reply</button></div>
-    <div id="rFileNames" class="msg-attach-names"></div>`;
+        ${rxnBar('message', m)}
+      </div>`).join('')}</div>`;
   v.querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThreadView }));
   v.querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
   v.querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
+  wireReactions(v, Object.fromEntries(t.messages.map(x => [x.id, x])));
   const rFiles = $('rFiles'); if (rFiles) rFiles.onchange = () => { $('rFileNames').textContent = rFiles.files.length ? `📎 ${rFiles.files.length} file${rFiles.files.length > 1 ? 's' : ''} attached` : ''; };
+  mountEmoji('rBody');
   const backToList = () => { S.msgThread = null; renderMessages(); };
   $('msgBack').onclick = backToList;
   const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshMsgUnread(); backToList(); } catch (e) { toast(e.message, true); } };
@@ -802,7 +904,7 @@ async function composeModal() {
       <div id="mRecipList" class="recip-list hidden"></div></div>
     <label>Subject</label><input id="mSubj" placeholder="Subject (optional)" />
     <label>Message</label><textarea id="mBody" rows="4" placeholder="Write your message…"></textarea>
-    <div class="msg-compose-attach"><label class="msg-attach-btn">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="mFiles"></label><span id="mFileNames" class="msg-attach-names"></span></div>
+    <div class="msg-compose-attach"><label class="msg-attach-btn">📎 Add photos / video / file<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="mFiles"></label><span id="mFileNames" class="msg-attach-names"></span></div>
   `, async () => {
     const to = $('mTo').value, subject = $('mSubj').value;
     const files = $('mFiles').files;
@@ -832,6 +934,7 @@ async function composeModal() {
   $('mPersonSearch').oninput = () => drawList($('mPersonSearch').value.trim().toLowerCase());
   drawChips();
   $('mFiles').onchange = () => { $('mFileNames').textContent = $('mFiles').files.length ? `📎 ${$('mFiles').files.length} file${$('mFiles').files.length > 1 ? 's' : ''} attached` : ''; };
+  mountEmoji('mBody');
 }
 
 // ── My Hours: the staff member's own timesheet (proxied to Management) ─────────
@@ -1578,6 +1681,90 @@ const alertCue = () => playCue(alertSoundOn(), alertVibrateOn(), 880);   // urge
 const msgCue = () => playCue(msgSoundOn(), msgVibrateOn(), 620);         // softer message chime
 
 const _shownAlerts = new Set();   // don't double-pop the same alert (SSE + active-poll)
+// ── Emoji picker: a 😊 button by every message / chat composer, so staff can drop
+// common emoji in before sending. Reusable: call mountEmoji(textareaId) after render.
+const EMOJI = {
+  'Smileys': ['😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥳','🤩','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🤭','🤫','🤥','😶','😐','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😇','🥸','🤡','🤖','👻','💀','☠️','👽','💩'],
+  'Gestures': ['👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','🫶','👏','🙌','👐','🤲','💪','🦾','✊','👊','🤛','🤜','🤳','💅','🖕'],
+  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💯','💢','💥','💫','💦','💨','🔥','✨','⭐','🌟'],
+  'People': ['👶','🧒','👦','👧','🧑','👨','👩','🧔','🧓','👴','👵','🙋','🙅','🙆','🤦','🤷','💁','🙇','🤦‍♀️','🤷‍♂️','👮','👷','💂','🕵️','🧑‍🍳','👨‍🍳','👩‍🍳','🧑‍💼','👨‍💼','👩‍💼','🦸','🧑‍🌾','🎅','🤶','👼'],
+  'Food': ['🍜','🍲','🍚','🍛','🍣','🍤','🍱','🥟','🥢','🍢','🍡','🍥','🍙','🍘','🥡','🍳','🥗','🥘','🍝','🍕','🍔','🌭','🥪','🌮','🌯','🥙','🧆','🍟','🍗','🍖','🥩','🥓','🧅','🧄','🥕','🌶️','🥬','🥦','🍅','🍄','🍞','🥖','🧀','🥚','🍰','🧁','🍦','🍨','🍧','🍩','🍪','🎂','🍫','🍬','🍭','☕','🍵','🧋','🥤','🧃','🍺','🍻','🥂','🍷','🍶','🥃','🍹','🧊'],
+  'Symbols': ['🎉','🎊','🎈','🎁','🏆','🥇','🥈','🥉','🎯','✅','☑️','✔️','❌','⭕','❗','❓','⚠️','🚫','💬','💭','🗨️','🔔','🔕','📣','📢','📌','📍','⏰','⏱️','⌛','📅','🗓️','💰','💵','💳','🧾','📈','📉','📊','🔑','🔒','🔓','♻️','🆗','🆕','💡','⚡','🌈','☀️','⛅','☁️','🌧️','❄️','🌸','🌼','🌺','🌻','🌹','💐','🐶','🐱','🐭','🐰','🦊','🐻','🐼'],
+};
+let _emojiPanel = null;
+function closeEmoji() { if (_emojiPanel) { _emojiPanel.remove(); _emojiPanel = null; document.removeEventListener('mousedown', _emojiOutside, true); } }
+function _emojiOutside(e) { if (_emojiPanel && !_emojiPanel.contains(e.target) && !(e.target.classList && e.target.classList.contains('emoji-btn'))) closeEmoji(); }
+function insertAtCursor(ta, text) {
+  const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+  const e = ta.selectionEnd != null ? ta.selectionEnd : ta.value.length;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+  const pos = s + text.length; ta.selectionStart = ta.selectionEnd = pos; ta.focus();
+  try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* counters etc. */ }
+}
+function openEmojiPanel(btn, ta) {
+  closeEmoji();
+  const p = document.createElement('div'); p.className = 'emoji-panel';
+  p.innerHTML = Object.keys(EMOJI).map(grp => `<div class="emoji-grp">${grp}</div><div class="emoji-row">${EMOJI[grp].map(e => `<button type="button" class="emoji-item" data-e="${e}">${e}</button>`).join('')}</div>`).join('');
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - p.offsetWidth - 8)) + 'px';
+  const above = r.top - p.offsetHeight - 6;
+  p.style.top = (above > 8 ? above : Math.min(r.bottom + 6, window.innerHeight - p.offsetHeight - 8)) + 'px';
+  p.querySelectorAll('.emoji-item').forEach(b => b.onmousedown = (ev) => { ev.preventDefault(); insertAtCursor(ta, b.dataset.e); });
+  _emojiPanel = p;
+  setTimeout(() => document.addEventListener('mousedown', _emojiOutside, true), 0);
+}
+function mountEmoji(taId) {
+  const ta = document.getElementById(taId); if (!ta || ta._emoji) return; ta._emoji = true;
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'emoji-btn'; btn.title = 'Add emoji'; btn.setAttribute('aria-label', 'Add emoji'); btn.textContent = '😊';
+  btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); if (_emojiPanel) closeEmoji(); else openEmojiPanel(btn, ta); };
+  ta.insertAdjacentElement('afterend', btn);
+}
+
+// ── Message / chat reactions (iMessage-style tapbacks) ──────────────────────
+// Each bubble shows its reaction badges (emoji + count; hover shows who) and a 🙂
+// button that opens a small menu to add/remove a reaction and see who reacted.
+const RXN_SET = ['❤️', 'Haha', '👍', '🙏', '😮', '😢', '👎'];   // 'Haha' renders as the HAHA bubble graphic
+const rxnIsText = (e) => /[A-Za-z]/.test(e);
+// The "Haha" reaction is drawn as a little blue thought-bubble (iMessage-style tapback),
+// re-created as a crisp inline SVG. The stored token stays "Haha".
+const HAHA_SVG = '<svg class="rxn-svg" viewBox="0 0 40 38" xmlns="http://www.w3.org/2000/svg" aria-label="Haha"><rect x="1.5" y="1" width="37" height="26" rx="8" fill="#c6e8ff" stroke="#fff" stroke-width="2"/><circle cx="8" cy="30" r="3.2" fill="#c6e8ff" stroke="#fff" stroke-width="1.6"/><circle cx="3" cy="35" r="2" fill="#c6e8ff" stroke="#fff" stroke-width="1.2"/><text x="20" y="13.2" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="13" fill="#2f86d6">HA</text><text x="20" y="24.8" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="13" fill="#2f86d6">HA</text></svg>';
+const rxnGlyph = (e) => e === 'Haha' ? HAHA_SVG : e;
+let _rxnMenu = null;
+function closeRxnMenu() { if (_rxnMenu) { _rxnMenu.remove(); _rxnMenu = null; document.removeEventListener('mousedown', _rxnOutside, true); } }
+function _rxnOutside(e) { if (_rxnMenu && !_rxnMenu.contains(e.target) && !(e.target.dataset && (e.target.dataset.rxnadd || e.target.dataset.rxn))) closeRxnMenu(); }
+function rxnBar(kind, m) {
+  const badges = (m.reactions || []).map(r => `<button type="button" class="rxn${r.mine ? ' mine' : ''}${rxnIsText(r.emoji) ? ' rxn-text' : ''}" data-rxn="${m.id}" data-k="${kind}" data-e="${r.emoji}" title="${esc(r.users.join(', '))}">${rxnGlyph(r.emoji)} ${r.count}</button>`).join('');
+  // Reactions float at the top-left corner of the bubble (iMessage tapback style); the
+  // 🙂 add button stays inline below.
+  return `${badges ? `<div class="rxn-badges">${badges}</div>` : ''}<div class="rxn-bar"><button type="button" class="rxn-add" data-rxnadd="${m.id}" data-k="${kind}" title="Add reaction">🙂﹢</button></div>`;
+}
+function openRxnMenu(anchor, kind, m) {
+  closeRxnMenu();
+  const p = document.createElement('div'); p.className = 'rxn-menu';
+  const pick = RXN_SET.map(e => { const mine = (m.reactions || []).some(r => r.emoji === e && r.mine); return `<button type="button" class="rxn-pick${rxnIsText(e) ? ' rxn-pick-text' : ''}${mine ? ' mine' : ''}" data-pe="${e}">${rxnGlyph(e)}</button>`; }).join('');
+  const who = (m.reactions || []).length ? `<div class="rxn-who">${m.reactions.map(r => `<div><span class="rxn-who-e">${rxnGlyph(r.emoji)}</span> ${esc(r.users.join(', '))}</div>`).join('')}</div>` : '';
+  p.innerHTML = `<div class="rxn-pickrow">${pick}</div>${who}`;
+  document.body.appendChild(p);
+  const rect = anchor.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - p.offsetWidth - 8)) + 'px';
+  const top = rect.top - p.offsetHeight - 6; p.style.top = (top > 8 ? top : rect.bottom + 6) + 'px';
+  p.querySelectorAll('[data-pe]').forEach(b => b.onmousedown = (ev) => { ev.preventDefault(); doReact(kind, m.id, b.dataset.pe); });
+  _rxnMenu = p; setTimeout(() => document.addEventListener('mousedown', _rxnOutside, true), 0);
+}
+async function doReact(kind, id, emoji) {
+  closeRxnMenu();
+  try {
+    await api((kind === 'chat' ? '/chat/messages/' : '/messages/') + id + '/react', { method: 'POST', body: JSON.stringify({ emoji }) });
+    if (kind === 'chat') renderChatGroupView(true); else renderThreadView();
+  } catch (e) { toast(e.message, true); }
+}
+function wireReactions(root, byId) {
+  root.querySelectorAll('[data-rxnadd]').forEach(b => b.onclick = () => openRxnMenu(b, b.dataset.k, byId[b.dataset.rxnadd] || { id: b.dataset.rxnadd, reactions: [] }));
+  root.querySelectorAll('[data-rxn]').forEach(b => b.onclick = () => doReact(b.dataset.k, b.dataset.rxn, b.dataset.e));
+}
+
 function showAlertPopup(a) {
   if (!a || _shownAlerts.has(a.id)) return;
   _shownAlerts.add(a.id);
@@ -1596,6 +1783,42 @@ function showAlertPopup(a) {
   const note = host.querySelector('[data-note]');
   const actions = host.querySelector('[data-actions]');
 
+  // Reflect a Service Flow change immediately wherever the staffer is looking — the
+  // board flips to Served/cleared at once, not on the next 30-s poll.
+  const refreshFlow = () => { refreshAlertCount(); if (S.view === 'serviceflow') renderStaffServiceFlow(); if (S.view === 'alerts') renderAlerts(); };
+
+  // ── Service Flow alerts use the claim-and-track lifecycle here too (NOT On-it/Done),
+  // so acting from the pop-up writes the board just like the Alerts inbox does. ──
+  if (a.flow_kind) {
+    const acts = (a.actions && a.actions.length) ? a.actions
+      : (a.flow_kind === 'food_late' ? ['served', 'waiting'] : a.flow_kind === 'lingering' ? ['paid', 'notyet'] : ['bussed']);
+    const doFlow = async (act) => {
+      try {
+        await api(`/alerts/${a.id}/flow`, { method: 'POST', body: JSON.stringify({ action: act }) });
+        toast(flowActToast(act));
+        if (!FLOW_WAIT_ACTS.includes(act)) { try { _shownAlerts.delete(a.id); } catch { /* ignore */ } }
+        refreshFlow();
+      } catch (e) { toast(e.message, true); }
+      close();
+    };
+    const renderFlowActions = () => {
+      note.textContent = 'You’ve got it — check the table, then update:';
+      actions.innerHTML = acts.map(act => `<button class="btn ${act === 'waiting' ? 'ghost' : ''}" data-act="${act}">${FLOW_ACT_LABEL[act] || act}</button>`).join('');
+      acts.forEach(act => { const el = actions.querySelector(`[data-act="${act}"]`); if (el) el.onclick = () => doFlow(act); });
+    };
+    const renderClaim = () => {
+      note.textContent = '';
+      actions.innerHTML = `<button class="btn ghost" data-dismiss>Dismiss</button><button class="btn" data-claim>🙋 On It</button>`;
+      actions.querySelector('[data-dismiss]').onclick = close;
+      actions.querySelector('[data-claim]').onclick = async () => {
+        try { await api(`/alerts/${a.id}/claim`, { method: 'POST', body: '{}' }); a.mine_claim = true; renderFlowActions(); }
+        catch (e) { toast(e.message, true); refreshAlertCount(); close(); }   // already taken → drop it for me
+      };
+    };
+    if (a.mine_claim) renderFlowActions(); else renderClaim();
+    return;
+  }
+
   // Stage 2 — "On it" recorded; now the staff member must confirm the task is
   // finished by tapping Done (which closes it for the sender).
   const renderDone = () => {
@@ -1603,7 +1826,7 @@ function showAlertPopup(a) {
     actions.innerHTML = `<button class="btn ghost" data-later>Later</button><button class="btn" data-done>✓ Mark done</button>`;
     actions.querySelector('[data-later]').onclick = close;   // stays open until done; re-surfaces on the 10-min re-nag
     actions.querySelector('[data-done]').onclick = async () => {
-      try { await api(`/alerts/${a.id}/complete`, { method: 'POST', body: '{}' }); toast('Marked done — thanks!'); _shownAlerts.delete(a.id); }
+      try { await api(`/alerts/${a.id}/complete`, { method: 'POST', body: '{}' }); toast('Marked done — thanks!'); _shownAlerts.delete(a.id); refreshAlertCount(); if (S.view === 'alerts') renderAlerts(); }
       catch (e) { toast(e.message, true); }
       close();
     };
@@ -1732,6 +1955,358 @@ async function renagSweep() {
 function startRenag() { clearInterval(RENAG_T); RENAG_T = setInterval(renagSweep, 60000); }
 // Coming back to the app (unlock / tab focus) re-checks pending items right away.
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.user) renagSweep(); });
+
+// ── Alerts inbox: every floor / system alert sent to me, Active vs History ────────────
+async function refreshAlertCount() {
+  try { const d = await api('/alerts/inbox'); S.alertCount = d.active_count || 0; renderNav(); } catch { /* keep last count */ }
+}
+// ── Barcode scanning (store inventory) ───────────────────────────────────────
+// Scan a retail UPC / EAN with the phone camera → receive / count it into this
+// staffer's own store inventory, or create / link a new item. All requests go to
+// the /invscan proxy, which forwards to Management scoped to the staffer's store.
+const nf = (n) => { const x = Number(n); return Number.isInteger(x) ? String(x) : (Math.round(x * 100) / 100).toString(); };
+const UOM_OPTIONS = ['lb', 'lbs', 'case', 'each', 'bottle', 'box', 'bag', 'can', 'jar', 'gallon', 'oz', 'kg', 'pack', 'dozen', 'bunch', 'carton', 'quart', 'pint', 'jug', 'container', 'tub', 'tube', 'g', 'liter', 'ml', 'fl oz', 'piece', 'head', 'crate', 'flat', 'tray', 'sleeve', 'roll', 'sheet', 'keg', 'cup', 'count', 'unit', 'pair', 'order', 'serving', 'portion', 'plate', 'half gallon', 'cl', 'tbsp', 'tsp', 'lug', 'bushel', 'peck', 'gross', 'pallet', 'sack', 'pouch', 'packet', 'sachet', 'canister', 'tin', 'drum', 'pail', 'bucket', 'barrel', 'stalk', 'bulb', 'clove', 'ear', 'sprig', 'leaf', 'root', 'loaf', 'stick', 'slice', 'fillet', 'rack', 'side', 'slab', 'block', 'wedge', 'wheel', 'round', 'scoop', 'ladle', 'dash', 'pinch', 'ream', 'bar', 'mg', 'ton'];
+const CATEGORY_OPTIONS = ['Produce', 'Herbs & Aromatics', 'Meat', 'Poultry', 'Seafood', 'Noodles', 'Broth & Soup Base', 'Rice & Grains', 'Sauces & Condiments', 'Spices & Seasonings', 'Oils & Vinegars', 'Dry Goods', 'Canned & Jarred', 'Dairy', 'Eggs', 'Frozen', 'Deli', 'Bakery & Bread', 'Flour & Baking', 'Sweeteners', 'Nuts & Seeds', 'Snacks', 'Beverages', 'Juice & Soda', 'Coffee & Tea', 'Beer', 'Wine', 'Liquor', 'Bar Supplies', 'Paper Goods', 'Disposables & To-Go', 'Packaging', 'Cleaning Supplies', 'Smallwares', 'Equipment', 'Office Supplies', 'Uniforms & Apparel', 'Other'];
+const comboHTML = (key, options, value, label) => { const cur = value == null ? '' : String(value); const inList = options.includes(cur); return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList && cur) ? 'selected' : ''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label || '').toLowerCase())}" value="${esc(!inList ? cur : '')}" ${(!inList && cur) ? '' : 'hidden'}></div>`; };
+function comboWire(root) { (root || document).querySelectorAll('[data-combo]').forEach(sel => { sel.onchange = () => { const o = document.getElementById('cbo_' + sel.dataset.combo); if (o) { const show = sel.value === '__other__'; o.hidden = !show; if (show) o.focus(); } }; }); }
+const comboVal = (key) => { const sel = document.getElementById('cb_' + key); if (!sel) return ''; return sel.value === '__other__' ? (((document.getElementById('cbo_' + key) || {}).value) || '').trim() : sel.value; };
+let _scanLibP = null;
+function loadScanLib() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (!_scanLibP) _scanLibP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/html5-qrcode.min.js'; s.onload = res; s.onerror = () => rej(new Error('Scanner library failed to load — check your connection.')); document.head.appendChild(s); });
+  return _scanLibP;
+}
+const scanFormats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+
+function renderScan() {
+  $('view').innerHTML = `<div class="section-head"><h2>📷 Scan Inventory</h2></div>
+    <div class="empty" style="text-align:left;line-height:1.6">
+      <p>Scan a product barcode with your phone to <strong>receive</strong> stock, <strong>check</strong> stock across every location, <strong>ship / transfer</strong> to another location, or mark stock <strong>used</strong> in the kitchen. Actions apply to <strong>your store</strong>.</p>
+      <button class="btn primary" id="scanStart" style="margin-top:.6rem">📷 Open scanner</button>
+    </div>`;
+  $('scanStart').onclick = openScanner;
+}
+
+async function openScanner() {
+  try { await loadScanLib(); } catch (e) { return toast(e.message, true); }
+  const host = document.createElement('div'); host.className = 'scan-overlay';
+  host.innerHTML = `<div class="scan-card">
+    <div class="scan-head"><strong>📷 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
+    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="check">📋 Check</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="use">🍳 Use</button></div>
+    <div id="shipBar" class="ship-bar" hidden></div>
+    <div id="scanReader" class="scan-reader"></div>
+    <div id="scanMsg" class="scan-msg">Point the camera at a UPC / EAN barcode.</div>
+    <div id="scanPanel"></div>
+    <div class="scan-manual"><input id="scanManual" placeholder="…or type a barcode number" inputmode="numeric"><button class="btn sm" id="scanManualGo">Go</button></div>
+  </div>`;
+  document.body.appendChild(host);
+  const qr = new Html5Qrcode('scanReader', { formatsToSupport: scanFormats(), verbose: false });
+  let busy = false, mode = 'receive';
+  const close = async () => { try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch { /* not scanning */ } try { qr.clear(); } catch { /* ignore */ } host.remove(); };
+  host.querySelector('[data-x]').onclick = close;
+  const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
+  const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
+  async function loadShipOrders() {
+    const to = shipTo(); const box = $('shipOrders'); if (!box) return;
+    if (!to) { box.innerHTML = ''; return; }
+    let ords = []; try { ords = await api('/invscan/ship/orders?to_location_id=' + to); } catch { /* ignore */ }
+    box.innerHTML = ords.length ? `<div class="ship-ord-h">Open order to fill:</div>` + ords.map(o => `<div class="ship-ord${o.remaining <= 0 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.ck_qty)}/${nf(o.requested_qty)} ${esc(o.unit || '')}</span></div>`).join('') : '<div class="muted" style="font-size:.82rem">No open orders for this location — scanning ships ad-hoc.</div>';
+  }
+  async function setMode(m) {
+    mode = m;
+    host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
+    $('shipBar').hidden = m !== 'ship';
+    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : (m === 'use' ? 'Scan an item to record kitchen use.' : 'Point the camera at a UPC / EAN barcode.'));
+    if (m === 'ship' && !$('shipBar').dataset.loaded) {
+      $('shipBar').dataset.loaded = '1';
+      let tgts = []; try { tgts = await api('/invscan/ship/targets'); } catch { /* ignore */ }
+      $('shipBar').innerHTML = `<label class="ship-lbl">Ship to</label>
+        <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(t.name)}${t.type === 'central_kitchen' ? ' (CK)' : ''}</option>`).join('')}</select>
+        <div id="shipOrders"></div>`;
+      $('shipTo').onchange = loadShipOrders;
+    }
+  }
+  host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  const onCode = async (code) => {
+    if (busy) return; busy = true;
+    try { await qr.pause(true); } catch { /* camera path */ }
+    try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
+    $('scanMsg').textContent = 'Scanned: ' + code;
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : 'Point the camera at the next barcode.')); try { qr.resume(); } catch { /* ignore */ } };
+    if (mode === 'ship') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders);
+    else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
+    else if (mode === 'use') await handleUse(code, $('scanPanel'), done);
+    else await handleScan(code, $('scanPanel'), done);
+  };
+  $('scanManualGo').onclick = () => { const c = ($('scanManual').value || '').trim(); if (c) onCode(c); };
+  $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') $('scanManualGo').click(); };
+  try {
+    // Full-frame decode (no qrbox) so long linear GS1-128 case labels fit. Plain environment
+    // camera — do NOT add width/height {ideal:...} constraints: they broke camera-open on the
+    // iPhone 16 even with a fallback (the fallback can't cleanly recover the iOS video element).
+    await qr.start({ facingMode: 'environment' }, { fps: 10 }, onCode, () => { /* per-frame no-op */ });
+  } catch (e) {
+    $('scanReader').innerHTML = ''; $('scanMsg').innerHTML = `📷 Camera unavailable (${esc(e && e.message || 'no access')}). Type a barcode below instead.`;
+  }
+}
+
+// Smart receive — glossary-aware. Known item adds count (or WEIGHT for catch-weight, with a
+// serial-duplicate guard); a new barcode pre-fills from the Glossary/label and writes back.
+async function handleScan(code, panel, next) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const p = r.parsed || {};
+  const key = r.code || code;
+  const packed = p.packDate || p.prodDate || '';
+  const labelExpiry = p.expiry || packed || '';
+  const labelLot = p.lot || '';
+  const wt = p.weightLb || '';
+  const gs1 = (p.isGs1 || wt || labelExpiry || labelLot || p.serial) ? `<div class="scan-gs1">🏷️ Label${wt ? ` · <strong>${nf(wt)} lb</strong>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${p.expiry ? ` · exp ${esc(p.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}${p.serial ? ` · #${esc(p.serial)}` : ''}</div>` : '';
+  if (r.in_stock) {
+    const it = r.item;
+    const cw = !!it.is_catch_weight;
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${gs1}
+      <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
+      <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
+    $('scGo').onclick = async () => {
+      const btn = $('scGo'); if (btn.disabled) return; btn.disabled = true;
+      const qv = $('scQty').value, m = $('scMode').value;
+      try {
+        if (m === 'count') {
+          const rr = await api('/invscan/scan', { method: 'POST', body: JSON.stringify({ code: key, quantity: qv, mode: 'count', expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined }) });
+          toast(`${it.item_name} count → ${nf(rr.item.quantity)} ${it.unit}`);
+        } else {
+          const body = { code: key, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          if (cw) body.weight = qv; else body.quantity = qv;
+          let rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(body) });
+          if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+          toast(`${it.item_name} → ${nf(rr.item.quantity)} ${it.unit}`);
+        }
+        next();
+      } catch (e) { toast(e.message, true); btn.disabled = false; }
+    };
+    $('scNext').onclick = next;
+  } else {
+    let g = r.glossary || null;
+    if (!g) { try { const look = await api('/invscan/lookup/' + encodeURIComponent(code)); if (look && look.found) g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size }; else if (look && look.weighed) g = { _weighed: true, default_unit_cost: look.price }; } catch { /* offline */ } }
+    const inGloss = !!(g && g.name);
+    const note = inGloss ? ` — in Glossary as <strong>${esc(g.name)}</strong>${g.size ? ` · <span class="muted">${esc(g.size)}</span>` : ''}` : (g && g._weighed ? ` — <strong>weighed in-store item</strong>; name it below` : '');
+    panel.innerHTML = `<div class="scan-unknown">🆕 New to stock <span class="muted mono">${esc(key)}</span>${note}${gs1}
+      <div class="scan-tabs"><button class="btn sm" data-new>Add to stock${inGloss ? '' : ' + glossary'}</button><button class="btn sm ghost" data-link>Link to existing</button><button class="btn sm ghost" data-skip>Skip</button></div>
+      <div id="scSub"></div></div>`;
+    panel.querySelector('[data-skip]').onclick = next;
+    panel.querySelector('[data-new]').onclick = () => {
+      const cwDefault = g && g.is_catch_weight ? '1' : '0';
+      $('scSub').innerHTML = `<div class="scan-form">
+        <input id="niName" placeholder="Item name / description" value="${esc(g && g.name ? g.name : '')}">
+        ${comboHTML('niCat', CATEGORY_OPTIONS, (g && g.category) || 'Produce', 'Category')}
+        ${comboHTML('niUnit', UOM_OPTIONS, (g && g.unit) || (wt ? 'lb' : 'each'), 'Unit of measure')}
+        <input id="niDesc" placeholder="Description (optional)" value="${esc(g && g.description ? g.description : '')}">
+        <div class="scan-row"><label class="scan-lbl" style="flex:1">Catch-weight? <select id="niCW"><option value="0" ${cwDefault === '0' ? 'selected' : ''}>No — count</option><option value="1" ${cwDefault === '1' ? 'selected' : ''}>Yes — by weight</option></select></label></div>
+        <div class="scan-row"><input id="niSku" placeholder="SKU (optional)"><input id="niCost" type="number" placeholder="Unit cost $" step="0.01" value="${g && g.default_unit_cost ? g.default_unit_cost : ''}"></div>
+        <div class="scan-row"><input id="niQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="niMin" type="number" placeholder="Reorder at" step="any"><input id="niPar" type="number" placeholder="Par" step="any"></div>
+        <div class="scan-row"><input id="niExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="niLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="scan-row"><input id="niVendor" list="niVendorList" placeholder="Supplier / vendor"><input id="niVCode" placeholder="Supplier item code"></div><datalist id="niVendorList"></datalist>
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to Glossary</label>
+        <button class="btn" id="niSave">Add to stock</button></div>`;
+      comboWire($('scSub'));
+      api('/invscan/vendors/list').then(vs => { const dl = $('niVendorList'); if (dl) dl.innerHTML = (vs || []).map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(() => {});
+      $('niSave').onclick = async () => {
+        const name = ($('niName').value || '').trim(); if (!name) return toast('Enter an item name', true);
+        const cw = $('niCW').value === '1';
+        const body = { barcode: key, item_name: name, category: comboVal('niCat') || 'Other', unit: comboVal('niUnit') || (cw ? 'lb' : 'each'),
+          description: $('niDesc').value.trim() || undefined, is_catch_weight: cw ? 1 : 0, sku: $('niSku').value.trim() || undefined,
+          unit_cost: $('niCost').value || 0, min_quantity: $('niMin').value || 0, par_level: $('niPar').value || undefined,
+          expiry_date: $('niExp').value || undefined, lot_code: $('niLot').value.trim() || undefined,
+          vendor_name: $('niVendor').value.trim() || undefined, vendor_code: $('niVCode').value.trim() || undefined,
+          save_to_glossary: $('niGloss').checked };
+        if (cw) body.weight = $('niQty').value; else body.quantity = $('niQty').value;
+        try { await api('/invscan/receive-create', { method: 'POST', body: JSON.stringify(body) }); toast(`Added ${name}${$('niGloss').checked ? ' · glossary updated' : ''}`); next(); } catch (e) { toast(e.message, true); }
+      };
+    };
+    panel.querySelector('[data-link]').onclick = async () => {
+      $('scSub').innerHTML = '<div class="scan-msg">Loading items…</div>';
+      let items = []; try { items = await api('/invscan/items/list'); } catch { /* ignore */ }
+      $('scSub').innerHTML = `<div class="scan-form"><select id="niItem">${items.map(i => `<option value="${i.id}">${esc(i.item_name)}</option>`).join('')}</select><button class="btn" id="niLink">Link barcode</button></div>`;
+      $('niLink').onclick = async () => { try { await api('/invscan/link', { method: 'POST', body: JSON.stringify({ code: key, item_id: $('niItem').value }) }); toast('Barcode linked'); next(); } catch (e) { toast(e.message, true); } };
+    };
+  }
+}
+
+// Scan-to-check: how much of the scanned product each location holds (read-only, all sites).
+async function handleCheck(code, panel, next) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/check/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  if (!r.found) { panel.innerHTML = `<div class="scan-unknown">🔍 <span class="mono">${esc(r.code)}</span> — not stocked anywhere yet. <button class="btn sm ghost" id="ckNext">OK</button></div>`; $('ckNext').onclick = next; return; }
+  panel.innerHTML = `<div class="scan-found">📋 <strong>${esc(r.item_name)}</strong> <span class="muted">· ${nf(r.total)} ${esc(r.unit)} across all locations</span>
+    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row${l.location_id === r.mine ? ' mine' : ''}"><span>${esc(l.location)}${l.type === 'central_kitchen' ? ' (CK)' : ''}${l.location_id === r.mine ? ' · you' : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${nf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    <button class="btn ghost" id="ckNext">Scan another</button></div>`;
+  $('ckNext').onclick = next;
+}
+
+// Scan-to-ship / transfer: move from THIS store to a chosen destination, filling any open order.
+async function handleShip(code, panel, next, to, toName, refreshOrders) {
+  if (!to) { panel.innerHTML = '<div class="scan-unknown">Pick a destination above, then scan an item to ship.</div>'; setTimeout(next, 1400); return; }
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store, so there's nothing to ship. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
+  let dflt = (r.parsed && r.parsed.weightLb) || 1;
+  try { const ords = await api('/invscan/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>
+    <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any"><span class="muted">→ ${esc(dest)}</span></div>
+    <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
+  $('shNext').onclick = next;
+  $('shGo').onclick = async () => {
+    const btn = $('shGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('shQty').value;
+    const body = { to_location_id: to, code: key, quantity: qv };
+    try {
+      let rr = await api('/invscan/ship', { method: 'POST', body: JSON.stringify(body) });
+      if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/invscan/ship', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+      toast(`Shipped ${nf(qv)} ${it.unit} → ${dest}${rr.order ? (rr.order.shipped ? ' · order complete ✅' : ` · order ${nf(rr.order.ck_qty)}/${nf(rr.order.requested_qty)}`) : ''}`);
+      if (refreshOrders) refreshOrders(); next();
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+}
+
+// Scan-to-use: consume stock at THIS store (kitchen prep / to serve).
+async function handleUse(code, panel, next) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store. <button class="btn sm ghost" id="uSkip">Skip</button></div>`; $('uSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const wt = (r.parsed && r.parsed.weightLb) || '';
+  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>
+    <div class="scan-act"><input id="uQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input id="uReason" placeholder="Reason (e.g. prep, serve)"></div>
+    <div class="scan-act"><button class="btn" id="uGo">🍳 Record use</button><button class="btn ghost" id="uNext">Skip</button></div></div>`;
+  $('uNext').onclick = next;
+  $('uGo').onclick = async () => {
+    const btn = $('uGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('uQty').value;
+    const body = { code: key, reason: $('uReason').value.trim() || undefined };
+    if (cw) body.weight = qv; else body.quantity = qv;
+    try { const rr = await api('/invscan/use', { method: 'POST', body: JSON.stringify(body) }); toast(`Used ${nf(qv)} ${it.unit} · ${it.item_name} → ${nf(rr.item.quantity)} left`); next(); } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+}
+
+async function renderAlerts() {
+  const v = $('view');
+  if (!S.alertTab) S.alertTab = 'active';
+  v.innerHTML = `<div class="section-head"><h2>🔔 Alerts</h2></div>
+    <div class="seg" style="margin-bottom:.7rem"><button class="seg-btn ${S.alertTab === 'active' ? 'active' : ''}" data-at="active">Active${S.alertCount ? ` (${S.alertCount})` : ''}</button><button class="seg-btn ${S.alertTab === 'history' ? 'active' : ''}" data-at="history">History</button></div>
+    <div id="alBody"><div class="empty">Loading…</div></div>`;
+  v.querySelectorAll('[data-at]').forEach(b => b.onclick = () => { S.alertTab = b.dataset.at; renderAlerts(); });
+  let d; try { d = await api('/alerts/inbox'); } catch (e) { const el = $('alBody'); if (el) el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.view !== 'alerts') return;
+  S.alertCount = d.active_count || 0; renderNav();
+  const at = $('view').querySelector('[data-at="active"]'); if (at) at.textContent = 'Active' + (S.alertCount ? ` (${S.alertCount})` : '');
+  const list = S.alertTab === 'active' ? d.active : d.history;
+  if (!list.length) { $('alBody').innerHTML = `<div class="empty">${S.alertTab === 'active' ? 'No active alerts — you’re all caught up. 🎉' : 'No past alerts yet.'}</div>`; return; }
+  const srcOf = (a) => /^(🍽|🧾|🧽|⏱)/.test(a.body || '') ? 'Service Flow' : a.sender_name;
+  $('alBody').innerHTML = list.map(a => `<div class="al-card${a.priority === 'urgent' ? ' al-urgent' : ''}${a.status === 'waiting' ? ' al-waiting' : ''}">
+    <div class="al-body">${a.priority === 'urgent' ? '🔴 ' : ''}${esc(a.body)}</div>
+    <div class="al-meta">from ${esc(srcOf(a))} · ${msgAgo(a.created_at)}${a.mine_done_at ? ` · ✅ done ${msgAgo(a.mine_done_at)}` : ''}</div>
+    ${alertActions(a)}
+  </div>`).join('');
+  const body = $('alBody');
+  body.querySelectorAll('[data-ack]').forEach(b => b.onclick = () => { b.disabled = true; api(`/alerts/${b.dataset.ack}/ack`, { method: 'POST', body: '{}' }).then(() => { toast('Acknowledged — tap Done when finished'); renderAlerts(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  body.querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api(`/alerts/${b.dataset.done}/complete`, { method: 'POST', body: '{}' }).then(() => { toast('Marked done — moved to History'); try { _shownAlerts.delete(+b.dataset.done); } catch { /* ignore */ } refreshAlertCount(); renderAlerts(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  // Service Flow: claim ("On It") reveals the status actions; the exclusion query then
+  // drops this alert off any other targeted staffer's list.
+  body.querySelectorAll('[data-claim]').forEach(b => b.onclick = () => { b.disabled = true; api(`/alerts/${b.dataset.claim}/claim`, { method: 'POST', body: '{}' }).then(() => { toast('You’ve got it — check the table & kitchen'); renderAlerts(); }).catch(e => { toast(e.message, true); refreshAlertCount(); renderAlerts(); }); });
+  // Status action: Mark Served / Mark Bussed / Checked resolve it (and move the board);
+  // Waiting parks it for a ~5-min re-nudge until the food is out.
+  body.querySelectorAll('[data-flow]').forEach(b => b.onclick = () => {
+    b.disabled = true;
+    const act = b.dataset.act;
+    api(`/alerts/${b.dataset.flow}/flow`, { method: 'POST', body: JSON.stringify({ action: act }) })
+      .then(() => {
+        toast(flowActToast(act));
+        if (!FLOW_WAIT_ACTS.includes(act)) { try { _shownAlerts.delete(+b.dataset.flow); } catch { /* ignore */ } }
+        refreshAlertCount(); if (S.view === 'serviceflow') renderStaffServiceFlow(); renderAlerts();
+      })
+      .catch(e => { toast(e.message, true); b.disabled = false; });
+  });
+}
+// Action row for one alert card. Manual alerts keep On-it / Done; Service Flow alerts
+// use the claim-and-track lifecycle (On It → Mark Served / Waiting, etc.).
+const FLOW_ACT_LABEL = { served: '✅ Mark Served', paid: '💳 Paid', bussed: '🧽 Mark Bussed', waiting: '⏳ Waiting', notyet: '⏳ Not yet' };
+const FLOW_WAIT_ACTS = ['waiting', 'notyet'];   // snooze/re-nudge actions (not a resolve)
+const flowActToast = (act) => ({
+  served: 'Marked served — updated on the board', paid: 'Marked paid — busser alerted',
+  bussed: 'Bussed — table cleared', waiting: 'Waiting — the floor will be re-alerted soon.',
+  notyet: 'Not yet — we’ll re-check the table shortly.',
+}[act] || 'Updated');
+function alertActions(a) {
+  if (S.alertTab !== 'active') return '';
+  if (a.flow_kind && a.actions) {
+    if (!a.mine_claim) return `<div class="al-act"><button class="btn" data-claim="${a.id}">🙋 On It</button></div>`;
+    const waiting = a.status === 'waiting';
+    const btns = a.actions.map(act => `<button class="btn ${act === 'waiting' ? 'ghost' : ''}" data-flow="${a.id}" data-act="${act}">${FLOW_ACT_LABEL[act] || act}</button>`).join('');
+    return `${waiting ? '<div class="al-wait">⏳ Waiting — the floor is re-alerted every ~5 min until it’s served.</div>' : ''}<div class="al-act">${btns}</div>`;
+  }
+  return `<div class="al-act">${a.mine_ack ? '<span class="muted">✓ On it</span>' : `<button class="btn ghost" data-ack="${a.id}">✓ On it</button>`}<button class="btn" data-done="${a.id}">✓ Done</button></div>`;
+}
+
+// ── Service Flow board (floor staff tap Served / Done; alerts arrive as floor pings) ──
+const SF2_STATE = {
+  seated: ['🪑 Seated', 'sf2-seated'],
+  awaiting_food: ['⏳ Awaiting food', 'sf2-await'],
+  in_service: ['🍜 In service', 'sf2-serv'],
+  ready_to_bus: ['🧽 Ready to bus', 'sf2-bus'],
+};
+async function renderStaffServiceFlow() {
+  const v = $('view');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  const q = S.sfLocSel ? '?location_id=' + encodeURIComponent(S.sfLocSel) : '';
+  let d; try { d = await api('/serviceflow/board' + q); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.view !== 'serviceflow') return;
+  const stores = d.stores || [];
+  // If this staffer covers several ON stores, offer a picker; keep the selection valid.
+  if (S.sfLocSel && stores.length && !stores.some(s => String(s.id) === String(S.sfLocSel))) { S.sfLocSel = null; }
+  if (!S.sfLocSel && d.location_id) S.sfLocSel = String(d.location_id);
+  const picker = stores.length > 1
+    ? `<label class="sf2-picker">Store <select id="sfLocSel">${stores.map(s => `<option value="${s.id}" ${String(S.sfLocSel) === String(s.id) ? 'selected' : ''}>${esc(short(s.name))}</option>`).join('')}</select></label>`
+    : '';
+  if (!d.enabled) {
+    v.innerHTML = `${picker ? `<div class="section-head"><h2>⏱️ Service Flow</h2>${picker}</div>` : ''}<div class="empty">Service Flow isn’t on for ${stores.length ? 'this store' : 'your store'} right now.</div>`;
+    const sel = $('sfLocSel'); if (sel) sel.onchange = (e) => { S.sfLocSel = e.target.value; renderStaffServiceFlow(); };
+    return;
+  }
+  const card = (t) => {
+    const [lbl, cls] = SF2_STATE[t.state] || ['', ''];
+    // Seated = host sat the party; no Toast order yet, so no Serve/Bus actions. It clears
+    // itself once the guest opens an order in Toast, then reappears as Awaiting food.
+    if (t.is_seated) {
+      return `<div class="sf2-card sf2-seated">
+        <div class="sf2-top"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
+        <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
+        <div class="sf2-act"><span class="muted">Waiting for the guest to order…</span></div>
+      </div>`;
+    }
+    return `<div class="sf2-card ${cls}${t.alert ? ' sf2-alert' : ''}">
+      <div class="sf2-top"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
+      <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.paid ? ' · 💳 Paid' : ''}</div>
+      <div class="sf2-act">
+        ${!t.served && !t.paid ? `<button class="btn" data-served="${t.order_guid}">✅ Served</button>` : (t.served && !t.paid ? '<span class="muted">✅ Served</span>' : '')}
+        ${t.paid ? `<button class="btn" data-done="${t.order_guid}">🧽 Bussed — clear</button>` : ''}
+      </div>
+    </div>`;
+  };
+  const sfSeated = d.seated || [];
+  v.innerHTML = `<div class="section-head"><h2>⏱️ Service Flow</h2>${picker}<span class="muted">${sfSeated.length ? sfSeated.length + ' seated · ' : ''}${d.counts.total} open · food ${d.served_min}m · pay ${d.pay_min}m after served</span></div>
+    ${(sfSeated.length || d.tables.length) ? `<div class="sf2-grid">${sfSeated.map(card).join('')}${d.tables.map(card).join('')}</div>` : '<div class="empty">No open dine-in tables right now.</div>'}`;
+  { const sel = $('sfLocSel'); if (sel) sel.onchange = (e) => { S.sfLocSel = e.target.value; renderStaffServiceFlow(); }; }
+  v.querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  clearTimeout(S._sf2Timer);
+  S._sf2Timer = setTimeout(() => { if (S.view === 'serviceflow' && !$('modalHost').innerHTML) renderStaffServiceFlow(); }, 30000);
+}
 
 // ── Settings: per-device preferences (currently the alert sound / vibration) ───
 function renderSettings() {

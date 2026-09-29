@@ -32,6 +32,7 @@ router.post('/groups', (req, res) => fwd(req, res, 'POST', '/groups', req.body))
 router.get('/groups/:id', (req, res) => fwd(req, res, 'GET', `/groups/${encodeURIComponent(req.params.id)}`));
 router.get('/groups/:id/messages', (req, res) => fwd(req, res, 'GET', `/groups/${encodeURIComponent(req.params.id)}/messages`));
 router.post('/groups/:id/messages', (req, res) => fwd(req, res, 'POST', `/groups/${encodeURIComponent(req.params.id)}/messages`, req.body));
+router.post('/messages/:id/react', (req, res) => fwd(req, res, 'POST', `/messages/${encodeURIComponent(req.params.id)}/react`, { emoji: req.body && req.body.emoji }));
 
 // Chat message attachments (pictures & videos). List is JSON; upload/download stream bytes.
 const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024;

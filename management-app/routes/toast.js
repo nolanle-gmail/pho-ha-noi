@@ -279,10 +279,110 @@ router.get('/service-flow', MANAGE, (req, res) => {
   const location_id = parseInt(req.query.location_id, 10);
   if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
   if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
-  const cfg = db.prepare(`SELECT service_alert_min, service_flow_on, service_alerts_live FROM toast_locations WHERE location_id=?`).get(location_id) || {};
+  const cfg = db.prepare(`SELECT service_flow_on, service_alerts_live, flow_served_min, flow_pay_min, flow_food_renudge_min, flow_pay_renudge_min, flow_alert_user_id FROM toast_locations WHERE location_id=?`).get(location_id) || {};
+  const alertUser = cfg.flow_alert_user_id ? (db.prepare(`SELECT name FROM users WHERE id=?`).get(cfg.flow_alert_user_id) || {}).name : null;
+  const live = !!(cfg.service_alerts_live && cfg.flow_alert_user_id);
   const flow = toastSync.computeServiceFlow(location_id);
-  const alerts = db.prepare(`SELECT table_name, server_name, minutes_open, status, created_at FROM toast_service_alerts WHERE location_id=? ORDER BY id DESC LIMIT 15`).all(location_id);
-  res.json({ ...flow, settings: { alert_min: cfg.service_alert_min || 40, flow_on: !!cfg.service_flow_on, alerts_live: !!cfg.service_alerts_live }, recent_alerts: alerts });
+  res.json({ ...flow, settings: { flow_on: !!cfg.service_flow_on, alerts_live: live, served_min: cfg.flow_served_min || 10, pay_min: cfg.flow_pay_min || 15,
+    food_renudge_min: cfg.flow_food_renudge_min || 5, pay_renudge_min: cfg.flow_pay_renudge_min || 7,
+    can_edit_timing: roleHasCap(req.user.role, 'manage'), can_toggle: roleHasCap(req.user.role, 'manage'), alert_user: alertUser } });
+});
+
+// Lightweight service-flow status for one location (used by the Locations manage view):
+// whether it's connected to Toast, plus the on/off + live-alert state — WITHOUT computing the
+// full live board (so opening a location's Details tab stays cheap).
+router.get('/service-flow/status', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const cfg = db.prepare(`SELECT toast_guid, active, service_flow_on, service_alerts_live, flow_alert_user_id FROM toast_locations WHERE location_id=?`).get(location_id);
+  const mapped = !!(cfg && cfg.active && cfg.toast_guid);
+  const alertUser = cfg && cfg.flow_alert_user_id ? (db.prepare(`SELECT name FROM users WHERE id=?`).get(cfg.flow_alert_user_id) || {}).name : null;
+  res.json({
+    mapped,
+    flow_on: !!(cfg && cfg.service_flow_on),
+    alerts_live: !!(cfg && cfg.service_alerts_live && cfg.flow_alert_user_id),
+    alert_user: alertUser,
+    can_toggle: roleHasCap(req.user.role, 'manage'),   // any manage-cap role can toggle its own store
+  });
+});
+
+// Turn a location's Service Flow on/off. Unlike /settings (ADMIN, also flips alerts-live &
+// thresholds), this flips ONLY service_flow_on and is open to any manage-cap role FOR THEIR OWN
+// location (canSeeLoc) — so a store manager can start/stop monitoring their own restaurant.
+// Going LIVE (routing alerts to a user) stays admin-only via /settings.
+router.post('/service-flow/toggle', MANAGE, (req, res) => {
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const cfg = db.prepare(`SELECT toast_guid, active FROM toast_locations WHERE location_id=?`).get(location_id);
+  if (!cfg || !cfg.active || !cfg.toast_guid) return res.status(400).json({ error: 'This location isn’t connected to Toast yet.' });
+  const on = req.body.flow_on ? 1 : 0;
+  db.prepare(`UPDATE toast_locations SET service_flow_on=? WHERE location_id=?`).run(on, location_id);
+  auditLog(req, 'toast_flow_toggle', 'location', location_id, { flow_on: on });
+  res.json({ ok: true, flow_on: !!on });
+});
+
+// Manager-editable alert timing for a store: the food alert threshold + re-alert cadence,
+// and the pay alert threshold (counted from served) + its cadence. Own store; owners all.
+router.post('/service-flow/timing', MANAGE, (req, res) => {
+  const location_id = parseInt(req.body.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const clamp = (v, lo, hi, dflt) => { const n = parseInt(v, 10); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt; };
+  const fields = [], args = [];
+  if (req.body.served_min !== undefined) { fields.push('flow_served_min=?'); args.push(clamp(req.body.served_min, 1, 120, 12)); }
+  if (req.body.pay_min !== undefined) { fields.push('flow_pay_min=?'); args.push(clamp(req.body.pay_min, 1, 180, 17)); }
+  if (req.body.food_renudge_min !== undefined) { fields.push('flow_food_renudge_min=?'); args.push(clamp(req.body.food_renudge_min, 2, 60, 5)); }
+  if (req.body.pay_renudge_min !== undefined) { fields.push('flow_pay_renudge_min=?'); args.push(clamp(req.body.pay_renudge_min, 2, 60, 7)); }
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update.' });
+  args.push(location_id);
+  db.prepare(`UPDATE toast_locations SET ${fields.join(',')} WHERE location_id=?`).run(...args);
+  auditLog(req, 'toast_flow_timing', 'location', location_id, req.body);
+  const c = db.prepare(`SELECT flow_served_min, flow_pay_min, flow_food_renudge_min, flow_pay_renudge_min FROM toast_locations WHERE location_id=?`).get(location_id);
+  res.json({ ok: true, settings: { served_min: c.flow_served_min, pay_min: c.flow_pay_min, food_renudge_min: c.flow_food_renudge_min, pay_renudge_min: c.flow_pay_renudge_min } });
+});
+
+// Audit trail of staff actions on Service Flow alerts (who / when / what) for review.
+router.get('/service-flow/log', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  if (!location_id) return res.status(400).json({ error: 'location_id is required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const limit = Math.min(300, Math.max(10, parseInt(req.query.limit, 10) || 100));
+  const events = db.prepare(`
+    SELECT e.created_at, e.action, e.flow_kind, e.user_name, e.order_guid,
+      (SELECT c.name FROM toast_orders o JOIN toast_config c ON c.location_id=o.location_id AND c.type='table' AND c.guid=o.table_guid WHERE o.guid=e.order_guid) AS table_name
+    FROM toast_flow_events e
+    WHERE e.location_id=? ORDER BY e.id DESC LIMIT ?`).all(location_id, limit);
+  res.json({ events });
+});
+
+// Staff mark a table Served (food delivered) or Done (bussed & cleared). Toast has no
+// such signal, so these are the only human inputs the board needs; everything else
+// (ordered / paid) comes from Toast. Location-scoped like the board.
+const flowLoc = (guid) => (db.prepare(`SELECT location_id FROM toast_orders WHERE guid=?`).get(guid) || {}).location_id;
+const upFlowServed = db.prepare(`INSERT INTO toast_flow_state (order_guid, location_id, served_at, served_by, updated_at)
+  VALUES (@guid,@loc,@at,@by,datetime('now'))
+  ON CONFLICT(order_guid) DO UPDATE SET served_at=@at, served_by=@by, updated_at=datetime('now')`);
+const upFlowBussed = db.prepare(`INSERT INTO toast_flow_state (order_guid, location_id, bussed_at, bussed_by, updated_at)
+  VALUES (@guid,@loc,@at,@by,datetime('now'))
+  ON CONFLICT(order_guid) DO UPDATE SET bussed_at=@at, bussed_by=@by, updated_at=datetime('now')`);
+router.post('/service-flow/:guid/served', MANAGE, (req, res) => {
+  const loc = flowLoc(req.params.guid);
+  if (!loc) return res.status(404).json({ error: 'Order not found.' });
+  if (!canSeeLoc(req, loc)) return res.status(403).json({ error: 'Not your location.' });
+  const clear = req.body && req.body.clear;                 // allow un-marking (mistap)
+  upFlowServed.run({ guid: req.params.guid, loc, at: clear ? null : new Date().toISOString(), by: clear ? null : req.user.id });
+  auditLog(req, 'flow_served', 'toast', req.params.guid, { clear: !!clear });
+  res.json({ success: true, served: !clear });
+});
+router.post('/service-flow/:guid/done', MANAGE, (req, res) => {
+  const loc = flowLoc(req.params.guid);
+  if (!loc) return res.status(404).json({ error: 'Order not found.' });
+  if (!canSeeLoc(req, loc)) return res.status(403).json({ error: 'Not your location.' });
+  upFlowBussed.run({ guid: req.params.guid, loc, at: new Date().toISOString(), by: req.user.id });
+  auditLog(req, 'flow_bussed', 'toast', req.params.guid, {});
+  res.json({ success: true, done: true });
 });
 
 // Update service-flow settings for a location (threshold, on/off, live vs dry-run).
@@ -338,6 +438,19 @@ router.get('/sales', MANAGE, (req, res) => {
   if (!location_id || !/^\d{4}-\d{2}-\d{2}$/.test(business_date)) return res.status(400).json({ error: 'location_id and business_date (YYYY-MM-DD) are required.' });
   if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
   res.json(toastSync.salesSummary(location_id, business_date));
+});
+
+// Same day's sales broken down by dining option (Dine In / Take Out / DoorDash …),
+// for the dashboard card's click-through detail. Scoped like /sales.
+router.get('/sales/dining', MANAGE, (req, res) => {
+  const location_id = parseInt(req.query.location_id, 10);
+  const business_date = String(req.query.business_date || '');
+  if (!location_id || !/^\d{4}-\d{2}-\d{2}$/.test(business_date)) return res.status(400).json({ error: 'location_id and business_date (YYYY-MM-DD) are required.' });
+  if (!canSeeLoc(req, location_id)) return res.status(403).json({ error: 'Not your location.' });
+  res.json({ location_id, business_date,
+    options: toastSync.salesByDiningOption(location_id, business_date, business_date),
+    payments: toastSync.salesByPaymentType(location_id, business_date, business_date),
+    payment_by_dining: toastSync.salesPaymentByDining(location_id, business_date, business_date) });
 });
 
 // Dashboard roll-up: each mapped location's most recently synced business day and
@@ -398,9 +511,18 @@ router.get('/analytics/summary', ANALYTICS, (req, res) => {
   const m = db.prepare(`SELECT ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips, ROUND(SUM(tax_amount),2) tax, ROUND(SUM(discount_amount),2) discounts FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
   const o = db.prepare(`SELECT COUNT(*) orders, COALESCE(SUM(num_guests),0) guests, COUNT(DISTINCT business_date) days FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
   const it = db.prepare(`SELECT ROUND(SUM(quantity),0) qty FROM toast_selections WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc}`).get(...a);
+  // Avg open→pay time (minutes) from the precomputed pay_minutes column (populated at
+  // sync time). 0–600 min window drops forgotten/employee tabs left open for hours.
+  const p = db.prepare(`SELECT COUNT(*) n, ROUND(AVG(pay_minutes),1) avg_min FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc} AND pay_minutes BETWEEN 0 AND 600`).get(...a);
+  // Split by dining type (Dine In / Take Out / DoorDash …) and by payment tender
+  // (Cash / Credit card / Gift card / Other) over the same range + scope.
+  const dining = toastSync.salesByDiningOption(loc, from, to);
+  const payments = toastSync.salesByPaymentType(loc, from, to);
+  const payment_by_dining = toastSync.salesPaymentByDining(loc, from, to);
   const net = m.net || 0, orders = o.orders || 0;
   res.json({ from, to, net, total: m.total || 0, tips: m.tips || 0, tax: m.tax || 0, discounts: m.discounts || 0,
     orders, guests: o.guests || 0, days: o.days || 0, items: it.qty || 0,
+    avg_pay_min: p.avg_min || 0, paid_orders: p.n || 0, dining, payments, payment_by_dining,
     avg_check: orders ? Math.round(net / orders * 100) / 100 : 0, avg_per_day: (o.days ? Math.round(net / o.days * 100) / 100 : 0) });
 });
 
@@ -424,8 +546,10 @@ router.get('/analytics/locations', ANALYTICS, (req, res) => {
     FROM toast_orders o JOIN locations l ON l.id=o.location_id WHERE o.voided=0 AND o.business_date BETWEEN ? AND ? ${lc} GROUP BY o.location_id`).all(...a);
   const lc2 = all ? '' : 'AND location_id=?';
   const money = db.prepare(`SELECT location_id, ROUND(SUM(amount),2) net, ROUND(SUM(total_amount),2) total, ROUND(SUM(tip_amount),2) tips FROM toast_checks WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc2} GROUP BY location_id`).all(...a);
+  const pay = db.prepare(`SELECT location_id, ROUND(AVG(pay_minutes),1) avg_min FROM toast_orders WHERE voided=0 AND business_date BETWEEN ? AND ? ${lc2} AND pay_minutes BETWEEN 0 AND 600 GROUP BY location_id`).all(...a);
   const byLoc = {}; for (const r of money) byLoc[r.location_id] = r;
-  const rows = ord.map(o => { const m = byLoc[o.location_id] || {}; const net = m.net || 0; return { location_id: o.location_id, name: o.name, net, total: m.total || 0, tips: m.tips || 0, orders: o.orders, guests: o.guests, avg_check: o.orders ? Math.round(net / o.orders * 100) / 100 : 0 }; }).sort((x, y) => y.net - x.net);
+  const byPay = {}; for (const r of pay) byPay[r.location_id] = r.avg_min;
+  const rows = ord.map(o => { const m = byLoc[o.location_id] || {}; const net = m.net || 0; return { location_id: o.location_id, name: o.name, net, total: m.total || 0, tips: m.tips || 0, orders: o.orders, guests: o.guests, avg_check: o.orders ? Math.round(net / o.orders * 100) / 100 : 0, avg_pay_min: byPay[o.location_id] || 0 }; }).sort((x, y) => y.net - x.net);
   res.json({ from, to, locations: rows });
 });
 

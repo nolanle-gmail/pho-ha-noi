@@ -51,7 +51,13 @@ function showSessionBanner() {
   const x = $('sessionBannerX'); if (x) x.onclick = hide;
   const t = setTimeout(hide, 6000);   // auto-dismiss after a few seconds
 }
-const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
+// The location the inventory tools act on: the Central Kitchen when we're inside the
+// Central Kitchen section, otherwise the picked Inventory location. This lets the CK
+// section reuse the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
+// scoped to the CK, while the Inventory section stays scoped to S.loc.
+const invLoc = () => (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc);
+const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
+const invName = () => { const id = invLoc(); const l = (S.locations || []).find(x => String(x.id) === String(id)); return l ? (l.name || '').replace('Pho Ha Noi — ', '') : (S.section === 'central' ? 'Central Kitchen' : 'this location'); };
 
 // ── Toast ────────────────────────────────────────────────────────────────
 let toastTimer;
@@ -70,15 +76,29 @@ function modal(title, fields, onSubmit, submitLabel = 'Save') {
     if (f.type === 'select') {
       return `<label>${esc(f.label)}</label><select data-k="${f.key}">${f.options.map(o => `<option value="${esc(o.value)}" ${o.value == f.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
     }
+    if (f.type === 'combo') {   // a visible dropdown of options + an "Other…" custom entry
+      const cur = f.value == null ? '' : String(f.value);
+      const inList = (f.options || []).some(o => o === cur);
+      const opts = (f.options || []).map(o => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('');
+      return `<label>${esc(f.label)}</label><select data-combo="${f.key}">${opts}<option value="__other__" ${(!inList && cur) ? 'selected' : ''}>✏️ Other…</option></select>`
+        + `<input data-comboother="${f.key}" placeholder="Type a ${esc((f.label || '').toLowerCase())}" value="${esc(!inList ? cur : '')}" style="${(!inList && cur) ? '' : 'display:none'};margin-top:.35rem" />`;
+    }
+    if (f.type === 'datalist') {   // pick from a list OR type your own
+      const dl = 'dl_' + f.key;
+      return `<label>${esc(f.label)}</label><input data-k="${f.key}" list="${dl}" value="${esc(f.value == null ? '' : f.value)}" placeholder="${esc(f.placeholder || 'Type or pick…')}" autocomplete="off" /><datalist id="${dl}">${(f.options || []).map(o => `<option value="${esc(o)}"></option>`).join('')}</datalist>`;
+    }
     return `<label>${esc(f.label)}</label><input data-k="${f.key}" type="${f.type || 'text'}" value="${esc(f.value == null ? '' : f.value)}" placeholder="${esc(f.placeholder || '')}" ${f.step ? `step="${f.step}"` : ''} />`;
   }).join('');
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(title)}</h3><div class="err" id="mErr"></div>${inputs}<div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">${esc(submitLabel)}</button></div></div></div>`;
   const close = () => host.innerHTML = '';
   $('mCancel').onclick = close;
   host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  // Combo: reveal the "Other" text box only when Other is chosen.
+  host.querySelectorAll('[data-combo]').forEach(sel => { sel.onchange = () => { const o = host.querySelector(`[data-comboother="${sel.dataset.combo}"]`); if (o) { const show = sel.value === '__other__'; o.style.display = show ? '' : 'none'; if (show) o.focus(); } }; });
   $('mOk').onclick = async () => {
     const vals = {};
     host.querySelectorAll('[data-k]').forEach(el => vals[el.dataset.k] = el.value);
+    host.querySelectorAll('[data-combo]').forEach(sel => { const k = sel.dataset.combo; if (sel.value === '__other__') { const o = host.querySelector(`[data-comboother="${k}"]`); vals[k] = (o ? o.value : '').trim(); } else vals[k] = sel.value; });
     try { await onSubmit(vals); close(); } catch (e) { $('mErr').textContent = e.message; }
   };
 }
@@ -157,20 +177,31 @@ async function boot() {
   $('logout').onclick = () => { localStorage.clear(); location.reload(); };
   $('navAccount').onclick = () => { setActiveNav(null); $('app').classList.remove('sidebar-open'); openAccount(); };
 
+  // A tapped push notification deep-links here (?n=msg&t=<thread> / ?n=chat&g=<group>).
+  // When present, start ON Messages so no other section's async render competes.
+  const q = new URLSearchParams(location.search);
+  const dl = q.get('n');
   const allowed = allowedSections();
-  const start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
+  let start = allowed.some(s => s[0] === S.section) ? S.section : allowed[0][0];
+  if (dl && allowed.some(s => s[0] === 'messages')) start = 'messages';
+  if (dl && start === 'messages') {   // preset the target so showSection's render lands on it
+    const t = q.get('t'), g = q.get('g');
+    if (g) { S.msgTab = 'chat'; S.chatGroup = String(g); }
+    else if (t) { S.msgTab = 'inbox'; S.msgThread = String(t); }
+  }
   showSection(start);
+  // showSection clears S.msgThread; re-apply and open the exact conversation.
+  if (dl && start === 'messages') {
+    const t = q.get('t'), g = q.get('g');
+    if (g) { S.msgTab = 'chat'; S.chatGroup = String(g); renderMsgTabs(); renderMessages(); }
+    else if (t) { S.msgTab = 'inbox'; S.msgThread = String(t); renderMsgTabs(); renderMessages(); }
+  }
+  if (dl) { try { history.replaceState(null, '', location.pathname); } catch { /* no-op */ } }
   refreshUnread();
   refreshChatUnread();    // seed the chat badge so the sidebar count includes chat from load
   setupMessageStream();   // live badge/inbox the moment a message arrives
   // Keep this device's push subscription fresh when notifications are already on.
   if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
-  // Deep-link from a tapped push notification → open Messages.
-  try {
-    const n = new URLSearchParams(location.search).get('n');
-    if (n && allowedSections().some(s => s[0] === 'messages')) showSection('messages');
-    if (n) history.replaceState(null, '', location.pathname);
-  } catch { /* no-op */ }
 }
 
 // ── Access-level registry (loaded from the API at boot; mirrors lib/auth.js) ──
@@ -312,6 +343,15 @@ function setupMessageStream() {
       else refreshChatUnread();   // any other view: keep the sidebar badge live
       return;
     }
+    if (d && d.type === 'reaction') {                                                // someone reacted to my message/chat
+      toast(`${d.emoji} ${d.by_name || 'Someone'} reacted to a ${d.kind === 'chat' ? 'chat message' : 'message'}`);
+      const open = d.kind === 'chat'
+        ? (S.section === 'messages' && S.msgTab === 'chat' && S.chatGroup && String(S.chatGroup) === String(d.group_id))
+        : (S.section === 'messages' && S.msgThread && String(S.msgThread) === String(d.thread_id));
+      if (open) { if (d.kind === 'chat') renderChatGroup(true); else renderThread(); }
+      if (d.kind === 'chat') refreshChatUnread(); else refreshUnread();   // bump the Messages/Chat badge
+      return;
+    }
     refreshUnread();
     if (S.section === 'messages' && !S.msgThread && S.msgTab === 'inbox') renderMessages();
   };
@@ -372,21 +412,25 @@ function downloadCsv(filename, matrix) {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
 }
 function exportAnalytics(which) {
-  const d = S.anData; if (!d) return toast('Nothing to export yet — let the data load.', true);
+  const d = S.anData || {};
   const F = S.anFilters, tag = `${F.from}_${F.to}${F.loc ? '_loc' + F.loc : ''}`;
   if (which === 'trend') {
+    if (!d.trend) return toast('Run the Sales trend report first.', true);
     const m = [['Period start', 'Net sales', 'Total', 'Tips', 'Orders', 'Guests']];
     for (const r of d.trend.series) m.push([r.start, r.net, r.total, r.tips, r.orders, r.guests]);
     downloadCsv(`phn-sales-trend-${d.trend.granularity}-${tag}.csv`, m);
   } else if (which === 'locations') {
-    const m = [['Location', 'Net sales', 'Total', 'Tips', 'Orders', 'Avg check', 'Guests']];
-    for (const l of (d.locations || [])) m.push([shortLoc(l.name), l.net, l.total, l.tips, l.orders, l.avg_check, l.guests]);
+    if (!d.locations) return toast('Run the By location report first.', true);
+    const m = [['Location', 'Net sales', 'Total', 'Tips', 'Orders', 'Avg check', 'Guests', 'Avg time to pay (min)']];
+    for (const l of (d.locations || [])) m.push([shortLoc(l.name), l.net, l.total, l.tips, l.orders, l.avg_check, l.guests, l.avg_pay_min || 0]);
     downloadCsv(`phn-sales-by-location-${tag}.csv`, m);
   } else if (which === 'items') {
+    if (!d.items) return toast('Run the Top items report first.', true);
     const m = [['Item', 'Quantity', 'Revenue', 'Checks']];
     for (const i of d.items.items) m.push([i.item_name, i.qty, i.revenue, i.checks]);
     downloadCsv(`phn-top-items-${tag}.csv`, m);
   } else if (which === 'patterns') {
+    if (!d.patterns) return toast('Run the Day & time patterns report first.', true);
     const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const m = [['Day of week', 'Net sales', 'Days', 'Orders', 'Avg per day']];
     for (const r of d.patterns.dow) m.push([wd[r.dow], r.net, r.days, r.orders, r.avg]);
@@ -396,10 +440,22 @@ function exportAnalytics(which) {
   }
 }
 
+// Reports run manually — nothing is pulled on open. Each report has its own Run
+// button; changing a filter marks the loaded reports stale (does NOT auto-refetch).
+const AN_IDLE = '<div class="empty">Click <strong>▶ Run</strong> to load this report.</div>';
+const AN_STALE = '<div class="empty">Filters changed — click <strong>▶ Run</strong> to refresh.</div>';
+function anVbars(rows, val, label, fmt) {
+  const max = Math.max(1, ...rows.map(val));
+  return `<div class="vbars">${rows.map(r => `<div class="vbar" title="${esc(label(r))}: ${fmt(val(r))}"><div class="vbar-fill" style="height:${Math.round(val(r) / max * 100)}%"></div><span class="vbar-lbl">${esc(label(r))}</span></div>`).join('')}</div>`;
+}
+function anQs() { const F = S.anFilters; return `from=${F.from}&to=${F.to}${F.loc ? '&location_id=' + F.loc : ''}`; }
+
 async function renderToastAnalytics() {
   const F = S.anFilters || (S.anFilters = defaultAnFilters());
   const isAdmin = roleScopeOf(S.user.role) === 'all';
   const locOpts = isAdmin ? `<label class="sched-filter-role">Location <select id="anLoc"><option value="">All locations</option>${(S.locations || []).map(l => `<option value="${l.id}" ${String(F.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></label>` : '';
+  const runBtn = (r) => `<button class="btn sm" data-anrun="${r}">▶ Run</button>`;
+  const csvBtn = (r) => `<button class="btn sm ghost" data-anexport="${r}" title="Download as CSV (opens in Excel)">⬇ CSV</button>`;
   $('view').innerHTML = `
     <h2 class="page">💹 Sales Analytics <span style="font-weight:400;color:var(--muted);font-size:.9rem">— from your stored Toast history (no live pull)</span></h2>
     <div class="sched-filters">
@@ -407,70 +463,98 @@ async function renderToastAnalytics() {
       <label class="sched-filter-role">To <input type="date" id="anTo" value="${F.to}" max="${pacificTodayIso()}"></label>
       <label class="sched-filter-role">By <select id="anGran"><option value="day" ${F.gran === 'day' ? 'selected' : ''}>Day</option><option value="week" ${F.gran === 'week' ? 'selected' : ''}>Week</option><option value="month" ${F.gran === 'month' ? 'selected' : ''}>Month</option></select></label>
       ${locOpts}
+      <button class="btn sm" id="anRunAll" title="Run every report below">▶ Run all reports</button>
       <span class="sched-filter-total" id="anRangeInfo"></span>
     </div>
-    <div id="anKpis" class="kpis"></div>
-    <div class="section"><div class="row-between"><h3>Sales trend</h3><button class="btn sm ghost" data-anexport="trend" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anTrend"><div class="empty">Loading…</div></div></div>
-    ${isAdmin ? '<div class="section"><div class="row-between"><h3>By location</h3><button class="btn sm ghost" data-anexport="locations" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anLocs"><div class="empty">Loading…</div></div></div>' : ''}
+    <div class="section"><div class="row-between"><h3>Summary</h3>${runBtn('summary')}</div><div id="anKpis" class="kpis">${AN_IDLE}</div><div id="anDining"></div></div>
+    <div class="section"><div class="row-between"><h3>Sales trend</h3><div style="display:flex;gap:.4rem">${runBtn('trend')}${csvBtn('trend')}</div></div><div id="anTrend">${AN_IDLE}</div></div>
+    ${isAdmin ? `<div class="section"><div class="row-between"><h3>By location</h3><div style="display:flex;gap:.4rem">${runBtn('locations')}${csvBtn('locations')}</div></div><div id="anLocs">${AN_IDLE}</div></div>` : ''}
     <div class="grid two" style="align-items:start">
-      <div class="section"><div class="row-between"><h3>Top items</h3><button class="btn sm ghost" data-anexport="items" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anItems"><div class="empty">Loading…</div></div></div>
-      <div class="section"><div class="row-between"><h3>Day &amp; time patterns</h3><button class="btn sm ghost" data-anexport="patterns" title="Download as CSV (opens in Excel)">⬇ CSV</button></div><div id="anPatterns"><div class="empty">Loading…</div></div></div>
+      <div class="section"><div class="row-between"><h3>Top items</h3><div style="display:flex;gap:.4rem">${runBtn('items')}${csvBtn('items')}</div></div><div id="anItems">${AN_IDLE}</div></div>
+      <div class="section"><div class="row-between"><h3>Day &amp; time patterns</h3><div style="display:flex;gap:.4rem">${runBtn('patterns')}${csvBtn('patterns')}</div></div><div id="anPatterns">${AN_IDLE}</div></div>
     </div>`;
-  const save = () => { try { localStorage.setItem('phn_an_filters', JSON.stringify(F)); } catch { /* ignore */ } loadAnalytics(); };
-  $('anFrom').onchange = (e) => { F.from = e.target.value; save(); };
-  $('anTo').onchange = (e) => { F.to = e.target.value; save(); };
-  $('anGran').onchange = (e) => { F.gran = e.target.value; save(); };
-  if ($('anLoc')) $('anLoc').onchange = (e) => { F.loc = e.target.value; save(); };
+  // Filter change: persist + reset any already-loaded report to a "stale" prompt.
+  // We do NOT refetch automatically — the user runs each report when ready.
+  const onFilter = () => {
+    try { localStorage.setItem('phn_an_filters', JSON.stringify(F)); } catch { /* ignore */ }
+    S.anData = {};
+    ['anKpis', 'anTrend', 'anLocs', 'anItems', 'anPatterns'].forEach(id => { if ($(id)) $(id).innerHTML = AN_STALE; });
+    if ($('anDining')) $('anDining').innerHTML = '';
+    if ($('anRangeInfo')) $('anRangeInfo').innerHTML = '';
+  };
+  $('anFrom').onchange = (e) => { F.from = e.target.value; onFilter(); };
+  $('anTo').onchange = (e) => { F.to = e.target.value; onFilter(); };
+  $('anGran').onchange = (e) => { F.gran = e.target.value; onFilter(); };
+  if ($('anLoc')) $('anLoc').onchange = (e) => { F.loc = e.target.value; onFilter(); };
+  $('view').querySelectorAll('[data-anrun]').forEach(b => b.onclick = () => runAnReport(b.dataset.anrun));
   $('view').querySelectorAll('[data-anexport]').forEach(b => b.onclick = () => exportAnalytics(b.dataset.anexport));
-  loadAnalytics();
+  $('anRunAll').onclick = () => { const rs = ['summary', 'trend', 'items', 'patterns']; if ($('anLocs')) rs.push('locations'); rs.forEach(runAnReport); };
+  S.anData = S.anData || {};
 }
 
-async function loadAnalytics() {
-  const F = S.anFilters; const qs = `from=${F.from}&to=${F.to}${F.loc ? '&location_id=' + F.loc : ''}`;
-  const vbars = (rows, val, label, fmt) => {
-    const max = Math.max(1, ...rows.map(val));
-    return `<div class="vbars">${rows.map(r => `<div class="vbar" title="${esc(label(r))}: ${fmt(val(r))}"><div class="vbar-fill" style="height:${Math.round(val(r) / max * 100)}%"></div><span class="vbar-lbl">${esc(label(r))}</span></div>`).join('')}</div>`;
-  };
+// Run one report on demand and render it into its own panel.
+async function runAnReport(which) {
+  if (!S.anData) S.anData = {};
+  const F = S.anFilters, qs = anQs();
+  const el = { summary: 'anKpis', trend: 'anTrend', locations: 'anLocs', items: 'anItems', patterns: 'anPatterns' }[which];
+  if (!el || !$(el)) return;
+  $(el).innerHTML = '<div class="empty">Loading…</div>';
   try {
-    const [sum, trend, items, pat] = await Promise.all([
-      api('/toast/analytics/summary?' + qs), api('/toast/analytics/trends?' + qs + '&granularity=' + F.gran),
-      api('/toast/analytics/items?' + qs + '&limit=100'), api('/toast/analytics/patterns?' + qs),
-    ]);
-    if (S.section !== 'salesanalytics') return;
-    S.anData = { summary: sum, trend, items, patterns: pat, locations: null };   // for CSV export
-    if ($('anRangeInfo')) $('anRangeInfo').innerHTML = `${sum.days} day${sum.days === 1 ? '' : 's'} with sales · avg <strong>${money(sum.avg_per_day)}</strong>/day`;
-    $('anKpis').innerHTML = [
-      ['Net sales', money(sum.net)], ['Orders', (sum.orders || 0).toLocaleString()], ['Guests', (sum.guests || 0).toLocaleString()],
-      ['Avg check', money(sum.avg_check)], ['Items sold', (sum.items || 0).toLocaleString()], ['Tips', money(sum.tips)],
-    ].map(([k, v]) => `<div class="card"><div class="label">${k}</div><div class="value">${v}</div></div>`).join('');
-    // Trend
-    const per = (r) => F.gran === 'month' ? r.start.slice(0, 7) : F.gran === 'week' ? fmtDay(r.start) : fmtDay(r.start);
-    $('anTrend').innerHTML = trend.series.length
-      ? vbars(trend.series, r => r.net, per, moneyK) + `<p class="sub" style="color:var(--muted);font-size:.78rem;margin:.4rem 0 0">Net sales per ${trend.granularity}. Hover a bar for the exact figure.</p>`
-      : '<div class="empty">No sales in this range.</div>';
-    // Locations (admin only)
-    if ($('anLocs')) {
-      try {
-        const d = await api('/toast/analytics/locations?' + qs);
-        if (S.anData) S.anData.locations = d.locations;
-        const max = Math.max(1, ...d.locations.map(l => l.net));
-        $('anLocs').innerHTML = d.locations.length ? `<div class="table-wrap"><table><thead><tr><th>Location</th><th>Net sales</th><th class="num">Orders</th><th class="num">Avg check</th><th class="num">Guests</th></tr></thead>
-          <tbody>${d.locations.map(l => `<tr><td><strong>${esc(shortLoc(l.name))}</strong></td>
-            <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(l.net / max * 100)}%"></div><span>${money(l.net)}</span></div></td>
-            <td class="num">${l.orders.toLocaleString()}</td><td class="num">${money(l.avg_check)}</td><td class="num">${l.guests.toLocaleString()}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data.</div>';
-      } catch (e) { $('anLocs').innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+    if (which === 'summary') {
+      const sum = await api('/toast/analytics/summary?' + qs);
+      if (S.section !== 'salesanalytics') return;
+      S.anData.summary = sum;
+      if ($('anRangeInfo')) $('anRangeInfo').innerHTML = `${sum.days} day${sum.days === 1 ? '' : 's'} with sales · avg <strong>${money(sum.avg_per_day)}</strong>/day`;
+      const payMin = sum.avg_pay_min ? `${sum.avg_pay_min.toFixed(1)}<span style="font-size:.7em;font-weight:600"> min</span>` : '—';
+      $('anKpis').innerHTML = [
+        ['Net sales', money(sum.net)], ['Orders', (sum.orders || 0).toLocaleString()], ['Guests', (sum.guests || 0).toLocaleString()],
+        ['Avg check', money(sum.avg_check)], ['Items sold', (sum.items || 0).toLocaleString()], ['Tips', money(sum.tips)],
+        ['Avg time to pay', payMin, 'open → paid'],
+      ].map(([k, v, sub]) => `<div class="card"><div class="label">${k}</div><div class="value">${v}</div>${sub ? `<div class="sub" style="color:var(--muted);font-size:.72rem">${sub}</div>` : ''}</div>`).join('');
+      if ($('anDining')) {
+        const dn = sum.dining || [];
+        const dt = dn.reduce((a, o) => ({ orders: a.orders + o.orders, guests: a.guests + o.guests, net: a.net + o.net_sales, tax: a.tax + o.tax, tips: a.tips + o.tips }), { orders: 0, guests: 0, net: 0, tax: 0, tips: 0 });
+        $('anDining').innerHTML = dn.length ? `<h4 style="margin:1rem 0 .3rem">By dining type <span style="font-weight:400;color:var(--muted);font-size:.78rem">— pre-tax, with tax, and tips per type over this range</span></h4>
+          <div class="table-wrap"><table><thead><tr><th>Dining option</th><th class="num">Orders</th><th class="num">Guests</th><th class="num">Pre-tax</th><th class="num">With tax</th><th class="num">Tips</th></tr></thead>
+          <tbody>${dn.map(o => `<tr><td><strong>${esc(o.name)}</strong></td><td class="num">${o.orders.toLocaleString()}</td><td class="num">${o.guests.toLocaleString()}</td><td class="num">${money(o.net_sales)}</td><td class="num">${money(o.net_sales + o.tax)}</td><td class="num">${money(o.tips)}</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${dt.orders.toLocaleString()}</strong></td><td class="num"><strong>${dt.guests.toLocaleString()}</strong></td><td class="num"><strong>${money(dt.net)}</strong></td><td class="num"><strong>${money(dt.net + dt.tax)}</strong></td><td class="num"><strong>${money(dt.tips)}</strong></td></tr></tfoot></table></div>` : '';
+        $('anDining').innerHTML += paymentTableHtml(sum.payments) + payByDiningTableHtml(sum.payment_by_dining);
+      }
+    } else if (which === 'trend') {
+      const trend = await api('/toast/analytics/trends?' + qs + '&granularity=' + F.gran);
+      if (S.section !== 'salesanalytics') return;
+      S.anData.trend = trend;
+      const per = (r) => F.gran === 'month' ? r.start.slice(0, 7) : fmtDay(r.start);
+      $('anTrend').innerHTML = trend.series.length
+        ? anVbars(trend.series, r => r.net, per, moneyK) + `<p class="sub" style="color:var(--muted);font-size:.78rem;margin:.4rem 0 0">Net sales per ${trend.granularity}. Hover a bar for the exact figure.</p>`
+        : '<div class="empty">No sales in this range.</div>';
+    } else if (which === 'locations') {
+      const d = await api('/toast/analytics/locations?' + qs);
+      if (S.section !== 'salesanalytics') return;
+      S.anData.locations = d.locations;
+      const max = Math.max(1, ...d.locations.map(l => l.net));
+      $('anLocs').innerHTML = d.locations.length ? `<div class="table-wrap"><table><thead><tr><th>Location</th><th>Net sales</th><th class="num">Orders</th><th class="num">Avg check</th><th class="num">Guests</th><th class="num">Avg pay</th></tr></thead>
+        <tbody>${d.locations.map(l => `<tr><td><strong>${esc(shortLoc(l.name))}</strong></td>
+          <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(l.net / max * 100)}%"></div><span>${money(l.net)}</span></div></td>
+          <td class="num">${l.orders.toLocaleString()}</td><td class="num">${money(l.avg_check)}</td><td class="num">${l.guests.toLocaleString()}</td><td class="num">${l.avg_pay_min ? l.avg_pay_min.toFixed(1) + ' min' : '—'}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No data.</div>';
+    } else if (which === 'items') {
+      const items = await api('/toast/analytics/items?' + qs + '&limit=100');
+      if (S.section !== 'salesanalytics') return;
+      S.anData.items = items;
+      const maxRev = Math.max(1, ...items.items.map(i => i.revenue));
+      $('anItems').innerHTML = items.items.length ? `<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Revenue</th></tr></thead>
+        <tbody>${items.items.map(i => `<tr><td>${esc(i.item_name)}</td><td class="num">${(i.qty || 0).toLocaleString()}</td>
+          <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(i.revenue / maxRev * 100)}%"></div><span>${money(i.revenue)}</span></div></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No items in this range.</div>';
+    } else if (which === 'patterns') {
+      const pat = await api('/toast/analytics/patterns?' + qs);
+      if (S.section !== 'salesanalytics') return;
+      S.anData.patterns = pat;
+      const dowRows = pat.dow.map(d => ({ ...d, label: WD_SUN[d.dow] }));
+      $('anPatterns').innerHTML = `<h4 style="margin:.2rem 0 .3rem">Average sales by day of week</h4>${anVbars(dowRows, r => r.avg, r => r.label, money)}
+        <h4 style="margin:1rem 0 .3rem">Orders by hour <span style="font-weight:400;color:var(--muted);font-size:.78rem">(approx. Pacific)</span></h4>${anVbars(pat.hours.filter(h => h.orders > 0), r => r.orders, r => (r.hour % 12 || 12) + (r.hour < 12 ? 'a' : 'p'), (v) => v.toLocaleString())}`;
     }
-    // Top items
-    const maxRev = Math.max(1, ...items.items.map(i => i.revenue));
-    $('anItems').innerHTML = items.items.length ? `<div class="table-wrap" style="max-height:420px;overflow:auto"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Revenue</th></tr></thead>
-      <tbody>${items.items.map(i => `<tr><td>${esc(i.item_name)}</td><td class="num">${(i.qty || 0).toLocaleString()}</td>
-        <td><div class="hbar"><div class="hbar-fill" style="width:${Math.round(i.revenue / maxRev * 100)}%"></div><span>${money(i.revenue)}</span></div></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">No items in this range.</div>';
-    // Patterns
-    const dowRows = pat.dow.map(d => ({ ...d, label: WD_SUN[d.dow] }));
-    $('anPatterns').innerHTML = `<h4 style="margin:.2rem 0 .3rem">Average sales by day of week</h4>${vbars(dowRows, r => r.avg, r => r.label, money)}
-      <h4 style="margin:1rem 0 .3rem">Orders by hour <span style="font-weight:400;color:var(--muted);font-size:.78rem">(approx. Pacific)</span></h4>${vbars(pat.hours.filter(h => h.orders > 0), r => r.orders, r => (r.hour % 12 || 12) + (r.hour < 12 ? 'a' : 'p'), (v) => v.toLocaleString())}`;
   } catch (e) {
-    if (S.section === 'salesanalytics') $('view').querySelectorAll('.empty').forEach(el => el.textContent = e.message);
+    if (S.section === 'salesanalytics' && $(el)) $(el).innerHTML = `<div class="empty">${esc(e.message)}</div>`;
   }
 }
 
@@ -481,40 +565,131 @@ async function renderServiceFlow() {
   const locOpts = isAdmin ? `<label class="sched-filter-role">Location <select id="sfLoc">${(S.locations || []).map(l => `<option value="${l.id}" ${String(S.sfLoc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></label>` : '';
   $('view').innerHTML = `
     <h2 class="page">⏱️ Service Flow <span style="font-weight:400;color:var(--muted);font-size:.9rem">— live table state from Toast orders</span></h2>
-    <div class="sched-filters">${locOpts}<span class="sched-filter-total" id="sfMeta"></span></div>
-    <div id="sfBanner"></div>
-    <div id="sfBody"><div class="empty">Loading…</div></div>`;
-  if ($('sfLoc')) $('sfLoc').onchange = (e) => { S.sfLoc = e.target.value; loadServiceFlow(); };
+    <div class="sf-wrap" id="sfWrap">
+      <div class="sched-filters">${locOpts}<span class="sched-filter-total" id="sfMeta"></span></div>
+      <div id="sfBanner"></div>
+      <div id="sfTiming"></div>
+      <div id="sfKpis"></div>
+      <div id="sfBody" class="sf-tables"><div class="empty">Loading…</div></div>
+      <details id="sfLog" style="margin-top:1.3rem">
+        <summary style="cursor:pointer;font-weight:600">📋 Alert activity <span style="font-weight:400;color:var(--muted)">— who handled each alert, when &amp; what they did</span></summary>
+        <div id="sfLogBody" class="empty" style="margin-top:.6rem">Expand to load…</div>
+      </details>
+    </div>`;
+  if ($('sfLoc')) $('sfLoc').onchange = (e) => { S.sfLoc = e.target.value; loadServiceFlow(); if ($('sfLog') && $('sfLog').open) loadSfLog(); };
+  if ($('sfLog')) $('sfLog').ontoggle = (e) => { if (e.target.open) loadSfLog(); };
   loadServiceFlow();
 }
+const SF_STATE = {
+  seated: '<span class="badge">🪑 Seated</span>',
+  awaiting_food: '<span class="badge low">⏳ Awaiting food</span>',
+  in_service: '<span class="badge ok">🍜 In service</span>',
+  ready_to_bus: '<span class="badge blue">🧽 Ready to bus</span>',
+};
+// The board renders both as its own section AND inside a location's Service Flow tab.
+const sfActive = () => S.section === 'serviceflow' || (S.section === 'locations' && S.locView === 'detail' && S.locTab === 'serviceflow');
 async function loadServiceFlow() {
   clearTimeout(S._sfTimer);
-  if (S.section !== 'serviceflow' || !S.sfLoc) return;
+  if (!sfActive() || !S.sfLoc) return;
   let d; try { d = await api('/toast/service-flow?location_id=' + S.sfLoc); }
   catch (e) { if ($('sfBody')) $('sfBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
-  if (S.section !== 'serviceflow') return;
-  if ($('sfMeta')) $('sfMeta').innerHTML = `updated ${new Date(d.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · alert at <strong>${d.threshold} min</strong>`;
-  if ($('sfBanner')) $('sfBanner').innerHTML = d.settings.alerts_live
-    ? '<div class="callout brand" style="margin:.2rem 0 1rem">🔔 <b>Alerts are LIVE</b> — staff are notified when a table passes the threshold.</div>'
-    : '<div class="callout" style="margin:.2rem 0 1rem">🧪 <b>Dry-run</b> — "check on table" alerts are being <b>logged only</b>; no staff are pinged yet. Watch the flagged tables below to tune the threshold, then go live.</div>';
-  const card = (t) => `<div class="card sf-card ${t.state}">
-    <div class="sf-top"><span class="sf-table">${t.table_name ? 'Table ' + esc(t.table_name) : 'No table'}</span><span class="sf-mins ${t.state}">${t.minutes_open != null ? t.minutes_open + 'm' : '—'}</span></div>
-    <div class="sf-server">${t.server_name ? esc(t.server_name) : '<span style="color:var(--muted)">unassigned</span>'}${t.guests ? ' · ' + t.guests + ' guests' : ''}</div>
-    <div class="sf-state">${t.state === 'attention' ? '⚠ Check on table — open too long without paying' : '🟢 In service'}</div>
-  </div>`;
-  const attention = d.tables.filter(t => t.state === 'attention'), normal = d.tables.filter(t => t.state !== 'attention');
-  $('sfBody').innerHTML = `
+  if (!sfActive()) return;
+  const st = d.settings;
+  // Any manage-cap role (owner/admin/GM/manager/…) can toggle its own store; the /toggle endpoint enforces it.
+  const toggleBtn = st.can_toggle ? `<button class="btn sm" id="sfToggle">${st.flow_on ? '⏸ Turn OFF' : '▶ Turn ON'}</button>` : '';
+  const wireToggle = () => { const b = $('sfToggle'); if (!b) return; b.onclick = () => { b.disabled = true; api('/toast/service-flow/toggle', { method: 'POST', body: JSON.stringify({ location_id: S.sfLoc, flow_on: !st.flow_on }) }).then(() => { toast(st.flow_on ? 'Service Flow turned off' : 'Service Flow turned on'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); }; };
+  // Turned off for this location → show an OFF state, no live board, no self-refresh.
+  if (!st.flow_on) {
+    if ($('sfWrap')) $('sfWrap').classList.remove('sf-top');   // no table → keep normal order
+    if ($('sfMeta')) $('sfMeta').innerHTML = '';
+    if ($('sfTiming')) $('sfTiming').innerHTML = '';
+    if ($('sfKpis')) $('sfKpis').innerHTML = '';
+    if ($('sfBanner')) $('sfBanner').innerHTML = `<div class="callout" style="margin:.2rem 0 1rem;display:flex;gap:.6rem;justify-content:space-between;align-items:center;flex-wrap:wrap"><span>⏸️ <b>Service Flow is OFF</b> for this location — no table monitoring and no alerts. Turn it on when the restaurant is ready.</span>${toggleBtn}</div>`;
+    if ($('sfBody')) $('sfBody').innerHTML = '<div class="empty">Service Flow is turned off for this location.</div>';
+    wireToggle();
+    return;
+  }
+  if ($('sfMeta')) $('sfMeta').innerHTML = `updated ${new Date(d.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · food alert ${d.served_min}m · pay alert ${d.pay_min}m`;
+  if ($('sfBanner')) $('sfBanner').innerHTML = st.alerts_live
+    ? `<div class="callout brand" style="margin:.2rem 0 1rem;display:flex;gap:.6rem;justify-content:space-between;align-items:center;flex-wrap:wrap"><span>🔔 <b>Alerts LIVE</b> — escalations go to <b>${esc(st.alert_user || '—')}</b> as in-app floor alerts (no SMS).</span>${toggleBtn}</div>`
+    : `<div class="callout" style="margin:.2rem 0 1rem;display:flex;gap:.6rem;justify-content:space-between;align-items:center;flex-wrap:wrap"><span>🧪 <b>Dry-run</b> — escalations are <b>logged only</b>; no one is pinged. Mark tables Served / Done below to drive the board.</span>${toggleBtn}</div>`;
+  wireToggle();
+  renderSfTiming(d);
+  // Seated parties (host-seated, no Toast order yet) lead the board; they carry no Toast
+  // guid so there's nothing to Serve/Bus — they clear themselves once the guest opens an order.
+  const seatedRows = (d.seated || []).map(t => `<tr class="sf-seated">
+    <td><strong>${esc(t.table_name || '—')}</strong>${t.server_name ? `<div style="color:var(--muted);font-size:.72rem">${esc(t.server_name)}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>` : (t.guests ? `<div style="color:var(--muted);font-size:.72rem">${t.guests}👤</div>` : '')}</td>
+    <td><span style="color:var(--muted)">waiting to order</span><div style="color:var(--muted);font-size:.72rem">${t.minutes_open != null ? 'seated ' + t.minutes_open + 'm ago' : ''}</div></td>
+    <td><span style="color:var(--muted)">—</span></td>
+    <td><span style="color:var(--muted)">—</span></td>
+    <td><span style="color:var(--muted)">—</span></td>
+    <td>${SF_STATE.seated}</td>
+  </tr>`).join('');
+  const rows = seatedRows + d.tables.map(t => `<tr class="${t.alert ? 'sf-alert' : ''}">
+    <td><strong>${esc(t.table_name || '—')}</strong>${t.server_name ? `<div style="color:var(--muted);font-size:.72rem">${esc(t.server_name)}</div>` : ''}</td>
+    <td>${ordTime(t.opened_at)}<div style="color:var(--muted);font-size:.72rem">${t.minutes_open != null ? t.minutes_open + 'm ago' : ''}</div></td>
+    <td>${t.served ? '✅ Yes' : `<button class="btn sm" data-served="${t.order_guid}">Mark served</button>`}</td>
+    <td>${t.paid ? '💳 Paid' : '<span style="color:var(--muted)">not yet</span>'}</td>
+    <td>${t.paid ? `<button class="btn sm" data-done="${t.order_guid}">Bussed — clear</button>` : '<span style="color:var(--muted)">—</span>'}</td>
+    <td>${SF_STATE[t.state] || ''}${t.alert ? ' <span class="badge out">⚠ alert</span>' : ''}</td>
+  </tr>`).join('');
+  // On phones the active-tables table jumps to the top (see .sf-wrap.sf-top .sf-tables in CSS)
+  // so staff act on tables first; the KPI cards / banner / timing sit below it.
+  if ($('sfWrap')) $('sfWrap').classList.add('sf-top');
+  if ($('sfKpis')) $('sfKpis').innerHTML = `
     <div class="kpis" style="margin-bottom:1rem">
-      <div class="card"><div class="label">Active tables</div><div class="value">${d.tables.length}</div></div>
-      <div class="card"><div class="label">In service</div><div class="value ok">${d.in_service}</div></div>
-      <div class="card"><div class="label">Needs attention</div><div class="value ${d.attention ? 'bad' : ''}">${d.attention}</div></div>
-    </div>
-    ${d.tables.length ? `<div class="sf-grid">${attention.map(card).join('')}${normal.map(card).join('')}</div>`
-      : '<div class="empty">No open tables right now (the store may be closed, or all orders are paid).</div>'}
-    ${d.recent_alerts.length ? `<div class="section" style="margin-top:1rem"><h3>Recent "check on table" alerts ${d.settings.alerts_live ? '' : '<span class="badge gray">dry-run · logged</span>'}</h3>
-      <div class="table-wrap"><table><thead><tr><th>Table</th><th>Server</th><th class="num">Open</th><th>When</th></tr></thead>
-      <tbody>${d.recent_alerts.map(a => `<tr><td>${a.table_name ? esc(a.table_name) : '—'}</td><td>${a.server_name ? esc(a.server_name) : '—'}</td><td class="num">${a.minutes_open}m</td><td class="sub" style="color:var(--muted)">${esc((a.created_at || '').replace('T', ' ').slice(0, 16))}</td></tr>`).join('')}</tbody></table></div></div>` : ''}`;
+      <div class="card"><div class="label">Seated</div><div class="value">${d.counts.seated || 0}</div></div>
+      <div class="card"><div class="label">Active tables</div><div class="value">${d.counts.total}</div></div>
+      <div class="card"><div class="label">Awaiting food</div><div class="value ${d.counts.awaiting_food ? 'warn' : ''}">${d.counts.awaiting_food}</div></div>
+      <div class="card"><div class="label">In service</div><div class="value ok">${d.counts.in_service}</div></div>
+      <div class="card"><div class="label">Ready to bus</div><div class="value">${d.counts.ready_to_bus}</div></div>
+    </div>`;
+  $('sfBody').innerHTML = `
+    ${(d.tables.length || (d.seated || []).length) ? `<div class="table-wrap"><table><thead><tr><th>Active table</th><th>Ordered</th><th>Served</th><th>Ready to pay</th><th>Ready to bus</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`
+      : '<div class="empty">No open dine-in tables right now (store closed, or all tables paid &amp; bussed).</div>'}`;
+  $('sfBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  $('sfBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   S._sfTimer = setTimeout(loadServiceFlow, 30000);   // self-refresh
+}
+// The per-store alert-timing panel: food & pay thresholds + their re-alert cadences.
+// Managers (manage cap, own store) get editable inputs + Save; others see it read-only.
+function renderSfTiming(d) {
+  const el = $('sfTiming'); if (!el) return;
+  const st = d.settings, edit = !!st.can_edit_timing;
+  const num = (id, v, min, max) => edit
+    ? `<input id="${id}" type="number" min="${min}" max="${max}" value="${v}" style="width:3.6em;padding:.15rem .3rem;border:1px solid var(--line);border-radius:6px;font:inherit;text-align:center">`
+    : `<b>${v}</b>`;
+  el.innerHTML = `<div class="callout" style="margin:.2rem 0 1rem;background:var(--surface)">
+    <div style="font-weight:600;margin-bottom:.4rem">⏱️ Alert timing <span style="font-weight:400;color:var(--muted)">— when each escalation fires for this store</span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:.5rem 1.6rem;align-items:center;font-size:.9rem">
+      <span>🍽 <b>Food:</b> alert after ${num('sfServedMin', st.served_min, 1, 120)} min, then every ${num('sfFoodRe', st.food_renudge_min, 2, 60)} min</span>
+      <span>🧾 <b>Ready to pay:</b> alert ${num('sfPayMin', st.pay_min, 1, 180)} min after served, then every ${num('sfPayRe', st.pay_renudge_min, 2, 60)} min</span>
+      <span style="color:var(--muted)">🙋 Unclaimed alerts re-pop every ${d.unclaimed_min || 3} min</span>
+      ${edit ? `<button class="btn sm" id="sfTimingSave">Save timing</button>` : ''}
+    </div>
+  </div>`;
+  if (edit && $('sfTimingSave')) $('sfTimingSave').onclick = () => {
+    const body = { location_id: S.sfLoc, served_min: +$('sfServedMin').value, food_renudge_min: +$('sfFoodRe').value, pay_min: +$('sfPayMin').value, pay_renudge_min: +$('sfPayRe').value };
+    $('sfTimingSave').disabled = true;
+    api('/toast/service-flow/timing', { method: 'POST', body: JSON.stringify(body) })
+      .then(() => { toast('Alert timing saved'); loadServiceFlow(); })
+      .catch(e => { toast(e.message, true); $('sfTimingSave').disabled = false; });
+  };
+}
+// The audit trail of staff actions on Service Flow alerts (who / when / what), so a
+// manager can review how each table was handled and coach for better service.
+const SF_ACT = { on_it: '🙋 On it', served: '✅ Served', paid: '💳 Paid', notyet: '⏳ Not yet', waiting: '⏳ Waiting', bussed: '🧽 Bussed', done: '✓ Done' };
+const SF_KIND = { food_late: 'Food', lingering: 'Ready to pay', ready_to_bus: 'Ready to bus' };
+async function loadSfLog() {
+  const el = $('sfLogBody'); if (!el || !S.sfLoc) return;
+  el.innerHTML = '<div class="empty">Loading…</div>';
+  let d; try { d = await api('/toast/service-flow/log?location_id=' + S.sfLoc); }
+  catch (e) { el.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!d.events.length) { el.innerHTML = '<div class="empty">No alert actions logged yet.</div>'; return; }
+  const when = (s) => new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>When</th><th>Staff</th><th>Action</th><th>Table</th><th>Alert</th></tr></thead>
+    <tbody>${d.events.map(e => `<tr><td style="white-space:nowrap">${when(e.created_at)}</td><td>${esc(e.user_name || '—')}</td><td>${SF_ACT[e.action] || esc(e.action)}</td><td>${esc(e.table_name || '—')}</td><td style="color:var(--muted)">${SF_KIND[e.flow_kind] || esc(e.flow_kind || '')}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
 // ── Orders browser (Toast order detail; owner/admin/manager) ──────────────────
@@ -1079,7 +1254,7 @@ async function svcIntervalModal(v) {
 const TABS = [
   ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['orders', 'Orders & Reorder'],
   ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
-  ['reports', 'Reports'], ['activity', 'Activity'], ['glossary', 'Glossary'],
+  ['reports', 'Reports'], ['activity', 'Activity'], ['glossary', 'Items'], ['catalog', 'Glossary'],
 ];
 function renderTabs() {
   $('tabs').innerHTML = TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'active' : ''}">${l}</button>`).join('');
@@ -1090,7 +1265,7 @@ function renderTabs() {
 function render() {
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
-  ({ dashboard: renderDashboard, stock: renderStock, glossary: renderGlossary, orders: renderOrders, transfers: renderTransfers,
+  ({ dashboard: renderDashboard, stock: renderStock, glossary: renderGlossary, catalog: renderCatalog, orders: renderOrders, transfers: renderTransfers,
      lots: renderLots, vendors: renderVendors, reports: renderReports, activity: renderActivity }[S.tab])();
 }
 
@@ -1098,6 +1273,232 @@ function statusBadge(qty, min) {
   if (qty <= 0) return '<span class="badge out">OUT</span>';
   if (min && qty <= min) return '<span class="badge low">LOW</span>';
   return '<span class="badge ok">OK</span>';
+}
+
+// ── Barcode scanner (phone camera → resolve / receive / link / create) ──────
+// Reuses retail UPC/EAN barcodes: scan a product, and it resolves to the item at the
+// active location (or the Central Kitchen). Unknown codes → look up a name (Open Food
+// Facts) and create or link. Uses the html5-qrcode library, lazy-loaded on first open.
+let _scanLibP = null;
+function loadScanLib() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (!_scanLibP) _scanLibP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/html5-qrcode.min.js'; s.onload = res; s.onerror = () => rej(new Error('Scanner library failed to load — check your connection.')); document.head.appendChild(s); });
+  return _scanLibP;
+}
+const scanFormats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'inventory') render(); }
+
+async function openScanner() {
+  try { await loadScanLib(); } catch (e) { return toast(e.message, true); }
+  const host = document.createElement('div'); host.className = 'scan-overlay';
+  host.innerHTML = `<div class="scan-card">
+    <div class="scan-head"><strong>📷 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
+    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="check">📋 Check</button></div>
+    <div id="shipBar" class="ship-bar" hidden></div>
+    <div id="scanReader" class="scan-reader"></div>
+    <div id="scanMsg" class="scan-msg">Point the camera at a UPC / EAN barcode.</div>
+    <div id="scanPanel"></div>
+    <div class="scan-manual"><input id="scanManual" placeholder="…or type a barcode number" inputmode="numeric"><button class="btn sm" id="scanManualGo">Go</button></div>
+  </div>`;
+  document.body.appendChild(host);
+  const qr = new Html5Qrcode('scanReader', { formatsToSupport: scanFormats(), verbose: false });
+  let busy = false, mode = 'receive';
+  const close = async () => { try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch { /* not scanning */ } try { qr.clear(); } catch { /* ignore */ } host.remove(); };
+  host.querySelector('[data-x]').onclick = close;
+  const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
+  const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
+  async function loadShipOrders() {
+    const to = shipTo(); const box = $('shipOrders'); if (!box) return;
+    if (!to) { box.innerHTML = ''; return; }
+    let ords = []; try { ords = await api('/inventory/ship/orders?to_location_id=' + to); } catch { /* ignore */ }
+    box.innerHTML = ords.length ? `<div class="ship-ord-h">Open order to fill:</div>` + ords.map(o => `<div class="ship-ord${o.remaining <= 0 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${numf(o.ck_qty)}/${numf(o.requested_qty)} ${esc(o.unit || '')}</span></div>`).join('') : '<div class="muted" style="font-size:.82rem">No open orders for this location — scanning ships ad-hoc.</div>';
+  }
+  async function setMode(m) {
+    mode = m;
+    host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
+    $('shipBar').hidden = m !== 'ship';
+    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : 'Point the camera at a UPC / EAN barcode.');
+    if (m === 'ship' && !$('shipBar').dataset.loaded) {
+      $('shipBar').dataset.loaded = '1';
+      let tgts = []; try { tgts = await api('/inventory/ship/targets?from_location_id=' + invLoc()); } catch { /* ignore */ }
+      $('shipBar').innerHTML = `<label class="ship-lbl">Ship from <strong>${esc(invName())}</strong> to</label>
+        <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(shortLoc(t.name))}${t.type === 'central_kitchen' ? ' (CK)' : ''}</option>`).join('')}</select>
+        <div id="shipOrders"></div>`;
+      $('shipTo').onchange = loadShipOrders;
+    }
+  }
+  host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  const onCode = async (code) => {
+    if (busy) return; busy = true;
+    try { await qr.pause(true); } catch { /* camera path */ }
+    try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
+    $('scanMsg').textContent = 'Scanned: ' + code;
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : 'Point the camera at the next barcode.'); try { qr.resume(); } catch { /* ignore */ } };
+    if (mode === 'ship') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders);
+    else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
+    else await handleScan(code, $('scanPanel'), done);
+  };
+  $('scanManualGo').onclick = () => { const c = ($('scanManual').value || '').trim(); if (c) onCode(c); };
+  $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') $('scanManualGo').click(); };
+  try {
+    // Full-frame decode (no qrbox) so long linear GS1-128 case labels fit. Plain environment
+    // camera — do NOT add width/height {ideal:...} constraints: they broke camera-open on the
+    // iPhone 16 even with a fallback (the fallback can't cleanly recover the iOS video element).
+    await qr.start({ facingMode: 'environment' }, { fps: 10 }, onCode, () => { /* per-frame no-op */ });
+  } catch (e) {
+    $('scanReader').innerHTML = ''; $('scanMsg').innerHTML = `📷 Camera unavailable (${esc(e && e.message || 'no access')}). Type a barcode below instead.`;
+  }
+}
+
+// Resolve a scanned code → show the right action. Glossary-aware: a known item just adds
+// (count, or WEIGHT for catch-weight items, with a serial-duplicate guard); a new barcode
+// pre-fills a form from the Glossary/label and, on save, writes the item into the Glossary too.
+async function handleScan(code, panel, next) {
+  panel.innerHTML = '<div class="muted">Looking up…</div>';
+  let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const p = r.parsed || {};
+  const key = r.code || code;                 // canonical GTIN the server resolved
+  const packed = p.packDate || p.prodDate || '';
+  const labelExpiry = p.expiry || packed || '';
+  const labelLot = p.lot || '';
+  const wt = p.weightLb || '';
+  // A GS1 case/meat label carries real data — show what we read off it.
+  const gs1 = (p.isGs1 || wt || labelExpiry || labelLot || p.serial) ? `<div class="scan-gs1">🏷️ Label${wt ? ` · <strong>${numf(wt)} lb</strong>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${p.expiry ? ` · exp ${esc(p.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}${p.serial ? ` · #${esc(p.serial)}` : ''}</div>` : '';
+  if (r.in_stock) {
+    const it = r.item;
+    const cw = !!it.is_catch_weight;
+    const qDflt = cw ? (wt || '') : (wt || 1);
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${gs1}
+      <div class="scan-act"><input id="scQty" type="number" value="${qDflt}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}" title="${cw ? 'Net weight to add (' + esc(it.unit) + ')' : 'Quantity (' + esc(it.unit) + ')'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
+      <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
+    $('scGo').onclick = async () => {
+      const btn = $('scGo'); if (btn.disabled) return; btn.disabled = true;
+      const qv = $('scQty').value, m = $('scMode').value;
+      try {
+        if (m === 'count') {
+          const body = { location_id: invLoc(), code: key, quantity: qv, mode: 'count', expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          const rr = await api('/inventory/barcode/scan', { method: 'POST', body: JSON.stringify(body) });
+          toast(`${it.item_name} count → ${numf(rr.item.quantity)} ${esc(it.unit)}`);
+        } else {
+          const body = { location_id: invLoc(), code: key, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          if (cw) body.weight = qv; else body.quantity = qv;
+          let rr = await api('/inventory/barcode/receive', { method: 'POST', body: JSON.stringify(body) });
+          if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/inventory/barcode/receive', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+          toast(`${it.item_name} → ${numf(rr.item.quantity)} ${esc(it.unit)}`);
+        }
+        invRefresh(); next();
+      } catch (e) { toast(e.message, true); btn.disabled = false; }
+    };
+    $('scNext').onclick = next;
+  } else {
+    // New to stock. Prefer the Glossary entry the server already returned; fall back to an
+    // online lookup (Open Food Facts / UPCitemdb) which also caches into the Glossary.
+    let g = r.glossary || null;
+    if (!g) { try { const look = await api('/inventory/lookup/' + encodeURIComponent(code)); if (look && look.found) g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size }; else if (look && look.weighed) g = { _weighed: true, default_unit_cost: look.price }; } catch { /* offline */ } }
+    const inGloss = !!(g && g.name);
+    const note = inGloss ? ` — in Glossary as <strong>${esc(g.name)}</strong>${g.size ? ` · <span class="muted">${esc(g.size)}</span>` : ''}` : (g && g._weighed ? ` — <strong>weighed in-store item</strong>; name it below` : '');
+    panel.innerHTML = `<div class="scan-unknown">🆕 New to stock <span class="muted mono">${esc(key)}</span>${note}${gs1}
+      <div class="scan-tabs"><button class="btn sm" data-new>Add to stock${inGloss ? '' : ' + glossary'}</button><button class="btn sm ghost" data-link>Link to existing</button><button class="btn sm ghost" data-skip>Skip</button></div>
+      <div id="scSub"></div></div>`;
+    panel.querySelector('[data-skip]').onclick = next;
+    panel.querySelector('[data-new]').onclick = () => {
+      const cwDefault = g && g.is_catch_weight ? '1' : '0';
+      const unitDefault = (g && g.unit) || (wt ? 'lb' : 'each');
+      const catDefault = (g && g.category) || 'Produce';
+      $('scSub').innerHTML = `<div class="scan-form">
+        <input id="niName" placeholder="Item name / description" value="${esc(g && g.name ? g.name : '')}">
+        ${comboHTML('niCat', CATEGORY_OPTIONS, catDefault, 'Category')}
+        ${comboHTML('niUnit', UOM_OPTIONS, unitDefault, 'Unit of measure')}
+        <input id="niDesc" placeholder="Description (optional)" value="${esc(g && g.description ? g.description : '')}">
+        <div class="scan-row"><label class="scan-lbl" style="flex:1">Catch-weight? <select id="niCW"><option value="0" ${cwDefault === '0' ? 'selected' : ''}>No — count</option><option value="1" ${cwDefault === '1' ? 'selected' : ''}>Yes — by weight</option></select></label></div>
+        <div class="scan-row"><input id="niSku" placeholder="SKU (optional)"><input id="niCost" type="number" placeholder="Unit cost $" step="0.01" value="${g && g.default_unit_cost ? g.default_unit_cost : ''}"></div>
+        <div class="scan-row"><input id="niQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="niMin" type="number" placeholder="Reorder at (min)" step="any"><input id="niPar" type="number" placeholder="Par level" step="any"></div>
+        <div class="scan-row"><input id="niExp" type="date" title="Expiry / use-by" value="${esc(labelExpiry)}"><input id="niLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="scan-row"><input id="niVendor" list="niVendorList" placeholder="Supplier / vendor"><input id="niVCode" placeholder="Supplier item code"></div><datalist id="niVendorList"></datalist>
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to Glossary</label>
+        <button class="btn" id="niSave">Add to stock</button></div>`;
+      comboWire($('scSub'));
+      api(invQ('/vendors')).then(vs => { const dl = $('niVendorList'); if (dl) dl.innerHTML = (vs || []).map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(() => {});
+      $('niSave').onclick = async () => {
+        const name = ($('niName').value || '').trim(); if (!name) return toast('Enter an item name', true);
+        const cw = $('niCW').value === '1';
+        const amt = $('niQty').value;
+        const body = { location_id: invLoc(), barcode: key, item_name: name, category: comboVal('niCat') || 'Other', unit: comboVal('niUnit') || (cw ? 'lb' : 'each'),
+          description: $('niDesc').value.trim() || undefined, is_catch_weight: cw ? 1 : 0, sku: $('niSku').value.trim() || undefined,
+          unit_cost: $('niCost').value || 0, min_quantity: $('niMin').value || 0, par_level: $('niPar').value || undefined,
+          expiry_date: $('niExp').value || undefined, lot_code: $('niLot').value.trim() || undefined,
+          vendor_name: $('niVendor').value.trim() || undefined, vendor_code: $('niVCode').value.trim() || undefined,
+          save_to_glossary: $('niGloss').checked };
+        if (cw) body.weight = amt; else body.quantity = amt;
+        try { const rr = await api('/inventory/barcode/create', { method: 'POST', body: JSON.stringify(body) }); toast(`Added ${name}${$('niGloss').checked ? ' · glossary updated' : ''}`); invRefresh(); next(); } catch (e) { toast(e.message, true); }
+      };
+    };
+    panel.querySelector('[data-link]').onclick = async () => {
+      $('scSub').innerHTML = '<div class="muted">Loading items…</div>';
+      let items = []; try { items = await api(invQ('/')); } catch { /* ignore */ }
+      $('scSub').innerHTML = `<div class="scan-form"><select id="niItem">${items.map(i => `<option value="${i.id}">${esc(i.item_name)}</option>`).join('')}</select><button class="btn" id="niLink">Link barcode</button></div>`;
+      $('niLink').onclick = async () => { try { await api('/inventory/barcode/link', { method: 'POST', body: JSON.stringify({ code: key, item_id: $('niItem').value }) }); toast('Barcode linked'); invRefresh(); next(); } catch (e) { toast(e.message, true); } };
+    };
+  }
+}
+
+// Scan-to-ship: move the scanned item from the current location to a chosen destination,
+// filling a matching open order line when the destination has one.
+async function handleShip(code, panel, next, to, toName, refreshOrders) {
+  if (!to) { panel.innerHTML = '<div class="scan-unknown">Pick a destination above, then scan an item to ship.</div>'; setTimeout(next, 1400); return; }
+  panel.innerHTML = '<div class="muted">Looking up…</div>';
+  let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to ship from here. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
+  let dflt = (r.parsed && r.parsed.weightLb) || 1;
+  try { const ords = await api('/inventory/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>
+    <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any" title="Qty to ship (${esc(it.unit)})"><span class="muted">→ ${esc(dest)}</span></div>
+    <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
+  $('shNext').onclick = next;
+  $('shGo').onclick = async () => {
+    const btn = $('shGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('shQty').value;
+    const body = { from_location_id: invLoc(), to_location_id: to, code: key, quantity: qv };
+    try {
+      let rr = await api('/inventory/barcode/transfer', { method: 'POST', body: JSON.stringify(body) });
+      if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/inventory/barcode/transfer', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+      toast(`Shipped ${numf(qv)} ${esc(it.unit)} → ${esc(dest)}${rr.order ? (rr.order.shipped ? ' · order line complete ✅' : ` · order ${numf(rr.order.ck_qty)}/${numf(rr.order.requested_qty)}`) : ''}`);
+      invRefresh(); if (refreshOrders) refreshOrders(); next();
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+}
+
+// Scan-to-check: show how much of the scanned product each location holds (read-only).
+async function handleCheck(code, panel, next) {
+  panel.innerHTML = '<div class="muted">Looking up…</div>';
+  let r; try { r = await api('/inventory/barcode/stock/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  if (!r.found) { panel.innerHTML = `<div class="scan-unknown">🔍 <span class="mono">${esc(r.code)}</span> — not stocked anywhere yet. <button class="btn sm ghost" id="ckNext">OK</button></div>`; $('ckNext').onclick = next; return; }
+  const ls = r.last_scan; const lastLine = ls ? [ls.weight_lb ? `${numf(ls.weight_lb)} lb` : '', ls.lot ? `lot ${esc(ls.lot)}` : '', (ls.pack_date || ls.prod_date) ? `packed ${esc(ls.pack_date || ls.prod_date)}` : '', ls.expiry ? `exp ${esc(ls.expiry)}` : ''].filter(Boolean).join(' · ') : '';
+  panel.innerHTML = `<div class="scan-found">📋 <strong>${esc(r.item_name)}</strong> <span class="muted">· ${numf(r.total)} ${esc(r.unit)} across all locations</span>
+    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row"><span>${esc(shortLoc(l.location))}${l.type === 'central_kitchen' ? ' (CK)' : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${numf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    ${lastLine ? `<div class="scan-gs1" style="margin-top:.5rem">🏷️ Last scan · ${lastLine}</div>` : ''}
+    <button class="btn ghost" id="ckNext">Scan another</button></div>`;
+  $('ckNext').onclick = next;
+}
+
+// Full scan history for an item — every box's weight, dates, lot, serial + all barcode data.
+async function openScanHistory(id, name) {
+  const host = $('modalHost');
+  const close = () => { host.innerHTML = ''; };
+  const ts = (s) => { try { return new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return s || '—'; } };
+  const ACT = { receive: '📥 Receive', count: '🔢 Count', ship: '📤 Ship', create: '🆕 Create', link: '🔗 Link' };
+  host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:720px"><div class="row-between"><h3 style="margin:0">📜 Scan history — ${esc(name)}</h3><button class="btn sm ghost" id="shX">✕</button></div><div id="shBody"><div class="empty">Loading…</div></div></div></div>`;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('shX').onclick = close;
+  let rows; try { rows = await api('/inventory/' + id + '/scan-history'); } catch (e) { $('shBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!rows.length) { $('shBody').innerHTML = '<div class="empty">No scans recorded for this item yet. Scan it (receive / ship) and the details will appear here.</div>'; return; }
+  $('shBody').innerHTML = `<div class="table-wrap"><table><thead><tr><th>When</th><th>Action</th><th class="num">Qty</th><th class="num">Weight</th><th>Packed</th><th>Expiry</th><th>Lot</th><th>Serial</th><th>Who</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td>${esc(ts(r.created_at))}</td><td>${ACT[r.action] || esc(r.action || '—')}</td><td class="num">${r.quantity == null ? '—' : numf(r.quantity)}</td><td class="num">${r.weight_lb ? numf(r.weight_lb) + ' lb' : '—'}</td><td>${esc(r.pack_date || r.prod_date || '—')}</td><td>${esc(r.expiry || '—')}</td><td class="mono">${esc(r.lot || '—')}</td><td class="mono">${esc(r.serial || '—')}</td><td>${esc(r.user_name || '—')}</td></tr>${r.ais ? `<tr class="sh-ais"><td colspan="9"><span style="color:var(--muted)">All barcode data:</span> ${Object.entries(r.ais).map(([k, v]) => `<code>(${esc(k)}) ${esc(v)}</code>`).join(' ')}</td></tr>` : ''}`).join('')}
+  </tbody></table></div>`;
 }
 
 // ── Dashboard ────────────────────────────────────────────────────────────
@@ -1136,16 +1537,19 @@ async function renderStock() {
     <div class="row-between"><h2 class="page">Stock</h2>
       <div style="display:flex;gap:.5rem">
         <button class="btn" id="addItem">+ Add item</button>
+        <button class="btn ghost" id="scanBtn">📷 Scan</button>
         <button class="btn ghost" id="receiveSku">Receive by SKU</button>
       </div></div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Actions</th>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>
       ${items.map(i => `<tr>
         <td><strong>${esc(i.item_name)}</strong></td>
         <td class="mono">${esc(i.sku || '—')}</td>
         <td>${esc(i.category)}</td>
-        <td class="num">${numf(i.quantity)} ${esc(i.unit)}</td>
+        <td>${i.vendor_name ? esc(i.vendor_name) + (i.vendor_code ? ` <span class="mono" style="color:var(--muted)">#${esc(i.vendor_code)}</span>` : '') : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${esc(i.unit || '—')}</td>
+        <td class="num">${numf(i.quantity)}</td>
         <td class="num">${numf(i.min_quantity)}</td>
         <td class="num">${i.par_level == null ? '—' : numf(i.par_level)}</td>
         <td class="num">${money(i.unit_cost)}</td>
@@ -1155,17 +1559,19 @@ async function renderStock() {
           <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}">Receive</button>
           <button class="btn sm ghost" data-act="waste" data-id="${i.id}" data-name="${esc(i.item_name)}">Waste</button>
           <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}">Count</button>
+          <button class="btn sm ghost" data-act="log" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Scan history — weight, dates, lot, serial">📜</button>
           <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
         </div></td>
       </tr>`).join('')}
     </tbody></table></div>`;
 
   $('addItem').onclick = () => openAddItemModal(items);
+  $('scanBtn').onclick = openScanner;
 
   $('receiveSku').onclick = () => modal('Receive by SKU', [
     { key: 'sku', label: 'SKU' }, { key: 'quantity', label: 'Quantity', type: 'number' },
     { key: 'expiry_date', label: 'Expiry (YYYY-MM-DD, optional)' }, { key: 'lot_code', label: 'Lot code (optional)' },
-  ], async (v) => { const r = await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: S.loc }, v)) }); toast(`Received into ${r.item_name}`); render(); });
+  ], async (v) => { const r = await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(`Received into ${r.item_name}`); render(); });
 
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => itemAction(b.dataset.act, b.dataset.id, b.dataset.name, items));
 }
@@ -1182,15 +1588,10 @@ function itemAction(act, id, name, items) {
   if (act === 'count') return modal(`Cycle count — ${name}`, [
     { key: 'counted_quantity', label: 'Counted quantity', type: 'number' },
   ], async (v) => { const r = await api('/inventory/count', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast(`Variance ${r.variance > 0 ? '+' : ''}${r.variance}`); render(); });
+  if (act === 'log') return openScanHistory(id, name);
   if (act === 'edit') {
     const it = items.find(x => x.id == id);
-    return modal(`Edit — ${it.item_name}`, [
-      { key: 'category', label: 'Category', value: it.category }, { key: 'unit', label: 'Unit', value: it.unit },
-      { key: 'min_quantity', label: 'Min', type: 'number', value: it.min_quantity },
-      { key: 'par_level', label: 'Par', type: 'number', value: it.par_level }, { key: 'unit_cost', label: 'Unit cost ($)', type: 'number', step: '0.01', value: it.unit_cost },
-      { key: 'sku', label: 'SKU', value: it.sku },
-      { key: 'reason', label: 'Reason / note (for audit)' },
-    ], async (v) => { await api('/inventory/' + id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); render(); });
+    return glossaryEdit(it);   // one full editor for both Stock and Glossary (all fields, UOM + Supplier pickers)
   }
 }
 
@@ -1231,7 +1632,7 @@ async function openAddItemModal(existing) {
   $('mOk').onclick = async () => {
     try {
       await api('/inventory/', { method: 'POST', body: JSON.stringify({
-        location_id: S.loc, item_name: $('aiItem').value,
+        location_id: invLoc(), item_name: $('aiItem').value,
         category: $('aiCat').value.trim() || 'Other', unit: $('aiUnit').value.trim() || 'units',
         quantity: $('aiQty').value, min_quantity: $('aiMin').value, par_level: $('aiPar').value,
         unit_cost: $('aiCost').value, sku: $('aiSku').value.trim() || null, reason: $('aiReason').value.trim(),
@@ -1251,54 +1652,96 @@ function suggestQty(it) {
 async function renderGlossary() {
   const items = await api(invQ('/'));
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">Glossary — item catalog</h2>
-      <button class="btn" id="gAdd">+ Add item</button></div>
-    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} items · descriptions, SKU, category & notes. Order directly from any row.</p>
+    <div class="row-between"><h2 class="page">Items — location catalog</h2>
+      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="gScan">📷 Scan</button><button class="btn" id="gAdd">+ Add item</button></div></div>
+    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} stocked items here · descriptions, SKU, category & notes. Order directly from any row. The shared product dictionary is on the <strong>Glossary</strong> tab.${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
     <div class="table-wrap"><table><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th>Unit</th><th>Description</th><th>Notes</th><th class="num">On hand</th><th class="num">Cost</th><th>Actions</th>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Unit</th><th>Supplier</th><th>Description</th><th>Notes</th><th class="num">On hand</th><th class="num">Cost</th><th>Actions</th>
     </tr></thead><tbody>
       ${items.map(i => `<tr>
         <td><strong>${esc(i.item_name)}</strong></td>
         <td class="mono">${esc(i.sku || '—')}</td>
         <td>${esc(i.category)}</td>
         <td>${esc(i.unit)}</td>
+        <td>${i.vendor_name ? esc(i.vendor_name) + (i.vendor_code ? ` <span class="mono" style="color:var(--muted)">#${esc(i.vendor_code)}</span>` : '') : '<span style="color:var(--muted)">—</span>'}</td>
         <td style="max-width:280px;color:#374151">${i.description ? esc(i.description) : '<span style="color:var(--muted)">—</span>'}</td>
         <td style="max-width:180px;color:#374151">${i.notes ? esc(i.notes) : '<span style="color:var(--muted)">—</span>'}</td>
         <td class="num">${numf(i.quantity)}</td>
         <td class="num">${money(i.unit_cost)}</td>
         <td><div class="actions-cell">
           <button class="btn sm" data-g="order" data-id="${i.id}">Order</button>
+          <button class="btn sm ghost" data-g="log" data-id="${i.id}" title="Scan history">📜</button>
           <button class="btn sm ghost" data-g="edit" data-id="${i.id}">Edit</button>
           <button class="btn sm ghost" data-g="del" data-id="${i.id}">Remove</button>
         </div></td>
       </tr>`).join('')}
     </tbody></table></div>`;
   $('gAdd').onclick = () => glossaryEdit(null);
+  $('gScan').onclick = openScanner;
   $('view').querySelectorAll('[data-g]').forEach(b => b.onclick = () => {
     const it = items.find(x => x.id == b.dataset.id);
     if (b.dataset.g === 'order') return openOrderModal({ item_id: it.id, suggested_qty: suggestQty(it) });
+    if (b.dataset.g === 'log') return openScanHistory(it.id, it.item_name);
     if (b.dataset.g === 'edit') return glossaryEdit(it);
     if (b.dataset.g === 'del') return confirmDelete(it);
   });
 }
 
-function glossaryEdit(it) {
+// Units of measure — ordered by how often a restaurant uses them (most common first).
+// Staff can still pick "Other…" and type anything not listed.
+const UOM_OPTIONS = [
+  // everyday restaurant receiving / counting
+  'lb', 'lbs', 'case', 'each', 'bottle', 'box', 'bag', 'can', 'jar', 'gallon', 'oz', 'kg',
+  'pack', 'dozen', 'bunch', 'carton', 'quart', 'pint', 'jug', 'container', 'tub', 'tube', 'g',
+  'liter', 'ml', 'fl oz', 'piece', 'head', 'crate', 'flat', 'tray', 'sleeve', 'roll',
+  'sheet', 'keg', 'cup', 'count', 'unit', 'pair', 'order', 'serving', 'portion', 'plate',
+  // rest — bulk, packaging, produce, prepped, misc
+  'half gallon', 'cl', 'tbsp', 'tsp', 'lug', 'bushel', 'peck', 'gross', 'pallet', 'sack',
+  'pouch', 'packet', 'sachet', 'canister', 'tin', 'drum', 'pail', 'bucket', 'barrel',
+  'stalk', 'bulb', 'clove', 'ear', 'sprig', 'leaf', 'root', 'loaf', 'stick', 'slice',
+  'fillet', 'rack', 'side', 'slab', 'block', 'wedge', 'wheel', 'round', 'scoop', 'ladle',
+  'dash', 'pinch', 'ream', 'bar', 'mg', 'ton',
+];
+// Inventory categories — ordered by how often a (pho / Asian) restaurant uses them.
+const CATEGORY_OPTIONS = [
+  'Produce', 'Herbs & Aromatics', 'Meat', 'Poultry', 'Seafood', 'Noodles', 'Broth & Soup Base',
+  'Rice & Grains', 'Sauces & Condiments', 'Spices & Seasonings', 'Oils & Vinegars', 'Dry Goods',
+  'Canned & Jarred', 'Dairy', 'Eggs', 'Frozen', 'Deli', 'Bakery & Bread', 'Flour & Baking',
+  'Sweeteners', 'Nuts & Seeds', 'Snacks', 'Beverages', 'Juice & Soda', 'Coffee & Tea', 'Beer',
+  'Wine', 'Liquor', 'Bar Supplies', 'Paper Goods', 'Disposables & To-Go', 'Packaging',
+  'Cleaning Supplies', 'Smallwares', 'Equipment', 'Office Supplies', 'Uniforms & Apparel', 'Other',
+];
+// Combo (visible dropdown + "Other…" custom entry) for non-modal forms like the scanner.
+const comboHTML = (key, options, value, label) => {
+  const cur = value == null ? '' : String(value);
+  const inList = options.includes(cur);
+  return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList && cur) ? 'selected' : ''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label || '').toLowerCase())}" value="${esc(!inList ? cur : '')}" ${(!inList && cur) ? '' : 'hidden'}></div>`;
+};
+function comboWire(root) { (root || document).querySelectorAll('[data-combo]').forEach(sel => { sel.onchange = () => { const o = document.getElementById('cbo_' + sel.dataset.combo); if (o) { const show = sel.value === '__other__'; o.hidden = !show; if (show) o.focus(); } }; }); }
+const comboVal = (key) => { const sel = document.getElementById('cb_' + key); if (!sel) return ''; return sel.value === '__other__' ? (((document.getElementById('cbo_' + key) || {}).value) || '').trim() : sel.value; };
+
+async function glossaryEdit(it) {
   const isNew = !it;
+  let vendorNames = [];
+  try { vendorNames = (await api(invQ('/vendors'))).map(v => v.name); } catch { /* offline — free text still works */ }
   const fields = [
     { key: 'item_name', label: 'Item name', value: it ? it.item_name : '' },
-    { key: 'category', label: 'Category', value: it ? it.category : 'Produce' },
-    { key: 'unit', label: 'Unit', value: it ? it.unit : 'lbs' },
+    { key: 'category', label: 'Category', type: 'combo', options: CATEGORY_OPTIONS, value: it ? it.category : 'Produce' },
+    { key: 'unit', label: 'Unit of measure', type: 'combo', options: UOM_OPTIONS, value: it ? it.unit : 'each' },
     { key: 'sku', label: 'SKU', value: it ? it.sku : '' },
+    { key: 'barcode', label: 'Barcode (UPC / EAN / GTIN)', value: it ? (it.barcode || '') : '' },
     { key: 'description', label: 'Description', value: it ? it.description : '' },
     { key: 'notes', label: 'Notes', value: it ? it.notes : '' },
     { key: 'min_quantity', label: 'Min (reorder trigger)', type: 'number', value: it ? it.min_quantity : 0 },
     { key: 'par_level', label: 'Par (target level)', type: 'number', value: it ? it.par_level : '' },
     { key: 'unit_cost', label: 'Unit cost ($)', type: 'number', step: '0.01', value: it ? it.unit_cost : 0 },
+    { key: 'vendor_name', label: 'Supplier / vendor', type: 'datalist', options: vendorNames, value: it ? (it.vendor_name || '') : '' },
+    { key: 'vendor_code', label: 'Supplier’s item code', value: it ? (it.vendor_code || '') : '' },
   ];
   if (isNew) fields.push({ key: 'quantity', label: 'Opening qty', type: 'number', value: 0 });
   fields.push({ key: 'reason', label: 'Reason / note (for audit)' });
   modal(isNew ? 'Add item' : `Edit — ${it.item_name}`, fields, async (v) => {
-    if (isNew) { await api('/inventory/', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: S.loc }, v)) }); toast('Item added'); }
+    if (isNew) { const r = await api('/inventory/', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(r.replicated ? `Item added — copied to ${r.replicated} location${r.replicated === 1 ? '' : 's'}` : 'Item added'); }
     else { await api('/inventory/' + it.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); }
     render();
   }, isNew ? 'Add item' : 'Save');
@@ -1314,6 +1757,85 @@ function confirmDelete(it) {
   }, 'Remove');
 }
 
+// ── Glossary — shared product dictionary (product_catalog, keyed by GTIN) ────
+// Global across the Central Kitchen and every location; pre-fills the scan-to-receive form.
+async function renderCatalog() {
+  const q = (S.catalogQ || '');
+  const rows = await api('/glossary' + (q ? '?q=' + encodeURIComponent(q) : ''));
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">Glossary — product dictionary</h2>
+      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="cScan">📷 Scan</button><button class="btn" id="cAdd">+ Add product</button></div></div>
+    <p class="sub" style="margin:-.5rem 0 .75rem;color:var(--muted)">Shared across the Central Kitchen and every location. One row per GTIN — name, description, unit, category, notes. Used to pre-fill the scan-to-receive form.</p>
+    <div style="margin-bottom:.75rem"><input id="cSearch" placeholder="Search GTIN, scale #, name, brand or category…" value="${esc(q)}" style="max-width:360px" /></div>
+    <div class="table-wrap"><table><thead><tr>
+      <th>GTIN</th><th>Scale #</th><th>Name</th><th>Category</th><th>Unit</th><th>Description</th><th>Flags</th><th>Notes</th><th>Source</th><th>Actions</th>
+    </tr></thead><tbody>
+      ${rows.length ? rows.map(r => `<tr>
+        <td class="mono">${esc(r.barcode)}</td>
+        <td class="mono">${r.scale_code ? esc(r.scale_code) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td><strong>${esc(r.name || '—')}</strong>${r.brand ? `<div class="sub" style="color:var(--muted)">${esc(r.brand)}</div>` : ''}</td>
+        <td>${esc(r.category || '—')}</td>
+        <td>${esc(r.unit || '—')}</td>
+        <td style="max-width:260px;color:#374151">${r.description ? esc(r.description) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${r.is_catch_weight ? '<span class="badge">⚖ catch-wt</span> ' : ''}${r.stackable ? '<span class="badge low">＋count</span>' : '<span class="badge out">unique</span>'}${(r.active == null || r.active) ? '' : ' <span class="badge out">inactive</span>'}</td>
+        <td style="max-width:160px;color:#374151">${r.notes ? esc(r.notes) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td>${r.source === 'staff' ? '👤 staff' : '🌐 auto'}</td>
+        <td><div class="actions-cell">
+          <button class="btn sm ghost" data-c="edit" data-code="${esc(r.barcode)}">Edit</button>
+          <button class="btn sm ghost" data-c="del" data-code="${esc(r.barcode)}">Delete</button>
+        </div></td>
+      </tr>`).join('') : `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:1.5rem">${q ? 'No products match.' : 'No products yet — add one or scan an item to start building the glossary.'}</td></tr>`}
+    </tbody></table></div>`;
+  $('cAdd').onclick = () => catalogEdit(null);
+  $('cScan').onclick = openScanner;
+  const s = $('cSearch'); let t;
+  s.oninput = () => { clearTimeout(t); t = setTimeout(() => { S.catalogQ = s.value.trim(); renderCatalog(); }, 300); };
+  s.onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(t); S.catalogQ = s.value.trim(); renderCatalog(); } };
+  $('view').querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+    const r = rows.find(x => x.barcode == b.dataset.code);
+    if (b.dataset.c === 'edit') return catalogEdit(r);
+    if (b.dataset.c === 'del') return catalogDelete(r);
+  });
+}
+
+async function catalogEdit(it) {
+  const isNew = !it;
+  const YN = [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }];
+  const fields = [
+    { key: 'barcode', label: 'GTIN / barcode', value: it ? it.barcode : '' },
+    { key: 'name', label: 'Name', value: it ? it.name : '' },
+    { key: 'brand', label: 'Brand', value: it ? (it.brand || '') : '' },
+    { key: 'category', label: 'Category', type: 'combo', options: CATEGORY_OPTIONS, value: it ? it.category : 'Produce' },
+    { key: 'unit', label: 'Unit of measure', type: 'combo', options: UOM_OPTIONS, value: it ? it.unit : 'each' },
+    { key: 'description', label: 'Description', value: it ? (it.description || '') : '' },
+    { key: 'notes', label: 'Notes', value: it ? (it.notes || '') : '' },
+    { key: 'size', label: 'Pack size (e.g. 5 L, 24 ct)', value: it ? (it.size || '') : '' },
+    { key: 'default_unit_cost', label: 'Default unit cost ($)', type: 'number', step: '0.01', value: it ? (it.default_unit_cost || 0) : 0 },
+    { key: 'is_catch_weight', label: 'Catch-weight? (variable weight — track by lb)', type: 'select', options: YN, value: it ? String(it.is_catch_weight ? 1 : 0) : '0' },
+    { key: 'stackable', label: 'Stackable? (repeat scans just add to count)', type: 'select', options: YN, value: it ? String(it.stackable ? 1 : 0) : '1' },
+    { key: 'barcode_type', label: 'Barcode type', type: 'combo', options: ['UPC', 'EAN', 'GS1', 'PLU', 'Other'], value: it ? (it.barcode_type || '') : '' },
+    { key: 'scale_code', label: 'Deli scale code (PLU / LF code set on the AvaWeigh scale)', value: it ? (it.scale_code || '') : '' },
+    { key: 'default_vendor_code', label: 'Supplier’s item code', value: it ? (it.default_vendor_code || '') : '' },
+  ];
+  if (!isNew) fields.push({ key: 'active', label: 'Active?', type: 'select', options: YN, value: String(it.active ? 1 : 0) });
+  modal(isNew ? 'Add product to glossary' : `Edit — ${it.name}`, fields, async (v) => {
+    if (!(v.barcode || '').trim()) throw new Error('A GTIN / barcode is required.');
+    if (!(v.name || '').trim()) throw new Error('A name is required.');
+    await api('/glossary', { method: 'POST', body: JSON.stringify(v) });
+    toast(isNew ? 'Added to glossary' : 'Glossary updated'); renderCatalog();
+  }, isNew ? 'Add' : 'Save');
+}
+
+async function catalogDelete(it) {
+  modal(`Delete “${it.name}” from the glossary?`, [
+    { key: '_', label: 'Removes the dictionary entry only (no stock is touched). Type DELETE to confirm.', placeholder: 'DELETE' },
+  ], async (v) => {
+    if ((v._ || '').trim().toUpperCase() !== 'DELETE') throw new Error('Type DELETE to confirm.');
+    await api('/glossary/' + encodeURIComponent(it.barcode), { method: 'DELETE' });
+    toast('Deleted from glossary'); renderCatalog();
+  }, 'Delete');
+}
+
 // ── Create order (PO) — pick existing item or add a new one ────────────────
 async function openOrderModal(prefill) {
   prefill = prefill || {};
@@ -1321,11 +1843,13 @@ async function openOrderModal(prefill) {
   const ckItems = (ckCat && ckCat.items) || {};
   const iOpts = items.map(i => `<option value="${i.id}" ${prefill.item_id == i.id ? 'selected' : ''}>${esc(i.item_name)} — ${numf(i.quantity)} ${esc(i.unit)} on hand</option>`).join('');
   const vendorTail = '<option value="">— No vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
-  // The source dropdown puts the Central Kitchen first and pre-selected when the item is
-  // stocked there; otherwise it's the plain vendor list.
+  // At the Central Kitchen there is no "order from the CK" — it restocks from vendors only.
+  const atCK = S.section === 'central';
+  // For a store, the source dropdown puts the Central Kitchen first and pre-selected when the
+  // item is stocked there; otherwise (and always at the CK) it's the plain vendor list.
   const sourceOptionsFor = (itemName) => {
     const avail = ckItems[itemName];
-    return (avail > 0 ? `<option value="ck" selected>🏭 Central Kitchen — ${numf(avail)} on hand</option>` : '') + vendorTail;
+    return (!atCK && avail > 0 ? `<option value="ck" selected>🏭 Central Kitchen — ${numf(avail)} on hand</option>` : '') + vendorTail;
   };
   const nameOf = (id) => { const it = items.find(x => x.id == id); return it ? it.item_name : ''; };
   const host = $('modalHost');
@@ -1339,7 +1863,7 @@ async function openOrderModal(prefill) {
       <label>Unit cost ($)</label><input id="nCost" type="number" step="0.01" value="0" />
     </div>
     <label>Quantity to order</label><input id="oQty" type="number" value="${prefill.suggested_qty || ''}" />
-    <label>Order from</label><select id="oVendor">${sourceOptionsFor(nameOf(prefill.item_id))}</select>
+    <label>Order from${atCK ? ' <span style="font-weight:400;color:var(--muted)">(the Central Kitchen restocks from vendors)</span>' : ''}</label><select id="oVendor">${sourceOptionsFor(nameOf(prefill.item_id))}</select>
     <label>Expected date (optional)</label><input id="oDate" type="date" />
     <label>Reason / note (for audit)</label><input id="oNotes" placeholder="why you're ordering — kept on the order & the audit log" />
     <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Create order</button></div>
@@ -1364,8 +1888,9 @@ async function openOrderModal(prefill) {
       if (!(qty > 0)) throw new Error('Enter a quantity greater than 0.');
       const source = $('oVendor').value, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
       // Central Kitchen source → the CK-first distribution flow (splits any shortfall to a vendor).
-      if (mode === 'existing' && source === 'ck') {
-        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
+      // Never offered at the CK itself (it restocks from vendors), so this stays store-only.
+      if (!atCK && mode === 'existing' && source === 'ck') {
+        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
         toast('Ordered — Central Kitchen first'); close();
         if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
         return;
@@ -1374,10 +1899,10 @@ async function openOrderModal(prefill) {
       if (mode === 'new') {
         const name = $('nName').value.trim();
         if (!name) throw new Error('Enter the new item name.');
-        const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0, reason: notes || '' }) });
+        const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0, reason: notes || '' }) });
         item_id = created.id;
       } else { item_id = $('oItem').value; }
-      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, item_id, quantity: qty, vendor_id: source || null, expected_date, notes, reason: notes || '' }) });
+      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_id, quantity: qty, vendor_id: source || null, expected_date, notes, reason: notes || '' }) });
       toast('Order created'); close();
       if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
     } catch (e) { $('mErr').textContent = e.message; }
@@ -1386,32 +1911,40 @@ async function openOrderModal(prefill) {
 
 // ── Orders & Reorder ─────────────────────────────────────────────────────
 async function renderOrders() {
-  const distQ = (p) => `/distribution${p}${p.includes('?') ? '&' : '?'}${S.loc ? 'location_id=' + S.loc : ''}`;
-  const [avail, orders, vendors, ckOrders] = await Promise.all([
-    api(distQ('/availability')), api(invQ('/supply-orders')), api('/inventory/vendors'), api(distQ('/orders?scope=store')),
+  // The Central Kitchen restocks from vendors (never itself); every store orders CK-first.
+  const atCK = S.section === 'central';
+  const distQ = (p) => `/distribution${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
+  const [avail, ckSugg, orders, vendors, ckOrders] = await Promise.all([
+    atCK ? Promise.resolve({ items: [] }) : api(distQ('/availability')),
+    atCK ? api('/inventory/reorder-suggestions?location_id=' + invLoc()) : Promise.resolve([]),
+    api(invQ('/supply-orders')), api('/inventory/vendors'),
+    atCK ? Promise.resolve({ orders: [] }) : api(distQ('/orders?scope=store')),
   ]);
-  const sugg = avail.items;
-  const ckTotal = sugg.reduce((a, s) => a + s.from_ck, 0);
+  const sugg = atCK ? ckSugg : avail.items;
+  const needOf = (s) => (atCK ? s.suggested_qty : s.need);
+  const ckTotal = atCK ? 0 : sugg.reduce((a, s) => a + s.from_ck, 0);
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Orders & Reorder</h2>
       <button class="btn" id="newOrder">+ New order</button></div>
     <div class="section">
-      <div class="row-between"><h3>Low stock — reorder <span style="font-weight:400;color:var(--muted);font-size:.85rem">Central Kitchen first, vendors for the shortfall</span></h3>
-        ${sugg.length ? `<div style="display:flex;gap:.5rem"><button class="btn" id="orderCK">Order all — CK first (${sugg.length})</button><button class="btn ghost" id="createPO">Vendor PO instead</button></div>` : ''}</div>
-      ${sugg.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Need</th><th class="num">🏭 From CK</th><th class="num">🚚 From vendor</th><th class="num">Est. cost</th></tr></thead><tbody>
-        ${sugg.map(s => `<tr><td>${esc(s.item_name)}</td><td class="num">${numf(s.quantity)}</td><td class="num"><strong>${numf(s.need)} ${esc(s.unit)}</strong></td><td class="num">${s.from_ck > 0 ? `<span class="badge ok">${numf(s.from_ck)}</span>` : '<span style="color:var(--muted)">0</span>'}</td><td class="num">${s.from_vendor > 0 ? `<span class="badge gold">${numf(s.from_vendor)}</span>` : '<span style="color:var(--muted)">0</span>'}</td><td class="num">${money(Math.round(s.need * (s.unit_cost || 0) * 100) / 100)}</td></tr>`).join('')}
+      <div class="row-between"><h3>Low stock — reorder <span style="font-weight:400;color:var(--muted);font-size:.85rem">${atCK ? 'the Central Kitchen restocks from vendors' : 'Central Kitchen first, vendors for the shortfall'}</span></h3>
+        ${sugg.length ? (atCK
+          ? `<button class="btn" id="createPO">Create vendor PO (${sugg.length})</button>`
+          : `<div style="display:flex;gap:.5rem"><button class="btn" id="orderCK">Order all — CK first (${sugg.length})</button><button class="btn ghost" id="createPO">Vendor PO instead</button></div>`) : ''}</div>
+      ${sugg.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Need</th>${atCK ? '' : '<th class="num">🏭 From CK</th><th class="num">🚚 From vendor</th>'}<th class="num">Est. cost</th></tr></thead><tbody>
+        ${sugg.map(s => `<tr><td>${esc(s.item_name)}</td><td class="num">${numf(s.quantity)}</td><td class="num"><strong>${numf(needOf(s))} ${esc(s.unit)}</strong></td>${atCK ? '' : `<td class="num">${s.from_ck > 0 ? `<span class="badge ok">${numf(s.from_ck)}</span>` : '<span style="color:var(--muted)">0</span>'}</td><td class="num">${s.from_vendor > 0 ? `<span class="badge gold">${numf(s.from_vendor)}</span>` : '<span style="color:var(--muted)">0</span>'}</td>`}<td class="num">${money(Math.round(needOf(s) * (s.unit_cost || 0) * 100) / 100)}</td></tr>`).join('')}
       </tbody></table></div>
-      <p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen can cover <strong>${numf(ckTotal)}</strong> unit${ckTotal === 1 ? '' : 's'} right now; the rest is auto-drafted as vendor POs.</p>` : '<div class="empty">No items below par. Nothing to reorder.</div>'}
+      ${atCK ? '' : `<p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen can cover <strong>${numf(ckTotal)}</strong> unit${ckTotal === 1 ? '' : 's'} right now; the rest is auto-drafted as vendor POs.</p>`}` : '<div class="empty">No items below par. Nothing to reorder.</div>'}
     </div>
-    <div class="section">
+    ${atCK ? '' : `<div class="section">
       <h3>Central Kitchen orders <span style="font-weight:400;color:var(--muted);font-size:.85rem">raw food from the warehouse</span></h3>
       ${ckOrders.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">CK</th><th class="num">Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody>
         ${ckOrders.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${numf(o.ck_qty)}</td><td class="num">${o.vendor_qty > 0 ? numf(o.vendor_qty) : '—'}</td><td>${distBadge(o.status)}</td>
           <td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No Central Kitchen orders yet.</div>'}
-    </div>
+    </div>`}
     <div class="section">
-      <h3>Purchase / supply orders</h3>
+      <h3>Purchase / supply orders${atCK ? ' <span style="font-weight:400;color:var(--muted);font-size:.85rem">Central Kitchen → vendors</span>' : ''}</h3>
       ${orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Vendor</th><th>Status</th><th>Ordered by</th><th>Actions</th></tr></thead><tbody>
         ${orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.quantity)} ${esc(o.unit)}</td><td>${esc(o.vendor_name || '—')}</td><td>${orderBadge(o.status)}</td><td>${esc(o.ordered_by_name)}</td>
           <td><div class="actions-cell">${nextOrderActions(o)}</div></td></tr>`).join('')}
@@ -1422,14 +1955,14 @@ async function renderOrders() {
   const orderCK = $('orderCK');
   if (orderCK) orderCK.onclick = () => modal('Order all — Central Kitchen first', [
     { key: 'reason', label: 'Reason / note (for audit)' },
-  ], async (v) => { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: S.loc, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }, 'Place order');
+  ], async (v) => { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }, 'Place order');
   const createPO = $('createPO');
   if (createPO) createPO.onclick = () => {
     const vOpts = [{ value: '', label: '— No vendor —' }].concat(vendors.map(v => ({ value: v.id, label: v.name })));
-    modal('Vendor purchase order (skip Central Kitchen)', [
+    modal(atCK ? 'Central Kitchen — vendor purchase order' : 'Vendor purchase order (skip Central Kitchen)', [
       { key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' },
       { key: 'reason', label: 'Reason / note (for audit)' },
-    ], async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: S.loc, vendor_id: v.vendor_id || null, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, quantity: s.need })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
+    ], async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), vendor_id: v.vendor_id || null, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, quantity: needOf(s) })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
   };
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
     try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); render(); }
@@ -1453,7 +1986,7 @@ function nextOrderActions(o) {
 // ── Transfers ──────────────────────────────────────────────────────────────
 async function renderTransfers() {
   const [items, reqs] = await Promise.all([api(invQ('/')), api(invQ('/transfer-requests'))]);
-  const others = S.locations.filter(l => String(l.id) !== String(S.loc));
+  const others = S.locations.filter(l => String(l.id) !== String(invLoc()));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Transfers</h2>
       <button class="btn" id="newTransfer" ${others.length ? '' : 'disabled'}>+ Direct transfer</button></div>
@@ -1465,7 +1998,7 @@ async function renderTransfers() {
     { key: 'item_id', label: 'Item', type: 'select', options: items.map(i => ({ value: i.id, label: `${i.item_name} (${numf(i.quantity)} ${i.unit})` })) },
     { key: 'to_location_id', label: 'To location', type: 'select', options: others.map(l => ({ value: l.id, label: l.name })) },
     { key: 'quantity', label: 'Quantity', type: 'number' },
-  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: S.loc, to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Transferred'); render(); });
+  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: invLoc(), to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Transferred'); render(); });
 }
 
 // ── Lots & Expiry ──────────────────────────────────────────────────────────
@@ -1487,20 +2020,29 @@ async function renderLots() {
 
 // ── Vendors ────────────────────────────────────────────────────────────────
 async function renderVendors() {
-  const vendors = await api('/inventory/vendors');
-  const canManage = ['owner', 'manager'].includes(S.user.role);
+  const vendors = await api(invQ('/vendors'));   // per-location list (CK shows its master list)
+  const canManage = myCap('manage');
+  const inCk = S.section === 'central';
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Vendors</h2>${canManage ? '<button class="btn" id="addVendor">+ Add vendor</button>' : ''}</div>
-    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th class="num">Lead time</th><th>Notes</th></tr></thead><tbody>
-      ${vendors.length ? vendors.map(v => `<tr><td><strong>${esc(v.name)}</strong></td><td>${esc(v.contact_name || '—')}</td><td>${esc(v.phone || '—')}</td><td>${esc(v.email || '—')}</td><td class="num">${v.lead_time_days}d</td><td>${esc(v.notes || '')}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No vendors.</td></tr>'}
+    ${inCk ? '<p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">Central Kitchen master list — adding or editing a vendor here copies it to <strong>every location</strong>. Stores can still add their own local vendors (those stay put).</p>' : ''}
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th class="num">Lead time</th><th>Notes</th>${canManage ? '<th>Actions</th>' : ''}</tr></thead><tbody>
+      ${vendors.length ? vendors.map(v => `<tr><td><strong>${esc(v.name)}</strong></td><td>${esc(v.contact_name || '—')}</td><td>${esc(v.phone || '—')}</td><td>${esc(v.email || '—')}</td><td class="num">${v.lead_time_days}d</td><td>${esc(v.notes || '')}</td>${canManage ? `<td><button class="btn sm ghost" data-ved="${v.id}">Edit</button></td>` : ''}</tr>`).join('') : `<tr><td colspan="${canManage ? 7 : 6}" class="empty">No vendors.</td></tr>`}
     </tbody></table></div>`;
+  const vfields = (v) => [
+    { key: 'name', label: 'Name', value: v ? v.name : '' }, { key: 'contact_name', label: 'Contact name', value: v ? (v.contact_name || '') : '' },
+    { key: 'phone', label: 'Phone', value: v ? (v.phone || '') : '' }, { key: 'email', label: 'Email', value: v ? (v.email || '') : '' },
+    { key: 'lead_time_days', label: 'Lead time (days)', type: 'number', value: v ? v.lead_time_days : 1 }, { key: 'notes', label: 'Notes', value: v ? (v.notes || '') : '' },
+  ];
   const av = $('addVendor');
-  if (av) av.onclick = () => modal('Add vendor', [
-    { key: 'name', label: 'Name' }, { key: 'contact_name', label: 'Contact name' },
-    { key: 'phone', label: 'Phone' }, { key: 'email', label: 'Email' },
-    { key: 'lead_time_days', label: 'Lead time (days)', type: 'number', value: 1 }, { key: 'notes', label: 'Notes' },
-    { key: 'reason', label: 'Reason / note (for audit)' },
-  ], async (v) => { await api('/inventory/vendors', { method: 'POST', body: JSON.stringify(v) }); toast('Vendor added'); render(); });
+  if (av) av.onclick = () => modal('Add vendor', vfields(null), async (val) => {
+    const r = await api('/inventory/vendors', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, val)) });
+    toast(r.replicated ? `Vendor added — copied to ${r.replicated} location${r.replicated === 1 ? '' : 's'}` : 'Vendor added'); render();
+  });
+  $('view').querySelectorAll('[data-ved]').forEach(b => b.onclick = () => {
+    const v = vendors.find(x => x.id == b.dataset.ved);
+    modal(`Edit — ${v.name}`, vfields(v), async (val) => { await api('/inventory/vendors/' + v.id, { method: 'PUT', body: JSON.stringify(val) }); toast(inCk ? 'Vendor updated — synced to all locations' : 'Vendor updated'); render(); }, 'Save');
+  });
 }
 
 // ── Reports (valuation & COGS) ──────────────────────────────────────────────
@@ -1655,17 +2197,69 @@ async function fillToastSales(elId) {
   let d; try { d = await api('/toast/sales/overview'); } catch { return; }
   const rows = (d.locations || []).filter(r => r.summary);
   if (!rows.length) return;
-  const card = (r) => { const s = r.summary; return `<div class="card tsale-card">
+  const card = (r) => { const s = r.summary; return `<div class="card tsale-card tsale-click" role="button" tabindex="0"
+      data-loc="${r.location_id}" data-date="${esc(r.business_date)}" data-name="${esc(shortLoc(r.location_name))}"
+      title="Click for a breakdown by dining option (Dine In, Take Out, delivery…)">
     <div class="tsale-head"><span class="tsale-loc">${esc(shortLoc(r.location_name))}</span><span class="tsale-date">${esc(fmtDay(r.business_date))}</span></div>
     <div class="tsale-net" title="Net sales (pre-tax)">${money(s.net_sales)}</div>
     <div class="tsale-sub">${(s.orders || 0).toLocaleString()} orders · ${(s.guests || 0).toLocaleString()} guests</div>
     <div class="tsale-total">${money(s.total)} <span>with tax &amp; tips</span></div>
+    <div class="tsale-more">🍽️ By dining option ›</div>
   </div>`; };
   el.innerHTML = `<div class="section"><div class="row-between"><h3>🔌 Toast sales <span style="font-weight:400;color:var(--muted);font-size:.82rem">— latest synced day per location</span></h3>
       ${myCap('org') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
     <div class="tsale-pulled">${d.last_pulled_at ? `⏱ Last pulled from Toast: <strong>${esc(fmtPulled(d.last_pulled_at))}</strong>` : 'Not pulled yet'}</div>
     <div class="kpis tsale-grid">${rows.map(card).join('')}</div></div>`;
   el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+  el.querySelectorAll('.tsale-click').forEach(c => {
+    const open = () => showDiningBreakdown(c.dataset.loc, c.dataset.date, c.dataset.name);
+    c.onclick = open;
+    c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } };
+  });
+}
+
+// Shared "By payment type" table (Cash / Credit card / Gift card / Other) — used by the
+// dashboard popup and the Sales Analytics Summary report.
+function paymentTableHtml(pays) {
+  if (!pays || !pays.length) return '';
+  const t = pays.reduce((a, p) => ({ payments: a.payments + p.payments, amount: a.amount + p.amount, tips: a.tips + p.tips }), { payments: 0, amount: 0, tips: 0 });
+  return `<h4 style="margin:1rem 0 .3rem">By payment type <span style="font-weight:400;color:var(--muted);font-size:.78rem">— amount collected &amp; tips per tender (credit split by card brand)</span></h4>
+    <div class="table-wrap"><table><thead><tr><th>Payment type</th><th class="num">Payments</th><th class="num">Amount</th><th class="num">Tips</th></tr></thead>
+    <tbody>${pays.map(p => `<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.payments.toLocaleString()}</td><td class="num">${money(p.amount)}</td><td class="num">${money(p.tips)}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${t.payments.toLocaleString()}</strong></td><td class="num"><strong>${money(t.amount)}</strong></td><td class="num"><strong>${money(t.tips)}</strong></td></tr></tfoot></table></div>`;
+}
+
+// Cross-tab: amount collected per payment tender for each dining option.
+function payByDiningTableHtml(pbd) {
+  if (!pbd || !pbd.rows || !pbd.rows.length) return '';
+  const cols = pbd.columns || [];
+  const head = `<tr><th>Dining option</th>${cols.map(c => `<th class="num">${esc(c.name)}</th>`).join('')}<th class="num">Total</th></tr>`;
+  const body = pbd.rows.map(r => `<tr><td><strong>${esc(r.name)}</strong></td>${cols.map(c => `<td class="num">${money(r[c.key] || 0)}</td>`).join('')}<td class="num"><strong>${money(r.total || 0)}</strong></td></tr>`).join('');
+  const foot = `<tr><td><strong>Total</strong></td>${cols.map(c => `<td class="num"><strong>${money(pbd.totals[c.key] || 0)}</strong></td>`).join('')}<td class="num"><strong>${money(pbd.totals.total || 0)}</strong></td></tr>`;
+  return `<h4 style="margin:1rem 0 .3rem">Payment type by dining option <span style="font-weight:400;color:var(--muted);font-size:.78rem">— amount collected per tender for each dining type</span></h4>
+    <div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div>`;
+}
+
+// Popup: one day's sales for a location split by dining option (Dine In / Take Out /
+// DoorDash …) and by payment type, opened from the dashboard Toast-sales card. Read-only.
+async function showDiningBreakdown(locId, date, name) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal modal-wide"><div id="dinDetail" class="empty">Loading…</div><div class="actions"><button class="btn ghost" id="dinClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = ''; $('dinClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  try {
+    const d = await api(`/toast/sales/dining?location_id=${encodeURIComponent(locId)}&business_date=${encodeURIComponent(date)}`);
+    const opts = d.options || [];
+    const t = opts.reduce((a, o) => ({ orders: a.orders + o.orders, guests: a.guests + o.guests, net: a.net + o.net_sales, tax: a.tax + o.tax, tips: a.tips + o.tips }), { orders: 0, guests: 0, net: 0, tax: 0, tips: 0 });
+    $('dinDetail').innerHTML = `
+      <h3 style="margin:0 0 .1rem">${esc(name)} — by dining option</h3>
+      <div style="color:var(--muted);font-size:.82rem;margin-bottom:.6rem">${esc(fmtDay(date))} · pre-tax sales, sales with tax, and tips per dining type</div>
+      ${opts.length ? `<div class="table-wrap"><table><thead><tr><th>Dining option</th><th class="num">Orders</th><th class="num">Guests</th><th class="num">Pre-tax</th><th class="num">With tax</th><th class="num">Tips</th></tr></thead>
+        <tbody>${opts.map(o => `<tr><td><strong>${esc(o.name)}</strong></td><td class="num">${o.orders.toLocaleString()}</td><td class="num">${o.guests.toLocaleString()}</td><td class="num">${money(o.net_sales)}</td><td class="num">${money(o.net_sales + o.tax)}</td><td class="num">${money(o.tips)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${t.orders.toLocaleString()}</strong></td><td class="num"><strong>${t.guests.toLocaleString()}</strong></td><td class="num"><strong>${money(t.net)}</strong></td><td class="num"><strong>${money(t.net + t.tax)}</strong></td><td class="num"><strong>${money(t.tips)}</strong></td></tr></tfoot></table></div>` : '<div class="empty">No dining data for this day.</div>'}
+      ${paymentTableHtml(d.payments)}
+      ${payByDiningTableHtml(d.payment_by_dining)}`;
+  } catch (e) { $('dinDetail').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 // Format a stored UTC 'YYYY-MM-DD HH:MM:SS' timestamp as friendly Pacific local time.
 function fmtPulled(s) {
@@ -2023,9 +2617,21 @@ function renderLocationsSection() {
 async function renderLocList() {
   const locs = await api('/locations');
   const canAdd = ORG_ADMIN.includes(S.user.role);
+  // True org headcount (deduplicated) for all-location roles — the per-store Staff counts below
+  // sum higher because people who cover several stores are counted at each one.
+  let head = null;
+  if (roleScopeOf(S.user.role) === 'all') { try { head = await api('/locations/headcount'); } catch { head = null; } }
+  const unassigned = (head && head.unassigned) || [];
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length}</span></h2>
+    <div class="row-between"><h2 class="page">Locations <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${locs.length}${head ? ` · <span title="Distinct active people across all stores — each person counted once, even if they cover several locations">${head.active} staff</span>` : ''}</span></h2>
       ${canAdd ? '<button class="btn" id="addLoc">+ Add location</button>' : ''}</div>
+    ${unassigned.length ? `<details class="callout" style="margin:.2rem 0 1.1rem;background:var(--surface)">
+      <summary style="cursor:pointer;font-weight:600">⚠️ ${unassigned.length} active ${unassigned.length === 1 ? 'person has' : 'people have'} no store assigned <span style="font-weight:400;color:var(--muted)">— they appear on no location roster</span></summary>
+      <div class="table-wrap" style="margin-top:.6rem"><table><thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Role</th></tr></thead><tbody>
+        ${unassigned.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.employee_code || '—')}</td><td class="mono">${esc(u.email || '—')}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td></tr>`).join('')}
+      </tbody></table></div>
+      <p class="sub" style="color:var(--muted);margin:.5rem 0 0">Give each a home store (and any additional stores) in the <b>Staff</b> section.</p>
+    </details>` : ''}
     <div class="loc-grid">
       ${locs.map(l => `<div class="loc-card">
         <div class="loc-card-head"><span class="loc-name">${esc(shortLoc(l.name))}</span>${statusBadgeLoc(l.status)}</div>
@@ -2079,10 +2685,14 @@ function breakLeadModal(loc) {
   }, 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service Flow'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
 const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
-const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) => k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role));
+// Service Flow tab: any manage-capability role (they can toggle & run the board for their store).
+const SF_TAB_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) =>
+  (k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role)) &&
+  (k !== 'serviceflow' || SF_TAB_ROLES.includes(S.user.role)));
 function renderLocDetailTabs() {
   $('tabs').innerHTML = locTabsForMe().map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -2097,7 +2707,8 @@ async function renderLocDetail() {
     <div id="locBody"><div class="empty">Loading…</div></div>`;
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
   if (S.locTab === 'activity' && !LOC_ACTIVITY_ROLES.includes(S.user.role)) S.locTab = 'details';
-  ({ details: () => renderLocInfo(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, performance: () => renderLocPerformance(loc), floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
+  if (S.locTab === 'serviceflow' && !SF_TAB_ROLES.includes(S.user.role)) S.locTab = 'details';
+  ({ details: () => renderLocInfo(loc), serviceflow: () => renderLocSfTab(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, performance: () => renderLocPerformance(loc), floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
 }
 
 // ── Location activity trail (Owner/Admin/GM/Manager; manager = own location) ──
@@ -2177,6 +2788,37 @@ async function renderLocInfo(loc) {
     } catch (e) { const body = $('locFloorSnapBody'); if (body) body.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
   }
 }
+// Service Flow tab inside a location's manage view — the same live board as the standalone
+// section, scoped to this store, right next to Details. Any manage-cap role can run it and (via
+// the board's toggle) turn their own store's monitoring on/off. Reuses loadServiceFlow, which
+// keeps refreshing only while this tab is active (see sfActive).
+async function renderLocSfTab(loc) {
+  S.sfLoc = String(loc.id);
+  $('locBody').innerHTML = '<div class="empty">Loading…</div>';
+  // A location must be connected to Toast to run Service Flow — show a clear state if it isn't.
+  let s; try { s = await api('/toast/service-flow/status?location_id=' + loc.id); }
+  catch (e) { if ($('locBody')) $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.locTab !== 'serviceflow' || String(S.locDetailId) !== String(loc.id) || !$('locBody')) return;
+  if (!s.mapped) {
+    $('locBody').innerHTML = `<div class="section"><div class="empty">⏱️ <b>Service Flow</b> needs a Toast connection. <b>${esc(shortLoc(loc.name))}</b> isn’t connected to Toast yet — connect it under <b>Integrations → Toast</b>, then Service Flow can run here.</div></div>`;
+    return;
+  }
+  $('locBody').innerHTML = `
+    <div class="sf-wrap" id="sfWrap">
+      <div class="sched-filters"><span class="sched-filter-total" id="sfMeta"></span></div>
+      <div id="sfBanner"></div>
+      <div id="sfTiming"></div>
+      <div id="sfKpis"></div>
+      <div id="sfBody" class="sf-tables"><div class="empty">Loading…</div></div>
+      <details id="sfLog" style="margin-top:1.3rem">
+        <summary style="cursor:pointer;font-weight:600">📋 Alert activity <span style="font-weight:400;color:var(--muted)">— who handled each alert, when &amp; what they did</span></summary>
+        <div id="sfLogBody" class="empty" style="margin-top:.6rem">Expand to load…</div>
+      </details>
+    </div>`;
+  if ($('sfLog')) $('sfLog').ontoggle = (e) => { if (e.target.open) loadSfLog(); };
+  loadServiceFlow();
+}
+
 // Read-only floor snapshot for the Location Details tab — a point-in-time picture
 // of who's seated. Reuses the Floor Plan status colors; no interaction.
 function fpMiniTable(t) {
@@ -2236,10 +2878,11 @@ function editHoursModal(loc) {
 
 async function renderLocStaff() {
   const staff = await api('/locations/' + S.locDetailId + '/staff');
+  const visiting = staff.filter(u => !u.is_home).length;
   $('locBody').innerHTML = `
-    <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location. Add or reassign staff in the Staff section.</p>
+    <p class="sub" style="color:var(--muted);margin-top:0">Roster for this location — staff based here plus anyone who also works here${visiting ? ` (<strong>${visiting}</strong> also cover another store)` : ''}. Set a person's stores in the Staff section.</p>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>
-      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td class="mono">${esc(u.employee_code || '—')}</td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No staff assigned to this location yet.</td></tr>'}
+      ${staff.length ? staff.map(u => `<tr><td><strong>${esc(u.name)}</strong>${u.is_home ? '' : ` <span class="badge blue" title="Home store: ${esc(u.home_location || '—')}">also works here</span>`}</td><td class="mono">${esc(u.employee_code || '—')}</td><td class="mono">${esc(u.email)}</td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td>${u.is_active ? '<span class="badge ok">Active</span>' : '<span class="badge out">Inactive</span>'}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No staff assigned to this location yet.</td></tr>'}
     </tbody></table></div>`;
 }
 
@@ -3037,6 +3680,14 @@ function pgLightbox(src) {
   const img = document.createElement('img'); img.src = src; img.alt = 'Proof photo';
   o.appendChild(img); o.onclick = () => o.remove(); document.body.appendChild(o);
 }
+// Load a punch photo (JWT-protected) and show it full-screen.
+async function openPunchPhoto(photoId) {
+  try {
+    const res = await fetch('/api/timeclock/photo/' + photoId, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+    if (!res.ok) throw new Error('unavailable');
+    pgLightbox(URL.createObjectURL(await res.blob()));
+  } catch { toast('Could not load the photo.', true); }
+}
 
 // Manage which specific tasks apply at this location (per-location task list).
 async function openLocTaskListModal(locId, locName) {
@@ -3184,7 +3835,8 @@ async function renderLocTimeClock() {
   const tcJob = (job) => job ? ` <span class="tc-job" style="background:${jobColor(job).bg};border-color:${jobColor(job).bd}" title="${esc(job)}">${esc(job)}</span>` : '';
   const entryRows = data.entries.map(r => `<tr${r.unscheduled || r.carryover ? ' class="tc-unscheduled"' : ''}>
     <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
-    <td>${r.clock_in || '—'}</td><td>${r.clock_out || '—'}</td>
+    <td>${r.clock_in || '—'}${r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : ''}</td>
+    <td>${r.clock_out || '—'}${r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : ''}</td>
     <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
     <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');
@@ -3235,6 +3887,7 @@ async function renderLocTimeClock() {
   $('tcPrev').onclick = () => go(addDaysIso(data.date, -1));
   $('tcNext').onclick = () => go(addDaysIso(data.date, 1));
   $('tcToday').onclick = () => go(data.today || fmtLocalIso(new Date()));
+  $('locBody').querySelectorAll('[data-punchphoto]').forEach(b => b.onclick = () => openPunchPhoto(b.dataset.punchphoto));
   $('locBody').querySelectorAll('[data-resolve]').forEach(b => b.onclick = async () => {
     try { await api('/timeclock/alerts/' + b.dataset.resolve + '/resolve', { method: 'POST' }); toast('Alert resolved'); renderLocTimeClock(); }
     catch (e) { toast(e.message, true); }
@@ -4471,15 +5124,24 @@ function foodPctBadge(pct) {
 const foodClass = (pct) => pct == null ? '' : (pct <= 30 ? '' : (pct <= 40 ? 'warn' : 'bad'));
 
 async function renderMenuList() {
-  const [items, cats] = await Promise.all([api('/menu/items'), api('/menu/categories')]);
+  // Fetch everything (?all=1) so we can count archived, then show only active unless
+  // the "Show archived" toggle is on. Archiving hides an item without deleting it.
+  const [allItems, allCats] = await Promise.all([api('/menu/items?all=1'), api('/menu/categories?all=1')]);
+  const showArch = !!S.menuShowArchived;
+  const activeCats = allCats.filter(c => c.is_active);
+  const archivedCount = allItems.filter(m => !m.is_active).length;
+  const activeCount = allItems.length - archivedCount;
+  const items = showArch ? allItems : allItems.filter(m => m.is_active);
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">Menu <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${items.length} items</span></h2>
-      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="addCat">+ Category</button><button class="btn" id="addMenuItem">+ Menu item</button></div></div>
+    <div class="row-between"><h2 class="page">Menu <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${activeCount} active${archivedCount ? ` · ${archivedCount} archived` : ''}</span></h2>
+      <div style="display:flex;gap:.5rem">
+        ${archivedCount ? `<button class="btn sm ghost" id="toggleArch">${showArch ? 'Hide archived' : `Show archived (${archivedCount})`}</button>` : ''}
+        <button class="btn ghost" id="addCat">+ Category</button><button class="btn" id="addMenuItem">+ Menu item</button></div></div>
     <div class="table-wrap"><table><thead><tr>
       <th>Item</th><th>Category</th><th class="num">Price</th><th class="num">Recipe cost</th><th>Food %</th><th>Description</th><th>Actions</th>
     </tr></thead><tbody>
-      ${items.length ? items.map(m => `<tr>
-        <td><strong>${esc(m.name)}</strong>${m.is_active ? '' : ' <span class="badge gray">inactive</span>'}</td>
+      ${items.length ? items.map(m => `<tr${m.is_active ? '' : ' style="opacity:.6"'}>
+        <td><strong>${esc(m.name)}</strong>${m.is_active ? '' : ' <span class="badge gray">archived</span>'}</td>
         <td>${esc(m.category_name || '—')}</td>
         <td class="num">${money(m.price)}</td>
         <td class="num">${m.ingredient_count ? money(m.recipe_cost) : '<span style="color:var(--muted)">no recipe</span>'}</td>
@@ -4488,19 +5150,24 @@ async function renderMenuList() {
         <td><div class="actions-cell">
           <button class="btn sm" data-mact="recipe" data-id="${m.id}">Recipe (${m.ingredient_count})</button>
           <button class="btn sm ghost" data-mact="edit" data-id="${m.id}">Edit</button>
-          <button class="btn sm ghost" data-mact="del" data-id="${m.id}">Delete</button>
+          ${m.is_active
+            ? `<button class="btn sm ghost" data-mact="archive" data-id="${m.id}">Archive</button>`
+            : `<button class="btn sm ghost" data-mact="restore" data-id="${m.id}">Restore</button><button class="btn sm ghost" data-mact="del" data-id="${m.id}">Delete</button>`}
         </div></td>
-      </tr>`).join('') : '<tr><td colspan="7" class="empty">No menu items yet.</td></tr>'}
+      </tr>`).join('') : `<tr><td colspan="7" class="empty">${archivedCount && !showArch ? 'No active menu items — click “Show archived” to see archived ones.' : 'No menu items yet.'}</td></tr>`}
     </tbody></table></div>`;
+  const tg = $('toggleArch'); if (tg) tg.onclick = () => { S.menuShowArchived = !S.menuShowArchived; renderMenu(); };
   $('addCat').onclick = () => modal('Add category', [
-    { key: 'name', label: 'Category name' }, { key: 'sort_order', label: 'Sort order', type: 'number', value: cats.length },
+    { key: 'name', label: 'Category name' }, { key: 'sort_order', label: 'Sort order', type: 'number', value: activeCats.length },
   ], async (v) => { await api('/menu/categories', { method: 'POST', body: JSON.stringify(v) }); toast('Category added'); renderMenu(); });
-  $('addMenuItem').onclick = () => menuItemModal(null, cats);
+  $('addMenuItem').onclick = () => menuItemModal(null, activeCats);
   $('view').querySelectorAll('[data-mact]').forEach(b => b.onclick = () => {
     const m = items.find(x => x.id == b.dataset.id);
     if (b.dataset.mact === 'recipe') { recipeEdit.itemId = m.id; S.menuTab = 'recipes'; renderMenuTabs(); renderMenu(); }
-    else if (b.dataset.mact === 'edit') menuItemModal(m, cats);
-    else if (b.dataset.mact === 'del') modal(`Delete “${m.name}”?`, [], async () => { await api('/menu/items/' + m.id, { method: 'DELETE' }); toast('Menu item deleted'); renderMenu(); }, 'Delete');
+    else if (b.dataset.mact === 'edit') menuItemModal(m, activeCats);
+    else if (b.dataset.mact === 'archive') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 0 }) }).then(() => { toast(`“${m.name}” archived`); renderMenu(); }); }
+    else if (b.dataset.mact === 'restore') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 1 }) }).then(() => { toast(`“${m.name}” restored`); renderMenu(); }); }
+    else if (b.dataset.mact === 'del') modal(`Permanently delete “${m.name}”? This cannot be undone.`, [], async () => { await api('/menu/items/' + m.id, { method: 'DELETE' }); toast('Menu item deleted'); renderMenu(); }, 'Delete');
   });
 }
 
@@ -4693,16 +5360,99 @@ async function renderRepAnalytics() {
 
 async function renderRepTimesheets() {
   const d = await api('/reports/timesheets' + reportQuery(true));
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  const showByLoc = (d.by_location || []).length > 1;
   $('view').innerHTML = `${reportFilters(true)}
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="tsRun">▶ Run report</button>
+      <button class="btn ghost" id="tsCsv" ${d.by_staff.length ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="tsXls" ${d.by_staff.length ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
+    </div>
     <div class="kpis">
       <div class="card"><div class="label">Total hours</div><div class="value">${numf(d.total_hours)}</div></div>
-      <div class="card"><div class="label">Labor cost</div><div class="value">${money(d.total_labor_cost)}</div></div>
+      <div class="card"><div class="label">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
+      <div class="card"><div class="label">Gross pay</div><div class="value">${money(d.total_labor_cost)}</div></div>
       <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Role</th><th>Location</th><th class="num">Shifts</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Labor cost</th></tr></thead><tbody>
-      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="7" class="empty">No timesheets in range.</td></tr>'}
-    </tbody></table></div>`;
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="9" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
+    </tbody></table></div>
+    ${showByLoc ? `<div class="section"><h3>Gross pay by location</h3>
+      <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Staff</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Gross pay</th></tr></thead><tbody>
+        ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location) || '—')}</td><td class="num">${l.headcount}</td><td class="num">${numf(l.hours)}</td><td class="num ${l.ot_hours ? 'warn' : ''}">${l.ot_hours ? numf(l.ot_hours) : '—'}</td><td class="num"><strong>${money(l.labor_cost)}</strong></td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--line)"><td><strong>All locations</strong></td><td class="num"><strong>${d.headcount}</strong></td><td class="num"><strong>${numf(d.total_hours)}</strong></td><td class="num"><strong>${numf(d.total_ot_hours)}</strong></td><td class="num"><strong>${money(d.total_labor_cost)}</strong></td></tr>
+      </tbody></table></div></div>` : ''}
+    <p class="sub" style="margin-top:.8rem;color:var(--muted)">Overtime uses California daily rules: over ${d.ot_rule ? d.ot_rule.ot_after_h : 8}h/day paid at ${d.ot_rule ? d.ot_rule.ot_mult : 1.5}×, over ${d.ot_rule ? d.ot_rule.dt_after_h : 12}h/day at ${d.ot_rule ? d.ot_rule.dt_mult : 2}× (double-time is included in OT hours &amp; gross). Gross pay is 0 where a staffer’s hourly rate isn’t set. Completed shifts only.</p>`;
   wireReportFilters(true);
+  $('tsRun').onclick = renderRepTimesheets;
+  $('tsCsv').onclick = () => exportTimesheets(d, locName, 'csv');
+  $('tsXls').onclick = () => exportTimesheets(d, locName, 'xls');
+  $('view').querySelectorAll('[data-tsphoto]').forEach(b => b.onclick = () => openStaffPunchPhotos(b.dataset.tsphoto, b.dataset.name, d.start, d.end));
+}
+
+// Modal: a staff member's clock-in/out photos over the report's date range.
+async function openStaffPunchPhotos(userId, name, start, end) {
+  const host = $('modalHost');
+  const close = () => { host.innerHTML = ''; };
+  host.innerHTML = `<div class="modal-bg"><div class="modal photo-gallery"><div class="row-between"><h4 style="margin:0">📷 ${esc(name)} · punch photos</h4><button class="btn sm ghost" id="ppX">✕</button></div>
+    <p class="sub" style="color:var(--muted);margin:.2rem 0 .6rem">${esc(start)} → ${esc(end)}</p>
+    <div id="ppGrid"><div class="empty">Loading…</div></div></div></div>`;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('ppX').onclick = close;
+  const q = new URLSearchParams({ user_id: userId, start, end });
+  if (reportFilter.loc) q.set('location_id', reportFilter.loc);
+  let data; try { data = await api('/timeclock/punch-photos?' + q.toString()); } catch (e) { $('ppGrid').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (!data.photos.length) { $('ppGrid').innerHTML = '<div class="empty">No punch photos for this staffer in range.</div>'; return; }
+  $('ppGrid').innerHTML = data.photos.map(p => `<figure class="pg-item"><div class="pg-img-wrap"><img alt="Punch photo" data-load="${p.photo_id}"></div>
+    <figcaption>${p.kind === 'out' ? '🔴 Out' : '🟢 In'} · ${esc(p.work_date)} ${esc(p.at)}${p.location ? ' · ' + esc(shortLoc(p.location)) : ''}</figcaption></figure>`).join('');
+  for (const p of data.photos) {
+    try {
+      const res = await fetch('/api/timeclock/photo/' + p.photo_id, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+      if (!res.ok) continue;
+      const url = URL.createObjectURL(await res.blob());
+      const img = $('ppGrid').querySelector(`[data-load="${p.photo_id}"]`);
+      if (img) { img.src = url; img.onclick = () => pgLightbox(url); }
+    } catch { /* skip a failed thumbnail */ }
+  }
+}
+
+// Build a payroll export (CSV or Excel-openable .xls) from the loaded timesheet data.
+// Includes the per-staff breakdown (regular / OT / DT hours + gross) and a per-location
+// gross-pay summary with a grand total, so finance can reconcile pay end to end.
+function exportTimesheets(d, locName, kind) {
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', '', d.total_labor_cost];
+  const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
+  const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
+  const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
+  const fname = `timesheet_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}.${kind === 'xls' ? 'xls' : 'csv'}`;
+  const title = `Phở Hà Nội — Timesheet · ${locName} · ${d.start} to ${d.end}`;
+  const note = 'OT: California daily — over 8h/day at 1.5×, over 12h/day at 2× (double-time included in OT hrs & gross).';
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [note], [], cols, ...staffRows, [], staffTotal, [], ['Gross pay by location'], locCols, ...locRows, locTotal];
+    downloadBlob(block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    // HTML-table workbook — Excel opens it natively, keeping columns and number formats.
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr, bold) => '<tr>' + arr.map(c => `<td${bold ? ' style="font-weight:bold"' : ''}>${escHtml(c)}</td>`).join('') + '</tr>';
+    const staffTbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${staffRows.map(r => bodyRow(r)).join('')}${bodyRow(staffTotal, true)}</tbody></table>`;
+    const locTbl = `<table border="1"><thead>${headRow(locCols)}</thead><tbody>${locRows.map(r => bodyRow(r)).join('')}${bodyRow(locTotal, true)}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body>
+      <h3>${escHtml(title)}</h3><p>${escHtml(note)}</p>${staffTbl}<h4>Gross pay by location</h4>${locTbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${d.by_staff.length} staff · ${kind.toUpperCase()}`);
+}
+function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 async function renderRepPayments() {
@@ -4788,6 +5538,92 @@ async function renderRepWaitlist() {
     for (const x of (S._wlHistory || [])) rows.push([x.guest_name || '', x.phone || '', x.sms_consent ? 'yes' : 'no', x.party_size, (WL_STATUS[x.status] || [x.status])[0], (x.created_at || '').replace('T', ' ').slice(0, 16), shortLoc(x.location_name || ''), x.notify_count || 0]);
     downloadCsv(`phn-waitlist-history-${reportFilter.start || 'all'}_${reportFilter.end || 'all'}.csv`, rows);
   };
+}
+
+// ── Emoji picker: a 😊 button by every message / chat composer, so staff can drop
+// common emoji in before sending. Categories cover what people actually use, plus
+// restaurant-relevant food. Reusable: call mountEmoji(textareaId) after a compose renders.
+const EMOJI = {
+  'Smileys': ['😀','😃','😄','😁','😆','😅','😂','🤣','🥲','☺️','😊','🙂','🙃','😉','😌','😍','🥰','😘','😗','😙','😚','😋','😛','😝','😜','🤪','🤨','🧐','🤓','😎','🥳','🤩','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤗','🤔','🤭','🤫','🤥','😶','😐','😑','😬','🙄','😯','😦','😧','😮','😲','🥱','😴','🤤','😪','😵','🤐','🥴','🤢','🤮','🤧','😷','🤒','🤕','🤑','🤠','😇','🥸','🤡','🤖','👻','💀','☠️','👽','💩'],
+  'Gestures': ['👍','👎','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👋','🤝','🙏','🫶','👏','🙌','👐','🤲','💪','🦾','✊','👊','🤛','🤜','🤳','💅','🖕'],
+  'Hearts': ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','♥️','💯','💢','💥','💫','💦','💨','🔥','✨','⭐','🌟'],
+  'People': ['👶','🧒','👦','👧','🧑','👨','👩','🧔','🧓','👴','👵','🙋','🙅','🙆','🤦','🤷','💁','🙇','🤦‍♀️','🤷‍♂️','👮','👷','💂','🕵️','🧑‍🍳','👨‍🍳','👩‍🍳','🧑‍💼','👨‍💼','👩‍💼','🦸','🧑‍🌾','🎅','🤶','👼'],
+  'Food': ['🍜','🍲','🍚','🍛','🍣','🍤','🍱','🥟','🥢','🍢','🍡','🍥','🍙','🍘','🥡','🍳','🥗','🥘','🍝','🍕','🍔','🌭','🥪','🌮','🌯','🥙','🧆','🍟','🍗','🍖','🥩','🥓','🧅','🧄','🥕','🌶️','🥬','🥦','🍅','🍄','🍚','🍞','🥖','🧀','🥚','🍰','🧁','🍦','🍨','🍧','🍩','🍪','🎂','🍫','🍬','🍭','☕','🍵','🧋','🥤','🧃','🍺','🍻','🥂','🍷','🍶','🥃','🍹','🧊'],
+  'Symbols': ['🎉','🎊','🎈','🎁','🏆','🥇','🥈','🥉','🎯','✅','☑️','✔️','❌','⭕','❗','❓','⚠️','🚫','💬','💭','🗨️','🔔','🔕','📣','📢','📌','📍','⏰','⏱️','⌛','📅','🗓️','💰','💵','💴','💶','💷','💳','🧾','📈','📉','📊','🔑','🔒','🔓','♻️','🆗','🆕','🔥','💡','⚡','🌈','☀️','⛅','☁️','🌧️','❄️','🌸','🌼','🌺','🌻','🌹','💐','🐶','🐱','🐭','🐰','🦊','🐻','🐼'],
+};
+let _emojiPanel = null;
+function closeEmoji() { if (_emojiPanel) { _emojiPanel.remove(); _emojiPanel = null; document.removeEventListener('mousedown', _emojiOutside, true); } }
+function _emojiOutside(e) { if (_emojiPanel && !_emojiPanel.contains(e.target) && !(e.target.classList && e.target.classList.contains('emoji-btn'))) closeEmoji(); }
+function insertAtCursor(ta, text) {
+  const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+  const e = ta.selectionEnd != null ? ta.selectionEnd : ta.value.length;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+  const pos = s + text.length; ta.selectionStart = ta.selectionEnd = pos; ta.focus();
+  try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch { /* counters etc. */ }
+}
+function openEmojiPanel(btn, ta) {
+  closeEmoji();
+  const p = document.createElement('div'); p.className = 'emoji-panel';
+  p.innerHTML = Object.keys(EMOJI).map(grp => `<div class="emoji-grp">${grp}</div><div class="emoji-row">${EMOJI[grp].map(e => `<button type="button" class="emoji-item" data-e="${e}">${e}</button>`).join('')}</div>`).join('');
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(r.left, window.innerWidth - p.offsetWidth - 8)) + 'px';
+  const above = r.top - p.offsetHeight - 6;
+  p.style.top = (above > 8 ? above : Math.min(r.bottom + 6, window.innerHeight - p.offsetHeight - 8)) + 'px';
+  p.querySelectorAll('.emoji-item').forEach(b => b.onmousedown = (ev) => { ev.preventDefault(); insertAtCursor(ta, b.dataset.e); });
+  _emojiPanel = p;
+  setTimeout(() => document.addEventListener('mousedown', _emojiOutside, true), 0);
+}
+function mountEmoji(taId) {
+  const ta = document.getElementById(taId); if (!ta || ta._emoji) return; ta._emoji = true;
+  const btn = document.createElement('button');
+  btn.type = 'button'; btn.className = 'emoji-btn'; btn.title = 'Add emoji'; btn.setAttribute('aria-label', 'Add emoji'); btn.textContent = '😊';
+  btn.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); if (_emojiPanel) closeEmoji(); else openEmojiPanel(btn, ta); };
+  ta.insertAdjacentElement('afterend', btn);
+}
+
+// ── Message / chat reactions (iMessage-style tapbacks) ──────────────────────
+// Each bubble shows its reaction badges (emoji + count; hover shows who) and a 🙂
+// button that opens a small menu to add/remove a reaction and see who reacted.
+const RXN_SET = ['❤️', 'Haha', '👍', '🙏', '😮', '😢', '👎'];   // 'Haha' renders as the HAHA bubble graphic
+const rxnIsText = (e) => /[A-Za-z]/.test(e);
+// The "Haha" reaction is drawn as a little blue thought-bubble (iMessage-style tapback),
+// re-created as a crisp inline SVG. The stored token stays "Haha".
+const HAHA_SVG = '<svg class="rxn-svg" viewBox="0 0 40 38" xmlns="http://www.w3.org/2000/svg" aria-label="Haha"><rect x="1.5" y="1" width="37" height="26" rx="8" fill="#c6e8ff" stroke="#fff" stroke-width="2"/><circle cx="8" cy="30" r="3.2" fill="#c6e8ff" stroke="#fff" stroke-width="1.6"/><circle cx="3" cy="35" r="2" fill="#c6e8ff" stroke="#fff" stroke-width="1.2"/><text x="20" y="13.2" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="13" fill="#2f86d6">HA</text><text x="20" y="24.8" text-anchor="middle" font-family="Arial Black,Arial,sans-serif" font-weight="900" font-size="13" fill="#2f86d6">HA</text></svg>';
+const rxnGlyph = (e) => e === 'Haha' ? HAHA_SVG : e;
+let _rxnMenu = null;
+function closeRxnMenu() { if (_rxnMenu) { _rxnMenu.remove(); _rxnMenu = null; document.removeEventListener('mousedown', _rxnOutside, true); } }
+function _rxnOutside(e) { if (_rxnMenu && !_rxnMenu.contains(e.target) && !(e.target.dataset && (e.target.dataset.rxnadd || e.target.dataset.rxn))) closeRxnMenu(); }
+function rxnBar(kind, m) {
+  const badges = (m.reactions || []).map(r => `<button type="button" class="rxn${r.mine ? ' mine' : ''}${rxnIsText(r.emoji) ? ' rxn-text' : ''}" data-rxn="${m.id}" data-k="${kind}" data-e="${r.emoji}" title="${esc(r.users.join(', '))}">${rxnGlyph(r.emoji)} ${r.count}</button>`).join('');
+  // Reactions float at the top-left corner of the bubble (iMessage tapback style); the
+  // 🙂 add button stays inline below.
+  return `${badges ? `<div class="rxn-badges">${badges}</div>` : ''}<div class="rxn-bar"><button type="button" class="rxn-add" data-rxnadd="${m.id}" data-k="${kind}" title="Add reaction">🙂﹢</button></div>`;
+}
+function openRxnMenu(anchor, kind, m) {
+  closeRxnMenu();
+  const p = document.createElement('div'); p.className = 'rxn-menu';
+  const pick = RXN_SET.map(e => { const mine = (m.reactions || []).some(r => r.emoji === e && r.mine); return `<button type="button" class="rxn-pick${rxnIsText(e) ? ' rxn-pick-text' : ''}${mine ? ' mine' : ''}" data-pe="${e}">${rxnGlyph(e)}</button>`; }).join('');
+  const who = (m.reactions || []).length ? `<div class="rxn-who">${m.reactions.map(r => `<div><span class="rxn-who-e">${rxnGlyph(r.emoji)}</span> ${esc(r.users.join(', '))}</div>`).join('')}</div>` : '';
+  p.innerHTML = `<div class="rxn-pickrow">${pick}</div>${who}`;
+  document.body.appendChild(p);
+  const rect = anchor.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - p.offsetWidth - 8)) + 'px';
+  const top = rect.top - p.offsetHeight - 6; p.style.top = (top > 8 ? top : rect.bottom + 6) + 'px';
+  p.querySelectorAll('[data-pe]').forEach(b => b.onmousedown = (ev) => { ev.preventDefault(); doReact(kind, m.id, b.dataset.pe); });
+  _rxnMenu = p; setTimeout(() => document.addEventListener('mousedown', _rxnOutside, true), 0);
+}
+async function doReact(kind, id, emoji) {
+  closeRxnMenu();
+  try {
+    await api((kind === 'chat' ? '/chat/messages/' : '/messages/') + id + '/react', { method: 'POST', body: JSON.stringify({ emoji }) });
+    if (kind === 'chat') renderChatGroup(true); else renderThread();
+  } catch (e) { toast(e.message, true); }
+}
+// Wire a container's reaction badges (toggle) and add-buttons (menu). `byId` maps id → message.
+function wireReactions(root, byId) {
+  root.querySelectorAll('[data-rxnadd]').forEach(b => b.onclick = () => openRxnMenu(b, b.dataset.k, byId[b.dataset.rxnadd] || { id: b.dataset.rxnadd, reactions: [] }));
+  root.querySelectorAll('[data-rxn]').forEach(b => b.onclick = () => doReact(b.dataset.k, b.dataset.rxn, b.dataset.e));
 }
 
 // ── Messages module (horizontal tabs) ──────────────────────────────────────
@@ -5158,24 +5994,72 @@ function revokeMsgAtts() { while (_msgAttUrls.length) URL.revokeObjectURL(_msgAt
 // A short caption when the sender attaches media but types no text.
 function msgFilesCaption(files) {
   const a = [...files]; if (!a.length) return '';
-  if (a.length === 1) return /^video\//.test(a[0].type) ? '🎥 Video' : '📷 Photo';
-  const v = a.filter(f => /^video\//.test(f.type)).length, i = a.length - v;
-  return ['📎', i ? `${i} photo${i > 1 ? 's' : ''}` : '', i && v ? '+' : '', v ? `${v} video${v > 1 ? 's' : ''}` : ''].filter(Boolean).join(' ');
+  const isVid = f => /^video\//.test(f.type), isImg = f => /^image\//.test(f.type);
+  if (a.length === 1) return isVid(a[0]) ? '🎥 Video' : isImg(a[0]) ? '📷 Photo' : `📎 ${a[0].name || 'File'}`;
+  const v = a.filter(isVid).length, i = a.filter(isImg).length, d = a.length - v - i;
+  const parts = [];
+  if (i) parts.push(`${i} photo${i > 1 ? 's' : ''}`);
+  if (v) parts.push(`${v} video${v > 1 ? 's' : ''}`);
+  if (d) parts.push(`${d} file${d > 1 ? 's' : ''}`);
+  return '📎 ' + parts.join(' + ');
 }
 // POST each selected file's bytes. `base` is the api path of the message or
 // chat-message (e.g. "/messages/42" or "/chat/groups/3/messages/9"). Returns {ok, err}.
+// A type icon + human size for a file attachment, and an auth'd download.
+function fileIcon(mime, name) {
+  const s = ((mime || '') + ' ' + (name || '')).toLowerCase();
+  if (/pdf/.test(s)) return '📕';
+  if (/(sheet|excel|csv|tsv|\.xls|\.numbers|\.ods)/.test(s)) return '📊';
+  if (/(word|wordprocessing|\.doc|\.pages|\.odt|rtf)/.test(s)) return '📝';
+  if (/(presentation|powerpoint|\.ppt|\.key|\.odp)/.test(s)) return '📈';
+  if (/(zip|rar|7z|gzip|x-tar|\.tar|\.gz)/.test(s)) return '🗜️';
+  if (/(text|\.txt|\.md|\.log|json|xml|calendar|\.ics)/.test(s)) return '📃';
+  return '📎';
+}
+async function downloadAttachment(base, a) {
+  try {
+    const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
+    if (!res.ok) throw new Error('Download failed');
+    const url = URL.createObjectURL(await res.blob());
+    const el = document.createElement('a'); el.href = url; el.download = a.filename || 'file'; document.body.appendChild(el); el.click(); el.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  } catch (e) { toast(e.message, true); }
+}
+// A small fixed progress banner shown while attachments upload, ending in "✓ Attached".
+function attachProgressStart() {
+  let el = $('attProg');
+  if (!el) { el = document.createElement('div'); el.id = 'attProg'; el.className = 'att-prog'; document.body.appendChild(el); }
+  el.style.display = 'block';
+  return {
+    set(total, idx, pct, name) { el.innerHTML = `📎 Uploading ${total > 1 ? `(${idx + 1}/${total}) ` : ''}${esc(name || 'file')} — ${pct}%<div class="att-prog-bar"><i style="width:${pct}%"></i></div>`; },
+    done(okCount, total) {
+      if (okCount) { el.innerHTML = `✓ ${okCount === total ? 'Attached' : okCount + ' of ' + total + ' attached'}`; setTimeout(() => { if ($('attProg')) $('attProg').style.display = 'none'; }, 1800); }
+      else if ($('attProg')) $('attProg').style.display = 'none';
+    },
+  };
+}
+// Upload each file with progress (XHR so we can show % for large files up to the cap).
 async function uploadMsgAttachments(base, files) {
-  const list = [...files].filter(f => /^(image|video)\//.test(f.type));
+  const list = [...files].filter(f => f && f.size > 0);   // images, videos or documents — server validates the type
+  if (!list.length) return { ok: 0, err: '' };
   let ok = 0, err = '';
-  for (const f of list) {
+  const prog = attachProgressStart();
+  for (let idx = 0; idx < list.length; idx++) {
+    const f = list[idx];
     try {
-      const res = await fetch(`/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`, {
-        method: 'POST', headers: { 'Content-Type': f.type || 'application/octet-stream', Authorization: 'Bearer ' + S.token }, body: f,
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `/api${base}/attachment?filename=${encodeURIComponent(f.name || '')}`);
+        xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+        if (S.token) xhr.setRequestHeader('Authorization', 'Bearer ' + S.token);
+        xhr.upload.onprogress = (e) => { if (e.lengthComputable) prog.set(list.length, idx, Math.round(e.loaded / e.total * 100), f.name); };
+        xhr.onload = () => { if (xhr.status >= 200 && xhr.status < 300) { ok++; resolve(); } else { let d = {}; try { d = JSON.parse(xhr.responseText); } catch { /* non-JSON error */ } reject(new Error(d.error || (xhr.status === 413 ? 'File too large.' : `Upload failed (${xhr.status}).`))); } };
+        xhr.onerror = () => reject(new Error('Network error during upload.'));
+        xhr.send(f);
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); err = d.error || 'Upload failed'; break; }
-      ok++;
     } catch (e) { err = e.message; break; }
   }
+  prog.done(err ? null : ok, list.length);
   return { ok, err };
 }
 // Render a message's/chat-message's attachments into a container: images (click to
@@ -5193,6 +6077,13 @@ async function loadMsgAttachments(base, el, opts) {
       const x = document.createElement('button'); x.type = 'button'; x.className = 'msg-att-rm'; x.textContent = '✕'; x.title = 'Remove attachment';
       x.onclick = async () => { if (!confirm('Remove this attachment?')) return; try { await api(`${base}/attachment/${a.id}`, { method: 'DELETE' }); toast('Attachment removed'); (opts.reload || (() => {}))(); } catch (e) { toast(e.message, true); } };
       wrap.appendChild(x);
+    }
+    if (a.kind === 'file') {   // a document — show a download card, don't fetch the bytes to render
+      const card = document.createElement('a'); card.className = 'msg-att-file'; card.href = '#';
+      card.innerHTML = `<span class="af-ic">${fileIcon(a.mime, a.filename)}</span><span class="af-meta"><span class="af-name">${esc(a.filename || 'File')}</span><span class="af-size">${fmtBytes(a.byte_size)}</span></span><span class="af-dl">⬇</span>`;
+      card.onclick = (e) => { e.preventDefault(); downloadAttachment(base, a); };
+      wrap.appendChild(card);
+      continue;
     }
     try {
       const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
@@ -5285,20 +6176,22 @@ async function renderThread() {
           : '<button class="btn sm ghost" id="thUnread">◍ Mark unread</button><button class="btn sm ghost" id="thArch">🗄️ Archive</button>'}
         <button class="btn sm ghost" id="thBack">← Back to inbox</button>
       </div></div>
-    <div class="thread">${t.messages.map(m => `
+    <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
+      <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="thFiles"></label>
+      <button class="btn" id="thSend">Reply</button></div>
+    <div id="thFileNames" class="msg-attach-names"></div>
+    <div class="thread">${t.messages.slice().reverse().map(m => `
       <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
         ${m.sender_id === me && m.recipient_count ? `<div class="msg-receipt${m.read_count >= m.recipient_count ? ' all' : ''}" data-receipts="${m.id}" title="See who's read it">${m.read_count >= m.recipient_count ? '✓✓' : '✓'} Read by ${m.read_count} of ${m.recipient_count}</div>` : ''}
-      </div>`).join('')}</div>
-    <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
-      <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="thFiles"></label>
-      <button class="btn" id="thSend">Reply</button></div>
-    <div id="thFileNames" class="msg-attach-names"></div>`;
+        ${rxnBar('message', m)}
+      </div>`).join('')}</div>`;
   $('view').querySelectorAll('[data-atts]').forEach(el => loadMsgAttachments('/messages/' + el.dataset.atts, el, { canDelete: el.dataset.candel === '1', reload: renderThread }));
   $('view').querySelectorAll('[data-delmsg]').forEach(b => b.onclick = () => deleteMessage(b.dataset.delmsg, t.messages.length));
   $('view').querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
+  wireReactions($('view'), Object.fromEntries(t.messages.map(x => [x.id, x])));
   wireAttachInput('thFiles', 'thFileNames');
   const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
   $('thBack').onclick = backToList;
@@ -5306,6 +6199,7 @@ async function renderThread() {
   if ($('thUnread')) $('thUnread').onclick = () => threadAction('unread', 'Marked unread');
   if ($('thArch')) $('thArch').onclick = () => threadAction('archive', 'Archived');
   if ($('thUnarch')) $('thUnarch').onclick = () => threadAction('unarchive', 'Moved to inbox');
+  mountEmoji('thBody');
   const last = t.messages[t.messages.length - 1];
   $('thSend').onclick = async () => {
     const files = $('thFiles').files;
@@ -5337,6 +6231,22 @@ async function showReceipts(msgId) {
       ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(r => row(r, false)).join('')}</div>` : ''}`;
   } catch (e) { $('rcpBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
+// Who in the group has read a chat message I posted, and who hasn't yet. Uses the
+// members' read cursors (S._chatReads), kept current by the render + the 10s poll.
+function showChatSeen(mid) {
+  const others = S._chatReads || [];
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Read receipts</h3><div id="rcpBody"></div><div class="actions"><button class="btn ghost" id="rcpClose">Close</button></div></div></div>`;
+  const close = () => host.innerHTML = ''; $('rcpClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const readList = others.filter(r => r.last_read_id >= mid), pending = others.filter(r => r.last_read_id < mid);
+  const row = (r) => `<div class="rcp-row"><span>${esc(r.name)} <span class="badge ${ROLE_CHIP[r.role] || 'gray'}">${esc(roleLabel(r.role))}</span></span></div>`;
+  $('rcpBody').innerHTML = `
+    <p class="sub" style="margin:.1rem 0 .6rem;color:var(--muted)">Read by <strong>${readList.length}</strong> of ${others.length}.</p>
+    ${readList.length ? `<div class="rcp-sec"><div class="rcp-h">✓✓ Read</div>${readList.map(row).join('')}</div>` : ''}
+    ${pending.length ? `<div class="rcp-sec"><div class="rcp-h">◍ Not read yet</div>${pending.map(row).join('')}</div>` : ''}
+    ${!others.length ? '<div class="empty">No other members.</div>' : ''}`;
+}
 // Update a "Read by / Seen by" chip in place (no full re-render, so drafts/scroll stay).
 function setMsgReceipt(el, read, total) {
   if (!el) return;
@@ -5347,8 +6257,8 @@ function setChatSeen(el, seen, others) {
   if (!el) return;
   const all = seen.length >= others.length;
   el.classList.toggle('all', all);
-  el.title = seen.length ? 'Seen by ' + seen.map(r => r.name).join(', ') : 'Not seen yet';
-  el.textContent = all ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
+  el.title = "See who's read it";
+  el.textContent = all ? '✓✓ Read by everyone' : (seen.length ? `✓ Read by ${seen.length} of ${others.length}` : '◍ Delivered · not read yet');
 }
 // While the sender stays on a thread / Sent / chat view, poll every ~10s and refresh
 // the read/seen chips in place — so status flips from unread→read without re-entering.
@@ -5364,6 +6274,7 @@ function pollReceipts() {
       } else if (S.msgTab === 'chat' && S.chatGroup) {
         const d = await api('/chat/groups/' + S.chatGroup + '/messages');
         const others = (d.reads || []).filter(r => String(r.user_id) !== String(d.me));
+        S._chatReads = others;                    // keep the click-through popup current
         $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => { const mid = +el.dataset.cmid; setChatSeen(el, others.filter(r => r.last_read_id >= mid), others); });
       } else if (S.msgTab === 'sent' && !S.msgThread) {
         const msgs = await api('/messages/sent');
@@ -5386,6 +6297,7 @@ const audBadge = (a) => a === 'all' ? '<span class="badge gray">broadcast</span>
 async function renderInbox() {
   const arch = S.msgArchived;
   const msgs = await api('/messages/inbox' + (arch ? '?archived=1' : ''));
+  if (S.section !== 'messages' || S.msgThread) return;   // a deep-link opened a thread meanwhile — don't clobber
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">${arch ? 'Archived' : 'Inbox'} ${!arch ? `<span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${msgs.reduce((s, m) => s + (m.unread || 0), 0)} unread</span>` : ''}</h2>
       <button class="btn sm ghost" id="inbToggle">${arch ? '← Back to inbox' : '🗄️ Archived'}</button></div>
@@ -5463,7 +6375,7 @@ async function renderCompose() {
       <label class="fld-label">Subject</label><input id="cSubj" class="fld" placeholder="Subject (optional)" />
       <label class="fld-label">Message</label><textarea id="cBody" class="fld" rows="5" placeholder="Write your message…"></textarea>
       <div class="msg-compose-attach">
-        <label class="msg-attach-btn" title="Attach photos or a video">📎 Add photos / video<input type="file" accept="image/*,video/*" multiple hidden id="cFiles"></label>
+        <label class="msg-attach-btn" title="Attach photos, videos or files">📎 Add photos / video / file<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="cFiles"></label>
         <span id="cFileNames" class="msg-attach-names"></span>
       </div>
       <button class="btn" id="cSend">Send message</button>
@@ -5489,6 +6401,7 @@ async function renderCompose() {
   $('cRecipSearch').oninput = () => drawList($('cRecipSearch').value.trim().toLowerCase());
   drawChips();
   wireAttachInput('cFiles', 'cFileNames');
+  mountEmoji('cBody');
   $('cSend').onclick = async () => {
     $('cErr').textContent = '';
     const val = aud.value;
@@ -5517,8 +6430,8 @@ async function renderChatList() {
   let groups;
   try { groups = await api('/chat/groups' + (scopeAll ? '?scope=all' : '')); }
   catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (S.section !== 'messages' || S.chatGroup) return;   // a deep-link opened a group meanwhile — don't clobber
   $('view').innerHTML = `
-    <div class="row-between"><h2 class="page">Chat groups ${scopeAll ? '<span class="badge gray">all · audit</span>' : ''}</h2>
       <div style="display:flex;gap:.4rem">
         ${isLead ? `<button class="btn sm ghost" id="chatScopeToggle">${scopeAll ? '← My groups' : 'All groups (audit)'}</button>` : ''}
         <button class="btn" id="chatNew">＋ New group</button>
@@ -5546,19 +6459,20 @@ async function renderChatGroup(silent) {
   const me = d.me;
   // "Seen by" receipts: other members whose read cursor has reached a given message.
   const others = (d.reads || []).filter(r => String(r.user_id) !== String(me));
+  S._chatReads = others;                        // for the "Read by" click-through popup
   const seenReceipt = (mid) => {
     if (!others.length) return '';
     const seen = others.filter(r => r.last_read_id >= mid);
-    const names = seen.map(r => r.name).join(', ');
-    const label = seen.length >= others.length ? '✓✓ Seen by everyone' : (seen.length ? `✓ Seen by ${seen.length} of ${others.length}` : '◍ Delivered');
-    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="${seen.length ? 'Seen by ' + esc(names) : 'Not seen yet'}">${label}</div>`;
+    const label = seen.length >= others.length ? '✓✓ Read by everyone' : (seen.length ? `✓ Read by ${seen.length} of ${others.length}` : '◍ Delivered · not read yet');
+    return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="See who's read it">${label}</div>`;
   };
-  const stream = d.messages.map(m => `
+  const stream = d.messages.slice().reverse().map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
       ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
       ${m.sender_id === me ? seenReceipt(m.id) : ''}
+      ${rxnBar('chat', m)}
     </div>`).join('') || '<div class="empty">No messages yet — say hello.</div>';
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">💬 ${esc(d.name)}${d.is_audit ? ' <span class="badge gray">audit view</span>' : ''}${!d.is_active ? ' <span class="badge out">deleted</span>' : ''}</h2>
@@ -5568,15 +6482,17 @@ async function renderChatGroup(silent) {
         <button class="btn sm ghost" id="chatBack">← Back to chats</button>
       </div></div>
     <div id="chatMemberList" class="hidden"></div>
-    <div class="thread" id="chatStream">${stream}</div>
     ${d.member && d.is_active
       ? `<div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea>
-          <label class="msg-attach-btn" title="Attach photos or a video">📎<input type="file" accept="image/*,video/*" multiple hidden id="chatFiles"></label>
+          <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="chatFiles"></label>
           <button class="btn" id="chatSend">Send</button></div>
          <div id="chatFileNames" class="msg-attach-names"></div>`
-      : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member of this group.' : 'This group is no longer active.'}</div>`}`;
+      : `<div class="empty">${d.is_audit ? 'Read-only audit view — you are not a member of this group.' : 'This group is no longer active.'}</div>`}
+    <div class="thread" id="chatStream">${stream}</div>`;
   $('view').querySelectorAll('[data-catts]').forEach(el => loadMsgAttachments(`/chat/groups/${gid}/messages/${el.dataset.catts}`, el, { canDelete: false }));
-  const stEl = $('chatStream'); if (stEl) stEl.scrollTop = stEl.scrollHeight;
+  $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => el.onclick = () => showChatSeen(+el.dataset.cmid));
+  wireReactions($('view'), Object.fromEntries(d.messages.map(x => [x.id, x])));
+  const stEl = $('chatStream'); if (stEl) stEl.scrollTop = 0;   // newest is at the top
   $('chatBack').onclick = () => { S.chatGroup = null; renderMessages(); };
   $('chatMembers').onclick = async () => {
     const el = $('chatMemberList');
@@ -5615,6 +6531,7 @@ async function renderChatGroup(silent) {
     };
     $('chatSend').onclick = send;
     $('chatBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+    mountEmoji('chatBody');
   }
   pollReceipts();
 }
@@ -5751,15 +6668,26 @@ async function openAddChatMembers(gid, existingIds) {
   };
 }
 
-// ── Central Kitchen module (production & supply hub) ────────────────────────
-const CK_TABS = [['overview', 'Overview'], ['demand', 'Demand'], ['production', 'Production'], ['distribution', 'Distribution'], ['recipes', 'Recipes'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+// ── Central Kitchen module (inventory + distribution hub) ───────────────────
+// The CK reuses the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
+// scoped to the Central Kitchen location via invLoc(). Items & vendors added on the
+// CK's Glossary/Vendors tabs fan out one-way to every restaurant (handled server-side).
+const CK_TABS = [['overview', 'Overview'], ['glossary', 'Items'], ['catalog', 'Glossary'], ['stock', 'Stock'], ['orders', 'Orders & Reorder'],
+  ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'], ['reports', 'Reports'], ['distribution', 'Distribution'],
+  ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+const CK_RENDER = { overview: renderDashboard, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock, orders: renderOrders,
+  lots: renderLots, vendors: renderVendors, reports: renderReports, distribution: renderCkDistribution,
+  fulfillment: renderCkFulfillment, staff: renderCkStaff };
 function renderCkTabs() {
   $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
 }
-function renderCentral() {
+async function renderCentral() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ overview: renderCkOverview, demand: renderCkDemand, production: renderCkProduction, distribution: renderCkDistribution, recipes: renderCkRecipes, fulfillment: renderCkFulfillment, staff: renderCkStaff }[S.ckTab])();
+  // The inventory views need the CK location id (invLoc() falls back to a store without it).
+  if (!S.ckLocId) { try { const s = await api('/central/summary'); S.ckLocId = s.location && s.location.id; } catch { /* keep trying */ } }
+  if (!CK_TABS.some(t => t[0] === S.ckTab)) { S.ckTab = 'overview'; renderCkTabs(); }   // stale/removed tab → reset
+  (CK_RENDER[S.ckTab] || renderDashboard)();
 }
 
 async function renderCkOverview() {

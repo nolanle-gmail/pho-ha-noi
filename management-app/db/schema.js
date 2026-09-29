@@ -381,7 +381,7 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS message_attachments (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-      kind       TEXT NOT NULL CHECK(kind IN ('image','video')),
+      kind       TEXT NOT NULL CHECK(kind IN ('image','video','file')),
       mime       TEXT NOT NULL,
       bytes      BLOB NOT NULL,
       byte_size  INTEGER NOT NULL DEFAULT 0,
@@ -421,7 +421,7 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS chat_message_attachments (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
-      kind            TEXT NOT NULL CHECK(kind IN ('image','video')),
+      kind            TEXT NOT NULL CHECK(kind IN ('image','video','file')),
       mime            TEXT NOT NULL,
       bytes           BLOB NOT NULL,
       byte_size       INTEGER NOT NULL DEFAULT 0,
@@ -1105,6 +1105,40 @@ function migrate() {
       created_at   TEXT DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_toast_svc_alerts ON toast_service_alerts(location_id, id);
+
+    -- Service Flow live board: manual "Served" / "Bussed (Done)" state per Toast order
+    -- (Toast has no served/bussed signal, so staff mark these on the board).
+    CREATE TABLE IF NOT EXISTS toast_flow_state (
+      order_guid  TEXT PRIMARY KEY,
+      location_id INTEGER,
+      served_at   TEXT,
+      served_by   INTEGER,
+      bussed_at   TEXT,
+      bussed_by   INTEGER,
+      updated_at  TEXT
+    );
+    -- One row per (order, alert type) actually fired, so each escalation pings once.
+    CREATE TABLE IF NOT EXISTS toast_flow_alerts (
+      order_guid  TEXT,
+      alert_type  TEXT,           -- 'food_late' | 'lingering' | 'ready_to_bus'
+      location_id INTEGER,
+      sent_at     TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (order_guid, alert_type)
+    );
+    -- Audit trail of every staff action on a Service Flow alert — who, when, what — so
+    -- managers can review how tables were handled and coach for better service.
+    CREATE TABLE IF NOT EXISTS toast_flow_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER,
+      order_guid  TEXT,
+      alert_id    INTEGER,
+      flow_kind   TEXT,           -- food_late | lingering | ready_to_bus
+      action      TEXT,           -- on_it | served | paid | notyet | waiting | bussed | done
+      user_id     INTEGER,
+      user_name   TEXT,
+      created_at  TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_toast_flow_events ON toast_flow_events(location_id, id);
   `);
 
   // Migrations for databases created before these columns existed.
@@ -1207,7 +1241,212 @@ function migrate() {
     `ALTER TABLE toast_locations ADD COLUMN service_alert_min INTEGER NOT NULL DEFAULT 40`,
     `ALTER TABLE toast_locations ADD COLUMN service_flow_on INTEGER NOT NULL DEFAULT 1`,
     `ALTER TABLE toast_locations ADD COLUMN service_alerts_live INTEGER NOT NULL DEFAULT 0`,
+    // Service Flow escalation thresholds (minutes) + the trial alert recipient. While
+    // flow_alert_user_id is set, all of this location's Service Flow alerts go to that
+    // one person (a safe single-recipient trial) instead of the role-based targeting.
+    `ALTER TABLE toast_locations ADD COLUMN flow_served_min INTEGER NOT NULL DEFAULT 10`,
+    `ALTER TABLE toast_locations ADD COLUMN flow_pay_min INTEGER NOT NULL DEFAULT 25`,
+    `ALTER TABLE toast_locations ADD COLUMN flow_alert_user_id INTEGER`,
+    // Precomputed open→paid duration in minutes (opened_at → paid_at), stored at sync
+    // time so analytics can AVG it cheaply instead of parsing dates on every read.
+    `ALTER TABLE toast_orders ADD COLUMN pay_minutes REAL`,
+    // Covering index for avg time-to-pay: scans (loc,date,pay_minutes) without touching rows.
+    `CREATE INDEX IF NOT EXISTS idx_toast_orders_pay ON toast_orders(location_id, business_date, pay_minutes)`,
+    // Date-leading covering indexes for all-location analytics (no location filter).
+    // Without these, SUM(quantity)/AVG(pay_minutes) over a date range full-scan the
+    // whole table because the (location_id,business_date) indexes lead with location.
+    `CREATE INDEX IF NOT EXISTS idx_toast_sel_date_cover ON toast_selections(business_date, voided, quantity)`,
+    `CREATE INDEX IF NOT EXISTS idx_toast_orders_date_pay ON toast_orders(business_date, voided, pay_minutes)`,
+    `CREATE INDEX IF NOT EXISTS idx_toast_checks_date_cover ON toast_checks(business_date, voided, amount)`,
+    // Covering index for the Top-items report (all-location GROUP BY item_name).
+    `CREATE INDEX IF NOT EXISTS idx_toast_sel_items ON toast_selections(business_date, voided, item_name, price, quantity, check_guid)`,
+    // Menu categories can be archived (hidden) like menu items — 0 = archived.
+    `ALTER TABLE menu_categories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
+    // Service Flow alerts became claimable tasks with a status lifecycle. A flow
+    // alert is tied to a dine-in order (flow_guid) + escalation (flow_kind); the
+    // first staffer to tap "On It" claims it (claimed_by), which removes it from
+    // everyone else. status walks open → claimed → waiting → resolved. next_alert_at
+    // parks a "waiting" food alert for a 5-min re-nudge (managed by the sweep).
+    `ALTER TABLE floor_alerts ADD COLUMN flow_guid TEXT`,
+    `ALTER TABLE floor_alerts ADD COLUMN flow_kind TEXT`,
+    `ALTER TABLE floor_alerts ADD COLUMN claimed_by INTEGER`,
+    `ALTER TABLE floor_alerts ADD COLUMN claimed_at TEXT`,
+    `ALTER TABLE floor_alerts ADD COLUMN status TEXT`,
+    // When a claimed food alert is set to "Waiting", the sweep re-fires a fresh alert
+    // once now >= next_at, then reschedules — recurring every ~5 min until the table is
+    // served (drops off the board) or goes stale. NULL = no re-nudge pending.
+    `ALTER TABLE toast_flow_alerts ADD COLUMN next_at TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_floor_alerts_flow ON floor_alerts(flow_guid, flow_kind, active)`,
+    // A table can be marked Paid by staff (from the "Ready to Pay" alert) as well as by
+    // Toast — this is the manual paid mark, mirroring served_at/bussed_at.
+    `ALTER TABLE toast_flow_state ADD COLUMN paid_at TEXT`,
+    `ALTER TABLE toast_flow_state ADD COLUMN paid_by INTEGER`,
+    // Per-location re-alert cadence for the food / pay escalations (minutes between
+    // repeat pings after a "Waiting"/"Not yet"), so a manager can tune them per store.
+    `ALTER TABLE toast_locations ADD COLUMN flow_food_renudge_min INTEGER NOT NULL DEFAULT 5`,
+    `ALTER TABLE toast_locations ADD COLUMN flow_pay_renudge_min INTEGER NOT NULL DEFAULT 7`,
+    // Re-fire mode for a marker: 'unclaimed' (re-pop every ~3 min until claimed) vs
+    // 'waiting' (a staffer said Not yet/Waiting → re-alert on the kind's ~5/7-min cadence).
+    `ALTER TABLE toast_flow_alerts ADD COLUMN mode TEXT`,
+    // Reusable retail barcode (UPC/EAN GTIN) on an inventory item, so a phone scan of
+    // a manufacturer barcode resolves straight to the item. Per (location, item).
+    `ALTER TABLE inventory ADD COLUMN barcode TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_inventory_barcode ON inventory(location_id, barcode)`,
+    // Group-wide "known products" dictionary keyed by barcode (GTIN). Shared across every
+    // location: the first time anyone names a barcode (or an external lookup resolves one),
+    // it's cached here so future scans anywhere pre-fill the name/brand/size instantly.
+    // `source` = 'staff' (someone named it — authoritative) or 'external' (an API filled it).
+    `CREATE TABLE IF NOT EXISTS product_catalog (
+      barcode    TEXT PRIMARY KEY,
+      name       TEXT,
+      brand      TEXT,
+      size       TEXT,
+      source     TEXT DEFAULT 'external',   -- 'staff' | 'external'
+      updated_by INTEGER,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`,
+    // Punch photos — a still captured on the clock kiosk when a staffer clocks in / out,
+    // to deter buddy-punching. One row per (time entry, kind); best-effort (a shift is
+    // never blocked if the camera is unavailable). Image bytes live in the DB like task_photos.
+    `CREATE TABLE IF NOT EXISTS time_entry_photos (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id   INTEGER NOT NULL,
+      kind       TEXT NOT NULL,             -- 'in' | 'out'
+      mime       TEXT,
+      bytes      BLOB,
+      byte_size  INTEGER,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_te_photos ON time_entry_photos(entry_id, kind)`,
+    // Preferred supplier for an inventory item + that supplier's own product/ordering code,
+    // so a scanned item records who sells it and how they list it (captured on the scan form).
+    `ALTER TABLE inventory ADD COLUMN vendor_id INTEGER`,
+    `ALTER TABLE inventory ADD COLUMN vendor_code TEXT`,
+    // Durable per-scan record of everything a barcode carried — GTIN, net weight, pack /
+    // production / expiry dates, lot & serial, plus a JSON of every GS1 Application Identifier
+    // found (so no printed data is lost). One row per meaningful scan (receive/ship/create/link).
+    `CREATE TABLE IF NOT EXISTS scan_events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_id     INTEGER,
+      location_id INTEGER,
+      action      TEXT,               -- receive | count | ship | create | link
+      gtin        TEXT,
+      quantity    REAL,
+      weight_lb   REAL,
+      weight_kg   REAL,
+      prod_date   TEXT,
+      pack_date   TEXT,
+      expiry      TEXT,
+      lot         TEXT,
+      serial      TEXT,
+      ais         TEXT,               -- JSON: every AI found, verbatim
+      raw         TEXT,               -- the raw scanned string
+      user_id     INTEGER,
+      created_at  TEXT DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_scan_events_item ON scan_events(item_id, created_at)`,
+    // Central Kitchen is the master catalog. Items/vendors added at the CK fan out
+    // (one-way) to every restaurant; `source_id` links each replicated copy back to the
+    // CK original so CK edits propagate to the copies. Vendors gain a `location_id` so
+    // each location keeps its own vendor list (store-level adds stay local).
+    `ALTER TABLE inventory ADD COLUMN source_id INTEGER`,
+    `ALTER TABLE vendors ADD COLUMN location_id INTEGER`,
+    `ALTER TABLE vendors ADD COLUMN source_id INTEGER`,
+    `CREATE INDEX IF NOT EXISTS idx_inventory_source ON inventory(source_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_vendors_loc ON vendors(location_id, is_active)`,
+    // Emoji reactions (iMessage-style tapbacks) on a direct message OR a chat message.
+    // One row per person-per-emoji on a target; tapping the same emoji again removes it.
+    `CREATE TABLE IF NOT EXISTS msg_reactions (
+      kind TEXT NOT NULL,            -- 'message' | 'chat'
+      target_id INTEGER NOT NULL,    -- messages.id or chat_messages.id
+      user_id INTEGER NOT NULL,
+      emoji TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (kind, target_id, user_id, emoji)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_msg_reactions ON msg_reactions(kind, target_id)`,
+    // Unseen reactions per person per conversation — so a reaction bumps that person's
+    // Messages/Chat unread badge like a new message, cleared when they open the
+    // conversation (thread_id for a message, group_id for a chat).
+    `CREATE TABLE IF NOT EXISTS reaction_unseen (
+      user_id INTEGER NOT NULL,
+      kind    TEXT NOT NULL,      -- 'message' | 'chat'
+      conv_id INTEGER NOT NULL,   -- thread_id | group_id
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, kind, conv_id)
+    )`,
+    // ── Glossary enrichment ────────────────────────────────────────────────
+    // The group-wide product dictionary (product_catalog) becomes the full "Glossary":
+    // shared across the Central Kitchen and every location, hand-manageable (add/edit/
+    // delete), and the source the smart receive flow pre-fills from. `barcode` is the GTIN
+    // key. (No non-constant DEFAULTs here — SQLite rejects datetime('now') on ADD COLUMN.)
+    `ALTER TABLE product_catalog ADD COLUMN description TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN unit TEXT`,                                  // unit of measure
+    `ALTER TABLE product_catalog ADD COLUMN category TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN notes TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN default_unit_cost REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE product_catalog ADD COLUMN stackable INTEGER NOT NULL DEFAULT 1`,       // repeat barcode just adds count (soy sauce)
+    `ALTER TABLE product_catalog ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`, // variable weight per unit (meat/produce)
+    `ALTER TABLE product_catalog ADD COLUMN default_vendor_id INTEGER`,
+    `ALTER TABLE product_catalog ADD COLUMN default_vendor_code TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN barcode_type TEXT`,                          // UPC | EAN | GS1 | PLU
+    `ALTER TABLE product_catalog ADD COLUMN image_url TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN active INTEGER NOT NULL DEFAULT 1`,
+    `ALTER TABLE product_catalog ADD COLUMN created_by INTEGER`,
+    `ALTER TABLE product_catalog ADD COLUMN created_at TEXT`,
+    // Deli price-computing scale item number (AvaWeigh "LF Code" / PLU) — the digits printed
+    // inside the scale's price/weight-embedded EAN-13, used to resolve the item name on scan.
+    `ALTER TABLE product_catalog ADD COLUMN scale_code TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_product_catalog_name ON product_catalog(name)`,
+    `CREATE INDEX IF NOT EXISTS idx_product_catalog_cat ON product_catalog(category)`,
+    `CREATE INDEX IF NOT EXISTS idx_product_catalog_scale ON product_catalog(scale_code)`,
+    // Per-received-box detail on the lot ledger: the GS1 serial (a unique physical unit)
+    // and net weight — so catch-weight stock and serial de-duplication work off the lots.
+    `ALTER TABLE inventory_lots ADD COLUMN serial TEXT`,
+    `ALTER TABLE inventory_lots ADD COLUMN net_weight_lb REAL`,
+    `ALTER TABLE inventory_lots ADD COLUMN net_weight_kg REAL`,
+    `CREATE INDEX IF NOT EXISTS idx_inventory_lots_serial ON inventory_lots(item_id, serial)`,
+    // Catch-weight + stackable flags copied onto a stock item from its glossary entry at
+    // create time, so receive/ship math knows whether `quantity` is a weight or a count.
+    `ALTER TABLE inventory ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE inventory ADD COLUMN stackable INTEGER NOT NULL DEFAULT 1`,
+    // Busser "On It" claim on a ready-to-bus table (set from the no-login Cleanup board), so
+    // other bussers see a table is being handled before it's marked Bussed (Done).
+    `ALTER TABLE toast_flow_state ADD COLUMN bus_claimed_at TEXT`,
+    `ALTER TABLE toast_flow_state ADD COLUMN bus_claimed_by INTEGER`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+
+  // Attachments used to be restricted to CHECK(kind IN ('image','video')); relax that so
+  // documents/files can be attached. SQLite can't ALTER a CHECK, so rebuild the table when
+  // it still has the old constraint (data, FK cascade and index are preserved).
+  for (const t of [
+    { name: 'message_attachments', fk: 'message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE', idx: `CREATE INDEX IF NOT EXISTS idx_msg_attach ON message_attachments(message_id)`, cols: 'id, message_id, kind, mime, bytes, byte_size, filename, created_at' },
+    { name: 'chat_message_attachments', fk: 'chat_message_id INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE', idx: `CREATE INDEX IF NOT EXISTS idx_chat_attach ON chat_message_attachments(chat_message_id)`, cols: 'id, chat_message_id, kind, mime, bytes, byte_size, filename, created_at' },
+  ]) {
+    try {
+      const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`).get(t.name);
+      if (row && row.sql && /IN\s*\(\s*'image'\s*,\s*'video'\s*\)/.test(row.sql)) {
+        db.exec(`CREATE TABLE ${t.name}__new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ${t.fk},
+          kind TEXT NOT NULL,
+          mime TEXT NOT NULL,
+          bytes BLOB NOT NULL,
+          byte_size INTEGER NOT NULL DEFAULT 0,
+          filename TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT INTO ${t.name}__new (${t.cols}) SELECT ${t.cols} FROM ${t.name};
+        DROP TABLE ${t.name};
+        ALTER TABLE ${t.name}__new RENAME TO ${t.name};
+        ${t.idx};`);
+      }
+    } catch (e) { console.error(`attachment kind migration (${t.name}) failed:`, e.message); }
+  }
+
+  // Note: existing rows get pay_minutes filled by a background chunked backfill
+  // (startPayMinutesBackfill in lib/toastSync), not here — a 247k-row UPDATE would
+  // block boot and risk the deploy health check.
 
   // Backfill a URL slug for every location that doesn't have one (used by the
   // per-location clock kiosk). Slugs are derived from the name and kept unique.

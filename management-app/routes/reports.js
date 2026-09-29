@@ -73,18 +73,73 @@ router.get('/payments', requireRole(ROLES.REPORTS), (req, res) => {
   res.json({ start, end, totals, by_location: byLocation });
 });
 
-// ── Timesheets report (hours + labor cost) ──────────────────────────────────
+// ── Timesheets report (hours, overtime & labor cost, for payroll) ───────────
+// Reads clocked time from `time_entries` (the live time-clock ledger). Only
+// completed shifts (clocked out → worked_minutes set) count toward pay. Overtime
+// follows the platform's California daily rule (same as the Time Clock payroll
+// export): regular ≤ 8h/day, OT 1.5× for 8–12h, double-time 2× beyond 12h — so
+// it must split per day, then roll up per staff member and per location.
+const TS_OT_AFTER = 8 * 60, TS_DT_AFTER = 12 * 60, TS_OT_MULT = 1.5, TS_DT_MULT = 2;
+const tsDaySplit = (m) => ({
+  reg: Math.min(m, TS_OT_AFTER),
+  ot: Math.min(Math.max(m - TS_OT_AFTER, 0), TS_DT_AFTER - TS_OT_AFTER),
+  dt: Math.max(m - TS_DT_AFTER, 0),
+});
+const tsHrs = (m) => Math.round(m / 60 * 100) / 100;
+
 router.get('/timesheets', requireRole(ROLES.REPORTS), (req, res) => {
   const { locId } = scope(req); const { start, end } = dateRange(req);
-  const conds = ['date(t.clock_in)>=?', 'date(t.clock_in)<=?'], args = [start, end];
+  const conds = ['t.work_date>=?', 't.work_date<=?', 't.worked_minutes IS NOT NULL'], args = [start, end];
   if (locId) { conds.push('t.location_id=?'); args.push(locId); }
-  const byStaff = db.prepare(`SELECT u.name, u.role, l.name location, COUNT(*) shifts, ROUND(SUM(t.hours),1) hours,
-    u.hourly_rate, ROUND(SUM(t.hours)*u.hourly_rate,2) labor_cost
-    FROM timesheets t JOIN users u ON t.user_id=u.id LEFT JOIN locations l ON t.location_id=l.id
-    WHERE ${conds.join(' AND ')} GROUP BY t.user_id ORDER BY hours DESC`).all(...args);
-  const tot = byStaff.reduce((a, r) => ({ hours: a.hours + r.hours, labor: a.labor + r.labor_cost }), { hours: 0, labor: 0 });
-  res.json({ start, end, total_hours: Math.round(tot.hours * 10) / 10, total_labor_cost: Math.round(tot.labor * 100) / 100,
-    headcount: byStaff.length, by_staff: byStaff });
+  const rows = db.prepare(`SELECT t.user_id, t.work_date, t.worked_minutes, t.location_id,
+      u.name, u.role, u.employee_code, u.hourly_rate, l.name location
+    FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN locations l ON l.id=t.location_id
+    WHERE ${conds.join(' AND ')}`).all(...args);
+
+  const byUser = new Map(), byLoc = new Map();
+  const locName = {};
+  for (const r of rows) {
+    if (r.location_id != null) locName[r.location_id] = r.location;
+    const sp = tsDaySplit(r.worked_minutes || 0);
+    const rate = r.hourly_rate || 0;
+    const dayGross = tsHrs(sp.reg) * rate + tsHrs(sp.ot) * rate * TS_OT_MULT + tsHrs(sp.dt) * rate * TS_DT_MULT;
+    let u = byUser.get(r.user_id);
+    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, locMin: {} }; byUser.set(r.user_id, u); }
+    u.shifts++; u.min += r.worked_minutes; u.reg += sp.reg; u.ot += sp.ot; u.dt += sp.dt; u.gross += dayGross;
+    u.locMin[r.location_id] = (u.locMin[r.location_id] || 0) + r.worked_minutes;
+    // Per-location roll-up: each day's pay is attributed to the location it was worked at.
+    let L = byLoc.get(r.location_id);
+    if (!L) { L = { location_id: r.location_id, staff: new Set(), min: 0, ot: 0, dt: 0, gross: 0 }; byLoc.set(r.location_id, L); }
+    L.staff.add(r.user_id); L.min += r.worked_minutes; L.ot += sp.ot; L.dt += sp.dt; L.gross += dayGross;
+  }
+
+  const by_staff = [...byUser.values()].map(u => {
+    // Show the location where this person worked the most hours in range.
+    let plId = null, mx = -1;
+    for (const [lid, m] of Object.entries(u.locMin)) if (m > mx) { mx = m; plId = lid; }
+    return {
+      user_id: u.user_id, name: u.name, role: u.role, employee_code: u.employee_code,
+      location: locName[plId] || null, location_id: plId != null ? Number(plId) : null,
+      shifts: u.shifts, hours: tsHrs(u.min), reg_hours: tsHrs(u.reg),
+      ot_hours: tsHrs(u.ot + u.dt), dt_hours: tsHrs(u.dt),
+      hourly_rate: u.hourly_rate, labor_cost: Math.round(u.gross * 100) / 100,
+    };
+  }).sort((a, b) => b.hours - a.hours);
+
+  const by_location = [...byLoc.values()].map(L => ({
+    location: locName[L.location_id] || '—', location_id: L.location_id != null ? Number(L.location_id) : null,
+    headcount: L.staff.size, hours: tsHrs(L.min), ot_hours: tsHrs(L.ot + L.dt),
+    labor_cost: Math.round(L.gross * 100) / 100,
+  })).sort((a, b) => b.labor_cost - a.labor_cost);
+
+  const tot = by_staff.reduce((a, r) => ({ hours: a.hours + r.hours, ot: a.ot + r.ot_hours, labor: a.labor + r.labor_cost }), { hours: 0, ot: 0, labor: 0 });
+  res.json({
+    start, end, location_id: locId ? Number(locId) : null,
+    ot_rule: { ot_after_h: 8, dt_after_h: 12, ot_mult: TS_OT_MULT, dt_mult: TS_DT_MULT },
+    total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100,
+    total_labor_cost: Math.round(tot.labor * 100) / 100, headcount: by_staff.length,
+    by_staff, by_location,
+  });
 });
 
 // ── Analytics report (executive summary) ────────────────────────────────────
@@ -99,9 +154,9 @@ router.get('/analytics', requireRole(ROLES.REPORTS), (req, res) => {
   if (locId) { lconds.push('d.location_id=?'); largs.push(locId); }
   const byLocation = db.prepare(`SELECT l.name location, ROUND(SUM(d.total_revenue),2) revenue FROM daily_sales d
     JOIN locations l ON d.location_id=l.id WHERE ${lconds.join(' AND ')} GROUP BY l.id ORDER BY revenue DESC`).all(...largs);
-  const tconds = ['date(t.clock_in)>=?', 'date(t.clock_in)<=?'], targs = [start, end];
+  const tconds = ['t.work_date>=?', 't.work_date<=?', 't.worked_minutes IS NOT NULL'], targs = [start, end];
   if (locId) { tconds.push('t.location_id=?'); targs.push(locId); }
-  const labor = db.prepare(`SELECT ROUND(COALESCE(SUM(t.hours*u.hourly_rate),0),2) cost FROM timesheets t
+  const labor = db.prepare(`SELECT ROUND(COALESCE(SUM(t.worked_minutes / 60.0 * u.hourly_rate),0),2) cost FROM time_entries t
     JOIN users u ON t.user_id=u.id WHERE ${tconds.join(' AND ')}`).get(...targs).cost;
   // Menu food-cost % (average across priced items; menu is global)
   const costs = {}; db.prepare(`SELECT item_name, AVG(unit_cost) c FROM inventory WHERE is_active=1 GROUP BY item_name`).all().forEach(r => costs[r.item_name] = r.c || 0);

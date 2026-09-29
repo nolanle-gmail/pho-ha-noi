@@ -7,18 +7,15 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db/database');
 const { verifyToken, SECRET } = require('../lib/auth');
-const { emitChat } = require('../lib/events');
+const { emitChat, emitReaction } = require('../lib/events');
 const { pushToUsers } = require('../lib/push');
+const { attachReactions, toggleReaction, markReactionUnseen, clearReactionUnseen, unseenReactionCount } = require('../lib/reactions');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const MAX_BODY = 4000;
-// Attachments (pictures & videos) — same caps as message attachments.
-const MAX_IMG = parseInt(process.env.MESSAGE_IMG_MAX || '', 10) || 10 * 1024 * 1024;
-const MAX_VID = parseInt(process.env.MESSAGE_VID_MAX || '', 10) || 25 * 1024 * 1024;
-const MAX_ATTACH = parseInt(process.env.MESSAGE_ATTACH_MAX || '', 10) || 10;
-const OK_IMG = /^image\/(jpeg|png|webp|heic|heif|gif)$/i;
-const OK_VID = /^video\/(mp4|quicktime|webm|ogg|3gpp|x-m4v|x-matroska)$/i;
+// Attachments — images, videos and files (docs/PDF/etc.) — same rules as message attachments.
+const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG } = require('../lib/attachments');
 const AUDIT = ['owner', 'admin', 'hr', 'general_manager']; // may read/list any group — ORG_ADMIN_ONLY (future: drop 'hr')
 const CAN_DELETE = ['owner', 'admin', 'hr'];              // may deactivate a group — ORG_ADMIN_ONLY (future: drop 'hr')
 
@@ -76,7 +73,7 @@ router.get('/unread-count', (req, res) => {
       FROM chat_groups g
       WHERE g.is_active=1 AND g.id IN (SELECT group_id FROM chat_group_members WHERE user_id=?)
     )`).get(req.user.id, req.user.id).c;
-  res.json({ count: n });
+  res.json({ count: n + unseenReactionCount('chat', req.user.id) });   // + groups with an unseen reaction
 });
 
 // Create a group from a set of staff. The creator is always a member.
@@ -122,6 +119,7 @@ router.get('/groups/:id/messages', (req, res) => {
     FROM chat_messages c JOIN users u ON u.id=c.sender_id
     WHERE c.group_id=? ORDER BY c.id ASC LIMIT 500`).all(g.id);
   if (member && messages.length) markRead(g.id, req.user.id, messages[messages.length - 1].id);
+  if (member) clearReactionUnseen('chat', g.id, req.user.id);   // opening the group clears its reaction badge
   // Per-member read cursor (last_read_id) so the client can show "seen by" on each
   // message the sender posted. Computed BEFORE this open bumps my own cursor above,
   // but that only affects my row, which the client excludes for its own messages.
@@ -129,7 +127,29 @@ router.get('/groups/:id/messages', (req, res) => {
     FROM chat_group_members m JOIN users u ON u.id=m.user_id
     LEFT JOIN chat_reads r ON r.group_id=m.group_id AND r.user_id=m.user_id
     WHERE m.group_id=? ORDER BY u.name`).all(g.id);
+  attachReactions('chat', messages, req.user.id);
   res.json({ id: g.id, name: g.name, is_active: !!g.is_active, me: req.user.id, member, is_audit: !member && isAudit(req.user.role), can_delete: CAN_DELETE.includes(req.user.role), can_manage: canManageGroup(req.user, g), messages, reads });
+});
+
+// Toggle an emoji reaction on a chat message (tapback). Members of the group only.
+router.post('/messages/:id/react', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const emoji = String(req.body.emoji || '');
+  const c = id && db.prepare(`SELECT id, group_id, sender_id FROM chat_messages WHERE id=?`).get(id);
+  if (!c) return res.status(404).json({ error: 'Message not found.' });
+  if (!isMember(c.group_id, req.user.id)) return res.status(403).json({ error: 'Not a member of this group.' });
+  let reacted; try { reacted = toggleReaction('chat', id, req.user.id, emoji); } catch (e) { return res.status(400).json({ error: e.message }); }
+  if (reacted) {   // notify everyone in the group (not the reactor)
+    const members = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(c.group_id).map(r => Number(r.user_id));
+    const audience = members.filter(uid => uid !== Number(req.user.id));
+    const gname = (db.prepare(`SELECT name FROM chat_groups WHERE id=?`).get(c.group_id) || {}).name;
+    markReactionUnseen('chat', c.group_id, audience);   // bump each member's Chat badge
+    try { emitReaction({ user_ids: audience, kind: 'chat', target_id: id, group_id: c.group_id, group_name: gname, emoji, by_name: req.user.name }); } catch { /* best-effort */ }
+    // OS push to EVERYONE in the group, like a message, deep-linking to the chat.
+    try { pushToUsers(audience, { title: `${emoji} ${req.user.name} reacted`, body: `reacted in ${gname || 'chat'} — tap to open`, tag: 'rxn-chat-' + c.group_id, url: '/?n=chat&g=' + c.group_id }); } catch { /* best-effort */ }
+  }
+  const rows = [{ id }]; attachReactions('chat', rows, req.user.id);
+  res.json({ success: true, reacted, reactions: rows[0].reactions });
 });
 
 // Post a message to a group. Members only (leadership audit is read-only).
@@ -169,27 +189,26 @@ function chatMsgAccess(req) {
 }
 
 // Attach an image or video to a chat message you sent (raw bytes; member only).
-router.post('/groups/:id/messages/:mid/attachment', express.raw({ type: () => true, limit: MAX_VID }), (req, res) => {
+router.post('/groups/:id/messages/:mid/attachment', express.raw({ type: () => true, limit: MAX_ANY }), (req, res) => {
   const a = chatMsgAccess(req);
   if (a.err) return res.status(a.err).json({ error: a.msg });
   if (!a.member || String(a.cm.sender_id) !== String(req.user.id)) return res.status(403).json({ error: 'You can only attach to your own message.' });
   if (!a.g.is_active) return res.status(404).json({ error: 'Group not found.' });
   const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-  const kind = OK_IMG.test(mime) ? 'image' : OK_VID.test(mime) ? 'video' : null;
-  if (!kind) return res.status(415).json({ error: 'Attach an image (JPG, PNG, WEBP, HEIC, GIF) or video (MP4, MOV, WEBM).' });
+  const filename = String(req.query.filename || '').slice(0, 200) || null;
+  const cls = classify(mime, filename);
+  if (!cls) return res.status(415).json({ error: REJECT_MSG });
   const bytes = req.body;
   if (!Buffer.isBuffer(bytes) || !bytes.length) return res.status(400).json({ error: 'No file received.' });
-  const cap = kind === 'video' ? MAX_VID : MAX_IMG;
-  if (bytes.length > cap) return res.status(413).json({ error: `${kind === 'video' ? 'Video' : 'Image'} too large (max ${Math.round(cap / 1048576)} MB).` });
+  if (bytes.length > cls.cap) return res.status(413).json({ error: `That ${cls.kind} is too large (max ${Math.round(cls.cap / 1048576)} MB).` });
   const count = db.prepare(`SELECT COUNT(*) n FROM chat_message_attachments WHERE chat_message_id=?`).get(a.cm.id).n;
   if (count >= MAX_ATTACH) return res.status(409).json({ error: `Up to ${MAX_ATTACH} attachments per message.` });
-  const filename = String(req.query.filename || '').slice(0, 200) || null;
   const info = db.prepare(`INSERT INTO chat_message_attachments (chat_message_id, kind, mime, bytes, byte_size, filename) VALUES (?,?,?,?,?,?)`)
-    .run(a.cm.id, kind, mime, bytes, bytes.length, filename);
-  // Nudge members to reload so the new media shows up live.
+    .run(a.cm.id, cls.kind, mime, bytes, bytes.length, filename);
+  // Nudge members to reload so the new attachment shows up live.
   const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(a.g.id).map(r => r.user_id);
   try { emitChat({ group_id: a.g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* best-effort */ }
-  res.json({ success: true, id: Number(info.lastInsertRowid), kind, count: count + 1, byte_size: bytes.length });
+  res.json({ success: true, id: Number(info.lastInsertRowid), kind: cls.kind, count: count + 1, byte_size: bytes.length });
 });
 
 // List a chat message's attachments (metadata only). Member or audit.
@@ -204,12 +223,14 @@ router.get('/groups/:id/messages/:mid/attachments', (req, res) => {
 router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res) => {
   const a = chatMsgAccess(req);
   if (a.err) return res.status(a.err).json({ error: a.msg });
-  const att = db.prepare(`SELECT mime, bytes FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
+  const att = db.prepare(`SELECT kind, mime, bytes, filename FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
   if (!att) return res.status(404).json({ error: 'No such attachment.' });
   const buf = Buffer.from(att.bytes);
   res.setHeader('Content-Type', att.mime);
   res.setHeader('Content-Length', buf.length);
   res.setHeader('Cache-Control', 'private, max-age=300');
+  const dispo = att.kind === 'file' ? 'attachment' : 'inline';
+  res.setHeader('Content-Disposition', `${dispo}${att.filename ? `; filename="${att.filename.replace(/[\r\n"]/g, '')}"` : ''}`);
   res.end(buf);
 });
 

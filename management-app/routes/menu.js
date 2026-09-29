@@ -33,14 +33,30 @@ function withCost(item, costs) {
 }
 
 // ── Categories ──────────────────────────────────────────────────────────────
+// Active categories by default; ?all=1 also returns archived (is_active=0) ones.
 router.get('/categories', requireRole(ROLES.MANAGE), (req, res) => {
-  res.json(db.prepare(`SELECT * FROM menu_categories ORDER BY sort_order, name`).all());
+  const where = req.query.all ? '' : 'WHERE is_active=1';
+  res.json(db.prepare(`SELECT * FROM menu_categories ${where} ORDER BY sort_order, name`).all());
 });
 router.post('/categories', requireRole(ROLES.MANAGE), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Category name required.' });
   const r = db.prepare(`INSERT INTO menu_categories (name, sort_order) VALUES (?,?)`).run(name, parseInt(req.body.sort_order) || 0);
   res.json({ success: true, id: r.lastInsertRowid });
+});
+// Archive / restore (or rename / re-sort) a category.
+router.put('/categories/:id', requireRole(ROLES.MANAGE), (req, res) => {
+  const cat = db.prepare(`SELECT * FROM menu_categories WHERE id=?`).get(req.params.id);
+  if (!cat) return res.status(404).json({ error: 'Category not found' });
+  const fields = [], vals = [];
+  if (req.body.name !== undefined) { fields.push('name=?'); vals.push((req.body.name || '').toString().trim() || cat.name); }
+  if (req.body.sort_order !== undefined) { fields.push('sort_order=?'); vals.push(parseInt(req.body.sort_order) || 0); }
+  if (req.body.is_active !== undefined) { fields.push('is_active=?'); vals.push(req.body.is_active ? 1 : 0); }
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  vals.push(cat.id);
+  db.prepare(`UPDATE menu_categories SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  auditLog(req, 'menu_category_update', 'menu', cat.id, { name: cat.name, is_active: req.body.is_active });
+  res.json({ success: true });
 });
 
 // Ingredient picker — distinct inventory items with average cost + unit.
@@ -52,11 +68,14 @@ router.get('/ingredients', requireRole(ROLES.MANAGE), (req, res) => {
 });
 
 // ── Menu items ──────────────────────────────────────────────────────────────
+// Active items by default; ?all=1 also returns archived (is_active=0) ones.
 router.get('/items', requireRole(ROLES.MANAGE), (req, res) => {
   const costs = ingredientCosts();
+  const where = req.query.all ? '' : 'WHERE m.is_active=1';
   const rows = db.prepare(`
     SELECT m.*, c.name AS category_name, c.sort_order AS cat_sort
     FROM menu_items m LEFT JOIN menu_categories c ON m.category_id=c.id
+    ${where}
     ORDER BY c.sort_order, m.name
   `).all();
   res.json(rows.map(r => withCost(r, costs)));

@@ -7,8 +7,10 @@
 body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); }
 button { font-family: inherit; cursor: pointer; }
 .hidden { display: none !important; }
-input, select { width: 100%; padding: .8rem; border: 1px solid var(--line); border-radius: 12px; font-size: 1rem; margin-bottom: .8rem; }
-input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
+/* Text-style inputs only — must NOT hit checkboxes/radios (their width:100%/padding breaks the
+   consent row on iOS Safari, pushing the label text off-screen). */
+input:not([type="checkbox"]):not([type="radio"]), select { width: 100%; padding: .8rem; border: 1px solid var(--line); border-radius: 12px; font-size: 1rem; margin-bottom: .8rem; }
+input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
 
 .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--red-dark), var(--red)); padding: 1rem; }
 .login-card { background: #fff; border-radius: 18px; padding: 2.25rem; width: 100%; max-width: 360px; box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center; }
@@ -105,12 +107,12 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 /* Read / seen receipts under a sender's own message */
 .msg-receipt { margin-top: .3rem; font-size: .72rem; font-weight: 600; color: var(--muted); }
 .msg-receipt.all { color: #15803d; }
-.msg-receipt[data-receipts] { cursor: pointer; }
-.msg-receipt[data-receipts]:hover { text-decoration: underline; }
+.msg-receipt[data-receipts], .msg-receipt[data-cmid] { cursor: pointer; }
+.msg-receipt[data-receipts]:hover, .msg-receipt[data-cmid]:hover { text-decoration: underline; }
 .rcp-sec { margin: .5rem 0 0; }
 .rcp-h { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 .25rem; }
 .rcp-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .25rem 0; border-top: 1px solid #eadfce; font-size: .86rem; }
-.reply-box { display: flex; gap: .5rem; align-items: flex-end; position: sticky; bottom: 0; background: var(--bg); padding: .5rem 0; }
+.reply-box { display: flex; gap: .5rem; align-items: flex-end; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: .5rem 0; border-bottom: 1px solid var(--line); margin-bottom: .5rem; }
 .reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; background: #fff; }
 /* Message attachments (pictures & videos) */
 .msg-attach-btn { display: inline-flex; align-items: center; gap: .3rem; padding: .55rem .7rem; border: 1px dashed #d8ab5e; border-radius: 10px; background: #fff; color: #8a5a12; cursor: pointer; font-size: .85rem; font-weight: 700; white-space: nowrap; }
@@ -264,6 +266,13 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .k-pos-num { font-size: 3.2rem; font-weight: 900; color: var(--red); line-height: 1; }
 .k-pos-lbl { color: var(--muted); font-weight: 700; }
 .k-note { color: var(--ink); font-size: .95rem; line-height: 1.5; margin: .3rem 0 0; }
+/* Public "current waitlist" list (/checkin/<slug>/current) */
+.k-wl { margin: .7rem 0 .2rem; border: 1px solid var(--line, #e7dccc); border-radius: 12px; overflow: hidden; }
+.k-wl-row { display: flex; align-items: center; gap: .7rem; padding: .6rem .8rem; border-bottom: 1px solid var(--line-soft, #f0e8da); }
+.k-wl-row:last-child { border-bottom: none; }
+.k-wl-pos { flex: 0 0 auto; min-width: 2.2rem; font-weight: 900; color: var(--red); font-size: 1.05rem; }
+.k-wl-name { flex: 1 1 auto; font-weight: 700; color: var(--ink); }
+.k-wl-meta { flex: 0 0 auto; color: var(--muted); font-size: .82rem; white-space: nowrap; }
 .k-big { font-size: 1.5rem; font-weight: 800; margin: .3rem 0; }
 .k-big.ok { color: var(--ok); }
 .k-ref { color: var(--muted); font-size: .8rem; margin-top: 1.1rem; border-top: 1px solid var(--line); padding-top: .7rem; }
@@ -324,6 +333,30 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .sv-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
 .sv-hi { font-size: 1.15rem; font-weight: 800; }
 .muted { color: #8a8172; }
+
+/* Alerts inbox (Staff app) */
+.al-card { background: #fff; border: 1px solid var(--line); border-left: 5px solid #8a8172; border-radius: 14px; padding: .8rem .9rem; margin-bottom: .7rem; }
+.al-card.al-urgent { border-left-color: #b91c1c; }
+.al-body { font-weight: 700; font-size: 1rem; }
+.al-meta { color: var(--muted); font-size: .8rem; margin-top: .25rem; }
+.al-act { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; align-items: center; }
+.al-act .btn { padding: .5rem .8rem; font-size: .88rem; }
+.al-card.al-waiting { border-left-color: #b45309; background: #fffbeb; }
+.al-wait { margin-top: .5rem; font-size: .82rem; color: #92400e; background: #fef3c7; border-radius: 8px; padding: .4rem .55rem; }
+
+/* Service Flow board (Staff app) */
+.sf2-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .8rem; }
+.sf2-card { background: #fff; border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 14px; padding: .8rem .9rem; }
+.sf2-card.sf2-seated { border-left-color: #15803d; background: #f2fbf5; }
+.sf2-card.sf2-await { border-left-color: #d97706; }
+.sf2-card.sf2-serv { border-left-color: #15803d; }
+.sf2-card.sf2-bus { border-left-color: #1d4ed8; }
+.sf2-card.sf2-alert { box-shadow: 0 0 0 2px #f2c98b; background: #fff9ef; }
+.sf2-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 1.05rem; }
+.sf2-top b { font-size: 1.1rem; }
+.sf2-sub { color: var(--muted); font-size: .82rem; margin: .15rem 0 .6rem; }
+.sf2-act { display: flex; gap: .5rem; flex-wrap: wrap; }
+.sf2-act .btn { padding: .55rem .8rem; font-size: .88rem; }
 .sv-stats { display: flex; gap: 8px; }
 .sv-stats > div { background: #f4f1ea; border-radius: 10px; padding: 6px 12px; text-align: center; min-width: 62px; }
 .sv-stats b { display: block; font-size: 1.1rem; font-weight: 800; color: #1d2a3a; }
@@ -469,3 +502,113 @@ input:focus, select:focus { outline: none; border-color: var(--gold); box-shadow
 .install-banner .ib-go { flex-shrink: 0; background: var(--gold); color: #422006; padding: .5rem .9rem; font-size: .9rem; }
 .install-banner .ib-x { flex-shrink: 0; background: transparent; border: 0; color: #fff; opacity: .7; font-size: 1rem; line-height: 1; padding: .3rem .4rem; border-radius: 8px; cursor: pointer; }
 .install-banner .ib-x:hover { opacity: 1; background: rgba(255,255,255,.12); }
+
+/* ── Emoji picker (message / chat composers) ─────────────────────────────── */
+.emoji-btn { background: none; border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+  font-size: 1.2rem; line-height: 1; padding: .3rem .5rem; margin: .3rem 0; }
+.emoji-btn:hover { background: var(--bg); }
+.emoji-panel { position: fixed; z-index: 1200; width: min(344px, 92vw); max-height: 46vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 10px 34px rgba(0,0,0,.2); padding: .5rem .6rem; }
+.emoji-grp { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  margin: .55rem 0 .2rem; font-weight: 700; }
+.emoji-grp:first-child { margin-top: 0; }
+.emoji-row { display: flex; flex-wrap: wrap; gap: .1rem; }
+.emoji-item { background: none; border: none; cursor: pointer; font-size: 1.5rem; line-height: 1;
+  padding: .25rem; border-radius: 6px; }
+.emoji-item:hover { background: var(--bg); }
+
+/* ── Message / chat reactions (tapbacks) ─────────────────────────────────── */
+.rxn-bar { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-top: .35rem; }
+.rxn { background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: .1rem .5rem; font-size: .85rem; cursor: pointer; line-height: 1.5; }
+.rxn.mine { background: var(--gold-soft); border-color: var(--gold); }
+.rxn-add { background: none; border: 1px solid transparent; border-radius: 999px;
+  padding: .1rem .4rem; font-size: .9rem; cursor: pointer; opacity: .5; }
+.rxn-add:hover { opacity: 1; background: var(--bg); }
+.rxn-menu { position: fixed; z-index: 1300; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; box-shadow: 0 10px 34px rgba(0,0,0,.2); padding: .4rem .5rem; max-width: min(300px, 92vw); }
+.rxn-pickrow { display: flex; gap: .1rem; }
+.rxn-pick { background: none; border: none; font-size: 1.7rem; cursor: pointer; padding: .2rem .3rem; border-radius: 8px; line-height: 1; }
+.rxn-pick:hover { background: var(--bg); }
+.rxn-pick.mine { background: var(--gold-soft); }
+.rxn-who { margin-top: .35rem; border-top: 1px solid var(--line); padding-top: .35rem; font-size: .82rem; color: var(--muted); max-height: 40vh; overflow-y: auto; }
+.rxn-who div { padding: .12rem 0; }
+.rxn-who-e { margin-right: .3rem; }
+/* Word-style reactions (e.g. the "Haha" tapback) — bold text, not an oversized emoji. */
+.rxn.rxn-text { font-weight: 800; }
+.rxn-pick.rxn-pick-text { font-size: .98rem; font-weight: 800; letter-spacing: .02em; padding: .35rem .55rem; }
+/* Reactions float at the top-left corner of the bubble (iMessage tapback style). */
+.thread-msg { position: relative; }
+.thread-msg:has(.rxn-badges) { margin-top: 1rem; }
+.rxn-badges { position: absolute; top: -.8rem; left: .6rem; z-index: 2; display: flex; flex-wrap: wrap; gap: .2rem; }
+.rxn-badges .rxn { box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+/* The "Haha" reaction graphic (inline SVG bubble) sizing per context. */
+.rxn-svg { height: 1.15em; width: auto; vertical-align: -.28em; }
+.rxn-pick .rxn-svg { height: 1.7rem; vertical-align: middle; }
+.rxn-who-e .rxn-svg { height: 1.25em; vertical-align: -.3em; }
+/* Enlarge the HAHA reaction graphic so the "HA HA" is legible on the bubble. */
+.rxn-svg { height: 1.55em; vertical-align: -.42em; }
+.rxn-pick .rxn-svg { height: 2rem; vertical-align: middle; }
+.rxn-who-e .rxn-svg { height: 1.5em; vertical-align: -.4em; }
+.rxn-badges { top: -1rem; }
+.thread-msg:has(.rxn-badges) { margin-top: 1.4rem; }
+
+/* ── Barcode scanner overlay ─────────────────────────────────────────── */
+.scan-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(15,23,42,.72); display: flex; align-items: flex-start; justify-content: center; padding: 1rem; overflow-y: auto; }
+.scan-card { background: #fff; border-radius: 14px; width: 100%; max-width: 460px; margin-top: 4vh; padding: 1rem 1.1rem 1.2rem; box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.scan-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .7rem; font-size: 1.05rem; }
+.scan-reader { width: 100%; border-radius: 10px; overflow: hidden; background: #0f172a; min-height: 200px; }
+.scan-reader video { width: 100% !important; border-radius: 10px; display: block; }
+.scan-msg { margin: .6rem 0; color: var(--muted, #64748b); font-size: .9rem; text-align: center; }
+.scan-found, .scan-unknown { background: #f8fafc; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: .8rem; color: #0f172a; }
+.scan-found strong { font-size: 1.05rem; }
+.scan-act, .scan-row { display: flex; gap: .5rem; margin-top: .6rem; flex-wrap: wrap; }
+.scan-act input, .scan-row input, .scan-form input, .scan-form select { flex: 1; min-width: 0; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; }
+.scan-act input { max-width: 90px; }
+.scan-tabs { display: flex; gap: .5rem; margin: .7rem 0 .2rem; flex-wrap: wrap; }
+.scan-form { display: flex; flex-direction: column; gap: .5rem; margin-top: .6rem; }
+.scan-manual { display: flex; gap: .5rem; margin-top: .8rem; }
+.scan-manual input { flex: 1; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; }
+.scan-err { color: #b91c1c; padding: .6rem; }
+.scan-card .mono { font-family: ui-monospace, monospace; }
+.scan-card .muted { color: var(--muted, #64748b); }
+
+.scan-gs1 { margin-top: .5rem; padding: .45rem .6rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: .85rem; color: #1e3a8a; }
+
+.scan-combo { display: flex; flex-direction: column; gap: .25rem; }
+.scan-lbl { font-size: .78rem; color: var(--muted, #64748b); font-weight: 600; }
+.scan-combo select, .scan-combo input { width: 100%; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; background: #fff; }
+
+/* File (document) attachment card in messages & chat */
+.msg-att-file { display: inline-flex; align-items: center; gap: .5rem; padding: .5rem .7rem; background: var(--surface, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 10px; text-decoration: none; color: var(--ink, #2a2320); max-width: 280px; }
+.msg-att-file:hover { background: var(--bg, #f5f5f5); }
+.msg-att-file .af-ic { font-size: 1.4rem; line-height: 1; }
+.msg-att-file .af-meta { display: flex; flex-direction: column; min-width: 0; }
+.msg-att-file .af-name { font-weight: 600; font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-att-file .af-size { font-size: .72rem; color: var(--muted, #64748b); }
+.msg-att-file .af-dl { margin-left: .3rem; color: var(--muted, #64748b); }
+
+/* Attachment upload progress banner */
+.att-prog { position: fixed; left: 50%; bottom: 4.5rem; transform: translateX(-50%); z-index: 9500; background: #2a2320; color: #fff; padding: .6rem .9rem; border-radius: 12px; font-size: .85rem; box-shadow: 0 8px 24px rgba(0,0,0,.3); min-width: 220px; max-width: 90vw; }
+.att-prog-bar { margin-top: .4rem; height: 6px; background: rgba(255,255,255,.2); border-radius: 4px; overflow: hidden; }
+.att-prog-bar i { display: block; height: 100%; background: var(--gold, #cfa941); border-radius: 4px; transition: width .15s; }
+
+/* Scanner modes + ship/check (Receive / Check / Ship / Use) */
+.scan-modes { display: flex; gap: .5rem; margin: .2rem 0 .7rem; }
+.scan-modes .btn { flex: 1; }
+.ship-bar { background: #f8fafc; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: .7rem .8rem; margin-bottom: .7rem; }
+.ship-lbl { display: block; font-size: .82rem; color: var(--muted, #6b7280); margin-bottom: .3rem; }
+.ship-bar select { width: 100%; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; }
+.ship-ord-h { font-size: .78rem; color: var(--muted, #6b7280); margin: .6rem 0 .3rem; text-transform: uppercase; letter-spacing: .03em; }
+.ship-ord { display: flex; justify-content: space-between; gap: .5rem; padding: .3rem .5rem; border-radius: 6px; font-size: .88rem; background: #fff; border: 1px solid #f0e8da; margin-bottom: .25rem; }
+.ship-ord.done { opacity: .5; text-decoration: line-through; }
+.scan-stock { margin-top: .5rem; border: 1px solid var(--line, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.scan-stock-row { display: flex; justify-content: space-between; gap: .5rem; padding: .4rem .6rem; font-size: .9rem; border-bottom: 1px solid #f0e8da; }
+.scan-stock-row:last-child { border-bottom: none; }
+.scan-stock-row.mine { background: #eef6ff; font-weight: 600; }
+.scan-stock-row .low { color: #b45309; font-weight: 600; }
+
+/* Service Flow store picker (staff who cover more than one ON store) */
+.sf2-picker { font-size: .85rem; color: var(--muted, #6b6b6b); display: inline-flex; align-items: center; gap: .35rem; }
+.sf2-picker select { font: inherit; padding: .25rem .4rem; border: 1px solid var(--line, #ddd); border-radius: 8px; background: var(--surface, #fff); }

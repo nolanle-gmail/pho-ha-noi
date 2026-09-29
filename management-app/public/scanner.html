@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Pho Ha Noi — Inventory Scanner</title>
+<style>
+  :root{ --red:#930B19; --red-dark:#62070e; --gold:#cfa941; --bg:#f7f3ec; --surface:#fff;
+    --ink:#2a2320; --muted:#6b6058; --line:#e7dece; --ok:#16a34a; --ok-bg:#dcfce7;
+    --warn:#b45309; --warn-bg:#fef3c7; --err:#b42318; --err-bg:#fee2e2; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; min-height:100%; }
+  body{ background:linear-gradient(160deg,var(--red) 0%, var(--red-dark) 100%); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; flex-direction:column; align-items:center; padding:4vh 16px; }
+  .card{ background:var(--surface); border-radius:22px; width:100%; max-width:480px; padding:1.75rem 1.5rem 2rem;
+    box-shadow:0 24px 60px rgba(0,0,0,.28); }
+  .brand{ text-align:center; margin-bottom:.4rem; }
+  .brand img.logo{ width:200px; max-width:70%; height:auto; }
+  h1{ text-align:center; font-size:1.3rem; margin:.4rem 0 .1rem; color:var(--red-dark); }
+  .loc{ text-align:center; color:var(--muted); font-size:1rem; margin:0 0 1.1rem; font-weight:600; }
+  label{ display:block; font-size:.85rem; color:var(--muted); font-weight:600; margin:.2rem 0 .35rem; }
+  input.code{ width:100%; padding:1rem; font-size:1.5rem; letter-spacing:.24em; text-align:center;
+    border:2px solid var(--line); border-radius:14px; font-family:inherit; }
+  input.code:focus{ outline:none; border-color:var(--gold); }
+  .btn{ display:block; width:100%; border:none; border-radius:14px; padding:1rem; font-size:1.1rem; font-weight:700;
+    cursor:pointer; margin-top:.8rem; font-family:inherit; }
+  .btn.primary{ background:var(--red); color:#fff; } .btn.primary:hover{ background:var(--red-dark); }
+  .btn.ok{ background:var(--ok); color:#fff; }
+  .btn.ghost{ background:#efe7d9; color:var(--ink); }
+  .btn.sm{ padding:.6rem .9rem; font-size:.95rem; width:auto; display:inline-block; margin-top:0; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .row{ display:flex; gap:.6rem; flex-wrap:wrap; } .row .btn{ flex:1; }
+  .panel{ margin-top:1rem; border-radius:14px; padding:.9rem 1rem; font-size:1rem; line-height:1.45; }
+  .panel.info{ background:var(--ok-bg); color:#14532d; } .panel.err{ background:var(--err-bg); color:var(--err); }
+  .panel .big{ font-size:1.15rem; font-weight:700; display:block; margin-bottom:.15rem; }
+  .picker a{ display:block; text-align:center; padding:1rem; margin-top:.6rem; border:1px solid var(--line);
+    border-radius:14px; text-decoration:none; color:var(--red-dark); font-weight:700; font-size:1.1rem; }
+  .picker a:hover{ background:var(--bg); }
+  .hint{ text-align:center; color:var(--muted); font-size:.82rem; margin-top:.9rem; }
+  .who{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.8rem;
+    background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:.55rem .8rem; font-size:.9rem; }
+  .who b{ color:var(--red-dark); }
+  .who a{ color:var(--muted); font-size:.82rem; text-decoration:underline; cursor:pointer; }
+  #reader{ width:100%; border-radius:14px; overflow:hidden; background:#0f172a; min-height:210px; margin-bottom:.4rem; }
+  #reader video{ width:100% !important; border-radius:14px; display:block; }
+  .scanmsg{ text-align:center; color:var(--muted); font-size:.9rem; margin:.4rem 0; }
+  .result{ border:1px solid var(--line); border-radius:14px; padding:.9rem; margin-top:.4rem; background:#fff; }
+  .result .name{ font-size:1.1rem; font-weight:700; color:var(--ink); }
+  .result .sub{ color:var(--muted); font-size:.9rem; margin-top:.15rem; }
+  .fields{ display:flex; gap:.5rem; margin-top:.7rem; flex-wrap:wrap; }
+  .fields input, .fields select{ flex:1; min-width:0; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; font-family:inherit; }
+  .fields input.qty{ max-width:90px; text-align:center; }
+  .tabs{ display:flex; gap:.5rem; margin:.7rem 0 .2rem; flex-wrap:wrap; }
+  .mono{ font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .manual{ display:flex; gap:.5rem; margin-top:.9rem; }
+  .manual input{ flex:1; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; }
+  .scan-gs1{ margin-top:.5rem; padding:.5rem .7rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; font-size:.9rem; color:#1e3a8a; }
+  .scan-combo{ display:flex; flex-direction:column; gap:.25rem; }
+  .scan-lbl{ font-size:.8rem; color:var(--muted); font-weight:600; }
+  .scan-combo select, .scan-combo input{ width:100%; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; background:#fff; }
+  .modes{ display:flex; gap:.5rem; margin:0 0 .7rem; } .modes .btn{ flex:1; }
+  .ship-bar{ background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:.7rem .8rem; margin-bottom:.7rem; }
+  .ship-lbl{ display:block; font-size:.82rem; color:var(--muted); margin-bottom:.35rem; }
+  .ship-bar select{ width:100%; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; }
+  .ship-ord-h{ font-size:.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:.6rem 0 .3rem; }
+  .ship-ord{ display:flex; justify-content:space-between; gap:.5rem; padding:.35rem .5rem; background:#fff; border:1px solid var(--line); border-radius:8px; margin-bottom:.25rem; font-size:.9rem; }
+  .ship-ord.done{ opacity:.5; text-decoration:line-through; }
+  [hidden]{ display:none !important; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><img class="logo" src="/brand.svg" alt="Phở Hà Nội" /></div>
+    <h1 id="title">Inventory Scanner</h1>
+    <div class="loc" id="loc"></div>
+
+    <!-- Bare /scanner: location picker -->
+    <div class="picker" id="picker" hidden></div>
+
+    <!-- Employee-code entry -->
+    <div id="identify" hidden>
+      <label for="code">Enter your employee code</label>
+      <input class="code" id="code" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="######" aria-label="Employee code" />
+      <button class="btn primary" id="go">Continue</button>
+      <div class="panel err" id="idErr" hidden></div>
+    </div>
+
+    <!-- Scanner (after identify) -->
+    <div id="scanner" hidden>
+      <div class="who"><span>Scanning as <b id="whoName"></b></span><a id="signout">Not you?</a></div>
+      <div class="modes"><button class="btn sm primary" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="check">📋 Check</button></div>
+      <div id="shipBar" class="ship-bar" hidden></div>
+      <div id="reader"></div>
+      <div class="scanmsg" id="scanmsg">Point the camera at a UPC / EAN barcode.</div>
+      <div id="result"></div>
+      <div class="manual"><input id="manual" inputmode="numeric" placeholder="…or type a barcode number" /><button class="btn sm primary" id="manualGo">Go</button></div>
+    </div>
+
+    <div class="hint" id="hint"></div>
+  </div>
+  <footer style="text-align:center;color:rgba(255,255,255,.6);font-size:.72rem;margin-top:1.4rem">© 2026 Phở Hà Nội. All rights reserved.</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const nf = (n) => { const x = Number(n); return Number.isInteger(x) ? String(x) : (Math.round(x*100)/100).toString(); };
+const UOM_OPTIONS = ['lb','lbs','case','each','bottle','box','bag','can','jar','gallon','oz','kg','pack','dozen','bunch','carton','quart','pint','jug','container','tub','tube','g','liter','ml','fl oz','piece','head','crate','flat','tray','sleeve','roll','sheet','keg','cup','count','unit','pair','order','serving','portion','plate','half gallon','cl','tbsp','tsp','lug','bushel','peck','gross','pallet','sack','pouch','packet','sachet','canister','tin','drum','pail','bucket','barrel','stalk','bulb','clove','ear','sprig','leaf','root','loaf','stick','slice','fillet','rack','side','slab','block','wedge','wheel','round','scoop','ladle','dash','pinch','ream','bar','mg','ton'];
+const CATEGORY_OPTIONS = ['Produce','Herbs & Aromatics','Meat','Poultry','Seafood','Noodles','Broth & Soup Base','Rice & Grains','Sauces & Condiments','Spices & Seasonings','Oils & Vinegars','Dry Goods','Canned & Jarred','Dairy','Eggs','Frozen','Deli','Bakery & Bread','Flour & Baking','Sweeteners','Nuts & Seeds','Snacks','Beverages','Juice & Soda','Coffee & Tea','Beer','Wine','Liquor','Bar Supplies','Paper Goods','Disposables & To-Go','Packaging','Cleaning Supplies','Smallwares','Equipment','Office Supplies','Uniforms & Apparel','Other'];
+const comboHTML = (key, options, value, label) => { const cur = value == null ? '' : String(value); const inList = options.includes(cur); return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o=>`<option value="${esc(o)}" ${o===cur?'selected':''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList&&cur)?'selected':''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label||'').toLowerCase())}" value="${esc(!inList?cur:'')}" ${(!inList&&cur)?'':'hidden'}></div>`; };
+function comboWire(root){ (root||document).querySelectorAll('[data-combo]').forEach(sel=>{ sel.onchange=()=>{ const o=document.getElementById('cbo_'+sel.dataset.combo); if(o){ const show=sel.value==='__other__'; o.hidden=!show; if(show)o.focus(); } }; }); }
+const comboVal = (key) => { const sel=document.getElementById('cb_'+key); if(!sel) return ''; return sel.value==='__other__' ? (((document.getElementById('cbo_'+key)||{}).value)||'').trim() : sel.value; };
+const slug = decodeURIComponent(location.pathname.replace(/^\/scanner\/?/, '')).trim();
+let empCode = '';
+let scanMode = 'receive', shipToId = '', shipToName = '', LOC_NAME = '';
+
+async function api(path, body){
+  const opts = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {};
+  const r = await fetch('/api/scannerkiosk' + path, opts);
+  const d = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, d };
+}
+
+// ── html5-qrcode (lazy-loaded) ───────────────────────────────────────────
+let _libP = null;
+function loadLib(){
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (!_libP) _libP = new Promise((res, rej) => { const s=document.createElement('script'); s.src='/html5-qrcode.min.js'; s.onload=res; s.onerror=()=>rej(new Error('Scanner library failed to load.')); document.head.appendChild(s); });
+  return _libP;
+}
+const formats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+// Full-frame decode (no qrbox) — the whole camera frame is scanned, so long linear
+// GS1-128 case/meat labels fit. A small box would crop a wide 1D barcode and never decode it.
+
+let qr = null, busy = false;
+async function startScanner(){
+  try { await loadLib(); } catch (e) { $('scanmsg').textContent = e.message; return; }
+  qr = new Html5Qrcode('reader', { formatsToSupport: formats(), verbose:false });
+  const onCode = async (code) => {
+    if (busy) return; busy = true;
+    try { await qr.pause(true); } catch {}
+    try { navigator.vibrate && navigator.vibrate(50); } catch {}
+    $('scanmsg').textContent = 'Scanned: ' + code;
+    await onScanned(code);
+  };
+  try {
+    // Plain environment camera + full-frame decode — the config that reliably OPENS on iPhone.
+    // Do NOT add width/height {ideal:...} resolution constraints: they broke camera-open on the
+    // iPhone 16 even with a fallback (the fallback can't cleanly recover the iOS video element).
+    await qr.start({ facingMode:'environment' }, { fps:10 }, onCode, () => {});
+  } catch (e) {
+    $('reader').innerHTML = ''; $('reader').style.minHeight='0';
+    $('scanmsg').innerHTML = '📷 Camera unavailable (' + esc(e && e.message || 'no access') + '). Type a barcode below.';
+  }
+}
+function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = 'Point the camera at the next barcode.'; try { qr && qr.resume(); } catch {} }
+
+const onScanned = (code) => scanMode === 'ship' ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : handleScan(code));
+
+// ── Check mode: stock of a scanned item across all locations ──────────────
+async function handleCheck(code){
+  $('result').innerHTML = '<div class="result">Looking up…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/stock', { employee_code: empCode, code });
+  if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Error')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
+  if (!d.found){ $('result').innerHTML = `<div class="result"><div class="name">🔍 Not stocked yet</div><div class="sub mono">${esc(d.code)}</div><button class="btn ghost" id="again">Scan another</button></div>`; $('again').onclick = resume; return; }
+  const ls = d.last_scan; const lastLine = ls ? [ls.weight_lb ? `${nf(ls.weight_lb)} lb` : '', ls.lot ? `lot ${esc(ls.lot)}` : '', (ls.pack_date||ls.prod_date) ? `packed ${esc(ls.pack_date||ls.prod_date)}` : '', ls.expiry ? `exp ${esc(ls.expiry)}` : ''].filter(Boolean).join(' · ') : '';
+  $('result').innerHTML = `<div class="result"><div class="name">📋 ${esc(d.item_name)}</div><div class="sub">${nf(d.total)} ${esc(d.unit)} across all locations</div>
+    <div class="ship-orders">${d.by_location.map(l => `<div class="ship-ord"><span>${esc((l.location||'').replace('Pho Ha Noi — ',''))}${l.type==='central_kitchen'?' (CK)':''}</span><span class="mono">${nf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    ${lastLine ? `<div class="scan-gs1" style="margin-top:.5rem">🏷️ Last scan · ${lastLine}</div>` : ''}
+    <button class="btn primary" id="again" style="margin-top:.6rem">Scan another</button></div>`;
+  $('again').onclick = resume;
+}
+
+// ── Ship-out mode ─────────────────────────────────────────────────────────
+async function setMode(m){
+  scanMode = m;
+  document.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm ' + (b.dataset.mode === m ? 'primary' : 'ghost'));
+  $('shipBar').hidden = m !== 'ship';
+  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock at every location.' : 'Point the camera at a UPC / EAN barcode.');
+  if (m === 'ship' && !$('shipBar').dataset.loaded){
+    $('shipBar').dataset.loaded = '1';
+    const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/targets', { employee_code: empCode });
+    const tgts = (d && d.targets) || [];
+    $('shipBar').innerHTML = `<label class="ship-lbl">Ship from <b>${esc(LOC_NAME)}</b> to</label><select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc((t.name||'').replace('Pho Ha Noi — ',''))}${t.type==='central_kitchen'?' (CK)':''}</option>`).join('')}</select><div id="shipOrders"></div>`;
+    $('shipTo').onchange = () => { shipToId = $('shipTo').value; shipToName = $('shipTo').selectedOptions[0] ? $('shipTo').selectedOptions[0].textContent.replace(/\s*\(CK\)\s*$/,'').trim() : ''; loadShipOrders(); };
+  }
+}
+async function loadShipOrders(){
+  const box = $('shipOrders'); if (!box) return;
+  if (!shipToId){ box.innerHTML = ''; return; }
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/orders', { employee_code: empCode, to_location_id: shipToId });
+  const ords = (d && d.orders) || [];
+  box.innerHTML = ords.length ? '<div class="ship-ord-h">Open order to fill:</div>' + ords.map(o => `<div class="ship-ord${o.remaining<=0?' done':''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.ck_qty)}/${nf(o.requested_qty)} ${esc(o.unit||'')}</span></div>`).join('') : '<div class="sub" style="color:var(--muted)">No open orders — scanning ships ad-hoc.</div>';
+}
+async function handleShip(code){
+  if (!shipToId){ $('result').innerHTML = `<div class="panel err">Pick a destination above first.</div><button class="btn ghost" id="again">OK</button>`; $('again').onclick = resume; return; }
+  $('result').innerHTML = '<div class="result">Looking up…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/resolve', { employee_code: empCode, code });
+  if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Error')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
+  const key = d.code || code;
+  if (!d.found){ $('result').innerHTML = `<div class="result"><div class="name">🚫 Not stocked here</div><div class="sub mono">${esc(key)}</div><div class="sub">Nothing to ship from ${esc(LOC_NAME)}.</div><button class="btn ghost" id="again">Scan another</button></div>`; $('again').onclick = resume; return; }
+  const it = d.item;
+  let dflt = d.weight_lb || 1;
+  try { const { d:od } = await api('/kiosk/' + encodeURIComponent(slug) + '/orders', { employee_code: empCode, to_location_id: shipToId }); const m = ((od && od.orders) || []).find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch {}
+  $('result').innerHTML = `<div class="result"><div class="name">📤 ${esc(it.item_name)}</div><div class="sub">${nf(it.quantity)} ${esc(it.unit)} here → <b>${esc(shipToName)}</b></div>
+    <div class="fields"><input class="qty" id="shq" type="number" value="${dflt}" min="0" step="any"></div>
+    <div class="row"><button class="btn ok" id="shGo">📤 Ship</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
+  $('again').onclick = resume;
+  $('shGo').onclick = async () => {
+    $('shGo').disabled = true;
+    const body = { employee_code: empCode, to_location_id: shipToId, code: key, quantity: $('shq').value };
+    let { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/transfer', body);
+    if (r.duplicate){ if (!window.confirm(r.message)){ $('shGo').disabled = false; return; } ({ d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/transfer', Object.assign({}, body, { confirm:true }))); }
+    if (!r.ok){ $('shGo').disabled = false; alert(r.error || 'Could not ship.'); return; }
+    $('result').innerHTML = `<div class="panel info"><span class="big">Shipped → ${esc(shipToName)}</span>${r.order ? (r.order.shipped ? 'Order line complete ✅' : `Order ${nf(r.order.ck_qty)}/${nf(r.order.requested_qty)}`) : ''}</div><button class="btn primary" id="again">Scan another</button>`;
+    $('again').onclick = resume;
+    loadShipOrders();
+  };
+}
+
+async function handleScan(code){
+  $('result').innerHTML = '<div class="result">Looking up…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/resolve', { employee_code: empCode, code });
+  if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Something went wrong.')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
+  const key = d.code || code;
+  const packed = d.pack_date || d.prod_date || '';
+  const labelExpiry = d.expiry || packed || '';
+  const labelLot = d.lot || '';
+  const gs1 = (d.is_gs1 || d.weight_lb || labelExpiry || labelLot) ? `<div class="scan-gs1">🏷️ Label${d.weight_lb ? ` · <b>${nf(d.weight_lb)} lb</b>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${d.expiry ? ` · exp ${esc(d.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}</div>` : '';
+  if (d.found){
+    const it = d.item; const cw = !!it.is_catch_weight;
+    $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${gs1}
+      <div class="fields"><input class="qty" id="q" type="number" value="${cw ? (d.weight_lb||'') : (d.weight_lb||1)}" min="0" step="any" placeholder="${cw?'net weight':'qty'}"><select id="m"><option value="in">${cw?'➕ Add weight':'➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
+      <div class="fields"><input id="qExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="qLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="row"><button class="btn ok" id="apply">Apply</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
+    $('again').onclick = resume;
+    $('apply').onclick = async () => {
+      $('apply').disabled = true;
+      const qv = $('q').value, mm = $('m').value;
+      const okMsg = (r) => { $('result').innerHTML = `<div class="panel info"><span class="big">Saved · ${esc(it.item_name)}</span>Now ${nf(r.item.quantity)} ${esc(it.unit)} on hand.</div><button class="btn primary" id="again">Scan another</button>`; $('again').onclick = resume; };
+      if (mm === 'count'){
+        const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/scan', { employee_code: empCode, code: key, quantity: qv, mode:'count', expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined });
+        if (!r.ok){ $('apply').disabled = false; alert(r.error || 'Could not save.'); return; }
+        okMsg(r); return;
+      }
+      const body = { employee_code: empCode, code: key, expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined };
+      if (cw) body.weight = qv; else body.quantity = qv;
+      let { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', body);
+      if (r.duplicate){ if (!window.confirm(r.message)){ $('apply').disabled = false; return; } ({ d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', Object.assign({}, body, { confirm:true }))); }
+      if (!r.ok){ $('apply').disabled = false; alert(r.error || 'Could not save.'); return; }
+      okMsg(r);
+    };
+  } else {
+    let g = d.glossary || null;
+    if (!g){ const { d:look } = await api('/kiosk/' + encodeURIComponent(slug) + '/lookup/' + encodeURIComponent(code)).catch(()=>({d:{}})); if (look && look.found) g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size }; else if (look && look.weighed) g = { _weighed:true, default_unit_cost: look.price }; }
+    const inGloss = !!(g && g.name);
+    const note = inGloss ? `In Glossary as <b>${esc(g.name)}</b>${g.size ? ' · ' + esc(g.size) : ''}` : (g && g._weighed ? `<b>Weighed in-store item</b> — name it below` : '');
+    const wt = d.weight_lb || '';
+    $('result').innerHTML = `<div class="result"><div class="name">🆕 New to stock</div><div class="sub mono">${esc(key)}</div>${note ? `<div class="sub">${note}</div>` : ''}${gs1}
+      <div class="tabs"><button class="btn sm primary" id="tNew">Add to stock${inGloss?'':' + glossary'}</button><button class="btn sm ghost" id="tLink">Link existing</button><button class="btn sm ghost" id="again">Skip</button></div>
+      <div id="sub"></div></div>`;
+    $('again').onclick = resume;
+    $('tNew').onclick = () => {
+      const cwDefault = g && g.is_catch_weight ? '1' : '0';
+      $('sub').innerHTML = `<div class="fields"><input id="nName" placeholder="Item name / description" value="${esc(g && g.name ? g.name : '')}"></div>
+        ${comboHTML('nCat', CATEGORY_OPTIONS, (g && g.category) || 'Produce', 'Category')}
+        ${comboHTML('nUnit', UOM_OPTIONS, (g && g.unit) || (wt ? 'lb' : 'each'), 'Unit of measure')}
+        <div class="fields"><input id="nDesc" placeholder="Description (optional)" value="${esc(g && g.description ? g.description : '')}"></div>
+        <div class="fields"><label class="scan-lbl" style="flex:1">Catch-weight? <select id="nCW"><option value="0" ${cwDefault==='0'?'selected':''}>No — count</option><option value="1" ${cwDefault==='1'?'selected':''}>Yes — by weight</option></select></label></div>
+        <div class="fields"><input id="nSku" placeholder="SKU (optional)"><input id="nCost" type="number" placeholder="Unit cost $" step="0.01" value="${(g && g.default_unit_cost) || ''}"></div>
+        <div class="fields"><input id="nQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="nMin" type="number" placeholder="Reorder at" step="any"><input id="nPar" type="number" placeholder="Par" step="any"></div>
+        <div class="fields"><input id="nExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="nLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="fields"><input id="nVendor" list="nVendorList" placeholder="Supplier / vendor"><input id="nVCode" placeholder="Supplier item code"></div><datalist id="nVendorList"></datalist>
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="nGloss" checked> Also save to Glossary</label>
+        <button class="btn ok" id="nSave">Add to stock</button>`;
+      comboWire($('sub'));
+      api('/kiosk/' + encodeURIComponent(slug) + '/vendors', { employee_code: empCode }).then(({d}) => { const dl = $('nVendorList'); if (dl && d && d.vendors) dl.innerHTML = d.vendors.map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(()=>{});
+      $('nSave').onclick = async () => {
+        const name = ($('nName').value||'').trim(); if (!name){ alert('Enter an item name'); return; }
+        $('nSave').disabled = true;
+        const cwv = $('nCW').value === '1'; const savedGloss = $('nGloss').checked;
+        const body = { employee_code: empCode, barcode:key, item_name:name, category:comboVal('nCat')||'Other', unit:comboVal('nUnit')||(cwv?'lb':'each'), description:$('nDesc').value.trim()||undefined, is_catch_weight: cwv?1:0, sku:$('nSku').value.trim()||undefined, unit_cost:$('nCost').value||0, min_quantity:$('nMin').value||0, par_level:$('nPar').value||undefined, expiry_date:$('nExp').value||undefined, lot_code:$('nLot').value.trim()||undefined, vendor_name:$('nVendor').value.trim()||undefined, vendor_code:$('nVCode').value.trim()||undefined, save_to_glossary: savedGloss };
+        if (cwv) body.weight = $('nQty').value; else body.quantity = $('nQty').value;
+        const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/create', body);
+        if (!r.ok){ $('nSave').disabled=false; alert(r.error||'Could not create.'); return; }
+        $('result').innerHTML = `<div class="panel info"><span class="big">Added ${esc(name)}</span>${savedGloss ? 'Glossary updated · ' : ''}barcode linked.</div><button class="btn primary" id="again">Scan another</button>`;
+        $('again').onclick = resume;
+      };
+    };
+    $('tLink').onclick = async () => {
+      $('sub').innerHTML = '<div class="sub">Loading items…</div>';
+      const { d:il } = await api('/kiosk/' + encodeURIComponent(slug) + '/items', { employee_code: empCode });
+      const items = (il && il.items) || [];
+      $('sub').innerHTML = `<div class="fields"><select id="lItem">${items.map(i=>`<option value="${i.id}">${esc(i.item_name)}</option>`).join('')}</select></div><button class="btn ok" id="lSave">Link barcode</button>`;
+      $('lSave').onclick = async () => {
+        $('lSave').disabled = true;
+        const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/link', { employee_code: empCode, code: key, item_id: $('lItem').value });
+        if (!r.ok){ $('lSave').disabled=false; alert(r.error||'Could not link.'); return; }
+        $('result').innerHTML = `<div class="panel info"><span class="big">Barcode linked</span>${esc(r.item.item_name)}</div><button class="btn primary" id="again">Scan another</button>`;
+        $('again').onclick = resume;
+      };
+    };
+  }
+}
+
+// ── Identify ──────────────────────────────────────────────────────────────
+async function identify(){
+  const code = ($('code').value||'').trim(); if (!code){ $('code').focus(); return; }
+  $('idErr').hidden = true;
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/identify', { employee_code: code });
+  if (!d.ok){ $('idErr').hidden = false; $('idErr').textContent = d.error || 'Please check your employee code.'; return; }
+  empCode = code;
+  $('whoName').textContent = d.name;
+  $('identify').hidden = true; $('scanner').hidden = false; $('hint').textContent = '';
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  startScanner();
+}
+function signOut(){ location.reload(); }
+
+async function start(){
+  if (!slug){
+    $('title').textContent = 'Choose your location';
+    const { d } = await api('/kiosk-locations');
+    const wrap = $('picker'); wrap.hidden = false;
+    wrap.innerHTML = (Array.isArray(d)?d:[]).map(l => `<a href="/scanner/${encodeURIComponent(l.slug)}">${esc(l.display)}</a>`).join('') || '<p class="hint">No locations available.</p>';
+    return;
+  }
+  const { ok, d } = await api('/kiosk/' + encodeURIComponent(slug));
+  if (!ok){ $('title').textContent = 'Location not found'; $('loc').textContent = 'Check the address and try again.'; return; }
+  document.title = 'Scanner — ' + d.display;
+  LOC_NAME = (d.display || '').replace('Pho Ha Noi ', '').trim() || 'this location';
+  $('loc').textContent = d.display;
+  $('identify').hidden = false;
+  $('hint').textContent = 'Enter your employee code, then scan any product barcode to receive or count stock.';
+  $('go').onclick = identify;
+  $('code').addEventListener('keydown', e => { if (e.key === 'Enter') identify(); });
+  $('signout').onclick = signOut;
+  $('manualGo').onclick = () => { const c = ($('manual').value||'').trim(); if (c){ $('manual').value=''; onScanned(c); } };
+  $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') $('manualGo').click(); });
+  $('code').focus();
+}
+start();
+</script>
+</body>
+</html>

@@ -51,6 +51,27 @@ router.get('/status', (req, res) => {
   res.json({ location: loc, ...statusFor(locId) });
 });
 
+// Public "current waitlist" for a location (by slug) — the parties waiting, in order,
+// so a guest can find their own name and see who's ahead. Names only (first + last
+// initial), party size and how long they've waited; never phone numbers.
+router.get('/waitlist/:slug', (req, res) => {
+  const slug = String(req.params.slug || '').toLowerCase();
+  const loc = db.prepare(`SELECT id, name, avg_turn_minutes FROM locations WHERE is_active=1`).all()
+    .find(l => slugify(l.name) === slug);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const rows = db.prepare(`SELECT guest_name, party_size,
+      CAST((julianday('now') - julianday(created_at)) * 1440 AS INTEGER) AS waited_min
+    FROM waitlist WHERE location_id=? AND status='waiting' ORDER BY created_at ASC, id ASC`).all(loc.id);
+  const parties = rows.map((w, i) => {
+    const parts = String(w.guest_name || '').trim().split(/\s+/).filter(Boolean);
+    const first = parts[0] || 'Guest';
+    const lastInit = parts.length > 1 && parts[parts.length - 1][0] ? ` ${parts[parts.length - 1][0].toUpperCase()}.` : '';
+    return { position: i + 1, name: first + lastInit, party_size: w.party_size, waiting_min: Math.max(0, w.waited_min || 0) };
+  });
+  res.json({ location: { name: loc.name, slug }, count: parties.length,
+    quoted_minutes: parties.length * (loc.avg_turn_minutes || 8), parties });
+});
+
 // Customer adds themselves to the waitlist.
 router.post('/checkin', checkinLimiter, (req, res) => {
   const locId = parseInt(req.body.location_id, 10);
@@ -85,11 +106,13 @@ router.post('/checkin', checkinLimiter, (req, res) => {
       .run(locId, 'party_added', 'waitlist', r.lastInsertRowid, JSON.stringify({ guest: name.slice(0, 120), party_size: size, source: 'self' }));
   } catch { /* audit is best-effort */ }
   try { require('../lib/events').emitWaitlist(locId); } catch { /* live-push best-effort */ }
-  // Text the guest a join confirmation with their spot — only if they opted in.
+  // Text the guest a join confirmation with their spot + a link to the live waitlist — only if they opted in.
   if (phone && smsConsent) {
     const pos = s.parties_ahead + 1;
     const wait = s.quoted_minutes > 0 ? ` about ${s.quoted_minutes} min` : ' a short wait';
-    notifyGuest(r.lastInsertRowid, phone, `${loc.name}: you're #${pos} on the waitlist, party of ${size} —${wait}. Track your spot and we'll text when your table is ready. Reply STOP to opt out.`, 'joined');
+    const base = (process.env.WAITLIST_PUBLIC_URL || ('https://' + (req.get('host') || 'pho-ha-noi-waitlist.fly.dev'))).replace(/\/+$/, '');
+    const listUrl = `${base}/checkin/${slugify(loc.name)}/current`;
+    notifyGuest(r.lastInsertRowid, phone, `${loc.name}: you're #${pos} on the waitlist (party of ${size}) —${wait}. We'll text when your table is ready.\nSee the current waitlist & your spot: ${listUrl}\nReply STOP to opt out.`, 'joined');
   }
   res.json({
     success: true, ref, position: s.parties_ahead + 1, quoted_minutes: s.quoted_minutes,

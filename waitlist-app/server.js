@@ -34,6 +34,8 @@ app.use('/api/messages', require('./routes/messages'));
 app.use('/api/chat', require('./routes/chat'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/alerts', require('./routes/alerts'));
+app.use('/api/serviceflow', require('./routes/serviceflow'));
+app.use('/api/invscan', require('./routes/invscan'));
 app.use('/api/timeclock', require('./routes/timeclock'));
 app.use('/api/translate', require('./routes/translate'));
 app.use('/api/stream', require('./routes/stream'));
