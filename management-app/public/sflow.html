@@ -346,8 +346,8 @@ async function loadFront() {
       <div class="stat"><div class="label">Seated today</div><div class="value">${stats.seated_today}</div></div>
       <div class="stat"><div class="label">Walk-ins today</div><div class="value">🚶 ${stats.kiosk_walkins_today || 0}</div></div>
     </div>
-    <div class="section-head"><h3>Waiting (${queue.length})</h3><div style="display:flex;gap:.5rem"><button class="btn ghost sm" id="fdWalk">🚶 Walk-in</button><button class="btn sm" id="fdAddBtn">+ Add party</button></div></div>
-    ${queue.length ? queue.map((p, i) => fdCard(p, i)).join('') : '<div class="empty">No one waiting. Tap “+ Add party” to check in a guest.</div>'}
+    <div class="section-head"><h3>Waiting (${queue.length})</h3><div style="display:flex;gap:.5rem"><button class="btn ghost sm" id="fdWalk">🚶 Walk-in</button></div></div>
+    ${queue.length ? queue.map((p, i) => fdCard(p, i)).join('') : '<div class="empty">No one waiting.</div>'}
     <div class="section-head" style="margin-top:1.6rem"><h3>Handled today</h3></div>
     <div class="hist"><table><thead><tr><th>Guest</th><th>Party</th><th>Status</th><th>Table</th><th>Time</th></tr></thead><tbody>
       ${history.length ? history.map(h => `<tr><td>${esc(h.guest_name)}</td><td>${h.party_size}</td><td><span class="badge ${h.status}">${esc(h.status)}</span></td><td>${esc(h.table_number || '—')}</td><td>${esc((h.seated_at || h.created_at || '').slice(11, 16))}</td></tr>`).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.2rem">No parties handled yet today.</td></tr>'}
@@ -357,7 +357,6 @@ async function loadFront() {
       ${audit.length ? audit.map(a => { const [lbl, tone] = ACTION_LABEL[a.action] || [a.action, 'left']; return `<tr><td>${fdHm(a.created_at)}</td><td><span class="badge ${tone}">${esc(lbl)}</span></td><td>${fdAuditSummary(a)}</td><td><strong>${esc(a.user_name || '—')}</strong></td></tr>`; }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.2rem">No activity logged yet today.</td></tr>'}
     </tbody></table></div>
   </div>`;
-  const ab = $('fdAddBtn'); if (ab) ab.onclick = fdAdd;
   const wb = $('fdWalk'); if (wb) wb.onclick = fdWalkIn;
   $('tabFront').querySelectorAll('[data-fd]').forEach(b => b.onclick = () => fdAct(b, b.dataset.fd, b.dataset.id, b.dataset.name));
   if (TAB === 'front') timer = setTimeout(loadFront, 15000);

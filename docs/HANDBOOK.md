@@ -1246,7 +1246,7 @@ front-desk-capable (owner/manager/host/frontdesk/server/cashier…), the `/sflow
 **🍜 Front Desk** tab beside **⏱️ Service Flow**, so a host-stand/kitchen tablet manages the waitlist
 *and* the floor from one no-login page. The Front Desk tab is a **full parity port of the staff-app
 board**: 5 stats (waiting / longest wait / quote / seated today / walk-ins today), the queue with
-**🔔 Notify · Seat · Left**, **+ Add party** (modal: name / phone / SMS-consent / party size),
+**🔔 Notify · Seat · Left**,
 **🚶 Walk-in**, and a **live floor-map picker** for both Seat and Walk-in (tap a free green table —
 same `roomSvg`/tables as the staff app, seats onto the Management floor plan + marks the party
 seated), plus **Handled today** and **Activity log** tables. Auto-refreshes every 15s. It calls the
