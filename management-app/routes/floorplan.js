@@ -54,7 +54,7 @@ router.get('/', requireView, (req, res) => {
   const locId = parseInt(reqLoc(req, true), 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
   if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
-  const loc = db.prepare(`SELECT id, name, room_outline FROM locations WHERE id=?`).get(locId);
+  const loc = db.prepare(`SELECT id, name, room_outline, floor_aspect FROM locations WHERE id=?`).get(locId);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const areas = db.prepare(`SELECT id, name, sort_order FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(locId);
   const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order, pos_x, pos_y, shape, status, guest_name, party_size, seated_at, est_free_at
@@ -86,6 +86,7 @@ router.get('/', requireView, (req, res) => {
   const active = all.filter(t => t.is_active);
   res.json({
     location: { id: loc.id, name: loc.name }, can_edit: !!isManage(req), room_outline: roomOutline(loc.room_outline),
+    aspect: loc.floor_aspect || null,
     areas: byArea, statuses: STATUSES,
     summary: { tables: active.length, available: active.filter(t => !t.occupied).length, occupied: active.filter(t => t.occupied).length },
   });

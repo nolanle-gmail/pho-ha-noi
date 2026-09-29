@@ -137,7 +137,8 @@
   .fp-legend{ display:flex; flex-wrap:wrap; gap:.5rem; margin:.4rem 0 .6rem; }
   .fp-leg{ display:inline-flex; align-items:center; gap:.35rem; font-size:.8rem; font-weight:600; background:#f2f0ee; border-radius:999px; padding:.2rem .6rem; color:#333; }
   .fp-dot{ width:11px; height:11px; border-radius:50%; display:inline-block; } .fp-leg-n{ color:var(--muted); font-weight:400; }
-  .floor-board{ position:relative; width:100%; padding-bottom:60%; background:#faf7f1; border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .floor-board{ position:relative; width:100%; padding-bottom:var(--fb-aspect,60%); background:#faf7f1; border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  .fp-band{ position:absolute; left:2.5%; transform:translateY(-175%); z-index:3; white-space:nowrap; font-weight:800; font-size:.64rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); background:#fff; border:1px solid var(--line); border-radius:999px; padding:.05rem .5rem; }
   .floor-board.picker [data-pick]{ cursor:pointer; }
   .floor-board.picker [data-pick]:active{ box-shadow:0 0 0 3px #2b5bd733; }
   .ftable{ position:absolute; transform:translate(-50%,-50%); width:clamp(34px,8.4%,58px); aspect-ratio:1; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:50%; background:var(--abg,#dcfce7); border:2px solid var(--ac,#16a34a); color:#14532d; }
@@ -312,6 +313,17 @@ function fdWaited(ts) { if (!ts) return 0; const d = new Date(String(ts).replace
 function fdHm(ts) { if (!ts) return ''; const d = new Date(String(ts).replace(' ', 'T') + 'Z'); return isNaN(d) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
 function fdAuditSummary(a) { const d = a.detail || {}; const b = []; if (d.guest) b.push(esc(d.guest)); if (d.party_size != null) b.push('party of ' + d.party_size); if (d.table_number) b.push('table ' + esc(d.table_number)); if (d.channel === 'sms') b.push('by SMS'); return b.join(' · '); }
 function roomSvg(o) { if (!Array.isArray(o) || o.length < 3) return ''; return `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${o.map(p => p.x + ',' + p.y).join(' ')}"/></svg>`; }
+// Area name labels floated above each area's first row of tables (groups the map by area).
+function areaBands(fp) {
+  return (fp.areas || []).map(a => {
+    const ts = (a.tables || []).filter(t => t.pos_y != null);
+    if (!ts.length || !a.name) return '';
+    const minY = Math.min(...ts.map(t => t.pos_y));
+    return `<div class="fp-band" style="top:${minY}%">${esc(a.name)}</div>`;
+  }).join('');
+}
+// Board height (padding-bottom %) so tables never overlap; comes from the saved floor layout.
+function fbStyle(fp) { return fp && fp.aspect ? ` style="--fb-aspect:${fp.aspect}%"` : ''; }
 function fdModal(title, bodyHtml, onOk, okLabel) {
   const host = $('modalHost');
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(title)}</h3><div class="err" id="mErr"></div>${bodyHtml}<div class="actions"><button class="btn ghost sm" id="mCancel">Cancel</button><button class="btn sm" id="mOk">${esc(okLabel || 'Save')}</button></div></div></div>`;
@@ -396,7 +408,7 @@ function fdLegend(fp) {
 async function fdPickAndSeat(title, subHtml, onPick, afterRender) {
   let fp; try { fp = await wl('/floormap?location_id=' + LOC); } catch { fp = { areas: [] }; }
   const body = `${subHtml}${fdLegend(fp)}
-    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${fdFloorTables(fp) || '<div class="fp-empty">No tables set up.</div>'}</div>
+    <div class="floor-board picker" id="floorBoard"${fbStyle(fp)}>${roomSvg(fp.room_outline)}${areaBands(fp)}${fdFloorTables(fp) || '<div class="fp-empty">No tables set up.</div>'}</div>
     <label style="margin-top:.5rem">Selected: <strong id="selName">none</strong></label>
     <input type="hidden" id="fSel" /><input type="hidden" id="fSelLabel" />`;
   fdModal(title, body, async () => { await onPick($('fSel').value, $('fSelLabel').value); }, 'Seat');

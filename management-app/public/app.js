@@ -2834,7 +2834,13 @@ function fpSnapshotHtml(fp) {
   if (!all.length) return '<div class="empty">No floor plan for this location yet. Open the Floor Plan tab to set one up.</div>';
   const sm = fp.summary;
   const legend = `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
-  const board = `<div class="floor-board snapshot">${roomSvgM(fp.room_outline || []) + all.map(fpMiniTable).join('')}</div>`;
+  const bands = fp.areas.map(a => {
+    const ts = (a.tables || []).filter(t => t.pos_y != null);
+    if (!ts.length || !a.name) return '';
+    return `<div class="fp-band" style="top:${Math.min(...ts.map(t => t.pos_y))}%">${esc(a.name)}</div>`;
+  }).join('');
+  const fbAspect = fp.aspect ? ` style="--fb-aspect:${fp.aspect}%"` : '';
+  const board = `<div class="floor-board snapshot"${fbAspect}>${roomSvgM(fp.room_outline || []) + bands + all.map(fpMiniTable).join('')}</div>`;
   return `<div class="row-between" style="margin-bottom:.2rem"><div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div></div>${legend}${board}`;
 }
 
@@ -4256,7 +4262,14 @@ async function renderLocFloorPlan() {
     const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
     return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
   };
-  const boardInner = roomSvgM(outline) + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
+  // Area name labels above each area's first row (view mode only — hidden while dragging).
+  const bands = edit ? '' : fp.areas.map(a => {
+    const ts = (a.tables || []).filter(t => t.pos_y != null);
+    if (!ts.length || !a.name) return '';
+    return `<div class="fp-band" style="top:${Math.min(...ts.map(t => t.pos_y))}%">${esc(a.name)}</div>`;
+  }).join('');
+  const fbAspect = fp.aspect ? ` style="--fb-aspect:${fp.aspect}%"` : '';
+  const boardInner = roomSvgM(outline) + bands + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
   const legend = edit
     ? `<div class="fp-legend">${fp.areas.map((a, i) => `<button class="fp-leg ed" data-area="${a.id}"><span class="fp-dot" style="background:${FP_AREA_COLORS[i % FP_AREA_COLORS.length]}"></span>${esc(a.name)} <span class="fp-leg-n">${a.tables.length}</span></button>`).join('')}</div>`
     : `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
@@ -4268,7 +4281,7 @@ async function renderLocFloorPlan() {
     </div>
     ${legend}
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem;font-size:.8rem">${edit ? 'Drag tables to arrange the room; tap a table to edit; “Edit room” reshapes the walls.' : 'Tap an available table to seat a guest; tap an occupied table to change its status. Shared live with the Front Desk.'}</p>
-    <div class="floor-board${edit ? ' editable' : ''}${S.fpEditRoom && edit ? ' roomedit' : ''}" id="fpBoard">${boardInner}</div>`;
+    <div class="floor-board${edit ? ' editable' : ''}${S.fpEditRoom && edit ? ' roomedit' : ''}" id="fpBoard"${fbAspect}>${boardInner}</div>`;
 
   if (edit) {
     $('fpToggle').onclick = () => { S.fpEdit = false; S.fpEditRoom = false; renderLocFloorPlan(); };

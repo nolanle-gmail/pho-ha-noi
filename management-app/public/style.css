@@ -567,9 +567,13 @@ tr:hover .order-hover { opacity: 1; }
 .fp-leg.ed { cursor: pointer; } .fp-leg.ed:hover { border-color: #d5d0c8; }
 .fp-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
 .fp-leg-n { color: var(--muted); font-weight: 400; }
-.floor-board { position: relative; width: 100%; padding-bottom: 58%; background-color: #faf8f5;
+.floor-board { position: relative; width: 100%; padding-bottom: var(--fb-aspect, 58%); background-color: #faf8f5;
   background-image: linear-gradient(#0000000a 1px, transparent 1px), linear-gradient(90deg, #0000000a 1px, transparent 1px);
   background-size: 5% 8.333%, 5% 8.333%; border: 1px solid #e4ded5; border-radius: 14px; overflow: hidden; touch-action: none; }
+/* Area band label on the floor map (groups tables by area) */
+.fp-band { position: absolute; left: 2.5%; transform: translateY(-175%); z-index: 3; white-space: nowrap;
+  font-weight: 800; font-size: .64rem; letter-spacing: .04em; text-transform: uppercase; color: var(--muted, #6b6b6b);
+  background: var(--surface, #fff); border: 1px solid var(--line, #e4ded5); border-radius: 999px; padding: .05rem .5rem; }
 .floor-board .ftable { position: absolute; transform: translate(-50%, -50%); width: clamp(36px, 8.4%, 60px); aspect-ratio: 1; z-index: 2;
   border-radius: 50%; background: var(--abg, #fff); border: 2px solid var(--ac, #2b5bd7); color: var(--ac, #2b5bd7);
   display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 3px #0002; user-select: none; cursor: pointer; }
@@ -584,7 +588,7 @@ tr:hover .order-hover { opacity: 1; }
 .room-vtx { position: absolute; transform: translate(-50%, -50%); width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid var(--red); cursor: grab; z-index: 5; box-shadow: 0 1px 3px #0003; touch-action: none; }
 .room-vtx.drag { transform: translate(-50%, -50%) scale(1.15); }
 .floor-board.roomedit .ftable { opacity: .45; pointer-events: none; }
-.floor-board.snapshot { padding-bottom: 46%; }
+.floor-board.snapshot { padding-bottom: var(--fb-aspect, 46%); }
 .floor-board.snapshot .ftable { cursor: default; width: clamp(28px, 7%, 46px); }
 /* Floor-plan reflection of the service lists: server name + check-due alert. */
 .floor-board .ftable.due { animation: tbldue 1.3s ease-in-out infinite; }

@@ -1486,7 +1486,7 @@ function statusTableEl(t) {
 }
 function fpBoardHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
-  return `${roomSvg(fp.room_outline)}${all.map(statusTableEl).join('') || '<div class="fp-empty">No tables set up \u2014 add them in the Management app.</div>'}`;
+  return `${roomSvg(fp.room_outline)}${areaBands(fp)}${all.map(statusTableEl).join('') || '<div class="fp-empty">No tables set up \u2014 add them in the Management app.</div>'}`;
 }
 function statusLegend(fp) {
   const all = fp.areas.flatMap(a => a.tables);
@@ -1504,7 +1504,7 @@ async function renderTables() {
       <div style="display:flex;gap:.4rem;align-items:center"><span class="badge seated">${sm.available} available</span> <span class="badge ${sm.occupied ? 'waiting' : 'left'}">${sm.occupied} occupied</span><button class="btn sm ghost" id="tmGuests">${showGuests() ? '👤 Guests shown' : '👤 Guests hidden'}</button></div></div>
     ${statusLegend(fp)}
     <p class="sub" style="margin:.1rem 0 .6rem">${canEdit ? 'Tap an available table to seat a guest; tap an occupied table to change its status.' : 'Live table status — view only.'}</p>
-    <div class="floor-board${canEdit ? '' : ' readonly'}" id="fpBoard">${fpBoardHtml(fp)}</div>`;
+    <div class="floor-board${canEdit ? '' : ' readonly'}" id="fpBoard"${fbStyle(fp)}>${fpBoardHtml(fp)}</div>`;
   $('tmGuests').onclick = () => { toggleGuests(); renderTables(); };
   if (canEdit) $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
     const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(el.dataset.tbl));
@@ -2433,6 +2433,17 @@ function roomSvg(outline) {
   if (!Array.isArray(outline) || outline.length < 3) return '';
   return `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${outline.map(p => `${p.x},${p.y}`).join(' ')}"/></svg>`;
 }
+// Area name labels floated above each area's first row (groups the floor map by area).
+function areaBands(fp) {
+  return (fp.areas || []).map(a => {
+    const ts = (a.tables || []).filter(t => t.pos_y != null);
+    if (!ts.length || !a.name) return '';
+    const minY = Math.min(...ts.map(t => t.pos_y));
+    return `<div class="fp-band" style="top:${minY}%">${esc(a.name)}</div>`;
+  }).join('');
+}
+// Board height (padding-bottom %) so tables never overlap; from the saved floor layout.
+function fbStyle(fp) { return fp && fp.aspect ? ` style="--fb-aspect:${fp.aspect}%"` : ''; }
 function ftableEl(t, ci, mode) {
   const cls = ['ftable', t.shape === 'square' ? 'sq' : '', t.occupied ? 'occ' : '', t.is_active === 0 ? 'off' : ''].filter(Boolean).join(' ');
   const attr = mode === 'pick' ? (t.occupied ? '' : ` data-pick="${esc(t.label)}"`) : (mode === 'edit' ? ` data-tid="${t.id}"` : '');
@@ -2452,7 +2463,7 @@ async function seatModal(id, name) {
   }).join('');
   const body = `<p class="sub" style="margin:.1rem 0 .5rem">Tap a free (green) table for <strong>${esc(name)}</strong>.</p>
     ${statusLegend(fp)}
-    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
+    <div class="floor-board picker" id="floorBoard"${fbStyle(fp)}>${roomSvg(fp.room_outline)}${areaBands(fp)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
     <label style="margin-top:.5rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="selName">none</strong></label>
     <input type="hidden" id="fSel" /><input type="hidden" id="fSelLabel" />`;
   modal(`Seat ${name}`, body, async () => {
@@ -2532,7 +2543,7 @@ async function walkInModal() {
     <div class="stepper"><button type="button" id="wMinus">−</button><span class="n" id="wSizeN">2</span><button type="button" id="wPlus">+</button></div>
     <p class="sub" style="margin:.6rem 0 .3rem">Tap a free (green) table to seat now.</p>
     ${statusLegend(fp)}
-    <div class="floor-board picker" id="floorBoard">${roomSvg(fp.room_outline)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
+    <div class="floor-board picker" id="floorBoard"${fbStyle(fp)}>${roomSvg(fp.room_outline)}${areaBands(fp)}${tablesHtml || '<div class="fp-empty">No tables — set them up in the Management app.</div>'}</div>
     <label style="margin-top:.5rem;display:block;font-size:.83rem;color:var(--muted)">Selected: <strong id="wSelName">none</strong></label>
     <input type="hidden" id="wSel" />`;
   let size = 2;

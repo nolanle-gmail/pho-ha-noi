@@ -203,6 +203,20 @@ erDiagram
 `waiting → seated → in_service → paying → done`. Every move is appended to
 `visit_events` for history and performance reporting.
 
+**Floor-map layout (2026-09-29).** Tables are plotted at stored `pos_x`/`pos_y` percentages on a
+`.floor-board`. On big floors (60–75 tables) a fixed-aspect board packed them so tightly they
+touched horizontally and overlapped vertically, which made seating hard on a phone. The map is now
+laid out **area-by-area on a clean, non-overlapping grid** (≤7 columns), each area introduced by a
+floated **area band label** (Dining Room / Bar / Lounge / Patio…). The board height is no longer
+fixed: a per-location `locations.floor_aspect` (padding-bottom %, returned by `/api/floorplan` as
+`aspect`, set via the `--fb-aspect` CSS var) makes the board grow taller for larger floors and stay
+compact for small ones — so nothing overlaps and staff scroll a tall, tidy map instead of hunting a
+cramped one. Seat pickers are scrollable modals (`max-height:90vh`) and widen when they hold a floor
+board. The same layout feeds every surface that draws the map: the Staff Table Map + seat/walk-in
+pickers, the `/sflow` Front Desk picker, and the Management floor-plan view/editor + snapshot.
+Managers can still drag tables in the editor to fine-tune; a one-off `relayout-floors.js` seeded the
+initial grid across all locations.
+
 ```mermaid
 erDiagram
   locations ||--o{ floor_areas : "has"

@@ -1177,6 +1177,7 @@ function migrate() {
     `ALTER TABLE shifts ADD COLUMN all_day INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE shifts ADD COLUMN leave_hours REAL`,
     `ALTER TABLE locations ADD COLUMN room_outline TEXT`,
+    `ALTER TABLE locations ADD COLUMN floor_aspect REAL`,
     `ALTER TABLE users ADD COLUMN employee_code TEXT`,
     `ALTER TABLE service_visits ADD COLUMN help_flag INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE service_visits ADD COLUMN help_at TEXT`,
