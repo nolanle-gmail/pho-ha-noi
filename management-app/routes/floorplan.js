@@ -80,6 +80,26 @@ router.get('/', requireView, (req, res) => {
     };
   };
   const all = tables.map(mapT);
+  // Overlay the live Service Flow so the floor shows a table BUSY whenever it's in any Service Flow
+  // status — Seated, Awaiting food, In service or Paid. The active (ordered/served/paid) states come
+  // from Toast, so those tables often have no local visit and would otherwise look free on the floor.
+  try {
+    const { computeServiceFlow } = require('../lib/toastSync');
+    const flow = computeServiceFlow(locId);
+    const FLOW_TO_STATUS = { seated: 'waiting_to_order', awaiting_food: 'waiting_to_order', in_service: 'served', ready_to_bus: 'cleaning' };
+    const nrm = s => String(s || '').trim().toLowerCase();
+    const busy = new Map();
+    (flow.seated || []).forEach(s => busy.set(nrm(s.table_name), { state: 'seated', server: s.server_name }));
+    (flow.tables || []).forEach(t => busy.set(nrm(t.table_name), { state: t.state, server: t.server_name }));
+    all.forEach(t => {
+      const b = busy.get(nrm(t.label));
+      if (b && !t.occupied) {                       // free locally but active in Toast/Seated → mark busy
+        t.status = FLOW_TO_STATUS[b.state] || 'served';
+        t.occupied = true;
+        if (!t.server_name && b.server) t.server_name = b.server;
+      }
+    });
+  } catch { /* Toast / Service Flow unavailable — leave the floor as-is */ }
   const byArea = areas.map(a => ({ id: a.id, name: a.name, sort_order: a.sort_order, tables: all.filter(t => t.area_id === a.id) }));
   const noArea = all.filter(t => !t.area_id);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });

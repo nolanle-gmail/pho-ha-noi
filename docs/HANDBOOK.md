@@ -217,6 +217,14 @@ pickers, the `/sflow` Front Desk picker, and the Management floor-plan view/edit
 Managers can still drag tables in the editor to fine-tune; a one-off `relayout-floors.js` seeded the
 initial grid across all locations.
 
+**Floor occupancy reflects the live Service Flow (2026-09-29).** `GET /api/floorplan` overlays
+`computeServiceFlow` onto each table, so a table shows **busy** whenever it's in **any** Service Flow
+status — 🪑 Seated, ⏳ Awaiting food, 🍜 In service or 💳 Paid. The active states come from **Toast**,
+so those tables usually have no local `service_visits` row and would otherwise look free; the overlay
+fills that gap (Seated / Awaiting food → `waiting_to_order`, In service → `served`, Paid → `cleaning`)
+and only ever upgrades an `available` table, never downgrading a locally-set status. Every floor
+surface and seat picker reads this, so a host can't pick a table that's mid-service.
+
 ```mermaid
 erDiagram
   locations ||--o{ floor_areas : "has"
