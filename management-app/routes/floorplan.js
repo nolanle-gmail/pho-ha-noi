@@ -80,26 +80,42 @@ router.get('/', requireView, (req, res) => {
     };
   };
   const all = tables.map(mapT);
-  // Overlay the live Service Flow so the floor shows a table BUSY whenever it's in any Service Flow
-  // status — Seated, Awaiting food, In service or Paid. The active (ordered/served/paid) states come
-  // from Toast, so those tables often have no local visit and would otherwise look free on the floor.
+  // Overlay the live Service Flow onto the floor:
+  //  • Seated / Awaiting food / In service → mark the table BUSY (these come from Toast, so the
+  //    table often has no local visit and would otherwise look free).
+  //  • Paid (ready_to_bus) → the guest is done, so FREE the table (available) — and reconcile any
+  //    lingering local visit to done so a server can immediately seat new guests there. Bussing
+  //    still happens on the Cleanup board; that's separate from opening the floor spot.
   try {
     const { computeServiceFlow } = require('../lib/toastSync');
     const flow = computeServiceFlow(locId);
-    const FLOW_TO_STATUS = { seated: 'waiting_to_order', awaiting_food: 'waiting_to_order', in_service: 'served', ready_to_bus: 'cleaning' };
+    const FLOW_TO_STATUS = { seated: 'waiting_to_order', awaiting_food: 'waiting_to_order', in_service: 'served' };
     const nrm = s => String(s || '').trim().toLowerCase();
     const busy = new Map();
+    const paid = new Set();
     (flow.seated || []).forEach(s => busy.set(nrm(s.table_name), { state: 'seated', server: s.server_name }));
-    (flow.tables || []).forEach(t => busy.set(nrm(t.table_name), { state: t.state, server: t.server_name }));
+    (flow.tables || []).forEach(t => { if (t.state === 'ready_to_bus') paid.add(nrm(t.table_name)); else busy.set(nrm(t.table_name), { state: t.state, server: t.server_name }); });
     all.forEach(t => {
-      const b = busy.get(nrm(t.label));
-      if (b && !t.occupied) {                       // free locally but active in Toast/Seated → mark busy
+      const key = nrm(t.label);
+      if (paid.has(key)) {
+        // Paid → free the spot. If a local visit is still open, close it (done) and clear the table
+        // in the DB so the seat action (which guards on table status) accepts a new party.
+        if (t.occupied || (t.status && t.status !== 'available')) {
+          const v = db.prepare(`SELECT id, stage FROM service_visits WHERE table_id=? AND stage IN ('seated','in_service','paying') ORDER BY id DESC LIMIT 1`).get(t.id);
+          if (v) { db.prepare(`UPDATE service_visits SET stage='done', done_at=? WHERE id=?`).run(nowISO(), v.id); logVisitEvent(v.id, locId, 'paid_freed', v.stage, 'done', req); }
+          db.prepare(`UPDATE restaurant_tables SET status='available', guest_name=NULL, party_size=NULL, seated_at=NULL, est_free_at=NULL WHERE id=?`).run(t.id);
+        }
+        t.status = 'available'; t.occupied = false; t.guest_name = null; t.party_size = null; t.server_name = null; t.stage = null; t.minutes_to_check = null; t.check_due = false;
+        return;
+      }
+      const b = busy.get(key);
+      if (b && !t.occupied) {                        // free locally but active in Toast/Seated → mark busy
         t.status = FLOW_TO_STATUS[b.state] || 'served';
         t.occupied = true;
         if (!t.server_name && b.server) t.server_name = b.server;
       }
     });
-  } catch { /* Toast / Service Flow unavailable — leave the floor as-is */ }
+  } catch (e) { console.error('[floormap] service-flow overlay:', e.message); }
   const byArea = areas.map(a => ({ id: a.id, name: a.name, sort_order: a.sort_order, tables: all.filter(t => t.area_id === a.id) }));
   const noArea = all.filter(t => !t.area_id);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });

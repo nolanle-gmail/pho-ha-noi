@@ -630,7 +630,7 @@ async function loadServiceFlow() {
     <td>${ordTime(t.opened_at)}<div style="color:var(--muted);font-size:.72rem">${t.minutes_open != null ? t.minutes_open + 'm ago' : ''}</div></td>
     <td>${t.served ? '✅ Yes' : `<button class="btn sm" data-served="${t.order_guid}">Mark served</button>`}</td>
     <td>${t.paid ? '💳 Paid' : '<span style="color:var(--muted)">not yet</span>'}</td>
-    <td>${t.paid ? `<button class="btn sm" data-done="${t.order_guid}">Bussed — clear</button>` : '<span style="color:var(--muted)">—</span>'}</td>
+    <td><span style="color:var(--muted)">—</span></td>
     <td>${SF_STATE[t.state] || ''}${t.alert ? ' <span class="badge out">⚠ alert</span>' : ''}</td>
   </tr>`).join('');
   // On phones the active-tables table jumps to the top (see .sf-wrap.sf-top .sf-tables in CSS)

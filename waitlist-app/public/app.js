@@ -2291,10 +2291,9 @@ async function renderStaffServiceFlow() {
     }
     return `<div class="sf2-card ${cls}${t.alert ? ' sf2-alert' : ''}">
       <div class="sf2-top"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
-      <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.paid ? ' · 💳 Paid' : ''}</div>
+      <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}</div>
       <div class="sf2-act">
         ${!t.served && !t.paid ? `<button class="btn" data-served="${t.order_guid}">✅ Served</button>` : (t.served && !t.paid ? '<span class="muted">✅ Served</span>' : '')}
-        ${t.paid ? `<button class="btn" data-done="${t.order_guid}">🧽 Bussed — clear</button>` : ''}
       </div>
     </div>`;
   };

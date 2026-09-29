@@ -55,9 +55,11 @@ router.get('/status', (req, res) => {
 // so a guest can find their own name and see who's ahead. Names only (first + last
 // initial), party size and how long they've waited; never phone numbers.
 router.get('/waitlist/:slug', (req, res) => {
-  const slug = String(req.params.slug || '').toLowerCase();
+  // Case/hyphen-insensitive so /checkin/fountainvalley/current and /fountain-valley/current both work.
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const slug = norm(req.params.slug);
   const loc = db.prepare(`SELECT id, name, avg_turn_minutes FROM locations WHERE is_active=1`).all()
-    .find(l => slugify(l.name) === slug);
+    .find(l => norm(slugify(l.name)) === slug);
   if (!loc) return res.status(404).json({ error: 'Location not found.' });
   const rows = db.prepare(`SELECT guest_name, party_size,
       CAST((julianday('now') - julianday(created_at)) * 1440 AS INTEGER) AS waited_min

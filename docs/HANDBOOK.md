@@ -218,12 +218,18 @@ Managers can still drag tables in the editor to fine-tune; a one-off `relayout-f
 initial grid across all locations.
 
 **Floor occupancy reflects the live Service Flow (2026-09-29).** `GET /api/floorplan` overlays
-`computeServiceFlow` onto each table, so a table shows **busy** whenever it's in **any** Service Flow
-status — 🪑 Seated, ⏳ Awaiting food, 🍜 In service or 💳 Paid. The active states come from **Toast**,
-so those tables usually have no local `service_visits` row and would otherwise look free; the overlay
-fills that gap (Seated / Awaiting food → `waiting_to_order`, In service → `served`, Paid → `cleaning`)
-and only ever upgrades an `available` table, never downgrading a locally-set status. Every floor
-surface and seat picker reads this, so a host can't pick a table that's mid-service.
+`computeServiceFlow` onto each table:
+- **🪑 Seated / ⏳ Awaiting food / 🍜 In service → BUSY.** These active states come from **Toast**, so
+  the table usually has no local `service_visits` row and would otherwise look free; the overlay fills
+  that gap (Seated / Awaiting food → `waiting_to_order`, In service → `served`) so a host can't pick a
+  table that's mid-service. It only ever upgrades an `available` table, never downgrading a local status.
+- **💳 Paid → FREE (available).** Once the guest has paid the table is opening up, so the overlay marks
+  it available **and reconciles** any lingering local visit to `done`, freeing the table in the DB — so a
+  server can immediately seat a new party there. (Bussing still happens on the Cleanup board; that's
+  separate from reopening the floor spot.) Reconciliation happens lazily on each `/floormap` read.
+
+Every floor surface and seat picker reads this shared endpoint, so the whole team sees the same
+occupancy and paid tables become seatable right away.
 
 ```mermaid
 erDiagram
@@ -1210,14 +1216,21 @@ scrolling; tablet/desktop keep the original layout exactly (the wrapper is expli
 - **🍜 In service** — served, not paid; past `flow_pay_min` **counted from when the food was
   *served*** (not from order-open) → alert the **server / back server**, then re-alert every
   `flow_pay_renudge_min` until paid.
-- **💳 Paid** — paid, not yet bussed → alert the **busser**; tapping **Done** clears it. (Internally
-  the `ready_to_bus` state; the Service Flow board labels it **Paid** — the dedicated Cleanup busser
-  board still says *Ready to bus*, which is the busser's own verb.)
+- **💳 Paid** — paid, not yet bussed → alert the **busser**. On the Service Flow board this just shows
+  **Paid** (no clear action) — **bussing/clearing moved to the dedicated Cleanup board**, where the
+  busser taps Done; that (or the ~20-min paid grace) drops the table from Service Flow. (Internally the
+  `ready_to_bus` state; the Service Flow board labels it **Paid**, the Cleanup board still says
+  *Ready to bus* — the busser's own verb.)
 
 The KPI row on the Service Flow board is **Seated · Awaiting food · In service · Paid** — the old
 **Active** (total-open) box was dropped as redundant now that Seated leads the row. Seated cards
 render first on every board — the Management console, the location **⏱️ Service Flow** tab, the
 **/sflow** kiosk, and the Staff app.
+
+**Card order (2026-09-29).** `computeServiceFlow` sorts its `tables` so **not-yet-paid tables come
+first** (longest-open first) and **Paid tables sink to the bottom** — so on a phone the tables still
+needing attention (Awaiting food / In service) sit at the top without scrolling past the paid ones.
+One backend sort, so all three boards inherit it.
 The **Cleanup** busser board is unaffected (it only ever shows Ready-to-bus).
 
 **Per-location On/Off lives in two places, and store managers control their own store.** The
@@ -1232,8 +1245,8 @@ via `POST /api/toast/service-flow/toggle` (own location only — `canSeeLoc`; fl
 Status without computing the board: `GET /api/toast/service-flow/status`.
 
 **Public Service Flow kiosk (no login).** Same trust model as the `/scanner` and `/clock` kiosks:
-a staffer opens the link, enters their **employee code**, and works the live board (tap **✅ Served**
-/ **🧽 Bussed — clear**). Two link forms:
+a staffer opens the link, enters their **employee code**, and works the live board (tap **✅ Served**;
+paid tables just show **💳 Paid**, cleared by the busser on the Cleanup board). Two link forms:
 - **Per-location: `/sflow/<slug>`** (e.g. `pho-ha-noi-management.fly.dev/sflow/fountain-valley` —
   slugs are case/hyphen-insensitive, so `/sflow/fountainvalley` also works). The URL **pins** the
   store: enter code → straight to that store's board (no picker). A staffer not assigned to that
@@ -1347,6 +1360,13 @@ size and mobile number**, joins, and then **tracks their spot live** — the scr
 flips to "🔔 Your table is ready!" the moment the host pages them. Hardened with
 per-IP rate limits, a duplicate-submit guard and a 16 KB body cap.
 
+The `<slug>` is **case/hyphen-insensitive** (like the `/sflow`, `/clock`, `/scanner`
+kiosks): `/checkin/fountainvalley` and `/checkin/fountain-valley` both resolve to
+Fountain Valley. A slug in the path is an **explicit** store choice — if it doesn't
+match a location the page shows the picker; it never silently falls back to the
+device's last-used store (that bug once showed a Fountain Valley guest the Sunnyvale
+list). `?loc=<id>` and the saved-store fallback apply only when the path has no slug.
+
 **Public "current waitlist" view — `/checkin/<slug>/current`.** A read-only page (the
 same URL with `/current` appended — e.g. `/checkin/milpitas/current`,
 `/checkin/san-jose/current`) that shows **who is waiting, in order**: position #, name
@@ -1370,7 +1390,7 @@ collapses to a hamburger drawer on phones. Views depend on role:
 | 🛎️ My Tables | The staff member's own tables, claim queue & timed checks | All front & back-of-house roles |
 | 🍜 Front Desk | The live waiting-list board for the store | Host / Front Desk / Server / Cashier / managers |
 | 🍽️ Floor | Live table map — front-of-house + managers can seat / update; kitchen roles view-only | All front & back-of-house roles + managers |
-| ⏱️ Service Flow | The live dine-in board for the store — tap **✅ Served** / **🧽 Bussed — clear** per table; the tab appears for floor staff at **any store where Service Flow is ON** (live *or* dry-run). **Multi-store staff** (home + `staff_locations`) land on whichever of *their* stores is ON, and get a **store picker** when several are on; acting is allowed at any store they belong to. Via `/api/serviceflow/*` proxy → Management `/api/sf/*` (service key + `as=<email>`) | Floor staff at any ON store |
+| ⏱️ Service Flow | The live dine-in board for the store — tap **✅ Served** per table; paid tables show **💳 Paid** (bussing is on the Cleanup board); the tab appears for floor staff at **any store where Service Flow is ON** (live *or* dry-run). **Multi-store staff** (home + `staff_locations`) land on whichever of *their* stores is ON, and get a **store picker** when several are on; acting is allowed at any store they belong to. Via `/api/serviceflow/*` proxy → Management `/api/sf/*` (service key + `as=<email>`) | Floor staff at any ON store |
 | 🔔 Alerts | Inbox of every alert sent to you (manager floor alerts + **Service Flow** system pings), **Active / History** tabs; a **count badge** shows alerts awaiting action. Manager alerts use **On it / Done**; **Service Flow** alerts use the claim-and-track lifecycle — **🙋 On It** claims it (removing it from other staff), then **✅ Mark Served** / **💳 Paid** / **🧽 Mark Bussed** resolves it (and moves the board), or **⏳ Waiting** (food) / **⏳ Not yet** (pay) re-alerts the floor (~5 / ~7 min) until it advances. Unclaimed alerts re-pop every ~3 min. Resolved alerts move to History | Everyone |
 | ✉️ Messages | Team inbox with unread badge (**counts direct messages + 💬 Chat together**); send/reply with picture & video attachments and a **😊 emoji picker** in every composer; **emoji reactions** on any bubble — iMessage-style tapbacks shown at the **top-left corner** (❤️ 👍 🙏 😮 😢 👎 **plus a "Haha" bubble graphic**); hover/tap a reaction to see who reacted; reacting notifies **everyone in the conversation** — live toast, **OS push**, and a **+1 unread badge** that clears when they open it); **💬 Chat** groups. A new message or chat pops up a small on-screen notification (sound / vibration). Two-tap **translate** on any message/chat between **English / Spanish / Vietnamese** | Everyone |
 | ⏱ My Hours | Own timesheet — day / week / bi-weekly / month, OT & late | Everyone |

@@ -570,7 +570,10 @@ function computeServiceFlow(locationId) {
       guests: r.num_guests, opened_at: r.opened_at, minutes_open: t, served, served_at: r.served_at, minutes_served: sMin,
       paid, paid_at: paidAt, minutes_paid: p, state, alert, drop,
       bus_claimed_at: r.bus_claimed_at || null, minutes_claimed: minsSince(r.bus_claimed_at) };
-  }).filter(x => !x.drop).sort((a, b) => (b.minutes_open || 0) - (a.minutes_open || 0));
+  }).filter(x => !x.drop)
+    // Not-yet-paid tables first (longest-open first), Paid tables sink to the bottom — so on a phone
+    // staff see the tables still needing attention at the top without scrolling.
+    .sort((a, b) => (a.paid ? 1 : 0) - (b.paid ? 1 : 0) || (b.minutes_open || 0) - (a.minutes_open || 0));
   const counts = { total: tables.length, seated: 0, awaiting_food: 0, in_service: 0, ready_to_bus: 0, alerting: 0 };
   tables.forEach(t => { counts[t.state]++; if (t.alert) counts.alerting++; });
   // "Seated" — host-seated parties who haven't opened a Toast order yet. Sourced from the

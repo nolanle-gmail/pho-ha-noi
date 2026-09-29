@@ -40,13 +40,15 @@ async function start() {
   catch (e) { KV().innerHTML = `<div class="k-error">${esc(e.message)}</div>`; return; }
   const params = new URLSearchParams(location.search);
   const byId = (v) => K.locations.find(l => String(l.id) === String(v));
-  // Pin the store from (in order): a /checkin/<slug> path, a ?loc=<id>, or a
-  // location this device was set to before. That way each tablet / QR stays on
-  // its own store's list.
-  const chosen = (ROUTE.slug && K.locations.find(l => l.slug === ROUTE.slug))
-    || byId(params.get('loc'))
-    || byId(localStorage.getItem(SAVED_LOC))
-    || (K.locations.length === 1 ? K.locations[0] : null);
+  // Match slugs case/hyphen-insensitively so /checkin/fountainvalley and
+  // /checkin/fountain-valley both resolve (same as the /sflow, /clock, /scanner kiosks).
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Pin the store: a /checkin/<slug> path is an EXPLICIT choice — only use the store it names
+  // (never silently fall back to this device's saved store, which showed the wrong location).
+  // With no slug in the path, fall back to ?loc=<id>, then this device's saved location.
+  const chosen = ROUTE.slug
+    ? (K.locations.find(l => norm(l.slug) === norm(ROUTE.slug)) || null)
+    : (byId(params.get('loc')) || byId(localStorage.getItem(SAVED_LOC)) || (K.locations.length === 1 ? K.locations[0] : null));
   if (chosen) {
     K.loc = String(chosen.id); K.fixed = true;
     try { localStorage.setItem(SAVED_LOC, K.loc); } catch { /* private mode */ }
@@ -75,7 +77,7 @@ async function renderForm() {
       <input id="kPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="tel" />
       <label class="k-consent" style="display:flex;gap:.6rem;align-items:flex-start;margin:.5rem 0 0;font-size:.82rem;line-height:1.4;color:#555;cursor:pointer">
         <input type="checkbox" id="kConsent" style="flex:0 0 auto;width:1.15rem;height:1.15rem;min-width:1.15rem;margin:.15rem 0 0;padding:0;border:0" />
-        <span style="flex:1 1 auto;min-width:0">Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Message &amp; data rates may apply. Reply STOP to opt out, HELP for help.</span>
+        <span style="flex:1 1 auto;min-width:0">Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Reply STOP to opt out, HELP for help.</span>
       </label>
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>

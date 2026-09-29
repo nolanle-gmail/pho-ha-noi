@@ -481,10 +481,11 @@ async function loadBoard() {
     let act = '';
     if (!t.served && !t.paid) act = `<button class="served" data-served="${t.order_guid}">✅ Served</button>`;
     else if (t.served && !t.paid) act = `<div class="done">✅ Served · waiting on payment</div>`;
-    if (t.paid) act = `<button class="bussed" data-done="${t.order_guid}">🧽 Bussed — clear</button>`;
+    // Paid tables just show the "💳 Paid" status (in the line above) — no action here.
+    if (t.paid) act = '';
     return `<div class="sf ${cls}${t.alert ? ' alert' : ''}">
       <div class="t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
-      <div class="s">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.paid ? ' · 💳 Paid' : ''}${t.alert ? ' · ⚠️' : ''}</div>
+      <div class="s">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.alert ? ' · ⚠️' : ''}</div>
       <div class="a">${act}</div>
     </div>`;
   };
