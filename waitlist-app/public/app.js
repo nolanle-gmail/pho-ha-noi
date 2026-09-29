@@ -2258,7 +2258,7 @@ const SF2_STATE = {
   seated: ['🪑 Seated', 'sf2-seated'],
   awaiting_food: ['⏳ Awaiting food', 'sf2-await'],
   in_service: ['🍜 In service', 'sf2-serv'],
-  ready_to_bus: ['🧽 Ready to bus', 'sf2-bus'],
+  ready_to_bus: ['💳 Paid', 'sf2-bus'],
 };
 async function renderStaffServiceFlow() {
   const v = $('view');

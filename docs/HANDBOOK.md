@@ -1202,10 +1202,14 @@ scrolling; tablet/desktop keep the original layout exactly (the wrapper is expli
 - **🍜 In service** — served, not paid; past `flow_pay_min` **counted from when the food was
   *served*** (not from order-open) → alert the **server / back server**, then re-alert every
   `flow_pay_renudge_min` until paid.
-- **🧽 Ready to bus** — paid, not yet bussed → alert the **busser**; tapping **Done** clears it.
+- **💳 Paid** — paid, not yet bussed → alert the **busser**; tapping **Done** clears it. (Internally
+  the `ready_to_bus` state; the Service Flow board labels it **Paid** — the dedicated Cleanup busser
+  board still says *Ready to bus*, which is the busser's own verb.)
 
-The **Seated** count leads the KPI row and seated cards render first on every board — the
-Management console, the location **⏱️ Service Flow** tab, the **/sflow** kiosk, and the Staff app.
+The KPI row on the Service Flow board is **Seated · Awaiting food · In service · Paid** — the old
+**Active** (total-open) box was dropped as redundant now that Seated leads the row. Seated cards
+render first on every board — the Management console, the location **⏱️ Service Flow** tab, the
+**/sflow** kiosk, and the Staff app.
 The **Cleanup** busser board is unaffected (it only ever shows Ready-to-bus).
 
 **Per-location On/Off lives in two places, and store managers control their own store.** The

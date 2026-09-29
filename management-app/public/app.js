@@ -584,7 +584,7 @@ const SF_STATE = {
   seated: '<span class="badge">🪑 Seated</span>',
   awaiting_food: '<span class="badge low">⏳ Awaiting food</span>',
   in_service: '<span class="badge ok">🍜 In service</span>',
-  ready_to_bus: '<span class="badge blue">🧽 Ready to bus</span>',
+  ready_to_bus: '<span class="badge blue">💳 Paid</span>',
 };
 // The board renders both as its own section AND inside a location's Service Flow tab.
 const sfActive = () => S.section === 'serviceflow' || (S.section === 'locations' && S.locView === 'detail' && S.locTab === 'serviceflow');
@@ -639,10 +639,9 @@ async function loadServiceFlow() {
   if ($('sfKpis')) $('sfKpis').innerHTML = `
     <div class="kpis" style="margin-bottom:1rem">
       <div class="card"><div class="label">Seated</div><div class="value">${d.counts.seated || 0}</div></div>
-      <div class="card"><div class="label">Active tables</div><div class="value">${d.counts.total}</div></div>
       <div class="card"><div class="label">Awaiting food</div><div class="value ${d.counts.awaiting_food ? 'warn' : ''}">${d.counts.awaiting_food}</div></div>
       <div class="card"><div class="label">In service</div><div class="value ok">${d.counts.in_service}</div></div>
-      <div class="card"><div class="label">Ready to bus</div><div class="value">${d.counts.ready_to_bus}</div></div>
+      <div class="card"><div class="label">Paid</div><div class="value">${d.counts.ready_to_bus}</div></div>
     </div>`;
   $('sfBody').innerHTML = `
     ${(d.tables.length || (d.seated || []).length) ? `<div class="table-wrap"><table><thead><tr><th>Active table</th><th>Ordered</th><th>Served</th><th>Ready to pay</th><th>Ready to bus</th><th>Status</th></tr></thead>

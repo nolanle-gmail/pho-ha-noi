@@ -38,7 +38,7 @@
   .hidden{ display:none !important; }
   .board-head{ display:flex; align-items:center; justify-content:space-between; gap:.5rem; flex-wrap:wrap; margin:.2rem 0 .9rem; }
   .board-head h2{ margin:0; font-size:1.2rem; }
-  .kpis{ display:grid; grid-template-columns:repeat(5,1fr); gap:.5rem; margin:0 0 1rem; }
+  .kpis{ display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; margin:0 0 1rem; }
   .kpi{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:.5rem; text-align:center; }
   .kpi .n{ font-size:1.3rem; font-weight:700; } .kpi .l{ font-size:.66rem; color:var(--muted); }
   .kpi .n.warn{ color:var(--await); }
@@ -450,7 +450,7 @@ function fdAct(btn, action, id, name) {
   if (action === 'leave') return go('/waitlist/' + id + '/leave', { method: 'PUT' }, 'Party removed');
 }
 
-const SF_STATE = { seated: ['🪑 Seated', 'seated'], awaiting_food: ['⏳ Awaiting food', 'await'], in_service: ['🍜 In service', 'serv'], ready_to_bus: ['🧽 Ready to bus', 'bus'] };
+const SF_STATE = { seated: ['🪑 Seated', 'seated'], awaiting_food: ['⏳ Awaiting food', 'await'], in_service: ['🍜 In service', 'serv'], ready_to_bus: ['💳 Paid', 'bus'] };
 async function loadBoard() {
   clearTimeout(timer);
   if (!CODE || !LOC) return;
@@ -492,10 +492,9 @@ async function loadBoard() {
   $('bBody').innerHTML = `
     <div class="kpis">
       <div class="kpi"><div class="n">${seated.length}</div><div class="l">Seated</div></div>
-      <div class="kpi"><div class="n">${d.counts.total}</div><div class="l">Active</div></div>
       <div class="kpi"><div class="n ${d.counts.awaiting_food ? 'warn' : ''}">${d.counts.awaiting_food}</div><div class="l">Awaiting food</div></div>
       <div class="kpi"><div class="n">${d.counts.in_service}</div><div class="l">In service</div></div>
-      <div class="kpi"><div class="n">${d.counts.ready_to_bus}</div><div class="l">Ready to bus</div></div>
+      <div class="kpi"><div class="n">${d.counts.ready_to_bus}</div><div class="l">Paid</div></div>
     </div>
     ${(seated.length || d.tables.length) ? `<div class="grid">${seated.map(card).join('')}${d.tables.map(card).join('')}</div>` : '<div class="empty">No open dine-in tables right now.</div>'}`;
   $('bBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => act(b, '/served/' + b.dataset.served, 'Marked served'));
