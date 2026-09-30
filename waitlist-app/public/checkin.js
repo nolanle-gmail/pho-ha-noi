@@ -73,12 +73,8 @@ async function renderForm() {
       <input id="kName" class="k-input" placeholder="e.g. Kim" autocomplete="name" />
       <label class="k-label">Party size</label>
       <div class="k-stepper"><button type="button" id="kMinus">−</button><span id="kSize">${K.size}</span><button type="button" id="kPlus">+</button></div>
-      <label class="k-label">Mobile number <span class="k-opt">(optional)</span></label>
+      <label class="k-label">Mobile number</label>
       <input id="kPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="tel" />
-      <label class="k-consent" style="display:flex;gap:.6rem;align-items:flex-start;margin:.5rem 0 0;font-size:.82rem;line-height:1.4;color:#555;cursor:pointer">
-        <input type="checkbox" id="kConsent" style="flex:0 0 auto;width:1.15rem;height:1.15rem;min-width:1.15rem;margin:.15rem 0 0;padding:0;border:0" />
-        <span style="flex:1 1 auto;min-width:0">Text me updates about my table. By checking this box, I agree to receive SMS text messages from Pho Ha Noi at the number above about my place in line. Reply STOP to opt out, HELP for help.</span>
-      </label>
       <div class="k-err" id="kErr"></div>
       <button class="k-btn" id="kJoin">Join the waitlist</button>
     </div>`;
@@ -111,11 +107,13 @@ async function join() {
   if (!loc) { err.textContent = 'Please choose your location.'; return; }
   const name = $('kName').value.trim();
   if (!name) { err.textContent = 'Please enter your name.'; return; }
+  const phone = $('kPhone').value.trim();
+  if ((phone.match(/\d/g) || []).length < 10) { err.textContent = 'Please enter your mobile number so we can text you when your table is ready.'; return; }
   $('kJoin').disabled = true;
   try {
     const r = await api('/checkin', { method: 'POST', body: JSON.stringify({
-      location_id: loc, guest_name: name, party_size: K.size, phone: $('kPhone').value.trim() || null,
-      sms_consent: !!($('kConsent') && $('kConsent').checked), notes: null }) });
+      location_id: loc, guest_name: name, party_size: K.size, phone,
+      sms_consent: true, notes: null }) });
     sessionStorage.setItem('phnw_ref', r.ref);
     renderConfirm(r.ref, r);
     // Hand the kiosk back to the next guest after a short confirmation.

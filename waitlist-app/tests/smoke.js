@@ -119,7 +119,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     // Rate limit kicks in after CHECKIN_MAX (=5) check-ins per IP.
     const burst = [];
     for (let i = 0; i < 8; i++) {
-      const rr = await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'Burst ' + i, party_size: 2 }) });
+      const rr = await fetch(base + '/api/public/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'Burst ' + i, party_size: 2, phone: '40855510' + String(10 + i) }) });
       burst.push(rr.status);
     }
     check('check-in is rate limited (429)', burst.includes(429), 'statuses=' + burst.join(','));

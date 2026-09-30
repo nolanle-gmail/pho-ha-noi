@@ -83,8 +83,10 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   const size = Math.max(1, Math.min(50, parseInt(req.body.party_size, 10) || 2));
   const phone = (req.body.phone || '').toString().trim().slice(0, 40) || null;
-  // SMS opt-in: only true when the guest ticked the consent box AND gave a phone.
-  const smsConsent = phone && (req.body.sms_consent === true || req.body.sms_consent === 1 || req.body.sms_consent === 'true') ? 1 : 0;
+  // Mobile number is now REQUIRED on self check-in (guests must give a number so we can text them).
+  if (!phone || (phone.match(/\d/g) || []).length < 10) return res.status(400).json({ error: 'A valid mobile number is required.' });
+  // Providing the required number on a self check-in is the opt-in to table-status texts.
+  const smsConsent = 1;
   const notes = (req.body.notes || '').toString().trim().slice(0, 300) || null; // special requests
   // Duplicate-submit guard: if an identical party is already waiting here (double
   // tap, page reload, back button), return that entry instead of a second one.
