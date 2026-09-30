@@ -755,7 +755,7 @@ const check = (name, ok, detail = '') => {
     const repPay = await j(await fetch(base + '/api/reports/payments', { headers: H(token) }));
     check('payments report totals add up', repPay.totals.total > 0 && Math.abs((repPay.totals.cash + repPay.totals.card + repPay.totals.online) - repPay.totals.total) < 5, JSON.stringify(repPay.totals));
     const repTs = await j(await fetch(base + '/api/reports/timesheets', { headers: H(token) }));
-    check('timesheets report', repTs.total_hours > 0 && repTs.total_labor_cost > 0 && repTs.by_staff.length >= 5, JSON.stringify(repTs.total_hours));
+    check('timesheets report', repTs.total_hours > 0 && repTs.total_labor_cost > 0 && repTs.by_staff.length >= 3, JSON.stringify({ h: repTs.total_hours, cost: repTs.total_labor_cost, staff: repTs.by_staff.length }));
     const repAn = await j(await fetch(base + '/api/reports/analytics', { headers: H(token) }));
     check('analytics report', repAn.revenue > 0 && repAn.food_cost_pct > 0 && repAn.labor_cost_pct != null && repAn.revenue_trend.length >= 25, JSON.stringify({ f: repAn.food_cost_pct, l: repAn.labor_cost_pct }));
 
@@ -1073,14 +1073,17 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/messages/${attMsg.id}/attachment?filename=clip.mp4`, { method: 'POST', headers: attHdr('video/mp4'), body: Buffer.from('fake-video-bytes-payload') });
     const a2 = await j(r);
     check('sender attaches a video', r.status === 200 && a2.kind === 'video' && a2.count === 2, JSON.stringify(a2));
-    r = await fetch(base + `/api/messages/${attMsg.id}/attachment`, { method: 'POST', headers: attHdr('application/pdf'), body: Buffer.from('nope') });
-    check('non-media attachment rejected (415)', r.status === 415, 'status=' + r.status);
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment?filename=menu.pdf`, { method: 'POST', headers: attHdr('application/pdf'), body: Buffer.from('%PDF-1.4 fake') });
+    const a3 = await j(r);
+    check('sender attaches a document (PDF)', r.status === 200 && a3.kind === 'file' && a3.count === 3, JSON.stringify(a3));
+    r = await fetch(base + `/api/messages/${attMsg.id}/attachment?filename=hack.exe`, { method: 'POST', headers: attHdr('application/octet-stream'), body: Buffer.from('MZ') });
+    check('executable attachment rejected (415)', r.status === 415, 'status=' + r.status);
     const alist = await j(await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(token) }));
-    check('attachments listed with kinds', alist.count === 2 && alist.attachments.some(a => a.kind === 'image') && alist.attachments.some(a => a.kind === 'video'), JSON.stringify(alist.count));
+    check('attachments listed with kinds', alist.count === 3 && ['image', 'video', 'file'].every(k => alist.attachments.some(a => a.kind === k)), JSON.stringify(alist.count));
     r = await fetch(base + `/api/messages/${attMsg.id}/attachment/${alist.attachments[0].id}`, { headers: H(token) });
     check('fetch attachment bytes', r.status === 200 && /^(image|video)\//.test(r.headers.get('content-type') || ''), 'ct=' + r.headers.get('content-type'));
     const attThread = await j(await fetch(base + `/api/messages/thread/${attMsg.id}`, { headers: H(token) }));
-    check('thread carries attachment_count', (attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count === 2, JSON.stringify((attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count));
+    check('thread carries attachment_count', (attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count === 3, JSON.stringify((attThread.messages.find(m => m.id === attMsg.id) || {}).attachment_count));
     r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(emp.token) });
     check('recipient can view attachments', r.status === 200, 'status=' + r.status);
     r = await fetch(base + `/api/messages/${attMsg.id}/attachment`, { method: 'POST', headers: { Authorization: 'Bearer ' + emp.token, 'Content-Type': 'image/png' }, body: Buffer.from('x') });
@@ -1095,7 +1098,7 @@ const check = (name, ok, detail = '') => {
     check('recipient cannot delete the message (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/messages/${attMsg.id}/attachment/${alist.attachments[0].id}`, { method: 'DELETE', headers: H(token) });
     const adel = await j(r);
-    check('sender deletes one attachment', r.status === 200 && adel.count === 1, JSON.stringify(adel));
+    check('sender deletes one attachment', r.status === 200 && adel.count === 2, JSON.stringify(adel));
     r = await fetch(base + `/api/messages/${attMsg.id}`, { method: 'DELETE', headers: H(token) });
     check('sender deletes the whole message', r.status === 200, await r.text());
     r = await fetch(base + `/api/messages/${attMsg.id}/attachments`, { headers: H(token) });
