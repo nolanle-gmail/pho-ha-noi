@@ -1208,11 +1208,15 @@ live/dry-run banner, per-store alert-timing panel and the alert-activity log).
 - **🪑 Seated** — the **first** status, *before* a Toast order exists. When a host seats a party
   from the **Front Desk** floor-map (or a walk-in is seated), that `service_visits` row
   (`stage='seated'`, its real floor table) shows here so the whole team sees the table is filling
-  even though nothing's rung in yet. It carries **no** Served/Bus actions — it **clears itself**
-  the moment a Toast order opens for that same table number (`opened_at ≥ seated_at`, turnover-safe),
-  then flows on as **⏳ Awaiting food**. Sourced live inside `computeServiceFlow` as its own
-  `seated[]` array + `counts.seated` (kept out of `tables[]`, so alerts are untouched); no sweep,
-  no alerts, no DB writes — purely a display bridge between host-seating and Toast pickup.
+  even though nothing's rung in yet. It carries **no** Served/Bus actions, but it does have a
+  **🚪 Guest left — free table** button: if the party leaves before ordering, a staffer taps it to
+  cancel the seating (`service_visits.stage='canceled'`) and free the floor table
+  (`status='available'`), so it drops off the Seated count and shows available again instead of busy.
+  (Shared `lib/seated.js` → `POST …/seated-left/:vid` on the console, `/sflow` kiosk and staff app.)
+  Otherwise it **clears itself** the moment a Toast order opens for that same table number
+  (`opened_at ≥ seated_at`, turnover-safe), then flows on as **⏳ Awaiting food**. Sourced live inside
+  `computeServiceFlow` as its own `seated[]` array + `counts.seated` (kept out of `tables[]`, so alerts
+  are untouched) — a display bridge between host-seating and Toast pickup.
 - **⏳ Awaiting food** — not served; past `flow_served_min` → alert the **food runner / back
   server**, then re-alert every `flow_food_renudge_min` until served.
 - **🍜 In service** — served, not paid; past `flow_pay_min` **counted from when the food was
