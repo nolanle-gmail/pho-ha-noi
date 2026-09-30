@@ -116,5 +116,18 @@ router.post('/done/:guid', (req, res) => {
   auditLog(auditReq(staff, req.body), 'flow_bussed', 'toast', req.params.guid, { via: 'sf_kiosk' });
   res.json({ success: true, done: true });
 });
+// Guest left before ordering: clear a "Seated" party and free its table.
+router.post('/seated-left/:vid', (req, res) => {
+  const staff = staffByCode(req.body && req.body.code);
+  if (!staff) return res.status(401).json({ error: 'Employee code not found.' });
+  const { clearSeatedVisit, seatedVisitLocation } = require('../lib/seated');
+  const loc = seatedVisitLocation(req.params.vid);
+  if (!loc) return res.status(404).json({ error: 'That seating was already cleared.' });
+  if (!authorizedAt(staff, loc)) return res.status(403).json({ error: 'You’re not assigned to this store.' });
+  const r = clearSeatedVisit(req.params.vid, { name: staff.name, role: staff.role });
+  if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+  auditLog(auditReq(staff, req.body), 'flow_seated_left', 'visit', req.params.vid, { via: 'sf_kiosk', table: r.table_name });
+  res.json({ success: true });
+});
 
 module.exports = router;

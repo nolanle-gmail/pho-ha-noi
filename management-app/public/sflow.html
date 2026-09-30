@@ -55,6 +55,7 @@
   .sf .a button{ width:100%; padding:.55rem; font-size:.92rem; font-weight:700; }
   .sf .a .served{ background:var(--ok); color:#fff; }
   .sf .a .bussed{ background:var(--bus); color:#fff; }
+  .sf .a .left{ background:#fff; color:var(--brand); border:1px solid var(--brand); }
   .sf .a .done{ color:var(--muted); font-size:.85rem; text-align:center; }
   .empty{ text-align:center; color:var(--muted); padding:2rem 1rem; }
   .toast{ position:fixed; left:50%; bottom:1.2rem; transform:translateX(-50%); background:var(--ink); color:#fff;
@@ -475,7 +476,7 @@ async function loadBoard() {
       return `<div class="sf seated">
         <div class="t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
         <div class="s">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-        <div class="a"><div class="done">Waiting for the guest to order…</div></div>
+        <div class="a"><div class="done" style="margin-bottom:.4rem">Waiting for the guest to order…</div><button class="left" data-left="${t.visit_id}">🚪 Guest left — free table</button></div>
       </div>`;
     }
     let act = '';
@@ -499,6 +500,7 @@ async function loadBoard() {
     ${(seated.length || d.tables.length) ? `<div class="grid">${seated.map(card).join('')}${d.tables.map(card).join('')}</div>` : '<div class="empty">No open dine-in tables right now.</div>'}`;
   $('bBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => act(b, '/served/' + b.dataset.served, 'Marked served'));
   $('bBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => act(b, '/done/' + b.dataset.done, 'Table cleared'));
+  $('bBody').querySelectorAll('[data-left]').forEach(b => b.onclick = () => { if (!confirm('Free this table? The seated guest will be removed.')) return; act(b, '/seated-left/' + b.dataset.left, 'Table freed'); });
   if (TAB === 'flow') timer = setTimeout(loadBoard, 30000);
 }
 function act(btn, path, okMsg) {

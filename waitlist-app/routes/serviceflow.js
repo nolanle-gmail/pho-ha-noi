@@ -31,5 +31,6 @@ async function fwd(req, res, method, path, body) {
 router.get('/board', (req, res) => fwd(req, res, 'GET', '/board' + (req.query.location_id ? `?location_id=${encodeURIComponent(req.query.location_id)}` : '')));
 router.post('/:guid/served', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.guid)}/served`, req.body || {}));
 router.post('/:guid/done', (req, res) => fwd(req, res, 'POST', `/${encodeURIComponent(req.params.guid)}/done`, {}));
+router.post('/seated-left/:vid', (req, res) => fwd(req, res, 'POST', `/seated-left/${encodeURIComponent(req.params.vid)}`, {}));
 
 module.exports = router;

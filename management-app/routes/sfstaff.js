@@ -95,5 +95,16 @@ router.post('/:guid/done', (req, res) => {
   auditLog(req, 'flow_bussed', 'toast', req.params.guid, { via: 'staff' });
   res.json({ success: true, done: true });
 });
+// Guest left before ordering: clear a "Seated" party and free its table.
+router.post('/seated-left/:vid', (req, res) => {
+  const { clearSeatedVisit, seatedVisitLocation } = require('../lib/seated');
+  const loc = seatedVisitLocation(req.params.vid);
+  if (!loc) return res.status(404).json({ error: 'That seating was already cleared.' });
+  if (!canAct(req.user, loc)) return res.status(403).json({ error: 'Not your store.' });
+  const r = clearSeatedVisit(req.params.vid, { name: req.user.name, role: req.user.role });
+  if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+  auditLog(req, 'flow_seated_left', 'visit', req.params.vid, { via: 'staff', table: r.table_name });
+  res.json({ success: true });
+});
 
 module.exports = router;

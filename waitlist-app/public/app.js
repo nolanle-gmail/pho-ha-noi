@@ -2286,7 +2286,7 @@ async function renderStaffServiceFlow() {
       return `<div class="sf2-card sf2-seated">
         <div class="sf2-top"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
         <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-        <div class="sf2-act"><span class="muted">Waiting for the guest to order…</span></div>
+        <div class="sf2-act"><span class="muted">Waiting for the guest to order…</span><button class="btn ghost" data-left="${t.visit_id}" style="margin-top:.4rem">🚪 Guest left — free table</button></div>
       </div>`;
     }
     return `<div class="sf2-card ${cls}${t.alert ? ' sf2-alert' : ''}">
@@ -2303,6 +2303,7 @@ async function renderStaffServiceFlow() {
   { const sel = $('sfLocSel'); if (sel) sel.onchange = (e) => { S.sfLocSel = e.target.value; renderStaffServiceFlow(); }; }
   v.querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  v.querySelectorAll('[data-left]').forEach(b => b.onclick = () => { if (!confirm('Free this table? The seated guest will be removed.')) return; b.disabled = true; api('/serviceflow/seated-left/' + b.dataset.left, { method: 'POST' }).then(() => { toast('Table freed'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   clearTimeout(S._sf2Timer);
   S._sf2Timer = setTimeout(() => { if (S.view === 'serviceflow' && !$('modalHost').innerHTML) renderStaffServiceFlow(); }, 30000);
 }

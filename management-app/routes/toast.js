@@ -384,6 +384,17 @@ router.post('/service-flow/:guid/done', MANAGE, (req, res) => {
   auditLog(req, 'flow_bussed', 'toast', req.params.guid, {});
   res.json({ success: true, done: true });
 });
+// Guest left before ordering: clear a "Seated" party and free its table.
+router.post('/service-flow/seated-left/:vid', MANAGE, (req, res) => {
+  const { clearSeatedVisit, seatedVisitLocation } = require('../lib/seated');
+  const loc = seatedVisitLocation(req.params.vid);
+  if (!loc) return res.status(404).json({ error: 'That seating was already cleared.' });
+  if (!canSeeLoc(req, loc)) return res.status(403).json({ error: 'Not your location.' });
+  const r = clearSeatedVisit(req.params.vid, { name: req.user.name, role: req.user.role });
+  if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+  auditLog(req, 'flow_seated_left', 'visit', req.params.vid, { table: r.table_name });
+  res.json({ success: true });
+});
 
 // Update service-flow settings for a location (threshold, on/off, live vs dry-run).
 router.post('/service-flow/settings', ADMIN, (req, res) => {

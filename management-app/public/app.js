@@ -616,7 +616,7 @@ async function loadServiceFlow() {
   const seatedCards = (d.seated || []).map(t => `<div class="sfk seated">
       <div class="sfk-t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
       <div class="sfk-s">${SFK_CARD.seated[0]}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-      <div class="sfk-a"><div class="sfk-done">Waiting for the guest to order…</div></div>
+      <div class="sfk-a"><div class="sfk-done" style="margin-bottom:.45rem">Waiting for the guest to order…</div><button class="btn sm ghost" data-left="${t.visit_id}">🚪 Guest left — free table</button></div>
     </div>`).join('');
   const tableCards = d.tables.map(t => {
     const [lbl, cls] = SFK_CARD[t.state] || ['', ''];
@@ -643,6 +643,7 @@ async function loadServiceFlow() {
     : '<div class="empty">No open dine-in tables right now (store closed, or all tables paid &amp; bussed).</div>';
   $('sfBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   $('sfBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
+  $('sfBody').querySelectorAll('[data-left]').forEach(b => b.onclick = () => { if (!confirm('Free this table? The seated guest will be removed from Service Flow.')) return; b.disabled = true; api('/toast/service-flow/seated-left/' + b.dataset.left, { method: 'POST' }).then(() => { toast('Table freed'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   S._sfTimer = setTimeout(loadServiceFlow, 30000);   // self-refresh
 }
 // The per-store alert-timing panel: food & pay thresholds + their re-alert cadences.
