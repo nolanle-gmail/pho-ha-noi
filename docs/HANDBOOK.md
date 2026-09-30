@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 29, 2026_
+_Last updated: September 30, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1199,9 +1199,11 @@ to-go / delivery / online and staff **"Employee" tabs** are excluded), refreshed
 time, **Paid** and **cleared** come straight from Toast; **Served** and **Bussed (Done)** are
 tapped by staff on the board (Toast has no such signal), stored in `toast_flow_state`. Each
 table sits in one state with its own **escalation** (each fires once, logged in
-`toast_flow_alerts`). **On phones (≤640px) the active-tables table floats to the top** of the
-board (above the KPI cards, banner and alert timing) so floor staff act on tables without
-scrolling; tablet/desktop keep the original layout exactly (the wrapper is explicitly block above 640px).
+`toast_flow_alerts`). The board is the **same card layout everywhere** — the Management console
+**Service Flow** section, each location's **⏱️ Service Flow** tab, and the **/sflow** kiosk all render
+the identical KPI row + card grid (Seated cards first, Paid cards last, tap **✅ Served**). The
+Management console additionally shows the manager-only controls above the cards (On/Off toggle,
+live/dry-run banner, per-store alert-timing panel and the alert-activity log).
 
 - **🪑 Seated** — the **first** status, *before* a Toast order exists. When a host seats a party
   from the **Front Desk** floor-map (or a walk-in is seated), that `service_visits` row

@@ -123,7 +123,21 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .hbar { position: relative; display: flex; align-items: center; min-width: 120px; height: 20px; background: var(--surface-2, #f2f2f2); border-radius: 4px; overflow: hidden; }
 .hbar-fill { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--brand, #b91c1c) 22%, transparent); }
 .hbar span { position: relative; padding: 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
-/* Service Flow board */
+/* Service Flow board — card layout, matching the /sflow page */
+.sfk-grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.sfk { border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 12px; padding: .7rem .8rem; background: var(--surface, #fff); }
+.sfk.seated { border-left-color: #15803d; background: color-mix(in srgb, #15803d 9%, var(--surface)); }
+.sfk.await  { border-left-color: #b45309; background: color-mix(in srgb, #b45309 9%, var(--surface)); }
+.sfk.serv   { border-left-color: #0e7490; background: color-mix(in srgb, #0e7490 9%, var(--surface)); }
+.sfk.bus    { border-left-color: #1d4ed8; background: color-mix(in srgb, #1d4ed8 9%, var(--surface)); }
+.sfk.alert  { box-shadow: 0 0 0 2px var(--out, #b91c1c) inset; }
+.sfk-t { display: flex; justify-content: space-between; align-items: baseline; }
+.sfk-t b { font-size: 1.05rem; } .sfk-t span { color: var(--muted); font-size: .8rem; }
+.sfk-s { font-size: .85rem; margin: .15rem 0 .55rem; }
+.sfk-a .btn { width: 100%; padding: .55rem; font-weight: 700; }
+.sfk-served { background: #15803d; color: #fff; border-color: #15803d; }
+.sfk-done { color: var(--muted); font-size: .85rem; text-align: center; }
+/* Service Flow board (legacy card list) */
 .sf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .8rem; }
 .sf-card { padding: .8rem .9rem; border-left: 4px solid var(--ok); }
 .sf-card.attention { border-left-color: var(--out); background: color-mix(in srgb, var(--out) 7%, var(--surface)); }

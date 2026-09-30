@@ -580,12 +580,6 @@ async function renderServiceFlow() {
   if ($('sfLog')) $('sfLog').ontoggle = (e) => { if (e.target.open) loadSfLog(); };
   loadServiceFlow();
 }
-const SF_STATE = {
-  seated: '<span class="badge">🪑 Seated</span>',
-  awaiting_food: '<span class="badge low">⏳ Awaiting food</span>',
-  in_service: '<span class="badge ok">🍜 In service</span>',
-  ready_to_bus: '<span class="badge blue">💳 Paid</span>',
-};
 // The board renders both as its own section AND inside a location's Service Flow tab.
 const sfActive = () => S.section === 'serviceflow' || (S.section === 'locations' && S.locView === 'detail' && S.locTab === 'serviceflow');
 async function loadServiceFlow() {
@@ -615,27 +609,28 @@ async function loadServiceFlow() {
     : `<div class="callout" style="margin:.2rem 0 1rem;display:flex;gap:.6rem;justify-content:space-between;align-items:center;flex-wrap:wrap"><span>🧪 <b>Dry-run</b> — escalations are <b>logged only</b>; no one is pinged. Mark tables Served / Done below to drive the board.</span>${toggleBtn}</div>`;
   wireToggle();
   renderSfTiming(d);
-  // Seated parties (host-seated, no Toast order yet) lead the board; they carry no Toast
-  // guid so there's nothing to Serve/Bus — they clear themselves once the guest opens an order.
-  const seatedRows = (d.seated || []).map(t => `<tr class="sf-seated">
-    <td><strong>${esc(t.table_name || '—')}</strong>${t.server_name ? `<div style="color:var(--muted);font-size:.72rem">${esc(t.server_name)}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>` : (t.guests ? `<div style="color:var(--muted);font-size:.72rem">${t.guests}👤</div>` : '')}</td>
-    <td><span style="color:var(--muted)">waiting to order</span><div style="color:var(--muted);font-size:.72rem">${t.minutes_open != null ? 'seated ' + t.minutes_open + 'm ago' : ''}</div></td>
-    <td><span style="color:var(--muted)">—</span></td>
-    <td><span style="color:var(--muted)">—</span></td>
-    <td><span style="color:var(--muted)">—</span></td>
-    <td>${SF_STATE.seated}</td>
-  </tr>`).join('');
-  const rows = seatedRows + d.tables.map(t => `<tr class="${t.alert ? 'sf-alert' : ''}">
-    <td><strong>${esc(t.table_name || '—')}</strong>${t.server_name ? `<div style="color:var(--muted);font-size:.72rem">${esc(t.server_name)}</div>` : ''}</td>
-    <td>${ordTime(t.opened_at)}<div style="color:var(--muted);font-size:.72rem">${t.minutes_open != null ? t.minutes_open + 'm ago' : ''}</div></td>
-    <td>${t.served ? '✅ Yes' : `<button class="btn sm" data-served="${t.order_guid}">Mark served</button>`}</td>
-    <td>${t.paid ? '💳 Paid' : '<span style="color:var(--muted)">not yet</span>'}</td>
-    <td><span style="color:var(--muted)">—</span></td>
-    <td>${SF_STATE[t.state] || ''}${t.alert ? ' <span class="badge out">⚠ alert</span>' : ''}</td>
-  </tr>`).join('');
-  // On phones the active-tables table jumps to the top (see .sf-wrap.sf-top .sf-tables in CSS)
-  // so staff act on tables first; the KPI cards / banner / timing sit below it.
-  if ($('sfWrap')) $('sfWrap').classList.add('sf-top');
+  // Card board — same layout, states and actions as the /sflow page.
+  const SFK_CARD = { seated: ['🪑 Seated', 'seated'], awaiting_food: ['⏳ Awaiting food', 'await'], in_service: ['🍜 In service', 'serv'], ready_to_bus: ['💳 Paid', 'bus'] };
+  // Seated parties (host-seated, no Toast order yet) lead the board — nothing to serve; they clear
+  // themselves once the guest opens an order in Toast.
+  const seatedCards = (d.seated || []).map(t => `<div class="sfk seated">
+      <div class="sfk-t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
+      <div class="sfk-s">${SFK_CARD.seated[0]}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
+      <div class="sfk-a"><div class="sfk-done">Waiting for the guest to order…</div></div>
+    </div>`).join('');
+  const tableCards = d.tables.map(t => {
+    const [lbl, cls] = SFK_CARD[t.state] || ['', ''];
+    // Paid tables just show the Paid status (bussing is on the Cleanup board) — no action.
+    let act = '';
+    if (!t.served && !t.paid) act = `<button class="btn sfk-served" data-served="${t.order_guid}">✅ Served</button>`;
+    else if (t.served && !t.paid) act = `<div class="sfk-done">✅ Served · waiting on payment</div>`;
+    return `<div class="sfk ${cls}${t.alert ? ' alert' : ''}">
+      <div class="sfk-t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
+      <div class="sfk-s">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.alert ? ' · ⚠️' : ''}</div>
+      <div class="sfk-a">${act}</div>
+    </div>`;
+  }).join('');
+  if ($('sfWrap')) $('sfWrap').classList.remove('sf-top');   // cards flow normally: KPIs then board
   if ($('sfKpis')) $('sfKpis').innerHTML = `
     <div class="kpis" style="margin-bottom:1rem">
       <div class="card"><div class="label">Seated</div><div class="value">${d.counts.seated || 0}</div></div>
@@ -643,10 +638,9 @@ async function loadServiceFlow() {
       <div class="card"><div class="label">In service</div><div class="value ok">${d.counts.in_service}</div></div>
       <div class="card"><div class="label">Paid</div><div class="value">${d.counts.ready_to_bus}</div></div>
     </div>`;
-  $('sfBody').innerHTML = `
-    ${(d.tables.length || (d.seated || []).length) ? `<div class="table-wrap"><table><thead><tr><th>Active table</th><th>Ordered</th><th>Served</th><th>Ready to pay</th><th>Ready to bus</th><th>Status</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>`
-      : '<div class="empty">No open dine-in tables right now (store closed, or all tables paid &amp; bussed).</div>'}`;
+  $('sfBody').innerHTML = (seatedCards || tableCards)
+    ? `<div class="sfk-grid">${seatedCards}${tableCards}</div>`
+    : '<div class="empty">No open dine-in tables right now (store closed, or all tables paid &amp; bussed).</div>';
   $('sfBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   $('sfBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   S._sfTimer = setTimeout(loadServiceFlow, 30000);   // self-refresh
