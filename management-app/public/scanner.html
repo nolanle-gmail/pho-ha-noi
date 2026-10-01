@@ -94,7 +94,7 @@
       <div id="reader"></div>
       <div class="scanmsg" id="scanmsg">Point the camera at a UPC / EAN barcode.</div>
       <div id="result"></div>
-      <div class="manual"><input id="manual" inputmode="numeric" placeholder="…or type a barcode number" /><button class="btn sm primary" id="manualGo">Go</button></div>
+      <div class="manual"><input id="manual" inputmode="numeric" autocomplete="off" placeholder="📠 Scan with your scanner — or type a code" /><button class="btn sm primary" id="manualGo">Go</button></div>
     </div>
 
     <div class="hint" id="hint"></div>
@@ -150,10 +150,13 @@ async function startScanner(){
     await qr.start({ facingMode:'environment' }, { fps:10 }, onCode, () => {});
   } catch (e) {
     $('reader').innerHTML = ''; $('reader').style.minHeight='0';
-    $('scanmsg').innerHTML = '📷 Camera unavailable (' + esc(e && e.message || 'no access') + '). Type a barcode below.';
+    $('scanmsg').innerHTML = '📷 Camera unavailable (' + esc(e && e.message || 'no access') + '). Scan with your barcode scanner, or type below.';
   }
+  // A USB/Bluetooth scanner is a keyboard-wedge: keep the field focused so scans land hands-free.
+  focusManual();
 }
-function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = 'Point the camera at the next barcode.'; try { qr && qr.resume(); } catch {} }
+const focusManual = () => { const m = $('manual'); if (m) setTimeout(() => { try { m.focus(); } catch {} }, 80); };
+function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = 'Point the camera at the next barcode.'; try { qr && qr.resume(); } catch {} focusManual(); }
 
 const onScanned = (code) => scanMode === 'ship' ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : handleScan(code));
 

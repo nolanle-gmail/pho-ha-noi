@@ -1292,9 +1292,13 @@ async function openScanner() {
     <div id="scanReader" class="scan-reader"></div>
     <div id="scanMsg" class="scan-msg">Point the camera at a UPC / EAN barcode.</div>
     <div id="scanPanel"></div>
-    <div class="scan-manual"><input id="scanManual" placeholder="…or type a barcode number" inputmode="numeric"><button class="btn sm" id="scanManualGo">Go</button></div>
+    <div class="scan-manual"><input id="scanManual" placeholder="📠 Scan with your scanner — or type a code" inputmode="numeric" autocomplete="off"><button class="btn sm" id="scanManualGo">Go</button></div>
   </div>`;
   document.body.appendChild(host);
+  // A USB/Bluetooth barcode scanner is a keyboard-wedge: it types the code + Enter. Keep this field
+  // focused so scans land here hands-free (and work on a laptop/PC where there's no camera).
+  const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
+  setTimeout(focusManual, 60);
   const qr = new Html5Qrcode('scanReader', { formatsToSupport: scanFormats(), verbose: false });
   let busy = false, mode = 'receive';
   const close = async () => { try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch { /* not scanning */ } try { qr.clear(); } catch { /* ignore */ } host.remove(); };
@@ -1327,13 +1331,13 @@ async function openScanner() {
     try { await qr.pause(true); } catch { /* camera path */ }
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : 'Point the camera at the next barcode.'); try { qr.resume(); } catch { /* ignore */ } };
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : 'Point the camera at the next barcode.'); try { qr.resume(); } catch { /* ignore */ } focusManual(); };
     if (mode === 'ship') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders);
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
     else await handleScan(code, $('scanPanel'), done);
   };
-  $('scanManualGo').onclick = () => { const c = ($('scanManual').value || '').trim(); if (c) onCode(c); };
-  $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') $('scanManualGo').click(); };
+  $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
+  $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
   try {
     // Full-frame decode (no qrbox) so long linear GS1-128 case labels fit. Plain environment
     // camera — do NOT add width/height {ideal:...} constraints: they broke camera-open on the
