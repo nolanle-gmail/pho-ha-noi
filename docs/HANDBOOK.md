@@ -1885,6 +1885,17 @@ messages are **retained for audit**. A group lives until then. Each message you 
 per-member read *position* (not a per-message timestamp), the chat popup shows names but no
 read-time, unlike direct messages.
 
+**@mentions.** Inside a chat group you can **call out a teammate**: type **`@`** in the
+message box and a **type-ahead picker** of the group's members appears — keep typing to
+filter, then click (or ↑/↓ + Enter/Tab) to insert **`@Name`**. In the posted thread, any
+`@Name` that matches a member is **highlighted** so the person notices it; **your own
+mentions get a stronger highlight**. This is a **visual cue only** — it doesn't send a
+separate push notification, it's **chat groups only** (not direct messages), and it's for
+**individual members** (there's no `@everyone`). The member list comes from the group's
+existing read roster, so nothing extra is stored. **Chat does not send on Enter** — Enter
+inserts a newline; a message goes only when you press the **Send** button (so long notes
+and shift-free line breaks are safe).
+
 **Pictures & videos in chat.** Like direct messages, the chat composer carries a **📎**
 control (multi-select): members can attach images, videos **and files** to a group message —
 same rules as direct messages (images ≤ 10 MB, videos & files ≤ 25 MB, 10 per message; no
