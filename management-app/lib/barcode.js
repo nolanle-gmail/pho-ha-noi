@@ -39,14 +39,20 @@ function parseScan(raw) {
   if (!looksGs1) {
     const digitsOnly = /^[0-9\s-]+$/.test(s) && /\d/.test(s);
     const d = digitsOnly ? s.replace(/\D/g, '') : '';
-    // AvaWeigh deli-scale weigh label — an in-store EAN-13 (GS1 prefix '2'), Barcode Type 06:
-    //   [dept 2][item/LF code 6][weight WWWW → WW.WW lb][check 1]
-    // The whole barcode changes with the weight, so it is NOT a stable retail key — the 6-digit
+    // AvaWeigh deli-scale weigh label — an in-store EAN-13 (GS1 prefix '2'), Barcode Type 06.
+    // Confirmed layout on the owner's AvaWeigh 334PCSP30 (from its printed labels + barcode-type
+    // table): the scale ALWAYS reserves 4 bytes for total price on a weight barcode, so the real
+    // item code is only 2 digits:
+    //   [dept 2][item code 2][total price 4 (always present, 0000 on a weight label)][weight WWWW → WW.WW lb][check 1]
+    // e.g. 2156000002372 → dept 21, code 56, price 0000, weight 02.37 lb, check 2.
+    // The whole barcode changes with the weight, so it is NOT a stable retail key — the 2-digit
     // scale code is. Surface the scale code + net weight; leave gtin/code null so resolveScan
-    // matches the Glossary by scale_code rather than by the varying barcode.
+    // matches the Glossary by scale_code rather than by the varying barcode. (The price field at
+    // digits 5-8 is ignored — reading code/weight by fixed position is robust whether or not the
+    // scale fills in a non-zero total price.)
     if (d.length === 13 && d[0] === '2') {
       res.weighed = true;
-      res.scaleCode = String(parseInt(d.slice(2, 8), 10) || 0);
+      res.scaleCode = String(parseInt(d.slice(2, 4), 10) || 0);
       const w = parseInt(d.slice(8, 12), 10);
       if (Number.isFinite(w) && w > 0) res.weightLb = +(w / 100).toFixed(2);
       return res;
