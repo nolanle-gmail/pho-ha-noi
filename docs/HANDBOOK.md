@@ -537,14 +537,18 @@ distinct things, on two tabs:
     (e.g. a soy-sauce bottle: always the same barcode, so pooling the count is correct).
   - **Catch-weight** (default no) — a **variable-weight** item (meat, produce): stock is
     tracked **by weight** and every scan captures the label's net weight.
-  - **Deli scale code** — the item number (PLU / "LF code") programmed on the in-store
+  - **Deli scale code** — the item number programmed in the **Code** field of the in-store
     **AvaWeigh** price-computing scale. Set the scale to **Barcode Type 06** (weight-embedded;
-    Type 02 embeds price). It then prints an in-store **EAN-13** laid out
-    `dept (2) + CODE (6) + weight WWWW (= WW.WW lb) + check`. A scan decodes this (`parseScan`):
-    the **6-digit code** resolves the Glossary entry by **scale_code** (`catalogGetByScaleCode`,
-    leading zeros ignored) and the embedded **net weight** pre-fills the catch-weight amount — so a
-    weighed item receives its exact pounds from the label. (The varying barcode isn't a stable key,
-    so it's matched by scale code, never as a GTIN.)
+    Type 02 embeds price). It prints an in-store **EAN-13** which — on the AvaWeigh 334PCSP30 —
+    always reserves 4 bytes for total price, so the layout is
+    `dept (2) + item code (2) + total price (4, =0000 on a weight label) + weight WWWW (= WW.XX lb) + check`.
+    That leaves a **2-digit item code (00–99)** — ample for the handful of weighed items, and the
+    scale's **LF Code** field is *not* used by Type 06 (ignore it; set the **Code** field). A scan
+    decodes this (`parseScan`): the **2-digit code** resolves the Glossary entry by **scale_code**
+    (`catalogGetByScaleCode`, leading zeros ignored, so Glossary `7` matches label code `07`) and the
+    embedded **net weight** pre-fills the catch-weight amount — so a weighed item receives its exact
+    pounds from the label. (The varying barcode isn't a stable key, so it's matched by scale code,
+    never as a GTIN; the price field is ignored.)
 
   API `GET/POST /api/glossary`, `DELETE /api/glossary/:gtin` (manager/ops). The dictionary is
   still auto-filled from external lookups (below), but a manual entry is authoritative and is
