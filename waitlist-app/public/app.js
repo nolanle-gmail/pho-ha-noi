@@ -2287,10 +2287,10 @@ async function renderStaffServiceFlow() {
     // Seated = host sat the party; no Toast order yet, so no Serve/Bus actions. It clears
     // itself once the guest opens an order in Toast, then reappears as Awaiting food.
     if (t.is_seated) {
-      return `<div class="sf2-card sf2-seated">
+      return `<div class="sf2-card sf2-seated sf2-seatcard" title="Seated — waiting for the guest to order">
         <div class="sf2-top"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
         <div class="sf2-sub">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-        <div class="sf2-act"><span class="muted">Waiting for the guest to order…</span><button class="btn ghost" data-left="${t.visit_id}" style="margin-top:.4rem">🚪 Guest left — free table</button></div>
+        <div class="sf2-act"><button class="btn ghost" data-left="${t.visit_id}">🚪 Left</button></div>
       </div>`;
     }
     return `<div class="sf2-card ${cls}${t.alert ? ' sf2-alert' : ''}">
@@ -2303,7 +2303,9 @@ async function renderStaffServiceFlow() {
   };
   const sfSeated = d.seated || [];
   v.innerHTML = `<div class="section-head"><h2>⏱️ Service Flow</h2>${picker}<span class="muted">${sfSeated.length ? sfSeated.length + ' seated · ' : ''}${d.counts.total} open · food ${d.served_min}m · pay ${d.pay_min}m after served</span></div>
-    ${(sfSeated.length || d.tables.length) ? `<div class="sf2-grid">${sfSeated.map(card).join('')}${d.tables.map(card).join('')}</div>` : '<div class="empty">No open dine-in tables right now.</div>'}`;
+    ${(sfSeated.length || d.tables.length)
+      ? `${sfSeated.length ? `<div class="sf2-grid sf2-seatgrid">${sfSeated.map(card).join('')}</div>` : ''}${d.tables.length ? `<div class="sf2-grid">${d.tables.map(card).join('')}</div>` : ''}`
+      : '<div class="empty">No open dine-in tables right now.</div>'}`;
   { const sel = $('sfLocSel'); if (sel) sel.onchange = (e) => { S.sfLocSel = e.target.value; renderStaffServiceFlow(); }; }
   v.querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   v.querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/serviceflow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); renderStaffServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });

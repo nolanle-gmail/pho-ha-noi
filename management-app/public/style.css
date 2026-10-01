@@ -125,6 +125,12 @@ tr.grp td { background: var(--gold-soft); font-weight: 800; color: var(--red); p
 .hbar span { position: relative; padding: 0 .5rem; font-size: .82rem; font-variant-numeric: tabular-nums; }
 /* Service Flow board — card layout, matching the /sflow page */
 .sfk-grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+/* Seated cards are smaller + denser so they don't crowd the board. */
+.sfk-seatgrid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: .4rem; margin-bottom: .55rem; }
+.sfk.sfk-seatcard { padding: .4rem .5rem; }
+.sfk-seatcard .sfk-t b { font-size: .92rem; } .sfk-seatcard .sfk-t span { font-size: .72rem; }
+.sfk-seatcard .sfk-s { font-size: .74rem; margin: .1rem 0 .3rem; }
+.sfk-seatcard .sfk-a .btn { padding: .3rem; font-size: .78rem; }
 .sfk { border: 1px solid var(--line); border-left: 5px solid var(--line); border-radius: 12px; padding: .7rem .8rem; background: var(--surface, #fff); }
 .sfk.seated { border-left-color: #15803d; background: color-mix(in srgb, #15803d 9%, var(--surface)); }
 .sfk.await  { border-left-color: #b45309; background: color-mix(in srgb, #b45309 9%, var(--surface)); }

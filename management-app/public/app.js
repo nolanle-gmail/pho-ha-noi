@@ -613,10 +613,10 @@ async function loadServiceFlow() {
   const SFK_CARD = { seated: ['🪑 Seated', 'seated'], awaiting_food: ['⏳ Awaiting food', 'await'], in_service: ['🍜 In service', 'serv'], ready_to_bus: ['💳 Paid', 'bus'] };
   // Seated parties (host-seated, no Toast order yet) lead the board — nothing to serve; they clear
   // themselves once the guest opens an order in Toast.
-  const seatedCards = (d.seated || []).map(t => `<div class="sfk seated">
+  const seatedCards = (d.seated || []).map(t => `<div class="sfk seated sfk-seatcard" title="Seated — waiting for the guest to order">
       <div class="sfk-t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
       <div class="sfk-s">${SFK_CARD.seated[0]}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-      <div class="sfk-a"><div class="sfk-done" style="margin-bottom:.45rem">Waiting for the guest to order…</div><button class="btn sm ghost" data-left="${t.visit_id}">🚪 Guest left — free table</button></div>
+      <div class="sfk-a"><button class="btn sm ghost" data-left="${t.visit_id}">🚪 Left</button></div>
     </div>`).join('');
   const tableCards = d.tables.map(t => {
     const [lbl, cls] = SFK_CARD[t.state] || ['', ''];
@@ -639,7 +639,7 @@ async function loadServiceFlow() {
       <div class="card"><div class="label">Paid</div><div class="value">${d.counts.ready_to_bus}</div></div>
     </div>`;
   $('sfBody').innerHTML = (seatedCards || tableCards)
-    ? `<div class="sfk-grid">${seatedCards}${tableCards}</div>`
+    ? `${seatedCards ? `<div class="sfk-grid sfk-seatgrid">${seatedCards}</div>` : ''}${tableCards ? `<div class="sfk-grid">${tableCards}</div>` : ''}`
     : '<div class="empty">No open dine-in tables right now (store closed, or all tables paid &amp; bussed).</div>';
   $('sfBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.served + '/served', { method: 'POST' }).then(() => { toast('Marked served'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });
   $('sfBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => { b.disabled = true; api('/toast/service-flow/' + b.dataset.done + '/done', { method: 'POST' }).then(() => { toast('Table cleared'); loadServiceFlow(); }).catch(e => { toast(e.message, true); b.disabled = false; }); });

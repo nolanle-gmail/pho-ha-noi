@@ -43,6 +43,12 @@
   .kpi .n{ font-size:1.3rem; font-weight:700; } .kpi .l{ font-size:.66rem; color:var(--muted); }
   .kpi .n.warn{ color:var(--await); }
   .grid{ display:grid; gap:.6rem; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  /* Seated cards are smaller + denser so they don't crowd the board. */
+  .seated-grid{ grid-template-columns:repeat(auto-fill,minmax(108px,1fr)); gap:.4rem; margin-bottom:.55rem; }
+  .sf.seatcard{ padding:.4rem .5rem; border-left-width:4px; }
+  .sf.seatcard .t b{ font-size:.9rem; } .sf.seatcard .t span{ font-size:.7rem; }
+  .sf.seatcard .s{ font-size:.72rem; margin:.1rem 0 .3rem; }
+  .sf.seatcard .a .left{ padding:.3rem; font-size:.76rem; }
   .sf{ border:1px solid var(--line); border-left:5px solid var(--line); border-radius:12px; padding:.7rem .8rem; background:#fff; }
   .sf.seated{ border-left-color:var(--ok); background:var(--okbg); }
   .sf.await{ border-left-color:var(--await); background:var(--awaitbg); }
@@ -473,10 +479,10 @@ async function loadBoard() {
     // Seated = host sat the party; no Toast order yet, so nothing to serve/bus. It clears
     // itself once the guest opens an order in Toast (then it reappears as Awaiting food).
     if (t.is_seated) {
-      return `<div class="sf seated">
+      return `<div class="sf seated seatcard" title="Seated — waiting for the guest to order">
         <div class="t"><b>Table ${esc(t.table_name || '—')}</b><span>${t.minutes_open != null ? t.minutes_open + 'm' : ''}</span></div>
         <div class="s">${lbl}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.guests ? ' · ' + t.guests + '👤' : ''}</div>
-        <div class="a"><div class="done" style="margin-bottom:.4rem">Waiting for the guest to order…</div><button class="left" data-left="${t.visit_id}">🚪 Guest left — free table</button></div>
+        <div class="a"><button class="left" data-left="${t.visit_id}">🚪 Left</button></div>
       </div>`;
     }
     let act = '';
@@ -497,7 +503,9 @@ async function loadBoard() {
       <div class="kpi"><div class="n">${d.counts.in_service}</div><div class="l">In service</div></div>
       <div class="kpi"><div class="n">${d.counts.ready_to_bus}</div><div class="l">Paid</div></div>
     </div>
-    ${(seated.length || d.tables.length) ? `<div class="grid">${seated.map(card).join('')}${d.tables.map(card).join('')}</div>` : '<div class="empty">No open dine-in tables right now.</div>'}`;
+    ${(seated.length || d.tables.length)
+      ? `${seated.length ? `<div class="grid seated-grid">${seated.map(card).join('')}</div>` : ''}${d.tables.length ? `<div class="grid">${d.tables.map(card).join('')}</div>` : ''}`
+      : '<div class="empty">No open dine-in tables right now.</div>'}`;
   $('bBody').querySelectorAll('[data-served]').forEach(b => b.onclick = () => act(b, '/served/' + b.dataset.served, 'Marked served'));
   $('bBody').querySelectorAll('[data-done]').forEach(b => b.onclick = () => act(b, '/done/' + b.dataset.done, 'Table cleared'));
   $('bBody').querySelectorAll('[data-left]').forEach(b => b.onclick = () => { if (!confirm('Free this table? The seated guest will be removed.')) return; act(b, '/seated-left/' + b.dataset.left, 'Table freed'); });
