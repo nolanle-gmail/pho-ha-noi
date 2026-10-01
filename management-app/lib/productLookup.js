@@ -145,9 +145,29 @@ async function lookupProduct(rawCode, userId) {
     // Glossary fields (null until a matching glossary entry is found).
     in_glossary: false, description: null, unit: null, category: null, notes: null,
     default_unit_cost: 0, stackable: 1, is_catch_weight: 0,
-    default_vendor_id: null, default_vendor_code: null, barcode_type: null,
+    default_vendor_id: null, default_vendor_code: null, barcode_type: null, scale_code: null,
   };
   if (p.weightLb) out.size = p.weightLb + ' lb';   // label net weight as a size hint
+  // Deli-scale weigh label: resolve by the scale (LF) code against the Glossary; the label's net
+  // weight pre-fills the amount. The varying barcode is not a stable key, so match by scale_code.
+  if (p.scaleCode) {
+    out.weighed = true; out.scale_code = p.scaleCode;
+    if (p.weightLb) out.weight_lb = p.weightLb;
+    const g = catalogGetByScaleCode(p.scaleCode);
+    if (g && clean(g.name)) {
+      return Object.assign(out, {
+        found: true, name: g.name, brand: g.brand || null, size: out.size || clean(g.size),
+        source: g.source || 'catalog', in_glossary: true, description: g.description || null,
+        unit: g.unit || null, category: g.category || null, notes: g.notes || null,
+        default_unit_cost: g.default_unit_cost || 0,
+        stackable: g.stackable == null ? 1 : (g.stackable ? 1 : 0),
+        is_catch_weight: g.is_catch_weight ? 1 : 0,
+        default_vendor_id: g.default_vendor_id || null, default_vendor_code: g.default_vendor_code || null,
+        barcode_type: g.barcode_type || null,
+      });
+    }
+    return out;   // weighed, not yet in the Glossary — the UI prompts to add it with this scale code
+  }
   if (!code) return out;
 
   if (!p.isGs1) { const w = weighedInfo(code); if (w) { out.weighed = true; out.price = w.price; return out; } }

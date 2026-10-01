@@ -12,7 +12,7 @@
 const db = require('../db/database');
 const { parseScan, logScan, dupMessage } = require('./barcode');
 const { receiveLot } = require('./lots');
-const { rememberProduct, catalogGet } = require('./productLookup');
+const { rememberProduct, catalogGet, catalogGetByScaleCode } = require('./productLookup');
 const { resolveVendor } = require('./vendors');
 
 const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -35,12 +35,16 @@ function serialOnHand({ locId, gtin, serial }) {
 // does the Glossary/label already know (to pre-fill a form)?
 function resolveScan({ locId, code }) {
   const p = parseScan(code);
-  const key = (p.gtin || p.code || '').toString().trim();
+  let gloss = null, key = '';
+  // Deli-scale weigh label: match the Glossary by the scale (LF) code, then use that entry's
+  // stable barcode as the stock key. The label's net weight (p.weightLb) pre-fills the amount.
+  if (p.scaleCode) { gloss = catalogGetByScaleCode(p.scaleCode); if (gloss) key = (gloss.barcode || '').toString().trim(); }
+  if (!key) key = (p.gtin || p.code || '').toString().trim();
+  if (!gloss && key) gloss = catalogGet(key);
   const item = key ? findItem(locId, key) : null;
-  const gloss = key ? catalogGet(key) : null;
   const dupBox = serialOnHand({ locId, gtin: p.gtin, serial: p.serial });
   return {
-    code: key, parsed: p, in_stock: !!item, item: item || null,
+    code: key, parsed: p, scale_code: p.scaleCode || null, in_stock: !!item, item: item || null,
     in_glossary: !!gloss, glossary: gloss || null,
     duplicate_box: dupBox ? { location_id: dupBox.location_id, item_name: dupBox.item_name, serial: p.serial } : null,
   };

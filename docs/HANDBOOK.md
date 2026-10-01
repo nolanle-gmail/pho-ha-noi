@@ -662,7 +662,14 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
   staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
 
 Both apps scan with a phone camera via the `html5-qrcode` library (lazy-loaded on
-first open; works on iOS Safari and Android). Decode → resolve → act:
+first open; works on iOS Safari and Android). Decode → resolve → act.
+
+**Hardware barcode scanners** (e.g. an Inateck Hyper 160 on a USB dongle / Bluetooth) also work on
+**every** scan surface — console, kiosk and staff app. A handheld scanner is a **keyboard-wedge**
+(it types the barcode + Enter), so each scan screen **auto-focuses** its barcode field (and re-focuses
+after each scan), feeding the typed code into the exact same resolve/receive flow as the camera. On a
+laptop/PC with no camera, that field is simply the primary input. No driver or backend change — set
+the scanner to US-English layout with an Enter suffix.
 
 - **Management console** — a **📷 Scan** button on Inventory → Stock and Glossary
   (and in the Central Kitchen, scoped to CK). Uses the JWT inventory API scoped by the

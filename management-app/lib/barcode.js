@@ -33,12 +33,25 @@ function parseScan(raw) {
   // Strip a leading AIM symbology identifier the scanner may prepend (e.g. "]C1", "]d2", "]e0").
   const s = s0.replace(/^\][A-Za-z0-9][0-9A-Za-z]/, '');
   const GS = String.fromCharCode(29);   // FNC1 group separator
-  const res = { raw: s, isGs1: false, code: null, gtin: null, lot: null, serial: null, prodDate: null, packDate: null, expiry: null, weightLb: null, weightKg: null, ais: null };
+  const res = { raw: s, isGs1: false, code: null, gtin: null, lot: null, serial: null, prodDate: null, packDate: null, expiry: null, weightLb: null, weightKg: null, scaleCode: null, weighed: false, ais: null };
 
   const looksGs1 = /\(\d{2,4}\)/.test(s) || s.indexOf(GS) >= 0 || /^01\d{14}/.test(s) || /^00\d{18}/.test(s) || /^02\d{14}/.test(s);
   if (!looksGs1) {
     const digitsOnly = /^[0-9\s-]+$/.test(s) && /\d/.test(s);
-    res.code = digitsOnly ? s.replace(/\D/g, '') : s;
+    const d = digitsOnly ? s.replace(/\D/g, '') : '';
+    // AvaWeigh deli-scale weigh label — an in-store EAN-13 (GS1 prefix '2'), Barcode Type 06:
+    //   [dept 2][item/LF code 6][weight WWWW → WW.WW lb][check 1]
+    // The whole barcode changes with the weight, so it is NOT a stable retail key — the 6-digit
+    // scale code is. Surface the scale code + net weight; leave gtin/code null so resolveScan
+    // matches the Glossary by scale_code rather than by the varying barcode.
+    if (d.length === 13 && d[0] === '2') {
+      res.weighed = true;
+      res.scaleCode = String(parseInt(d.slice(2, 8), 10) || 0);
+      const w = parseInt(d.slice(8, 12), 10);
+      if (Number.isFinite(w) && w > 0) res.weightLb = +(w / 100).toFixed(2);
+      return res;
+    }
+    res.code = digitsOnly ? d : s;
     res.gtin = digitsOnly ? normGtin(res.code) : null;
     if (res.gtin) res.code = res.gtin;   // canonical key for retail codes
     return res;
