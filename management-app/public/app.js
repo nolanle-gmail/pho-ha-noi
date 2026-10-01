@@ -6460,6 +6460,31 @@ async function renderChatList() {
   $('view').querySelectorAll('[data-cg]').forEach(c => c.onclick = () => { S.chatGroup = c.dataset.cg; renderMessages(); });
 }
 
+// Highlight @Name mentions in an already-HTML-escaped chat body. `rows` is the member list
+// (d.reads: {user_id,name}); a mention of the current user gets the stronger ".me" style.
+function mentionHtml(escBody, rows, meId) {
+  if (!escBody || !rows || !rows.length) return escBody || '';
+  const names = rows.map(r => ({ n: esc(String(r.name || '')), me: String(r.user_id) === String(meId) }))
+    .filter(x => x.n).sort((a, b) => b.n.length - a.n.length);        // longest first so "@A B" beats "@A"
+  if (!names.length) return escBody;
+  const meSet = new Set(names.filter(x => x.me).map(x => x.n));
+  const alt = names.map(x => x.n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return escBody.replace(new RegExp('@(' + alt + ')(?![\\w])', 'g'),
+    (_, n) => `<span class="mention${meSet.has(n) ? ' me' : ''}">@${n}</span>`);
+}
+// Type-ahead @mention picker on a chat textarea. `members` = [{id,name}] (exclude self).
+function attachMentionPicker(ta, members) {
+  if (!ta || !members || !members.length) return;
+  let box = null, items = [], sel = 0, tokenStart = -1;
+  const close = () => { if (box) { box.remove(); box = null; } items = []; tokenStart = -1; };
+  const curToken = () => { const pos = ta.selectionStart; const m = ta.value.slice(0, pos).match(/(?:^|\s)@([^\s@]{0,30})$/); return m ? { start: pos - m[1].length - 1, frag: m[1], pos } : null; };
+  const draw = () => { box.innerHTML = items.map((u, i) => `<div class="mention-opt${i === sel ? ' on' : ''}" data-i="${i}">${esc(u.name)}</div>`).join(''); box.querySelectorAll('.mention-opt').forEach(el => { el.onmousedown = (e) => { e.preventDefault(); pick(+el.dataset.i); }; }); };
+  const open = (tok) => { const f = tok.frag.toLowerCase(); items = members.filter(u => String(u.name).toLowerCase().includes(f)).slice(0, 8); if (!items.length) return close(); tokenStart = tok.start; sel = 0; if (!box) { box = document.createElement('div'); box.className = 'mention-pop'; (ta.parentNode || document.body).appendChild(box); } draw(); };
+  const pick = (i) => { const u = items[i]; if (!u) return; const pos = ta.selectionStart; const ins = '@' + u.name + ' '; const before = ta.value.slice(0, tokenStart); ta.value = before + ins + ta.value.slice(pos); const np = (before + ins).length; close(); ta.focus(); ta.setSelectionRange(np, np); };
+  ta.addEventListener('input', () => { const t = curToken(); if (t) open(t); else close(); });
+  ta.addEventListener('keydown', (e) => { if (!box) return; if (e.key === 'ArrowDown') { e.preventDefault(); sel = (sel + 1) % items.length; draw(); } else if (e.key === 'ArrowUp') { e.preventDefault(); sel = (sel - 1 + items.length) % items.length; draw(); } else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sel); } else if (e.key === 'Escape') { e.preventDefault(); close(); } });
+  ta.addEventListener('blur', () => setTimeout(close, 150));
+}
 async function renderChatGroup(silent) {
   const gid = S.chatGroup;
   const draft = silent && $('chatBody') ? $('chatBody').value : '';
@@ -6480,7 +6505,7 @@ async function renderChatGroup(silent) {
   const stream = d.messages.slice().reverse().map(m => `
     <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
-      ${m.body ? `<div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}` : ''}
+      ${m.body ? `<div class="thread-body">${mentionHtml(esc(m.body), d.reads, me)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
       ${m.sender_id === me ? seenReceipt(m.id) : ''}
       ${rxnBar('chat', m)}
@@ -6543,6 +6568,7 @@ async function renderChatGroup(silent) {
     $('chatSend').onclick = send;
     // Enter does NOT send — it adds a newline. Messages send only on the Send button (owner request).
     mountEmoji('chatBody');
+    attachMentionPicker($('chatBody'), (d.reads || []).map(r => ({ id: r.user_id, name: r.name })).filter(u => String(u.id) !== String(me)));
   }
   pollReceipts();
 }

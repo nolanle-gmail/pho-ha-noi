@@ -662,6 +662,12 @@ tr:hover .order-hover { opacity: 1; }
 .rcp-row { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: .25rem 0; border-top: 1px solid var(--line-soft, #f0e8da); font-size: .86rem; }
 .reply-box { display: flex; gap: .6rem; align-items: flex-end; max-width: 720px; position: sticky; top: 0; z-index: 5; background: var(--bg); padding: .5rem 0; border-bottom: 1px solid var(--line); margin-bottom: .5rem; }
 .reply-box textarea { flex: 1; padding: .6rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; resize: vertical; box-sizing: border-box; }
+/* @mention type-ahead picker + highlighted mentions */
+.mention-pop { position: absolute; left: 0; top: calc(100% + 2px); z-index: 60; background: var(--surface, #fff); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 22px #0003; min-width: 190px; max-width: 300px; max-height: 240px; overflow-y: auto; }
+.mention-opt { padding: .5rem .75rem; cursor: pointer; font-size: .9rem; }
+.mention-opt.on, .mention-opt:hover { background: color-mix(in srgb, var(--brand, #b91c1c) 10%, var(--surface, #fff)); }
+.mention { background: #e0e8fb; color: #1d4ed8; border-radius: 5px; padding: 0 .25em; font-weight: 700; }
+.mention.me { background: #fde68a; color: #92400e; }
 /* Message attachments (pictures & videos) */
 .msg-attach-btn { display: inline-flex; align-items: center; gap: .3rem; padding: .5rem .7rem; border: 1px dashed var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: .85rem; font-weight: 600; white-space: nowrap; }
 .msg-attach-btn:hover { border-color: var(--gold); color: var(--gold-strong); }
