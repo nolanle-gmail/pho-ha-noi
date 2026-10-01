@@ -567,7 +567,7 @@ async function renderChatGroupView(silent) {
       } catch (e) { toast(e.message, true); $('cgSend').disabled = false; }
     };
     $('cgSend').onclick = send;
-    $('cgBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+    // Enter does NOT send — it adds a newline. Chat sends only on the Send button (owner request).
   }
   pollReceipts();
 }

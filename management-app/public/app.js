@@ -6541,7 +6541,7 @@ async function renderChatGroup(silent) {
       } catch (e) { toast(e.message, true); $('chatSend').disabled = false; }
     };
     $('chatSend').onclick = send;
-    $('chatBody').onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+    // Enter does NOT send — it adds a newline. Messages send only on the Send button (owner request).
     mountEmoji('chatBody');
   }
   pollReceipts();
