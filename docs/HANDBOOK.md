@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: September 30, 2026_
+_Last updated: October 1, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -662,20 +662,20 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
 - **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
   staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
 
-Both apps scan with a phone camera via the `html5-qrcode` library (lazy-loaded on
-first open; works on iOS Safari and Android). Decode → resolve → act.
+**All scanning is done with a hardware barcode scanner** (e.g. an Inateck Hyper 160 on a USB
+dongle / Bluetooth) — the **phone-camera option was removed** on all three surfaces (console,
+staff app and kiosk) once the team standardized on the handheld scanner. A handheld scanner is a
+**keyboard-wedge** (it types the barcode + Enter), so each scan screen is just an **auto-focused**
+barcode field (re-focused after each scan) that feeds the typed/scanned code into the
+resolve → receive/ship/check/use flow. It works the same on a laptop/PC, phone or tablet — a
+Bluetooth scanner pairs with an iPhone/iPad or Android in **HID (keyboard) mode**; the USB dongle
+is for a laptop/PC. No driver or backend change — set the scanner to US-English layout with an
+Enter suffix. (The old `html5-qrcode` camera library is no longer shipped.)
 
-**Hardware barcode scanners** (e.g. an Inateck Hyper 160 on a USB dongle / Bluetooth) also work on
-**every** scan surface — console, kiosk and staff app. A handheld scanner is a **keyboard-wedge**
-(it types the barcode + Enter), so each scan screen **auto-focuses** its barcode field (and re-focuses
-after each scan), feeding the typed code into the exact same resolve/receive flow as the camera. On a
-laptop/PC with no camera, that field is simply the primary input. No driver or backend change — set
-the scanner to US-English layout with an Enter suffix.
-
-- **Management console** — a **📷 Scan** button on Inventory → Stock and Glossary
+- **Management console** — a **📠 Scan** button on Inventory → Stock and Glossary
   (and in the Central Kitchen, scoped to CK). Uses the JWT inventory API scoped by the
   selected location.
-- **Staff app** — a **📷 Scan** nav item for store staff (hidden for all-location
+- **Staff app** — a **📠 Scan** nav item for store staff (hidden for all-location
   leadership), with **Receive / Check / Ship / Use** modes. Calls the `/api/invscan/*` proxy,
   which forwards to Management with the service key + `?as=<staff email>` so every **action** is
   pinned to the staffer's own store (Check is read-only across all locations).
