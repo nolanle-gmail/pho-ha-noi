@@ -1269,39 +1269,30 @@ function statusBadge(qty, min) {
   return '<span class="badge ok">OK</span>';
 }
 
-// ── Barcode scanner (phone camera → resolve / receive / link / create) ──────
+// ── Barcode scanner (hardware scanner → resolve / receive / link / create) ──────
 // Reuses retail UPC/EAN barcodes: scan a product, and it resolves to the item at the
 // active location (or the Central Kitchen). Unknown codes → look up a name (Open Food
-// Facts) and create or link. Uses the html5-qrcode library, lazy-loaded on first open.
-let _scanLibP = null;
-function loadScanLib() {
-  if (window.Html5Qrcode) return Promise.resolve();
-  if (!_scanLibP) _scanLibP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/html5-qrcode.min.js'; s.onload = res; s.onerror = () => rej(new Error('Scanner library failed to load — check your connection.')); document.head.appendChild(s); });
-  return _scanLibP;
-}
-const scanFormats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+// Facts) and create or link. Input is a USB/Bluetooth barcode scanner (keyboard-wedge)
+// typing into the auto-focused field — no phone camera.
 function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'inventory') render(); }
 
 async function openScanner() {
-  try { await loadScanLib(); } catch (e) { return toast(e.message, true); }
   const host = document.createElement('div'); host.className = 'scan-overlay';
   host.innerHTML = `<div class="scan-card">
-    <div class="scan-head"><strong>📷 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
+    <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
     <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="check">📋 Check</button></div>
     <div id="shipBar" class="ship-bar" hidden></div>
-    <div id="scanReader" class="scan-reader"></div>
-    <div id="scanMsg" class="scan-msg">Point the camera at a UPC / EAN barcode.</div>
+    <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
     <div id="scanPanel"></div>
     <div class="scan-manual"><input id="scanManual" placeholder="📠 Scan with your scanner — or type a code" inputmode="numeric" autocomplete="off"><button class="btn sm" id="scanManualGo">Go</button></div>
   </div>`;
   document.body.appendChild(host);
   // A USB/Bluetooth barcode scanner is a keyboard-wedge: it types the code + Enter. Keep this field
-  // focused so scans land here hands-free (and work on a laptop/PC where there's no camera).
+  // focused so scans land here hands-free (laptop, phone or tablet — no camera needed).
   const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
   setTimeout(focusManual, 60);
-  const qr = new Html5Qrcode('scanReader', { formatsToSupport: scanFormats(), verbose: false });
   let busy = false, mode = 'receive';
-  const close = async () => { try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch { /* not scanning */ } try { qr.clear(); } catch { /* ignore */ } host.remove(); };
+  const close = () => { host.remove(); };
   host.querySelector('[data-x]').onclick = close;
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
   const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
@@ -1315,7 +1306,7 @@ async function openScanner() {
     mode = m;
     host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
     $('shipBar').hidden = m !== 'ship';
-    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : 'Point the camera at a UPC / EAN barcode.');
+    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : '📠 Ready — scan a barcode with your scanner.');
     if (m === 'ship' && !$('shipBar').dataset.loaded) {
       $('shipBar').dataset.loaded = '1';
       let tgts = []; try { tgts = await api('/inventory/ship/targets?from_location_id=' + invLoc()); } catch { /* ignore */ }
@@ -1328,24 +1319,15 @@ async function openScanner() {
   host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   const onCode = async (code) => {
     if (busy) return; busy = true;
-    try { await qr.pause(true); } catch { /* camera path */ }
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : 'Point the camera at the next barcode.'); try { qr.resume(); } catch { /* ignore */ } focusManual(); };
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : '📠 Ready — scan the next barcode.'); focusManual(); };
     if (mode === 'ship') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders);
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
     else await handleScan(code, $('scanPanel'), done);
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
   $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
-  try {
-    // Full-frame decode (no qrbox) so long linear GS1-128 case labels fit. Plain environment
-    // camera — do NOT add width/height {ideal:...} constraints: they broke camera-open on the
-    // iPhone 16 even with a fallback (the fallback can't cleanly recover the iOS video element).
-    await qr.start({ facingMode: 'environment' }, { fps: 10 }, onCode, () => { /* per-frame no-op */ });
-  } catch (e) {
-    $('scanReader').innerHTML = ''; $('scanMsg').innerHTML = `📷 Camera unavailable (${esc(e && e.message || 'no access')}). Type a barcode below instead.`;
-  }
 }
 
 // Resolve a scanned code → show the right action. Glossary-aware: a known item just adds
@@ -1535,7 +1517,7 @@ async function renderStock() {
     <div class="row-between"><h2 class="page">Stock</h2>
       <div style="display:flex;gap:.5rem">
         <button class="btn" id="addItem">+ Add item</button>
-        <button class="btn ghost" id="scanBtn">📷 Scan</button>
+        <button class="btn ghost" id="scanBtn">📠 Scan</button>
         <button class="btn ghost" id="receiveSku">Receive by SKU</button>
       </div></div>
     <div class="table-wrap"><table><thead><tr>
@@ -1651,7 +1633,7 @@ async function renderGlossary() {
   const items = await api(invQ('/'));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Items — location catalog</h2>
-      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="gScan">📷 Scan</button><button class="btn" id="gAdd">+ Add item</button></div></div>
+      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="gScan">📠 Scan</button><button class="btn" id="gAdd">+ Add item</button></div></div>
     <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} stocked items here · descriptions, SKU, category & notes. Order directly from any row. The shared product dictionary is on the <strong>Glossary</strong> tab.${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
     <div class="table-wrap"><table><thead><tr>
       <th>Item</th><th>SKU</th><th>Category</th><th>Unit</th><th>Supplier</th><th>Description</th><th>Notes</th><th class="num">On hand</th><th class="num">Cost</th><th>Actions</th>
@@ -1762,7 +1744,7 @@ async function renderCatalog() {
   const rows = await api('/glossary' + (q ? '?q=' + encodeURIComponent(q) : ''));
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Glossary — product dictionary</h2>
-      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="cScan">📷 Scan</button><button class="btn" id="cAdd">+ Add product</button></div></div>
+      <div style="display:flex;gap:.5rem"><button class="btn ghost" id="cScan">📠 Scan</button><button class="btn" id="cAdd">+ Add product</button></div></div>
     <p class="sub" style="margin:-.5rem 0 .75rem;color:var(--muted)">Shared across the Central Kitchen and every location. One row per GTIN — name, description, unit, category, notes. Used to pre-fill the scan-to-receive form.</p>
     <div style="margin-bottom:.75rem"><input id="cSearch" placeholder="Search GTIN, scale #, name, brand or category…" value="${esc(q)}" style="max-width:360px" /></div>
     <div class="table-wrap"><table><thead><tr>

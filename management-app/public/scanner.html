@@ -42,8 +42,6 @@
     background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:.55rem .8rem; font-size:.9rem; }
   .who b{ color:var(--red-dark); }
   .who a{ color:var(--muted); font-size:.82rem; text-decoration:underline; cursor:pointer; }
-  #reader{ width:100%; border-radius:14px; overflow:hidden; background:#0f172a; min-height:210px; margin-bottom:.4rem; }
-  #reader video{ width:100% !important; border-radius:14px; display:block; }
   .scanmsg{ text-align:center; color:var(--muted); font-size:.9rem; margin:.4rem 0; }
   .result{ border:1px solid var(--line); border-radius:14px; padding:.9rem; margin-top:.4rem; background:#fff; }
   .result .name{ font-size:1.1rem; font-weight:700; color:var(--ink); }
@@ -91,8 +89,7 @@
       <div class="who"><span>Scanning as <b id="whoName"></b></span><a id="signout">Not you?</a></div>
       <div class="modes"><button class="btn sm primary" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="check">📋 Check</button></div>
       <div id="shipBar" class="ship-bar" hidden></div>
-      <div id="reader"></div>
-      <div class="scanmsg" id="scanmsg">Point the camera at a UPC / EAN barcode.</div>
+      <div class="scanmsg" id="scanmsg">📠 Ready — scan a barcode with your scanner.</div>
       <div id="result"></div>
       <div class="manual"><input id="manual" inputmode="numeric" autocomplete="off" placeholder="📠 Scan with your scanner — or type a code" /><button class="btn sm primary" id="manualGo">Go</button></div>
     </div>
@@ -121,43 +118,23 @@ async function api(path, body){
   return { ok: r.ok, status: r.status, d };
 }
 
-// ── html5-qrcode (lazy-loaded) ───────────────────────────────────────────
-let _libP = null;
-function loadLib(){
-  if (window.Html5Qrcode) return Promise.resolve();
-  if (!_libP) _libP = new Promise((res, rej) => { const s=document.createElement('script'); s.src='/html5-qrcode.min.js'; s.onload=res; s.onerror=()=>rej(new Error('Scanner library failed to load.')); document.head.appendChild(s); });
-  return _libP;
-}
-const formats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
-// Full-frame decode (no qrbox) — the whole camera frame is scanned, so long linear
-// GS1-128 case/meat labels fit. A small box would crop a wide 1D barcode and never decode it.
-
-let qr = null, busy = false;
-async function startScanner(){
-  try { await loadLib(); } catch (e) { $('scanmsg').textContent = e.message; return; }
-  qr = new Html5Qrcode('reader', { formatsToSupport: formats(), verbose:false });
-  const onCode = async (code) => {
-    if (busy) return; busy = true;
-    try { await qr.pause(true); } catch {}
-    try { navigator.vibrate && navigator.vibrate(50); } catch {}
-    $('scanmsg').textContent = 'Scanned: ' + code;
-    await onScanned(code);
-  };
-  try {
-    // Plain environment camera + full-frame decode — the config that reliably OPENS on iPhone.
-    // Do NOT add width/height {ideal:...} resolution constraints: they broke camera-open on the
-    // iPhone 16 even with a fallback (the fallback can't cleanly recover the iOS video element).
-    await qr.start({ facingMode:'environment' }, { fps:10 }, onCode, () => {});
-  } catch (e) {
-    $('reader').innerHTML = ''; $('reader').style.minHeight='0';
-    $('scanmsg').innerHTML = '📷 Camera unavailable (' + esc(e && e.message || 'no access') + '). Scan with your barcode scanner, or type below.';
-  }
-  // A USB/Bluetooth scanner is a keyboard-wedge: keep the field focused so scans land hands-free.
+// ── Hardware barcode scanner (keyboard-wedge) ─────────────────────────────
+// A USB/Bluetooth scanner types the code + Enter into the auto-focused field below —
+// no phone camera. The field is kept focused so scans land hands-free.
+let busy = false;
+function startScanner(){
+  $('scanmsg').textContent = '📠 Ready — scan a barcode with your scanner.';
   focusManual();
 }
 const focusManual = () => { const m = $('manual'); if (m) setTimeout(() => { try { m.focus(); } catch {} }, 80); };
-function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = 'Point the camera at the next barcode.'; try { qr && qr.resume(); } catch {} focusManual(); }
+function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = '📠 Ready — scan the next barcode.'; focusManual(); }
 
+async function handleCode(code){
+  if (busy) return; busy = true;
+  try { navigator.vibrate && navigator.vibrate(50); } catch {}
+  $('scanmsg').textContent = 'Scanned: ' + code;
+  await onScanned(code);
+}
 const onScanned = (code) => scanMode === 'ship' ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : handleScan(code));
 
 // ── Check mode: stock of a scanned item across all locations ──────────────
@@ -179,7 +156,7 @@ async function setMode(m){
   scanMode = m;
   document.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm ' + (b.dataset.mode === m ? 'primary' : 'ghost'));
   $('shipBar').hidden = m !== 'ship';
-  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock at every location.' : 'Point the camera at a UPC / EAN barcode.');
+  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock at every location.' : '📠 Ready — scan a barcode with your scanner.');
   if (m === 'ship' && !$('shipBar').dataset.loaded){
     $('shipBar').dataset.loaded = '1';
     const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/targets', { employee_code: empCode });
@@ -338,7 +315,7 @@ async function start(){
   $('go').onclick = identify;
   $('code').addEventListener('keydown', e => { if (e.key === 'Enter') identify(); });
   $('signout').onclick = signOut;
-  $('manualGo').onclick = () => { const c = ($('manual').value||'').trim(); if (c){ $('manual').value=''; onScanned(c); } };
+  $('manualGo').onclick = () => { const c = ($('manual').value||'').trim(); if (c){ $('manual').value=''; handleCode(c); focusManual(); } };
   $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') $('manualGo').click(); });
   $('code').focus();
 }
