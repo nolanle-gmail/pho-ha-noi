@@ -1333,6 +1333,17 @@ async function openScanner() {
 // Resolve a scanned code → show the right action. Glossary-aware: a known item just adds
 // (count, or WEIGHT for catch-weight items, with a serial-duplicate guard); a new barcode
 // pre-fills a form from the Glossary/label and, on save, writes the item into the Glossary too.
+// The item's Vietnamese + Spanish names from the Glossary, shown under the English name so
+// Vietnamese- and Spanish-speaking staff recognize it on a scan. Renders nothing when unset.
+function scanLangs(g) {
+  if (!g) return '';
+  const vi = (g.name_vi || '').trim(), es = (g.name_es || '').trim();
+  const parts = [];
+  if (vi) parts.push(`<span class="lang-tag">VI</span> ${esc(vi)}`);
+  if (es) parts.push(`<span class="lang-tag">ES</span> ${esc(es)}`);
+  return parts.length ? `<div class="scan-langs">${parts.join('<span class="lang-sep">·</span>')}</div>` : '';
+}
+
 async function handleScan(code, panel, next) {
   panel.innerHTML = '<div class="muted">Looking up…</div>';
   let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
@@ -1348,7 +1359,7 @@ async function handleScan(code, panel, next) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
     const qDflt = cw ? (wt || '') : (wt || 1);
-    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${gs1}
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${gs1}
       <div class="scan-act"><input id="scQty" type="number" value="${qDflt}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}" title="${cw ? 'Net weight to add (' + esc(it.unit) + ')' : 'Quantity (' + esc(it.unit) + ')'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
@@ -1435,7 +1446,7 @@ async function handleShip(code, panel, next, to, toName, refreshOrders) {
   const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
   let dflt = (r.parsed && r.parsed.weightLb) || 1;
   try { const ords = await api('/inventory/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>${scanLangs(r.glossary)}
     <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any" title="Qty to ship (${esc(it.unit)})"><span class="muted">→ ${esc(dest)}</span></div>
     <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
   $('shNext').onclick = next;
@@ -1783,7 +1794,9 @@ async function catalogEdit(it) {
   const YN = [{ value: '1', label: 'Yes' }, { value: '0', label: 'No' }];
   const fields = [
     { key: 'barcode', label: 'GTIN / barcode', value: it ? it.barcode : '' },
-    { key: 'name', label: 'Name', value: it ? it.name : '' },
+    { key: 'name', label: 'Name (English)', value: it ? it.name : '' },
+    { key: 'name_vi', label: 'Name (Vietnamese) — shown to staff on scan', value: it ? (it.name_vi || '') : '' },
+    { key: 'name_es', label: 'Name (Spanish) — shown to staff on scan', value: it ? (it.name_es || '') : '' },
     { key: 'brand', label: 'Brand', value: it ? (it.brand || '') : '' },
     { key: 'category', label: 'Category', type: 'combo', options: CATEGORY_OPTIONS, value: it ? it.category : 'Produce' },
     { key: 'unit', label: 'Unit of measure', type: 'combo', options: UOM_OPTIONS, value: it ? it.unit : 'each' },

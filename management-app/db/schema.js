@@ -1398,6 +1398,11 @@ function migrate() {
     // Deli price-computing scale item number (AvaWeigh "LF Code" / PLU) — the digits printed
     // inside the scale's price/weight-embedded EAN-13, used to resolve the item name on scan.
     `ALTER TABLE product_catalog ADD COLUMN scale_code TEXT`,
+    // Translated item names shown to kitchen/warehouse staff on scan (Ship / Use). The English
+    // `name` stays the canonical one; these are optional and populated by hand (or by Claude when
+    // seeding items). Pho Ha Noi employs many Vietnamese- and Spanish-speaking staff.
+    `ALTER TABLE product_catalog ADD COLUMN name_vi TEXT`,
+    `ALTER TABLE product_catalog ADD COLUMN name_es TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_name ON product_catalog(name)`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_cat ON product_catalog(category)`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_scale ON product_catalog(scale_code)`,

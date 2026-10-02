@@ -2062,6 +2062,18 @@ async function openScanner() {
 
 // Smart receive — glossary-aware. Known item adds count (or WEIGHT for catch-weight, with a
 // serial-duplicate guard); a new barcode pre-fills from the Glossary/label and writes back.
+// The item's Vietnamese + Spanish names from the Glossary, shown under the English name so
+// Vietnamese- and Spanish-speaking kitchen/warehouse staff recognize what they're handling.
+// English stays the canonical name; this renders nothing when no translation is set.
+function scanLangs(g) {
+  if (!g) return '';
+  const vi = (g.name_vi || '').trim(), es = (g.name_es || '').trim();
+  const parts = [];
+  if (vi) parts.push(`<span class="lang-tag">VI</span> ${esc(vi)}`);
+  if (es) parts.push(`<span class="lang-tag">ES</span> ${esc(es)}`);
+  return parts.length ? `<div class="scan-langs">${parts.join('<span class="lang-sep">·</span>')}</div>` : '';
+}
+
 async function handleScan(code, panel, next) {
   panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
   let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
@@ -2075,7 +2087,7 @@ async function handleScan(code, panel, next) {
   if (r.in_stock) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
-    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${gs1}
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${gs1}
       <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
@@ -2166,7 +2178,7 @@ async function handleShip(code, panel, next, to, toName, refreshOrders) {
   const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
   let dflt = (r.parsed && r.parsed.weightLb) || 1;
   try { const ords = await api('/invscan/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}
     <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any"><span class="muted">→ ${esc(dest)}</span></div>
     <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
   $('shNext').onclick = next;
@@ -2191,7 +2203,7 @@ async function handleUse(code, panel, next) {
   if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store. <button class="btn sm ghost" id="uSkip">Skip</button></div>`; $('uSkip').onclick = next; return; }
   const it = r.item; const cw = !!it.is_catch_weight;
   const wt = (r.parsed && r.parsed.weightLb) || '';
-  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>
+  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}
     <div class="scan-act"><input id="uQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input id="uReason" placeholder="Reason (e.g. prep, serve)"></div>
     <div class="scan-act"><button class="btn" id="uGo">🍳 Record use</button><button class="btn ghost" id="uNext">Skip</button></div></div>`;
   $('uNext').onclick = next;

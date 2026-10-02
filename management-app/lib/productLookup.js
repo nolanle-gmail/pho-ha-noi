@@ -78,7 +78,7 @@ async function upcItemDb(code) {
 
 // ── Catalog helpers ──────────────────────────────────────────────────────────
 // Full glossary column set (product_catalog is the group-wide "Glossary").
-const GLOSSARY_COLS = `barcode, name, brand, size, description, unit, category, notes,
+const GLOSSARY_COLS = `barcode, name, name_vi, name_es, brand, size, description, unit, category, notes,
   default_unit_cost, stackable, is_catch_weight, default_vendor_id, default_vendor_code,
   barcode_type, scale_code, image_url, active, source, created_by, created_at, updated_by, updated_at`;
 // Normalize a deli-scale item code to a canonical digits-only, no-leading-zero string
@@ -143,7 +143,7 @@ async function lookupProduct(rawCode, userId) {
     gtin: p.gtin, code: p.code, is_gs1: p.isGs1, weight_lb: p.weightLb, weight_kg: p.weightKg,
     prod_date: p.prodDate, pack_date: p.packDate, expiry: p.expiry, lot: p.lot, serial: p.serial,
     // Glossary fields (null until a matching glossary entry is found).
-    in_glossary: false, description: null, unit: null, category: null, notes: null,
+    in_glossary: false, name_vi: null, name_es: null, description: null, unit: null, category: null, notes: null,
     default_unit_cost: 0, stackable: 1, is_catch_weight: 0,
     default_vendor_id: null, default_vendor_code: null, barcode_type: null, scale_code: null,
   };
@@ -156,7 +156,8 @@ async function lookupProduct(rawCode, userId) {
     const g = catalogGetByScaleCode(p.scaleCode);
     if (g && clean(g.name)) {
       return Object.assign(out, {
-        found: true, name: g.name, brand: g.brand || null, size: out.size || clean(g.size),
+        found: true, name: g.name, name_vi: g.name_vi || null, name_es: g.name_es || null,
+        brand: g.brand || null, size: out.size || clean(g.size),
         source: g.source || 'catalog', in_glossary: true, description: g.description || null,
         unit: g.unit || null, category: g.category || null, notes: g.notes || null,
         default_unit_cost: g.default_unit_cost || 0,
@@ -175,7 +176,8 @@ async function lookupProduct(rawCode, userId) {
   const hit = catalogGet(code);
   if (hit && clean(hit.name)) {
     return Object.assign(out, {
-      found: true, name: hit.name, brand: hit.brand || null,
+      found: true, name: hit.name, name_vi: hit.name_vi || null, name_es: hit.name_es || null,
+      brand: hit.brand || null,
       size: clean(hit.size) || out.size, source: hit.source || 'catalog',
       in_glossary: true, description: hit.description || null, unit: hit.unit || null,
       category: hit.category || null, notes: hit.notes || null,
@@ -217,7 +219,7 @@ function rememberProduct(code, name, userId, extra = {}) {
 function glossaryList({ q = '', category = '', activeOnly = false, limit = 500 } = {}) {
   try {
     const conds = [], args = [];
-    if (q) { const like = `%${clean(q)}%`; conds.push('(barcode LIKE ? OR name LIKE ? OR brand LIKE ? OR category LIKE ? OR scale_code LIKE ?)'); args.push(like, like, like, like, like); }
+    if (q) { const like = `%${clean(q)}%`; conds.push('(barcode LIKE ? OR name LIKE ? OR name_vi LIKE ? OR name_es LIKE ? OR brand LIKE ? OR category LIKE ? OR scale_code LIKE ?)'); args.push(like, like, like, like, like, like, like); }
     if (category) { conds.push('category=?'); args.push(category); }
     if (activeOnly) conds.push('COALESCE(active,1)=1');
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
@@ -238,7 +240,8 @@ function glossaryUpsert(fields, userId) {
   const num = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
   const bool = (v, d) => (v == null || v === '' ? d : (v && v !== '0' && v !== 'false' ? 1 : 0));
   const vals = [
-    code, name, clean(fields.brand) || null, clean(fields.size) || null,
+    code, name, clean(fields.name_vi) || null, clean(fields.name_es) || null,
+    clean(fields.brand) || null, clean(fields.size) || null,
     clean(fields.description) || null, clean(fields.unit) || null, clean(fields.category) || null,
     clean(fields.notes) || null,
     num(fields.default_unit_cost, existing ? existing.default_unit_cost : 0),
@@ -252,11 +255,12 @@ function glossaryUpsert(fields, userId) {
   ];
   try {
     db.prepare(`INSERT INTO product_catalog
-        (barcode,name,brand,size,description,unit,category,notes,default_unit_cost,stackable,is_catch_weight,
+        (barcode,name,name_vi,name_es,brand,size,description,unit,category,notes,default_unit_cost,stackable,is_catch_weight,
          default_vendor_id,default_vendor_code,barcode_type,scale_code,image_url,active,source,created_by,created_at,updated_by,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'staff',?,datetime('now'),?,datetime('now'))
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'staff',?,datetime('now'),?,datetime('now'))
         ON CONFLICT(barcode) DO UPDATE SET
-          name=excluded.name, brand=excluded.brand, size=excluded.size, description=excluded.description,
+          name=excluded.name, name_vi=excluded.name_vi, name_es=excluded.name_es,
+          brand=excluded.brand, size=excluded.size, description=excluded.description,
           unit=excluded.unit, category=excluded.category, notes=excluded.notes,
           default_unit_cost=excluded.default_unit_cost, stackable=excluded.stackable,
           is_catch_weight=excluded.is_catch_weight, default_vendor_id=excluded.default_vendor_id,
