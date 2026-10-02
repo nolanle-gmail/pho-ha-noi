@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 1, 2026_
+_Last updated: October 2, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -531,8 +531,14 @@ distinct things, on two tabs:
 - **Glossary** (new tab) — the **group-wide product dictionary** (`product_catalog`), **one row
   per GTIN, shared across the Central Kitchen and every location**. Managed by hand (search /
   **+ Add product** / edit / delete) and used to **pre-fill the scan-to-receive form**. Fields:
-  **GTIN, Name, Brand, Category, Unit of measure, Description, Notes, Pack size, Default unit
-  cost, Barcode type, Supplier code, Deli scale code**, plus two behaviour flags:
+  **GTIN, Name (English), Name (Vietnamese), Name (Spanish), Brand, Category, Unit of measure,
+  Description, Notes, Pack size, Default unit cost, Barcode type, Supplier code, Deli scale code**,
+  plus two behaviour flags:
+  - **Name (Vietnamese) / Name (Spanish)** — optional translations of the English name. Pho Ha Noi
+    employs many Vietnamese- and Spanish-speaking staff, so when anyone **scans** an item (Receive /
+    Ship / **Use** / kiosk) the result shows an **amber VI · ES line** under the English name, so
+    kitchen and warehouse staff recognize what they're handling. English stays the canonical name;
+    the line is omitted when no translation is set. Both are searchable in the Glossary.
   - **Stackable** (default yes) — a repeat scan of this barcode just **adds to the count**
     (e.g. a soy-sauce bottle: always the same barcode, so pooling the count is correct).
   - **Catch-weight** (default no) — a **variable-weight** item (meat, produce): stock is
