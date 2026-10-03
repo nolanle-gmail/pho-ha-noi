@@ -159,6 +159,16 @@ router.put('/:id', requireRole(ROLES.ADMIN), (req, res) => {
     fields.push('status=?'); vals.push(req.body.status);
     fields.push('is_active=?'); vals.push(req.body.status === 'active' ? 1 : 0);
   }
+  // URL slug for the public check-in / clock / scanner kiosks (/checkin/<slug>, /clock/<slug>, …).
+  // Editable so a renamed location (e.g. Oakland → San Francisco) can get a matching URL. Changing
+  // it updates those links — old QR codes / bookmarks to the previous slug stop resolving.
+  if (req.body.slug !== undefined) {
+    const s = slugify(req.body.slug);
+    if (!s) return res.status(400).json({ error: 'Enter a valid URL slug (letters, numbers and hyphens).' });
+    const clash = db.prepare(`SELECT id FROM locations WHERE lower(slug)=? AND id<>?`).get(s.toLowerCase(), loc.id);
+    if (clash) return res.status(409).json({ error: 'That URL slug is already used by another location.' });
+    fields.push('slug=?'); vals.push(s);
+  }
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(loc.id);
   db.prepare(`UPDATE locations SET ${fields.join(',')} WHERE id=?`).run(...vals);

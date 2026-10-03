@@ -73,6 +73,7 @@ function toast(msg, bad) {
 function modal(title, fields, onSubmit, submitLabel = 'Save') {
   const host = $('modalHost');
   const inputs = fields.map(f => {
+    if (f.type === 'note') return `<p class="modal-note">${esc(f.label)}</p>`;   // read-only explanation, no input
     if (f.type === 'select') {
       return `<label>${esc(f.label)}</label><select data-k="${f.key}">${f.options.map(o => `<option value="${esc(o.value)}" ${o.value == f.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
     }
@@ -2677,7 +2678,7 @@ async function renderLocList() {
       <p class="sub" style="color:var(--muted);margin:.5rem 0 0">Give each a home store (and any additional stores) in the <b>Staff</b> section.</p>
     </details>` : ''}
     <div class="loc-grid">
-      ${locs.map(l => `<div class="loc-card">
+      ${locs.map(l => `<div class="loc-card${l.is_active ? '' : ' loc-hidden'}">
         <div class="loc-card-head"><span class="loc-name">${esc(shortLoc(l.name))}</span>${statusBadgeLoc(l.status)}</div>
         <div class="loc-meta">📍 ${esc([l.city, l.state].filter(Boolean).join(', ') || '—')}</div>
         <div class="loc-meta">📞 ${esc(l.phone || '—')}</div>
@@ -2687,11 +2688,22 @@ async function renderLocList() {
           <div><span>Seats</span><strong>${l.seats || '—'}</strong></div>
           <div><span>Equipment</span><strong>${l.equipment_count}${l.equipment_issues ? ` <span class="badge low">${l.equipment_issues}⚠</span>` : ''}</strong></div>
         </div>
-        <button class="btn ghost sm" data-manage="${l.id}">Manage →</button>
+        <div class="loc-card-actions">
+          <button class="btn ghost sm" data-manage="${l.id}">Manage →</button>
+          ${canAdd ? `<button class="btn ghost sm" data-editloc="${l.id}">✎ Edit</button>${l.is_active
+            ? `<button class="btn ghost sm" data-hideloc="${l.id}" data-name="${esc(shortLoc(l.name))}">🙈 Hide</button>`
+            : `<button class="btn sm" data-showloc="${l.id}" data-name="${esc(shortLoc(l.name))}">↩ Unhide</button>`}` : ''}
+        </div>
       </div>`).join('')}
     </div>`;
   if (canAdd) $('addLoc').onclick = () => locationModal(null);
   $('view').querySelectorAll('[data-manage]').forEach(b => b.onclick = () => { S.locDetailId = b.dataset.manage; S.locView = 'detail'; S.locTab = 'details'; renderLocationsSection(); });
+  const setLocStatus = async (id, status, msg) => { await api('/locations/' + id, { method: 'PUT', body: JSON.stringify({ status }) }); S.locations = await api('/inventory/locations').catch(() => S.locations); toast(msg); renderLocList(); };
+  $('view').querySelectorAll('[data-editloc]').forEach(b => b.onclick = () => { const l = locs.find(x => String(x.id) === b.dataset.editloc); if (l) locationModal(l); });
+  $('view').querySelectorAll('[data-hideloc]').forEach(b => b.onclick = () => modal(`Hide “${b.dataset.name}”?`, [
+    { key: '_', type: 'note', label: 'It’s hidden from location pickers and day-to-day use (and stops accepting check-ins), but all stock, staff and history are kept. You can Unhide it anytime.' },
+  ], async () => setLocStatus(b.dataset.hideloc, 'closed', 'Location hidden'), 'Hide'));
+  $('view').querySelectorAll('[data-showloc]').forEach(b => b.onclick = () => setLocStatus(b.dataset.showloc, 'active', 'Location shown again'));
 }
 
 function locationModal(loc) {
@@ -2707,13 +2719,18 @@ function locationModal(loc) {
     { key: 'seats', label: 'Seats', type: 'number', value: loc ? loc.seats : 0 },
     { key: 'opening_date', label: 'Opening date (YYYY-MM-DD)', value: loc ? loc.opening_date : '' },
     { key: 'break_reminder_lead_min', label: 'Break reminder lead (minutes before break)', type: 'number', step: '1', placeholder: '10', value: loc && loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10 },
-    { key: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }, { value: 'closed', label: 'Closed' }], value: loc ? loc.status : 'active' },
+    { key: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }, { value: 'closed', label: 'Closed (hidden)' }], value: loc ? loc.status : 'active' },
   ];
+  // Editing only: let an admin change the public URL slug (check-in / kiosk links) — e.g. after a
+  // rename. Changing it updates /checkin/<slug>, /clock/<slug>, /scanner/<slug>; old QR codes break.
+  if (loc) fields.push({ key: 'slug', label: 'Kiosk URL slug (staff clock & scanner links, e.g. /clock/<slug>). Update it after a rename to retire the old link. (Guest check-in URLs follow the name automatically.)', value: loc.slug || '' });
   modal(isNew ? 'Add location' : `Edit — ${shortLoc(loc.name)}`, fields, async (v) => {
     if (isNew) { await api('/locations', { method: 'POST', body: JSON.stringify(v) }); toast('Location added'); }
     else { await api('/locations/' + loc.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Location updated'); }
     S.locations = await api('/inventory/locations').catch(() => S.locations);
-    isNew ? (S.locView = 'list', renderLocationsSection()) : renderLocDetail();
+    if (isNew) { S.locView = 'list'; renderLocationsSection(); }
+    else if (S.locView === 'detail' && S.locDetailId) renderLocDetail();
+    else renderLocList();
   }, isNew ? 'Add location' : 'Save');
 }
 

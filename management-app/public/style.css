@@ -434,6 +434,9 @@ textarea.fld { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
 /* Locations */
 .loc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
 .loc-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem; }
+.loc-card.loc-hidden { opacity: .62; background: var(--surface-2, #f5eee2); }
+.loc-card-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
+.modal-note { margin: .2rem 0 .6rem; padding: .5rem .7rem; background: var(--surface-2, #f5eee2); border: 1px solid var(--line); border-radius: 8px; font-size: .86rem; color: var(--ink-soft, #6e5f51); line-height: 1.45; }
 .loc-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
 .loc-card-head .loc-name { font-weight: 800; font-size: 1.02rem; }
 .loc-meta { color: var(--muted); font-size: .85rem; margin-bottom: .2rem; }
