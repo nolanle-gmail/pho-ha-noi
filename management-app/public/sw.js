@@ -1,8 +1,8 @@
 // Pho Ha Noi Management — service worker. Network-first for the app shell so the
 // console always loads the latest code online, with a cached fallback offline.
 // Live data (/api/*) always goes to the network.
-const CACHE = 'phn-mgmt-v154';
-const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/brand.svg', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const CACHE = 'phn-mgmt-v155';
+const SHELL = ['/', '/index.html', '/app.js', '/staff-views.js', '/style.css', '/brand.svg', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

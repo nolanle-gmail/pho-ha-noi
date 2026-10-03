@@ -686,9 +686,12 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/locations/${loc1}/activity`, { headers: H(emp.token) });
     check('employee blocked from location activity (403)', r.status === 403, 'status=' + r.status);
 
-    // RBAC
+    // RBAC — store staff can read their OWN location's service lists (for "My Tables" in the
+    // Management console), but not another location's.
     r = await fetch(base + `${V}?location_id=${loc1}`, { headers: H(emp.token) });
-    check('employee blocked from service lists (403)', r.status === 403, 'status=' + r.status);
+    check('store employee reads own-location service lists (My Tables, 200)', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + `${V}?location_id=${loc2}`, { headers: H(emp.token) });
+    check('employee blocked from another location service lists (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `${V}?location_id=${loc2}`, { headers: H(mgr.token) });
     check('manager blocked from another location visits (403)', r.status === 403, 'status=' + r.status);
     const mgrV = await j(await fetch(base + V, { headers: H(mgr.token) }));

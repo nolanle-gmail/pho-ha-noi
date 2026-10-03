@@ -59,6 +59,12 @@ const ownsLocation = (req, locId) => req.service || seesAllLocations(req.user.ro
 // View/act: the service key (Staff app) or a manager. Per-user server/host scoping
 // happens in the Staff app UI (Phase 4); the API trusts the service key.
 const requireView = (req, res, next) => (req.service || isManage(req) ? next() : res.status(403).json({ error: 'You do not have access to the service lists.' }));
+// Floor access for store staff using the Management console's "My Tables": read the
+// service lists and do the server actions (claim / check / pay / done / help / bus) at
+// their own store. Any non-all-location staffer qualifies; manager-only actions
+// (seat / assign / transfer / cancel / interval / create) keep requireView.
+const isFloorStaff = (req) => req.user && !seesAllLocations(req.user.role);
+const requireFloor = (req, res, next) => (req.service || isManage(req) || isFloorStaff(req) ? next() : res.status(403).json({ error: 'You do not have access to the service lists.' }));
 
 const nowISO = () => new Date().toISOString();
 const addMin = (min, from) => new Date((from ? new Date(from).getTime() : Date.now()) + min * 60000).toISOString();
@@ -132,7 +138,7 @@ function scopeLocation(req, res) {
 }
 
 // ── The lists: every active visit, grouped by stage, scoped to the viewer ─────
-router.get('/', requireView, (req, res) => {
+router.get('/', requireFloor, (req, res) => {
   const s = scopeLocation(req, res); if (!s) return;
   const includeDone = req.query.include === 'done';
   const stages = includeDone ? [...ACTIVE_STAGES, 'done'] : ACTIVE_STAGES;
@@ -246,11 +252,11 @@ function toInService(req, res, event) {
   logEvent(nv, event, v.stage, 'in_service', actorOf(req), { server_id: serverId, server: serverName });
   res.json({ success: true, visit: mapVisit(nv) });
 }
-router.put('/:id/claim', requireView, (req, res) => toInService(req, res, 'claimed'));
+router.put('/:id/claim', requireFloor, (req, res) => toInService(req, res, 'claimed'));
 router.put('/:id/assign', requireView, (req, res) => toInService(req, res, 'assigned'));
 
 // ── Log a check (resets the timer) ───────────────────────────────────────────
-router.put('/:id/check', requireView, (req, res) => {
+router.put('/:id/check', requireFloor, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   if (v.stage !== 'in_service') return res.status(409).json({ error: 'Only tables in service are checked.' });
   const interval = v.check_interval_min || DEFAULT_CHECK;
@@ -275,7 +281,7 @@ router.put('/:id/interval', requireView, (req, res) => {
 });
 
 // ── Move to paying ───────────────────────────────────────────────────────────
-router.put('/:id/pay', requireView, (req, res) => {
+router.put('/:id/pay', requireFloor, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   if (!['in_service', 'seated'].includes(v.stage)) return res.status(409).json({ error: `Cannot move a ${v.stage} visit to paying.` });
   db.prepare(`UPDATE service_visits SET stage='paying', paying_at=?, next_check_at=NULL WHERE id=?`).run(nowISO(), v.id);
@@ -286,7 +292,7 @@ router.put('/:id/pay', requireView, (req, res) => {
 });
 
 // ── Done — one tap when guests leave; frees the table. Optional tip recorded. ─
-router.put('/:id/done', requireView, (req, res) => {
+router.put('/:id/done', requireFloor, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   if (v.stage === 'done' || v.stage === 'canceled') return res.status(409).json({ error: `Visit is already ${v.stage}.` });
   const tableId = v.table_id;
@@ -300,7 +306,7 @@ router.put('/:id/done', requireView, (req, res) => {
 });
 
 // ── Server flags: raise a hand for a manager, or ping a busser to clear a table ─
-router.put('/:id/help', requireView, (req, res) => {
+router.put('/:id/help', requireFloor, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   const on = req.body.on === undefined ? !v.help_flag : !!req.body.on;
   db.prepare(`UPDATE service_visits SET help_flag=?, help_at=? WHERE id=?`).run(on ? 1 : 0, on ? nowISO() : null, v.id);
@@ -308,7 +314,7 @@ router.put('/:id/help', requireView, (req, res) => {
   logEvent(nv, on ? 'help_raised' : 'help_cleared', v.stage, v.stage, actorOf(req), null);
   res.json({ success: true, visit: mapVisit(nv) });
 });
-router.put('/:id/bus', requireView, (req, res) => {
+router.put('/:id/bus', requireFloor, (req, res) => {
   const v = loadOwned(req, res); if (!v) return;
   const on = req.body.on === undefined ? !v.bus_flag : !!req.body.on;
   db.prepare(`UPDATE service_visits SET bus_flag=?, bus_at=? WHERE id=?`).run(on ? 1 : 0, on ? nowISO() : null, v.id);
@@ -372,7 +378,7 @@ router.get('/reports/servers', requireView, (req, res) => {
 });
 
 // ── One server's own tally today: covers (guests) + tips ─────────────────────
-router.get('/me/tally', requireView, (req, res) => {
+router.get('/me/tally', requireFloor, (req, res) => {
   const s = scopeLocation(req, res); if (!s) return;
   const serverId = req.query.server_id ? parseInt(req.query.server_id, 10) : (req.user ? req.user.id : null);
   if (!serverId) return res.status(400).json({ error: 'server_id is required.' });

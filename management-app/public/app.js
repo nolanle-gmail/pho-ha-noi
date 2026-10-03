@@ -237,6 +237,10 @@ const SECTIONS = [
   ['locations', '📍', 'Locations', 'manage'],
   ['staff', '👥', 'Staff', 'manage'],
   ['myschedule', '🗓️', 'My Schedule', 'scheduled'],
+  ['mytasks', '✅', 'My Tasks', 'scheduled'],
+  ['mytables', '🍽️', 'My Tables', 'scheduled'],
+  ['alerts', '🔔', 'Alerts', 'scheduled'],
+  ['myhours', '⏱️', 'My Hours', 'scheduled'],
   ['inventory', '📦', 'Inventory', 'ops'],
   ['central', '🏭', 'Central Kitchen', 'central'],
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
@@ -252,7 +256,7 @@ const allowedSections = () => SECTIONS.filter(s => myCap(s[3]));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
-    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}${k === 'messages' && navUnread() ? `<span class="nav-badge">${navUnread()}</span>` : ''}</button>`
+    `<button class="nav-item ${S.section === k ? 'active' : ''}" data-section="${k}"><span class="nav-icon">${icon}</span>${esc(label)}${k === 'messages' && navUnread() ? `<span class="nav-badge">${navUnread()}</span>` : ''}${k === 'alerts' && S.alertCount ? `<span class="nav-badge">${S.alertCount}</span>` : ''}</button>`
   ).join('');
   $('sidebarNav').querySelectorAll('button').forEach(b => b.onclick = () => showSection(b.dataset.section));
 }
@@ -391,7 +395,7 @@ function showSection(section) {
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
