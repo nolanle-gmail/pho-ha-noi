@@ -1098,6 +1098,16 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, backfill history, and toggle auto-sync (read-only) | Owner/Admin |
 | **Messages** | Inbox, sent, compose (direct or broadcast). Inside a conversation, the **newest message shows at the top** with the composer pinned at the top, so new messages/chat are visible without scrolling down; with **picture, video & file attachments** (PDF/Office/CSV/ZIP…) and a **😊 emoji picker** in every composer, **emoji reactions** on any message or chat bubble — iMessage-style tapbacks shown at the bubble's **top-left corner** (❤️ 👍 🙏 😮 😢 👎 **plus a "Haha" bubble graphic**); hover a reaction to see who reacted; reacting notifies **everyone in the conversation** — a live toast, an **OS push**, and a **+1 on their Messages/Chat unread badge** (like a new message) that clears when they open the conversation and deep-links straight to it), **💬 Chat** groups (channels; leadership can audit any), **Floor alerts** (urgent on-screen pings), **📱 Text** (SMS blasts to staff phones); two-tap **translate** (EN/ES/VI) on any message or chat | All · alerts & texts sent by managers |
 | **My Schedule** | Read-only weekly shifts across every store they work | Scheduled staff |
+| **My Tasks** | The staffer's **daily task board** — start → done, proof photos, comments/feedback (same as the Staff app, reads `/stafftasks`) | Store staff |
+| **My Tables** | A **server's live tables** — claim open tables, Check / To pay / Done, Call for help / Ready to bus, with covers & tips tally (reads `/visits`, scoped to their own store). Store staff can do these **server actions** and read their own store's service lists; manager actions (seat / assign / transfer) stay manager-only | Store staff |
+| **Alerts** | The staffer's **received floor / system alerts** inbox (Active / History, On-it / Done, plus the Service-Flow claim-and-track lifecycle) | Store staff |
+| **My Hours** | The staffer's own clocked hours, overtime & late starts (Daily / Weekly / Bi-weekly / Monthly) | Store staff |
+
+> **One app for staff.** Store staff (any non-all-location role) can now do everything they need
+> from the **Management console** — **My Schedule, My Tasks, My Tables, Alerts, My Hours** sit in the
+> sidebar alongside Messages, so they no longer need the separate Staff app. These sections are
+> hidden for all-location leadership (owner / admin / CEO / president / HR / GM / regional), who
+> aren't shift-scheduled. The views are ported from the Staff app and call the same Management API.
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
 > their **full HR profile** — Account (name), Personal, Contact, Mailing address,
