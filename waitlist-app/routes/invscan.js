@@ -34,6 +34,13 @@ router.get('/lookup/:code', (req, res) => fwd(req, res, 'GET', `/lookup/${encode
 router.post('/scan', (req, res) => fwd(req, res, 'POST', '/scan', req.body || {}));
 router.post('/link', (req, res) => fwd(req, res, 'POST', '/link', req.body || {}));
 router.post('/create', (req, res) => fwd(req, res, 'POST', '/create', req.body || {}));
+// Storage sections (shelves) — scoped to the staffer's own store on the Management side.
+router.get('/sections', (req, res) => fwd(req, res, 'GET', '/sections'));
+router.get('/sections/map', (req, res) => fwd(req, res, 'GET', '/sections/map'));
+router.post('/sections', (req, res) => fwd(req, res, 'POST', '/sections', req.body || {}));
+router.post('/sections/assign', (req, res) => fwd(req, res, 'POST', '/sections/assign', req.body || {}));
+router.put('/sections/:id', (req, res) => fwd(req, res, 'PUT', `/sections/${encodeURIComponent(req.params.id)}`, req.body || {}));
+router.delete('/sections/:id', (req, res) => fwd(req, res, 'DELETE', `/sections/${encodeURIComponent(req.params.id)}`));
 router.get('/:code', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.code)}`));
 
 module.exports = router;

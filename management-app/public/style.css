@@ -846,6 +846,19 @@ tr:hover .order-hover { opacity: 1; }
 .scan-langs { margin-top: .4rem; padding: .4rem .6rem; background: #fdf6ec; border: 1px solid #f3e2c7; border-radius: 8px; font-size: 1rem; color: #1f2937; line-height: 1.5; }
 .scan-langs .lang-tag { display: inline-block; min-width: 1.5rem; margin-right: .25rem; padding: 0 .3rem; border-radius: 4px; background: #9a5b08; color: #fff; font-size: .68rem; font-weight: 700; text-align: center; vertical-align: middle; }
 .scan-langs .lang-sep { margin: 0 .5rem; color: #cbbca0; }
+/* Storage shelf / section */
+.scan-section { margin-top: .4rem; padding: .4rem .6rem; background: #eef6ef; border: 1px solid #cfe6d2; border-radius: 8px; font-size: .92rem; color: #14532d; }
+.shelf-chip { display: inline-block; padding: .1rem .45rem; border-radius: 999px; background: var(--surface-2, #f0e8da); border: 1px solid var(--line, #e7dccc); font-size: .82rem; white-space: nowrap; }
+.shelf-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); margin: 1rem 0; }
+.shelf-card { border: 1px solid var(--line, #e7dccc); border-radius: 12px; background: var(--surface, #fff); overflow: hidden; }
+.shelf-card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem .8rem; background: var(--surface-2, #f5eee2); border-bottom: 1px solid var(--line, #e7dccc); flex-wrap: wrap; }
+.shelf-card-actions { display: flex; gap: .3rem; }
+.shelf-count { display: inline-block; min-width: 1.3rem; padding: 0 .4rem; border-radius: 999px; background: var(--brand, #b91c1c); color: #fff; font-size: .72rem; font-weight: 700; text-align: center; }
+.shelf-items { padding: .3rem .5rem .5rem; }
+.shelf-item { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .4rem .6rem; padding: .35rem .3rem; border-bottom: 1px solid var(--line-soft, #f0e8da); }
+.shelf-item:last-child { border-bottom: none; }
+.shelf-item-name { font-size: .9rem; }
+.shelf-item .shelf-move { grid-column: 1 / -1; font-size: .82rem; padding: .25rem .4rem; border: 1px solid var(--line, #e7dccc); border-radius: 7px; background: var(--surface, #fff); }
 .scan-form .scan-row input { min-width: 0; }
 
 .scan-modes { display: flex; gap: .5rem; margin: .2rem 0 .7rem; }

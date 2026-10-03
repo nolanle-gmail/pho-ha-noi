@@ -57,6 +57,7 @@
   .scan-langs{ margin-top:.5rem; padding:.5rem .7rem; background:#fdf6ec; border:1px solid #f3e2c7; border-radius:10px; font-size:1rem; color:#1f2937; line-height:1.5; }
   .scan-langs .lang-tag{ display:inline-block; min-width:1.5rem; margin-right:.25rem; padding:0 .3rem; border-radius:4px; background:#9a5b08; color:#fff; font-size:.68rem; font-weight:700; text-align:center; vertical-align:middle; }
   .scan-langs .lang-sep{ margin:0 .5rem; color:#cbbca0; }
+  .scan-section{ margin-top:.5rem; padding:.5rem .7rem; background:#eef6ef; border:1px solid #cfe6d2; border-radius:10px; font-size:.95rem; color:#14532d; }
   .scan-combo{ display:flex; flex-direction:column; gap:.25rem; }
   .scan-lbl{ font-size:.8rem; color:var(--muted); font-weight:600; }
   .scan-combo select, .scan-combo input{ width:100%; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; background:#fff; }
@@ -107,6 +108,8 @@ const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<
 const nf = (n) => { const x = Number(n); return Number.isInteger(x) ? String(x) : (Math.round(x*100)/100).toString(); };
 // Vietnamese + Spanish item names from the Glossary, for kitchen/warehouse staff on scan.
 function scanLangs(g){ if(!g) return ''; const vi=(g.name_vi||'').trim(), es=(g.name_es||'').trim(); const p=[]; if(vi)p.push('<span class="lang-tag">VI</span> '+esc(vi)); if(es)p.push('<span class="lang-tag">ES</span> '+esc(es)); return p.length?'<div class="scan-langs">'+p.join('<span class="lang-sep">·</span>')+'</div>':''; }
+// Where the item is stored (its shelf/section).
+function scanSection(it){ return it && it.section_name ? '<div class="scan-section">📍 Stored on <b>'+esc(it.section_name)+'</b></div>' : ''; }
 const UOM_OPTIONS = ['lb','lbs','case','each','bottle','box','bag','can','jar','gallon','oz','kg','pack','dozen','bunch','carton','quart','pint','jug','container','tub','tube','g','liter','ml','fl oz','piece','head','crate','flat','tray','sleeve','roll','sheet','keg','cup','count','unit','pair','order','serving','portion','plate','half gallon','cl','tbsp','tsp','lug','bushel','peck','gross','pallet','sack','pouch','packet','sachet','canister','tin','drum','pail','bucket','barrel','stalk','bulb','clove','ear','sprig','leaf','root','loaf','stick','slice','fillet','rack','side','slab','block','wedge','wheel','round','scoop','ladle','dash','pinch','ream','bar','mg','ton'];
 const CATEGORY_OPTIONS = ['Produce','Herbs & Aromatics','Meat','Poultry','Seafood','Noodles','Broth & Soup Base','Rice & Grains','Sauces & Condiments','Spices & Seasonings','Oils & Vinegars','Dry Goods','Canned & Jarred','Dairy','Eggs','Frozen','Deli','Bakery & Bread','Flour & Baking','Sweeteners','Nuts & Seeds','Snacks','Beverages','Juice & Soda','Coffee & Tea','Beer','Wine','Liquor','Bar Supplies','Paper Goods','Disposables & To-Go','Packaging','Cleaning Supplies','Smallwares','Equipment','Office Supplies','Uniforms & Apparel','Other'];
 const comboHTML = (key, options, value, label) => { const cur = value == null ? '' : String(value); const inList = options.includes(cur); return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o=>`<option value="${esc(o)}" ${o===cur?'selected':''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList&&cur)?'selected':''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label||'').toLowerCase())}" value="${esc(!inList?cur:'')}" ${(!inList&&cur)?'':'hidden'}></div>`; };
@@ -187,7 +190,7 @@ async function handleShip(code){
   const it = d.item;
   let dflt = d.weight_lb || 1;
   try { const { d:od } = await api('/kiosk/' + encodeURIComponent(slug) + '/orders', { employee_code: empCode, to_location_id: shipToId }); const m = ((od && od.orders) || []).find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch {}
-  $('result').innerHTML = `<div class="result"><div class="name">📤 ${esc(it.item_name)}</div><div class="sub">${nf(it.quantity)} ${esc(it.unit)} here → <b>${esc(shipToName)}</b></div>${scanLangs(d.glossary)}
+  $('result').innerHTML = `<div class="result"><div class="name">📤 ${esc(it.item_name)}</div><div class="sub">${nf(it.quantity)} ${esc(it.unit)} here → <b>${esc(shipToName)}</b></div>${scanLangs(d.glossary)}${scanSection(it)}
     <div class="fields"><input class="qty" id="shq" type="number" value="${dflt}" min="0" step="any"></div>
     <div class="row"><button class="btn ok" id="shGo">📤 Ship</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
   $('again').onclick = resume;
@@ -214,7 +217,7 @@ async function handleScan(code){
   const gs1 = (d.is_gs1 || d.weight_lb || labelExpiry || labelLot) ? `<div class="scan-gs1">🏷️ Label${d.weight_lb ? ` · <b>${nf(d.weight_lb)} lb</b>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${d.expiry ? ` · exp ${esc(d.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}</div>` : '';
   if (d.found){
     const it = d.item; const cw = !!it.is_catch_weight;
-    $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${gs1}
+    $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${scanSection(it)}${gs1}
       <div class="fields"><input class="qty" id="q" type="number" value="${cw ? (d.weight_lb||'') : (d.weight_lb||1)}" min="0" step="any" placeholder="${cw?'net weight':'qty'}"><select id="m"><option value="in">${cw?'➕ Add weight':'➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
       <div class="fields"><input id="qExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="qLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="row"><button class="btn ok" id="apply">Apply</button><button class="btn ghost" id="again">Scan another</button></div></div>`;

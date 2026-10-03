@@ -30,7 +30,7 @@ router.use((req, res, next) => {
 });
 
 const storeLoc = (req) => req.user.location_id;
-const findItem = (loc, code) => db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(loc, code);
+const findItem = (loc, code) => db.prepare(`SELECT i.*, s.name AS section_name FROM inventory i LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.barcode=? AND i.is_active=1`).get(loc, code);
 
 // The store's item list (for the "link to existing item" picker).
 router.get('/items/list', (req, res) => {
@@ -166,8 +166,9 @@ router.get('/check/:code', (req, res) => {
   if (!code) return res.json({ found: false, code });
   const seed = db.prepare(`SELECT item_name, unit FROM inventory WHERE barcode=? AND is_active=1 ORDER BY id LIMIT 1`).get(code);
   if (!seed) return res.json({ found: false, code, gtin: p.gtin });
-  const rows = db.prepare(`SELECT l.name AS location, l.type, i.location_id, i.quantity, i.min_quantity, i.unit
+  const rows = db.prepare(`SELECT l.name AS location, l.type, i.location_id, i.quantity, i.min_quantity, i.unit, s.name AS section
     FROM inventory i JOIN locations l ON l.id=i.location_id
+    LEFT JOIN storage_sections s ON s.id=i.section_id
     WHERE i.item_name=? AND i.is_active=1 ORDER BY (l.type='central_kitchen') DESC, l.name`).all(seed.item_name);
   const total = rows.reduce((a, r) => a + (r.quantity || 0), 0);
   res.json({ found: true, code, gtin: p.gtin, item_name: seed.item_name, unit: seed.unit, mine: storeLoc(req),
@@ -206,6 +207,81 @@ router.post('/use', (req, res) => {
   logScan({ itemId: item.id, locationId: loc, action: 'use', parsed: p, quantity: qty, userId: req.user.id });
   auditLog(req, 'stock_used', 'inventory', item.id, { item: item.item_name, qty, reason, via: 'scan' });
   res.json({ success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id) });
+});
+
+// ── Storage sections (shelves) — scoped to the staffer's own store ─────────────
+// Store staff can organize their storage: add/rename/remove shelves and assign items to them.
+router.get('/sections', (req, res) => {
+  const loc = storeLoc(req); if (!loc) return res.json([]);
+  res.json(db.prepare(`SELECT s.*, (SELECT COUNT(*) FROM inventory i WHERE i.section_id=s.id AND i.is_active=1) AS item_count
+    FROM storage_sections s WHERE s.location_id=? AND s.is_active=1 ORDER BY s.sort_order, s.name`).all(loc));
+});
+router.get('/sections/map', (req, res) => {
+  const loc = storeLoc(req); if (!loc) return res.status(400).json({ error: 'No store for this account.' });
+  const sections = db.prepare(`SELECT * FROM storage_sections WHERE location_id=? AND is_active=1 ORDER BY sort_order, name`).all(loc);
+  const itemsFor = (sid) => db.prepare(`SELECT id, item_name, quantity, unit, min_quantity, is_catch_weight FROM inventory
+      WHERE location_id=? AND is_active=1 AND ${sid == null ? 'section_id IS NULL' : 'section_id=?'} ORDER BY category, item_name`)
+    .all(...(sid == null ? [loc] : [loc, sid]));
+  res.json({ sections: sections.map(s => ({ ...s, items: itemsFor(s.id) })), unassigned: itemsFor(null) });
+});
+router.post('/sections', (req, res) => {
+  const loc = storeLoc(req); if (!loc) return res.status(400).json({ error: 'No store for this account.' });
+  const name = (req.body.name || '').toString().trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: 'A shelf / section name is required.' });
+  const dup = db.prepare(`SELECT id, is_active FROM storage_sections WHERE location_id=? AND name=? COLLATE NOCASE`).get(loc, name);
+  if (dup) {
+    if (!dup.is_active) { db.prepare(`UPDATE storage_sections SET is_active=1, note=? WHERE id=?`).run((req.body.note || '').toString().slice(0, 200) || null, dup.id); return res.json({ success: true, id: dup.id, reactivated: true }); }
+    return res.status(409).json({ error: 'A shelf / section with that name already exists.' });
+  }
+  const sort = ((db.prepare(`SELECT MAX(sort_order) m FROM storage_sections WHERE location_id=?`).get(loc) || {}).m || 0) + 1;
+  const r = db.prepare(`INSERT INTO storage_sections (location_id, name, note, sort_order) VALUES (?,?,?,?)`)
+    .run(loc, name, (req.body.note || '').toString().slice(0, 200) || null, sort);
+  auditLog(req, 'section_create', 'storage_sections', r.lastInsertRowid, { name, location_id: loc, via: 'staff' });
+  res.json({ success: true, id: r.lastInsertRowid });
+});
+router.put('/sections/:id', (req, res) => {
+  const loc = storeLoc(req);
+  const s = db.prepare(`SELECT * FROM storage_sections WHERE id=? AND location_id=?`).get(req.params.id, loc);
+  if (!s) return res.status(404).json({ error: 'Section not found at your store.' });
+  const fields = [], vals = [];
+  if (req.body.name !== undefined && String(req.body.name).trim()) {
+    const nm = String(req.body.name).trim().slice(0, 60);
+    const clash = db.prepare(`SELECT id FROM storage_sections WHERE location_id=? AND name=? COLLATE NOCASE AND id<>?`).get(loc, nm, s.id);
+    if (clash) return res.status(409).json({ error: 'Another shelf / section already has that name.' });
+    fields.push('name=?'); vals.push(nm);
+  }
+  if (req.body.note !== undefined) { fields.push('note=?'); vals.push((req.body.note || '').toString().slice(0, 200) || null); }
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  vals.push(s.id);
+  db.prepare(`UPDATE storage_sections SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  res.json({ success: true });
+});
+router.delete('/sections/:id', (req, res) => {
+  const loc = storeLoc(req);
+  const s = db.prepare(`SELECT * FROM storage_sections WHERE id=? AND location_id=?`).get(req.params.id, loc);
+  if (!s) return res.status(404).json({ error: 'Section not found at your store.' });
+  db.exec('BEGIN');
+  try {
+    db.prepare(`UPDATE inventory SET section_id=NULL WHERE section_id=?`).run(s.id);
+    db.prepare(`UPDATE storage_sections SET is_active=0 WHERE id=?`).run(s.id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: e.message }); }
+  auditLog(req, 'section_delete', 'storage_sections', s.id, { name: s.name, via: 'staff' });
+  res.json({ success: true });
+});
+// Assign an item (by id) to a section (or null to clear) — used by the browse-by-shelf view.
+router.post('/sections/assign', (req, res) => {
+  const loc = storeLoc(req); if (!loc) return res.status(400).json({ error: 'No store for this account.' });
+  const item = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=? AND is_active=1`).get(req.body.item_id, loc);
+  if (!item) return res.status(404).json({ error: 'Item not found at your store.' });
+  let sid = null;
+  if (req.body.section_id != null && req.body.section_id !== '') {
+    const s = db.prepare(`SELECT id FROM storage_sections WHERE id=? AND location_id=? AND is_active=1`).get(parseInt(req.body.section_id, 10) || 0, loc);
+    if (!s) return res.status(400).json({ error: 'Unknown shelf / section.' });
+    sid = s.id;
+  }
+  db.prepare(`UPDATE inventory SET section_id=? WHERE id=?`).run(sid, item.id);
+  res.json({ success: true });
 });
 
 // Resolve a scanned barcode to an item (kept last — single-segment catch).

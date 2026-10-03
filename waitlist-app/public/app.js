@@ -292,6 +292,7 @@ function renderNav() {
   if (isFrontDeskRole(role)) items.push(['board', '🍜 Front Desk']);
   if (isSelfServiceRole(role) || isFrontDeskRole(role)) items.push(['tables', '🍽️ Floor']);
   if (!isAllLocationRole(role)) items.push(['scan', '📠 Scan']);   // store-scoped inventory scanning
+  if (!isAllLocationRole(role)) items.push(['storage', '📍 Storage']);   // shelves / sections at my store
   if (S.sfOn) items.push(['serviceflow', '⏱️ Service Flow']);   // only where the trial is live
   items.push(['alerts', '🔔 Alerts']);       // received floor / system alerts (everyone)
   items.push(['messages', '✉️ Messages']);   // team messaging for everyone, next to Floor
@@ -335,6 +336,7 @@ function render() {
   if (S.view === 'tables') return renderTables();
   if (S.view === 'serviceflow') return renderStaffServiceFlow();
   if (S.view === 'scan') return renderScan();
+  if (S.view === 'storage') return renderStorage();
   if (S.view === 'alerts') return renderAlerts();
   if (S.view === 'settings') return renderSettings();
   return renderBoard();
@@ -1996,6 +1998,49 @@ const CATEGORY_OPTIONS = ['Produce', 'Herbs & Aromatics', 'Meat', 'Poultry', 'Se
 const comboHTML = (key, options, value, label) => { const cur = value == null ? '' : String(value); const inList = options.includes(cur); return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList && cur) ? 'selected' : ''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label || '').toLowerCase())}" value="${esc(!inList ? cur : '')}" ${(!inList && cur) ? '' : 'hidden'}></div>`; };
 function comboWire(root) { (root || document).querySelectorAll('[data-combo]').forEach(sel => { sel.onchange = () => { const o = document.getElementById('cbo_' + sel.dataset.combo); if (o) { const show = sel.value === '__other__'; o.hidden = !show; if (show) o.focus(); } }; }); }
 const comboVal = (key) => { const sel = document.getElementById('cb_' + key); if (!sel) return ''; return sel.value === '__other__' ? (((document.getElementById('cbo_' + key) || {}).value) || '').trim() : sel.value; };
+// ── Storage — shelves / sections at my store ───────────────────────────────
+async function renderStorage() {
+  const v = $('view');
+  v.innerHTML = '<div class="empty">Loading…</div>';
+  let data; try { data = await api('/invscan/sections/map'); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const sections = data.sections || [];
+  const moveSelect = (itemId, curSid) => `<select class="shelf-move" data-move="${itemId}" title="Move to a shelf"><option value="">— Unassigned —</option>${sections.map(s => `<option value="${s.id}" ${String(curSid) === String(s.id) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>`;
+  const itemsHtml = (items, curSid) => items.length
+    ? `<div class="shelf-items">${items.map(i => `<div class="shelf-item"><span class="shelf-item-name">${esc(i.item_name)}</span><span class="muted mono">${nf(i.quantity)} ${esc(i.unit || '')}</span>${moveSelect(i.id, curSid)}</div>`).join('')}</div>`
+    : '<div class="muted" style="padding:.4rem .2rem">No items here yet.</div>';
+  const card = (title, note, count, items, sid) => `
+    <div class="shelf-card">
+      <div class="shelf-card-head">
+        <div><strong>${esc(title)}</strong>${note ? ` <span class="muted">· ${esc(note)}</span>` : ''} <span class="shelf-count">${count}</span></div>
+        ${sid ? `<div class="shelf-card-actions"><button class="btn sm ghost" data-sec-rename="${sid}" data-name="${esc(title)}" data-note="${esc(note || '')}">Rename</button><button class="btn sm ghost" data-sec-del="${sid}" data-name="${esc(title)}" data-count="${count}">Delete</button></div>` : ''}
+      </div>
+      ${itemsHtml(items, sid || '')}
+    </div>`;
+  v.innerHTML = `
+    <div class="section-head"><h2>📍 Storage — shelves &amp; sections</h2><button class="btn" id="secAdd">＋ Add shelf</button></div>
+    <p class="empty" style="text-align:left;margin:.2rem 0 .6rem">Organize where food is stored at your store so you can put it away and grab it fast — the shelf shows up whenever you scan an item.</p>
+    <div class="shelf-grid">
+      ${sections.map(s => card(s.name, s.note, (s.items || []).length, s.items, s.id)).join('')}
+      ${card('Unassigned', 'not placed on a shelf yet', (data.unassigned || []).length, data.unassigned || [], null)}
+    </div>`;
+  $('secAdd').onclick = () => modal('Add shelf / section', `<input id="secName" placeholder="e.g. Shelf A — meat, Section 5 — chicken"><input id="secNote" placeholder="Note (optional)" style="margin-top:.4rem">`, async () => {
+    const name = ($('secName').value || '').trim(); if (!name) throw new Error('Enter a name');
+    await api('/invscan/sections', { method: 'POST', body: JSON.stringify({ name, note: ($('secNote').value || '').trim() }) });
+    toast('Shelf added'); renderStorage();
+  }, 'Add');
+  v.querySelectorAll('[data-sec-rename]').forEach(b => b.onclick = () => modal('Rename shelf / section', `<input id="secName" value="${esc(b.dataset.name)}"><input id="secNote" value="${esc(b.dataset.note)}" placeholder="Note (optional)" style="margin-top:.4rem">`, async () => {
+    await api('/invscan/sections/' + b.dataset.secRename, { method: 'PUT', body: JSON.stringify({ name: ($('secName').value || '').trim(), note: ($('secNote').value || '').trim() }) });
+    toast('Updated'); renderStorage();
+  }, 'Save'));
+  v.querySelectorAll('[data-sec-del]').forEach(b => b.onclick = () => modal(`Delete “${b.dataset.name}”?`, `<p>${b.dataset.count} item(s) will move to Unassigned — stock is not touched.</p>`, async () => {
+    await api('/invscan/sections/' + b.dataset.secDel, { method: 'DELETE' }); toast('Deleted'); renderStorage();
+  }, 'Delete'));
+  v.querySelectorAll('[data-move]').forEach(sel => sel.onchange = async () => {
+    try { await api('/invscan/sections/assign', { method: 'POST', body: JSON.stringify({ item_id: sel.dataset.move, section_id: sel.value || '' }) }); toast('Moved'); renderStorage(); }
+    catch (e) { toast(e.message, true); renderStorage(); }
+  });
+}
+
 function renderScan() {
   $('view').innerHTML = `<div class="section-head"><h2>📠 Scan Inventory</h2></div>
     <div class="empty" style="text-align:left;line-height:1.6">
@@ -2073,6 +2118,8 @@ function scanLangs(g) {
   if (es) parts.push(`<span class="lang-tag">ES</span> ${esc(es)}`);
   return parts.length ? `<div class="scan-langs">${parts.join('<span class="lang-sep">·</span>')}</div>` : '';
 }
+// Where the item is stored (its shelf/section) — so staff know where to put it away or grab it.
+function scanSection(it) { return it && it.section_name ? `<div class="scan-section">📍 Stored on <strong>${esc(it.section_name)}</strong></div>` : ''; }
 
 async function handleScan(code, panel, next) {
   panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
@@ -2087,7 +2134,7 @@ async function handleScan(code, panel, next) {
   if (r.in_stock) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
-    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${gs1}
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}
       <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
@@ -2162,7 +2209,7 @@ async function handleCheck(code, panel, next) {
   let r; try { r = await api('/invscan/check/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
   if (!r.found) { panel.innerHTML = `<div class="scan-unknown">🔍 <span class="mono">${esc(r.code)}</span> — not stocked anywhere yet. <button class="btn sm ghost" id="ckNext">OK</button></div>`; $('ckNext').onclick = next; return; }
   panel.innerHTML = `<div class="scan-found">📋 <strong>${esc(r.item_name)}</strong> <span class="muted">· ${nf(r.total)} ${esc(r.unit)} across all locations</span>
-    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row${l.location_id === r.mine ? ' mine' : ''}"><span>${esc(l.location)}${l.type === 'central_kitchen' ? ' (CK)' : ''}${l.location_id === r.mine ? ' · you' : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${nf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row${l.location_id === r.mine ? ' mine' : ''}"><span>${esc(l.location)}${l.type === 'central_kitchen' ? ' (CK)' : ''}${l.location_id === r.mine ? ' · you' : ''}${l.section ? ` <span class="stock-shelf">📍 ${esc(l.section)}</span>` : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${nf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
     <button class="btn ghost" id="ckNext">Scan another</button></div>`;
   $('ckNext').onclick = next;
 }
@@ -2178,7 +2225,7 @@ async function handleShip(code, panel, next, to, toName, refreshOrders) {
   const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
   let dflt = (r.parsed && r.parsed.weightLb) || 1;
   try { const ords = await api('/invscan/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}
     <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any"><span class="muted">→ ${esc(dest)}</span></div>
     <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
   $('shNext').onclick = next;
@@ -2203,7 +2250,7 @@ async function handleUse(code, panel, next) {
   if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store. <button class="btn sm ghost" id="uSkip">Skip</button></div>`; $('uSkip').onclick = next; return; }
   const it = r.item; const cw = !!it.is_catch_weight;
   const wt = (r.parsed && r.parsed.weightLb) || '';
-  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}
+  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${nf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}
     <div class="scan-act"><input id="uQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input id="uReason" placeholder="Reason (e.g. prep, serve)"></div>
     <div class="scan-act"><button class="btn" id="uGo">🍳 Record use</button><button class="btn ghost" id="uNext">Skip</button></div></div>`;
   $('uNext').onclick = next;

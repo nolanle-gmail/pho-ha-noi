@@ -1246,7 +1246,7 @@ async function svcIntervalModal(v) {
 }
 
 const TABS = [
-  ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['orders', 'Orders & Reorder'],
+  ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['storage', 'Storage'], ['orders', 'Orders & Reorder'],
   ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
   ['reports', 'Reports'], ['activity', 'Activity'], ['glossary', 'Items'], ['catalog', 'Glossary'],
 ];
@@ -1259,7 +1259,7 @@ function renderTabs() {
 function render() {
   const v = $('view');
   v.innerHTML = '<div class="empty">Loading…</div>';
-  ({ dashboard: renderDashboard, stock: renderStock, glossary: renderGlossary, catalog: renderCatalog, orders: renderOrders, transfers: renderTransfers,
+  ({ dashboard: renderDashboard, stock: renderStock, storage: renderStorage, glossary: renderGlossary, catalog: renderCatalog, orders: renderOrders, transfers: renderTransfers,
      lots: renderLots, vendors: renderVendors, reports: renderReports, activity: renderActivity }[S.tab])();
 }
 
@@ -1343,6 +1343,8 @@ function scanLangs(g) {
   if (es) parts.push(`<span class="lang-tag">ES</span> ${esc(es)}`);
   return parts.length ? `<div class="scan-langs">${parts.join('<span class="lang-sep">·</span>')}</div>` : '';
 }
+// Where the item is stored (its shelf/section) — so staff know where to put it away or pick it.
+function scanSection(it) { return it && it.section_name ? `<div class="scan-section">📍 Stored on <strong>${esc(it.section_name)}</strong></div>` : ''; }
 
 async function handleScan(code, panel, next) {
   panel.innerHTML = '<div class="muted">Looking up…</div>';
@@ -1359,7 +1361,7 @@ async function handleScan(code, panel, next) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
     const qDflt = cw ? (wt || '') : (wt || 1);
-    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${gs1}
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}
       <div class="scan-act"><input id="scQty" type="number" value="${qDflt}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}" title="${cw ? 'Net weight to add (' + esc(it.unit) + ')' : 'Quantity (' + esc(it.unit) + ')'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
@@ -1446,7 +1448,7 @@ async function handleShip(code, panel, next, to, toName, refreshOrders) {
   const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
   let dflt = (r.parsed && r.parsed.weightLb) || 1;
   try { const ords = await api('/inventory/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>${scanLangs(r.glossary)}
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>${scanLangs(r.glossary)}${scanSection(it)}
     <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any" title="Qty to ship (${esc(it.unit)})"><span class="muted">→ ${esc(dest)}</span></div>
     <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
   $('shNext').onclick = next;
@@ -1532,12 +1534,13 @@ async function renderStock() {
         <button class="btn ghost" id="receiveSku">Receive by SKU</button>
       </div></div>
     <div class="table-wrap"><table><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Actions</th>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Actions</th>
     </tr></thead><tbody>
       ${items.map(i => `<tr>
         <td><strong>${esc(i.item_name)}</strong></td>
         <td class="mono">${esc(i.sku || '—')}</td>
         <td>${esc(i.category)}</td>
+        <td>${i.section_name ? `<span class="shelf-chip">📍 ${esc(i.section_name)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
         <td>${i.vendor_name ? esc(i.vendor_name) + (i.vendor_code ? ` <span class="mono" style="color:var(--muted)">#${esc(i.vendor_code)}</span>` : '') : '<span style="color:var(--muted)">—</span>'}</td>
         <td>${esc(i.unit || '—')}</td>
         <td class="num">${numf(i.quantity)}</td>
@@ -1565,6 +1568,50 @@ async function renderStock() {
   ], async (v) => { const r = await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(`Received into ${r.item_name}`); render(); });
 
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => itemAction(b.dataset.act, b.dataset.id, b.dataset.name, items));
+}
+
+// ── Storage — shelves / sections (per location) ────────────────────────────
+// Manage the named shelves/sections, browse what's on each, and move items between them.
+async function renderStorage() {
+  const loc = invLoc();
+  if (!loc) { $('view').innerHTML = `<div class="section-head"><h2>📍 Storage — shelves &amp; sections</h2></div><div class="empty">Pick a single location above to organize its storage.</div>`; return; }
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  let data; try { data = await api('/inventory/sections/map?location_id=' + loc); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const sections = data.sections || [];
+  const moveSelect = (itemId, curSid) => `<select class="shelf-move" data-move="${itemId}" title="Move to a shelf / section"><option value="">— Unassigned —</option>${sections.map(s => `<option value="${s.id}" ${String(curSid) === String(s.id) ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>`;
+  const itemsHtml = (items, curSid) => items.length
+    ? `<div class="shelf-items">${items.map(i => `<div class="shelf-item"><span class="shelf-item-name">${esc(i.item_name)}${i.min_quantity && i.quantity <= i.min_quantity ? ' <span class="badge low">LOW</span>' : ''}</span><span class="muted mono">${numf(i.quantity)} ${esc(i.unit || '')}</span>${moveSelect(i.id, curSid)}</div>`).join('')}</div>`
+    : '<div class="muted" style="padding:.4rem .2rem">No items here yet.</div>';
+  const card = (title, note, count, items, sid) => `
+    <div class="shelf-card">
+      <div class="shelf-card-head">
+        <div><strong>${esc(title)}</strong>${note ? ` <span class="muted">· ${esc(note)}</span>` : ''} <span class="shelf-count">${count}</span></div>
+        ${sid ? `<div class="shelf-card-actions"><button class="btn xs ghost" data-sec-rename="${sid}" data-name="${esc(title)}" data-note="${esc(note || '')}">Rename</button><button class="btn xs ghost" data-sec-del="${sid}" data-name="${esc(title)}" data-count="${count}">Delete</button></div>` : ''}
+      </div>
+      ${itemsHtml(items, sid || '')}
+    </div>`;
+  $('view').innerHTML = `
+    <div class="section-head"><h2>📍 Storage — shelves &amp; sections <span class="muted">· ${esc(invName())}</span></h2>
+      <button class="btn" id="secAdd">＋ Add shelf / section</button></div>
+    <p class="sub" style="color:var(--muted)">Organize where food is stored so staff can put it away and pick it quickly — the shelf shows up whenever staff scan an item. Changes apply to <strong>${esc(invName())}</strong> only.</p>
+    <div class="shelf-grid">
+      ${sections.map(s => card(s.name, s.note, (s.items || []).length, s.items, s.id)).join('')}
+      ${card('Unassigned', 'items not yet placed on a shelf', (data.unassigned || []).length, data.unassigned || [], null)}
+    </div>`;
+  $('secAdd').onclick = () => modal('Add shelf / section', [
+    { key: 'name', label: 'Name (e.g. “Shelf A — meat”, “Section 5 — chicken”)' },
+    { key: 'note', label: 'Note (optional)' },
+  ], async (v) => { if (!(v.name || '').trim()) throw new Error('A name is required.'); await api('/inventory/sections', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: loc }, v)) }); toast('Shelf / section added'); renderStorage(); }, 'Add');
+  $('view').querySelectorAll('[data-sec-rename]').forEach(b => b.onclick = () => modal('Rename shelf / section', [
+    { key: 'name', label: 'Name', value: b.dataset.name }, { key: 'note', label: 'Note', value: b.dataset.note },
+  ], async (v) => { await api('/inventory/sections/' + b.dataset.secRename, { method: 'PUT', body: JSON.stringify(v) }); toast('Updated'); renderStorage(); }, 'Save'));
+  $('view').querySelectorAll('[data-sec-del]').forEach(b => b.onclick = () => modal(`Delete “${b.dataset.name}”?`, [
+    { key: '_', label: `${b.dataset.count} item(s) will move to Unassigned (stock is untouched). Type DELETE to confirm.`, placeholder: 'DELETE' },
+  ], async (v) => { if ((v._ || '').trim().toUpperCase() !== 'DELETE') throw new Error('Type DELETE to confirm.'); await api('/inventory/sections/' + b.dataset.secDel, { method: 'DELETE' }); toast('Deleted'); renderStorage(); }, 'Delete'));
+  $('view').querySelectorAll('[data-move]').forEach(sel => sel.onchange = async () => {
+    try { await api('/inventory/' + sel.dataset.move, { method: 'PUT', body: JSON.stringify({ section_id: sel.value || '' }) }); toast('Moved'); renderStorage(); }
+    catch (e) { toast(e.message, true); renderStorage(); }
+  });
 }
 
 function itemAction(act, id, name, items) {
@@ -1715,10 +1762,14 @@ async function glossaryEdit(it) {
   const isNew = !it;
   let vendorNames = [];
   try { vendorNames = (await api(invQ('/vendors'))).map(v => v.name); } catch { /* offline — free text still works */ }
+  const secLoc = it ? it.location_id : invLoc();
+  let sectionNames = [];
+  if (secLoc) { try { sectionNames = (await api('/inventory/sections?location_id=' + secLoc)).map(s => s.name); } catch { /* offline */ } }
   const fields = [
     { key: 'item_name', label: 'Item name', value: it ? it.item_name : '' },
     { key: 'category', label: 'Category', type: 'combo', options: CATEGORY_OPTIONS, value: it ? it.category : 'Produce' },
     { key: 'unit', label: 'Unit of measure', type: 'combo', options: UOM_OPTIONS, value: it ? it.unit : 'each' },
+    { key: 'section_name', label: 'Shelf / Section (where it’s stored — pick or type a new one)', type: 'datalist', options: sectionNames, value: it ? (it.section_name || '') : '' },
     { key: 'sku', label: 'SKU', value: it ? it.sku : '' },
     { key: 'barcode', label: 'Barcode (UPC / EAN / GTIN)', value: it ? (it.barcode || '') : '' },
     { key: 'description', label: 'Description', value: it ? it.description : '' },

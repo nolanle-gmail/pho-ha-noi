@@ -1403,6 +1403,22 @@ function migrate() {
     // seeding items). Pho Ha Noi employs many Vietnamese- and Spanish-speaking staff.
     `ALTER TABLE product_catalog ADD COLUMN name_vi TEXT`,
     `ALTER TABLE product_catalog ADD COLUMN name_es TEXT`,
+    // Storage layout — a managed, per-location list of shelves/sections (e.g. "Shelf A — meat",
+    // "Section 5 — chicken") so staff know where to put away / pick an item. Each inventory row
+    // may point at one. Deleting a section just nulls the items' section_id (stock is untouched).
+    `CREATE TABLE IF NOT EXISTS storage_sections (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      note TEXT,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(location_id, name)
+    )`,
+    `ALTER TABLE inventory ADD COLUMN section_id INTEGER`,
+    `CREATE INDEX IF NOT EXISTS idx_storage_sections_loc ON storage_sections(location_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_inventory_section ON inventory(section_id)`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_name ON product_catalog(name)`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_cat ON product_catalog(category)`,
     `CREATE INDEX IF NOT EXISTS idx_product_catalog_scale ON product_catalog(scale_code)`,

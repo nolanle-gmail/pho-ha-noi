@@ -16,7 +16,7 @@ const { rememberProduct, catalogGet, catalogGetByScaleCode } = require('./produc
 const { resolveVendor } = require('./vendors');
 
 const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
-const findItem = (locId, code) => db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(locId, code);
+const findItem = (locId, code) => db.prepare(`SELECT i.*, s.name AS section_name FROM inventory i LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.barcode=? AND i.is_active=1`).get(locId, code);
 
 // Is this exact GS1 box (gtin+serial) already on hand? (Optionally scoped to a location.)
 function serialOnHand({ locId, gtin, serial }) {
