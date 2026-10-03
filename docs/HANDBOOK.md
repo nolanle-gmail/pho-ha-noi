@@ -733,6 +733,30 @@ key, own store): `GET /invscan/{:code,resolve/:code,check/:code}`,
 `POST /invscan/{scan,link,create,receive,receive-create,ship,use}`,
 `GET /invscan/{lookup/:code,items/list,ship/targets,ship/orders}`.
 
+### 3.5c Storage layout — shelves & sections
+
+To make putting food away and picking it fast, each **inventory item can live on a named
+shelf/section** (e.g. "Shelf A — meat", "Section 5 — chicken"). Sections are a **managed list,
+per location** (`storage_sections`, one row per shelf at a store/CK; the item points at one via
+`inventory.section_id`). They're **location-specific** — Shelf A at San Jose is independent of
+Shelf A at Fremont — and a CK item's shelf is **not** replicated to the store copies.
+
+- **Manage them** on the console's **Inventory → Storage** tab (per the picked location) or the
+  staff app's **📍 Storage** screen (scoped to the staffer's own store): **add / rename / delete**
+  a shelf, and **browse-by-shelf** — every section with the items on it, plus an **Unassigned**
+  bucket — with a dropdown on each item to **move** it between shelves. Deleting a shelf only moves
+  its items to Unassigned; **stock is never touched**.
+- **Assign** an item to a shelf from the item editor (a type-or-pick **Shelf / Section** field —
+  typing a new name creates the shelf) or from the browse view's move dropdown. The **Stock** table
+  shows a **Shelf / Section** column.
+- **On every scan** — Receive / Ship / Use / Check, across the staff app, console scanner and
+  kiosk — the result shows **📍 Stored on `<shelf>`**, so staff know where to put it away or grab
+  it. Check shows each location's shelf.
+- API — console (JWT, location-scoped): `GET /inventory/sections`, `GET /inventory/sections/map`,
+  `POST /inventory/sections`, `PUT/DELETE /inventory/sections/:id`; items carry `section_id` on
+  create/edit. Staff proxy (own store): the same under `/invscan/sections…` plus
+  `POST /invscan/sections/assign`.
+
 ### 3.6 Central kitchen
 
 The central kitchen produces broths and prepped proteins. Stores submit
