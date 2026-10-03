@@ -12,7 +12,7 @@ const { sendSms, smsEnabled, SMS_PROVIDER } = require('../lib/sms');
 const router = express.Router();
 router.use(verifyToken);
 
-const CAN_SEND = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const CAN_SEND = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 const canSend = (role) => CAN_SEND.includes(role);
 const ownsLoc = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
 

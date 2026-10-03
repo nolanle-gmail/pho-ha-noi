@@ -210,7 +210,10 @@ let ROLE_DEFS = {};
 // Org administrators — the top-tier access levels with the 'org' capability.
 // HR mirrors Owner/Admin today. (When archive/delete/activity-log/audit become
 // Owner/Admin-only, drop 'hr' from that specific check, not from here.)
-const ORG_ADMIN = ['owner', 'admin', 'hr'];
+// Org-level administrators (all-location executives with the 'org' capability) — they see the
+// org-admin UI incl. the Locations Edit / Hide / Add controls. Mirrors the backend's ROLES.ADMIN
+// (roles with the 'org' cap): Owner, CEO, President, Admin, HR.
+const ORG_ADMIN = ['owner', 'ceo', 'president', 'admin', 'hr'];
 const roleDef = (r) => ROLE_DEFS[r] || { label: r, scope: 'self', caps: [] };
 const roleLabel = (r) => roleDef(r).label;
 const roleScopeOf = (r) => roleDef(r).scope;
@@ -2748,9 +2751,9 @@ function breakLeadModal(loc) {
 
 const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service Flow'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
-const LOC_ACTIVITY_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
+const LOC_ACTIVITY_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 // Service Flow tab: any manage-capability role (they can toggle & run the board for their store).
-const SF_TAB_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const SF_TAB_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) =>
   (k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role)) &&
   (k !== 'serviceflow' || SF_TAB_ROLES.includes(S.user.role)));
@@ -2810,11 +2813,11 @@ async function renderLocActivity() {
 
 async function renderLocInfo(loc) {
   const canEdit = ORG_ADMIN.includes(S.user.role);
-  const canEditHours = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canEditHours = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   // A store manager can set their own location's break-reminder lead time even
   // though they don't get the full (owner/admin) location edit modal.
-  const canEditLead = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'].includes(S.user.role);
-  const canViewFloor = ['owner', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
+  const canEditLead = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'].includes(S.user.role);
+  const canViewFloor = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
   $('locBody').innerHTML = `
@@ -4443,7 +4446,7 @@ const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational']
 function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }
 async function renderLocEquipment() {
   const eq = await api('/locations/' + S.locDetailId + '/equipment');
-  const canManage = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   $('locBody').innerHTML = `
     <div class="row-between"><h3 style="margin:0">Equipment & assets <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${eq.length}</span></h3>${canManage ? '<button class="btn" id="addEq">+ Add equipment</button>' : ''}</div>
     <div class="table-wrap" style="margin-top:1rem"><table><thead><tr>
@@ -4611,7 +4614,7 @@ async function renderJobsCatalog() {
   let jobs;
   try { jobs = await api('/schedule/jobs'); }
   catch (e) { return renderPlaceholder('Jobs', '🧾', e.message); }
-  const canManage = ['owner', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   const active = jobs.filter(j => j.is_active);
   const byDept = {};
   active.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
@@ -4697,7 +4700,7 @@ const letterOf = (u) => { const L = (u.name.trim()[0] || '#').toUpperCase(); ret
 // owner/admin account. Only owner/admin can Add staff or change access level /
 // home location.
 const MGR_EDIT_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
-const ALL_SCOPE_ROLES = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const ALL_SCOPE_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
 function canEditStaffRow(u) {
   const r = S.user.role;
   if (ORG_ADMIN.includes(r)) return true;
@@ -5707,7 +5710,7 @@ const ALERT_PRESETS = [
   'Table {n} needs a refill / bus', 'Come to the front desk', 'Check on your section',
 ];
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
-const ALERT_SEES_ALL = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const ALERT_SEES_ALL = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
 
 // One shared AudioContext, unlocked on any user gesture. A context created inside
 // an SSE callback (not a gesture) starts *suspended* and stays silent, so we reuse
@@ -6410,15 +6413,15 @@ async function renderSent() {
   pollReceipts();
 }
 
-const MSG_LEADERSHIP = ['owner', 'admin', 'hr', 'general_manager'];
+const MSG_LEADERSHIP = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager'];
 const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
 // Who may delete any message / attachment (matches the server's MODERATOR set).
-const MSG_MODERATOR = ['owner', 'admin', 'hr', 'general_manager', 'manager'];
+const MSG_MODERATOR = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MODERATOR.includes(S.user.role);
 
 async function renderCompose() {
   const role = S.user.role;
-  const canBroadcast = ['owner', 'admin', 'hr', 'manager'].includes(role);
+  const canBroadcast = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(role);
   const recips = await api('/messages/recipients');
   const myLoc = String(S.user.location_id || '');
   const inLoc = (u) => String(u.location_id || '') === myLoc;

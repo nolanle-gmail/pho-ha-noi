@@ -24,7 +24,7 @@ router.use((req, res, next) => {
   return verifyToken(req, res, next);
 });
 
-const SEES_ALL = ['owner', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const SEES_ALL = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
 // Every store a staffer can work: their home store plus any additional stores (staff_locations).
 function staffStores(user) {
   const set = new Set();

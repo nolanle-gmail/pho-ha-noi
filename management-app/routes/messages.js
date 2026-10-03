@@ -90,7 +90,7 @@ router.use((req, res, next) => {
   return verifyToken(req, res, next);
 });
 
-const canBroadcast = (role) => ['owner', 'admin', 'hr', 'manager'].includes(role);
+const canBroadcast = (role) => ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(role);
 
 // People I can message (everyone active except me), with location for grouping.
 router.get('/recipients', (req, res) => {
@@ -393,7 +393,7 @@ router.get('/:id/attachment/:aid', (req, res) => {
 });
 
 // Who may delete a message or its attachments: its sender, or a manager (moderation).
-const MODERATOR = ['owner', 'admin', 'hr', 'general_manager', 'manager']; // delete — 'hr' shares this today (future: owner/admin-only)
+const MODERATOR = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager']; // delete — 'hr' shares this today (future: owner/admin-only)
 const canDeleteMessage = (user, msg) => String(msg.sender_id) === String(user.id) || MODERATOR.includes(user.role);
 
 // Delete a whole message (removes its recipients + attachments too). One message,

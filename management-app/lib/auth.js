@@ -31,6 +31,8 @@ const SCOPES = ['all', 'location', 'self'];
 const DEFAULT_ROLE_DEFS = {
   // Executive / all-location administration
   owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central'] },
+  ceo:               { label: 'CEO',               scope: 'all',      rank: 99,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
+  president:         { label: 'President',         scope: 'all',      rank: 98,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   // HR — full administrative access, mirroring Admin. (Owner/Admin are slated to
   // keep a few powers to themselves later — archive, delete, activity log & audit —
