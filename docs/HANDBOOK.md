@@ -605,7 +605,12 @@ editor (free-text name → find-or-create the vendor at that location, case-inse
 duplicates). The item list API returns the joined `vendor_name` alongside `vendor_code`.
 
 The **Stock** table has a dedicated **Unit** (of measure) column — the On-hand column shows just
-the number, not "5 units". **Stock Edit and Glossary Add/Edit share one full item editor** (name,
+the number, not "5 units". Each row's actions are **🛒 Order · Receive · Waste · Count · 📜 (scan
+history) · Edit · 🗑 Delete**. **Delete** (also "Remove" on the Items tab) removes an unused item or
+one scanned by accident — it's a **soft-delete** (confirm by typing *REMOVE* + an optional reason):
+the item leaves the active list but its transaction, lot & scan history is kept, and it reappears if
+scanned or re-added. OPS-gated and location-scoped.
+**Stock Edit and Glossary Add/Edit share one full item editor** (name,
 category, unit, SKU, barcode, description, notes, min, par, unit cost, supplier + supplier code).
 **Category** and **Unit of measure** are visible **dropdowns** pre-populated with a comprehensive
 list (categories by storage zone; ~85 units) — each ending in an **"✏️ Other…"** choice that
