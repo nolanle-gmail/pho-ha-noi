@@ -1563,6 +1563,7 @@ async function renderStock() {
           <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}">Count</button>
           <button class="btn sm ghost" data-act="log" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Scan history — weight, dates, lot, serial">📜</button>
           <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
+          <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove this item from stock (history is kept)">🗑 Delete</button>
         </div></td>
       </tr>`).join('')}
     </tbody></table></div>`;
@@ -1638,6 +1639,10 @@ function itemAction(act, id, name, items) {
   if (act === 'edit') {
     const it = items.find(x => x.id == id);
     return glossaryEdit(it);   // one full editor for both Stock and Glossary (all fields, UOM + Supplier pickers)
+  }
+  if (act === 'delete') {
+    const it = items.find(x => x.id == id);
+    if (it) return confirmDelete(it);   // same flow as the Items tab's Remove (type REMOVE + reason; history kept)
   }
 }
 
