@@ -28,7 +28,7 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('seeded queue', queue.length >= 4, 'len=' + queue.length);
 
     const quote = await j(await fetch(base + `/api/waitlist/quote?location_id=${loc}`, { headers: H(token) }));
-    check('quote scales with queue', quote.suggested_minutes === quote.parties_ahead * 8, JSON.stringify(quote));
+    check('quote scales with queue (3 min/party)', quote.suggested_minutes === quote.parties_ahead * 3, JSON.stringify(quote));
 
     r = await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'Smoke, Test', party_size: 3, phone: '+14085559999', sms_consent: true }) });
     const added = await j(r);

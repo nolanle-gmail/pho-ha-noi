@@ -38,8 +38,9 @@ function run() {
   try { db.exec(`DELETE FROM sqlite_sequence`); } catch { /* no AUTOINCREMENT tables yet */ }
   db.exec('PRAGMA foreign_keys = ON');
 
-  const locIds = LOCATIONS.map(([name, addr, turn]) =>
-    db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,?)`).run(name, addr, turn).lastInsertRowid);
+  const locIds = LOCATIONS.map(([name, addr]) =>
+    // 3 min quoted per party ahead (short, so guests aren't scared off by a long estimate).
+    db.prepare(`INSERT INTO locations (name, address, avg_turn_minutes) VALUES (?,?,3)`).run(name, addr).lastInsertRowid);
 
   // Default room outline (a rectangle with an entrance notch) for the floor map.
   const DEFAULT_ROOM = JSON.stringify([

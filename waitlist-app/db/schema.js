@@ -7,7 +7,7 @@ function migrate() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       address TEXT,
-      avg_turn_minutes INTEGER NOT NULL DEFAULT 8,  -- per party ahead, used to quote waits
+      avg_turn_minutes INTEGER NOT NULL DEFAULT 3,  -- minutes quoted per party ahead (keep it short so guests don't walk)
       is_active INTEGER NOT NULL DEFAULT 1,
       room_outline TEXT,                            -- JSON polygon [{x,y}…] in % of the floor board
       created_at TEXT DEFAULT (datetime('now'))

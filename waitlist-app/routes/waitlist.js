@@ -37,7 +37,7 @@ router.get('/quote', requireRole(...HOST), (req, res) => {
   const l = requireLoc(req, res, true); if (!l) return;
   const location = db.prepare(`SELECT avg_turn_minutes FROM locations WHERE id=?`).get(l);
   const ahead = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND status='waiting'`).get(l).c;
-  res.json({ parties_ahead: ahead, suggested_minutes: ahead * (location ? location.avg_turn_minutes : 8) });
+  res.json({ parties_ahead: ahead, suggested_minutes: ahead * (location ? location.avg_turn_minutes : 3) });
 });
 
 router.get('/stats', requireRole(...HOST), (req, res) => {
@@ -52,7 +52,7 @@ router.get('/stats', requireRole(...HOST), (req, res) => {
   const kioskWalkins = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND notes LIKE '%Walk-in%' AND date(created_at)=date('now')`).get(l).c;
   res.json({ waiting, seated_today: seatedToday, left_today: leftToday, longest_wait_min: longestWait,
              kiosk_walkins_today: kioskWalkins,
-             next_quote_min: waiting * (location ? location.avg_turn_minutes : 8) });
+             next_quote_min: waiting * (location ? location.avg_turn_minutes : 3) });
 });
 
 // Add a party.
@@ -67,7 +67,7 @@ router.post('/', requireRole(...HOST), (req, res) => {
   if (!Number.isFinite(quote)) {
     const location = db.prepare(`SELECT avg_turn_minutes FROM locations WHERE id=?`).get(l);
     const ahead = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND status='waiting'`).get(l).c;
-    quote = ahead * (location ? location.avg_turn_minutes : 8);
+    quote = ahead * (location ? location.avg_turn_minutes : 3);
   }
   const r = db.prepare(`INSERT INTO waitlist (location_id, guest_name, party_size, phone, quoted_minutes, notes, sms_consent, consent_at) VALUES (?,?,?,?,?,?,?,?)`)
     .run(l, String(guest_name).slice(0, 120), size, phone || null, quote, notes ? String(notes).slice(0, 300) : null, smsConsent, smsConsent ? new Date().toISOString() : null);

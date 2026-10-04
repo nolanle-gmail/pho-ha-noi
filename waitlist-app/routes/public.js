@@ -28,7 +28,7 @@ const checkinLimiter = rateLimit({
 function statusFor(locId) {
   const location = db.prepare(`SELECT avg_turn_minutes FROM locations WHERE id=?`).get(locId);
   const ahead = db.prepare(`SELECT COUNT(*) c FROM waitlist WHERE location_id=? AND status='waiting'`).get(locId).c;
-  return { parties_ahead: ahead, quoted_minutes: ahead * (location ? location.avg_turn_minutes : 8) };
+  return { parties_ahead: ahead, quoted_minutes: ahead * (location ? location.avg_turn_minutes : 3) };
 }
 
 // A URL-friendly slug from a location name ("Pho Ha Noi — Berkeley" → "berkeley").
@@ -71,7 +71,7 @@ router.get('/waitlist/:slug', (req, res) => {
     return { position: i + 1, name: first + lastInit, party_size: w.party_size, waiting_min: Math.max(0, w.waited_min || 0) };
   });
   res.json({ location: { name: loc.name, slug }, count: parties.length,
-    quoted_minutes: parties.length * (loc.avg_turn_minutes || 8), parties });
+    quoted_minutes: parties.length * (loc.avg_turn_minutes || 3), parties });
 });
 
 // Customer adds themselves to the waitlist.
@@ -137,7 +137,7 @@ router.get('/position/:ref', (req, res) => {
   res.json({
     status: w.status, guest_name: w.guest_name, party_size: w.party_size,
     position, notified: !!w.notified_at, table_number: w.table_number,
-    quoted_minutes: position != null ? Math.max(0, position - 1) * (location ? location.avg_turn_minutes : 8) : 0,
+    quoted_minutes: position != null ? Math.max(0, position - 1) * (location ? location.avg_turn_minutes : 3) : 0,
     location: location ? location.name : '',
   });
 });
