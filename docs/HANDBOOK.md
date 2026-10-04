@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 3, 2026_
+_Last updated: October 4, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -950,6 +950,9 @@ erDiagram
     text name
     int avg_turn_minutes
   }
+  %% avg_turn_minutes = minutes quoted PER PARTY AHEAD (default 3). The guest wait estimate is
+  %% parties_ahead * avg_turn_minutes, so 3 waiting -> 9 min, 4 -> 12 min. Kept short so a long
+  %% quote doesn't scare guests into walking away.
   waitlist {
     int id PK
     int location_id FK
