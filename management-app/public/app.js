@@ -1557,13 +1557,13 @@ async function renderStock() {
         <td class="num">${money(i.unit_cost)}</td>
         <td>${statusBadge(i.quantity, i.min_quantity)}</td>
         <td><div class="actions-cell">
+          <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
+          <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove this item from stock (history is kept)">🗑 Delete</button>
           <button class="btn sm order-hover" data-act="order" data-id="${i.id}" title="Create a purchase order for this item">🛒 Order</button>
           <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}">Receive</button>
           <button class="btn sm ghost" data-act="waste" data-id="${i.id}" data-name="${esc(i.item_name)}">Waste</button>
           <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}">Count</button>
           <button class="btn sm ghost" data-act="log" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Scan history — weight, dates, lot, serial">📜</button>
-          <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
-          <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove this item from stock (history is kept)">🗑 Delete</button>
         </div></td>
       </tr>`).join('')}
     </tbody></table></div>`;
