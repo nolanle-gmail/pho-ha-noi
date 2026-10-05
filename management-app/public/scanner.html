@@ -143,7 +143,7 @@ async function handleCode(code){
   $('scanmsg').textContent = 'Scanned: ' + code;
   await onScanned(code);
 }
-const onScanned = (code) => (scanMode === 'ship' || scanMode === 'transfer') ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : handleScan(code));
+const onScanned = (code) => (scanMode === 'ship' || scanMode === 'transfer') ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : (scanMode === 'use' ? handleUse(code) : handleScan(code)));
 
 // ── Check mode: stock of a scanned item across all locations ──────────────
 async function handleCheck(code){
@@ -166,7 +166,7 @@ async function setMode(m){
   // Shipping and Transferring both pick a destination; only Shipping shows the order-fill list.
   const wantsDest = (m === 'ship' || m === 'transfer');
   $('shipBar').hidden = !wantsDest;
-  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship — open orders fill automatically.' : (m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock at every location.' : '📠 Ready — scan a barcode with your scanner.'));
+  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship — open orders fill automatically.' : (m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock at every location.' : (m === 'use' ? 'Scan an item to record stock used here.' : '📠 Ready — scan a barcode with your scanner.')));
   if (wantsDest && !$('shipBar').dataset.loaded){
     $('shipBar').dataset.loaded = '1';
     const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/targets', { employee_code: empCode });
@@ -211,6 +211,29 @@ async function handleShip(code){
     $('result').innerHTML = `<div class="panel info"><span class="big">${vPast} → ${esc(shipToName)}</span>${r.order ? (r.order.shipped ? 'Order line complete ✅' : `Order ${nf(r.order.ck_qty)}/${nf(r.order.requested_qty)}`) : ''}</div><button class="btn primary" id="again">Scan another</button>`;
     $('again').onclick = resume;
     if (isShip) loadShipOrders();
+  };
+}
+
+// ── Use mode: consume stock at this kiosk's location (production / prep / to serve) ──
+async function handleUse(code){
+  $('result').innerHTML = '<div class="result">Looking up…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/resolve', { employee_code: empCode, code });
+  if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Error')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
+  const key = d.code || code;
+  if (!d.found){ $('result').innerHTML = `<div class="result"><div class="name">🚫 Not stocked here</div><div class="sub mono">${esc(key)}</div><div class="sub">Nothing to use at ${esc(LOC_NAME)}.</div><button class="btn ghost" id="again">Scan another</button></div>`; $('again').onclick = resume; return; }
+  const it = d.item; const cw = !!it.is_catch_weight; const wt = d.weight_lb || '';
+  $('result').innerHTML = `<div class="result"><div class="name">🍳 ${esc(it.item_name)}</div><div class="sub">${nf(it.quantity)} ${esc(it.unit)} on hand${cw?' ⚖':''}</div>${scanLangs(d.glossary)}${scanSection(it)}
+    <div class="fields"><input class="qty" id="uq" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input class="qty" id="ur" placeholder="Reason (e.g. prep, serve)"></div>
+    <div class="row"><button class="btn ok" id="uGo">🍳 Record use</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
+  $('again').onclick = resume;
+  $('uGo').onclick = async () => {
+    $('uGo').disabled = true;
+    const body = { employee_code: empCode, code: key, reason: ($('ur').value||'').trim() || undefined };
+    if (cw) body.weight = $('uq').value; else body.quantity = $('uq').value;
+    const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/use', body);
+    if (!r.ok){ $('uGo').disabled = false; alert(r.error || 'Could not record use.'); return; }
+    $('result').innerHTML = `<div class="panel info"><span class="big">Used · ${esc(it.item_name)}</span>${nf(r.item.quantity)} ${esc(it.unit)} left</div><button class="btn primary" id="again">Scan another</button>`;
+    $('again').onclick = resume;
   };
 }
 
@@ -330,8 +353,8 @@ async function start(){
   // a store has no orders to fulfil, so it gets Receiving / Transferring / Checking Inventory.
   const isHub = (LOC_TYPE === 'central_kitchen' || LOC_TYPE === 'warehouse');
   const MODES = isHub
-    ? [['receive','📥 Receiving'],['ship','📤 Shipping'],['transfer','🔁 Transferring'],['check','📋 Checking Inventory']]
-    : [['receive','📥 Receiving'],['transfer','🔁 Transferring'],['check','📋 Checking Inventory']];
+    ? [['receive','📥 Receiving'],['ship','📤 Shipping'],['transfer','🔁 Transferring'],['check','📋 Checking Inventory'],['use','🍳 Use']]
+    : [['receive','📥 Receiving'],['transfer','🔁 Transferring'],['check','📋 Checking Inventory'],['use','🍳 Use']];
   $('modes').innerHTML = MODES.map((m,i) => `<button class="btn sm ${i?'ghost':'primary'}" data-mode="${m[0]}">${esc(m[1])}</button>`).join('');
   $('loc').textContent = d.display;
   $('identify').hidden = false;

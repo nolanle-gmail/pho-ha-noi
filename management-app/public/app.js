@@ -1290,13 +1290,13 @@ function statusBadge(qty, min) {
 function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'inventory') render(); }
 
 async function openScanner() {
-  // The Warehouse & Central Kitchen are distribution hubs, so their scanner adds Shipping (fulfill
-  // store orders) and Use (consume stock) to the set: Receiving, Shipping, Transferring (ad-hoc
-  // move), Checking Inventory, Use. Every other location gets Receiving / Transferring / Checking.
+  // Every location can Receive, Transfer, Check Inventory and Use (consume) stock. The Warehouse &
+  // Central Kitchen (distribution hubs) additionally get Shipping (fulfill store orders) — they're
+  // the only ones with orders to fulfil.
   const isDist = (S.section === 'central' || S.section === 'warehouse');
   const MODES = isDist
     ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']]
-    : [['receive', '📥 Receiving'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory']];
+    : [['receive', '📥 Receiving'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']];
   const modesHtml = MODES.map((m, i) => `<button class="btn sm${i ? ' ghost' : ''}" data-mode="${m[0]}">${m[1]}</button>`).join('');
   const host = document.createElement('div'); host.className = 'scan-overlay';
   host.innerHTML = `<div class="scan-card">

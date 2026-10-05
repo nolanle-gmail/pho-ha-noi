@@ -157,6 +157,28 @@ router.post('/kiosk/:slug/transfer', throttle, (req, res) => {
   res.json({ ok: true, success: true, item: r.item, to: r.to, order: r.order });
 });
 
+// Scan-to-use: consume the scanned item at this kiosk's location (production / prep / to serve).
+router.post('/kiosk/:slug/use', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  const loc = c.loc.id, staff = c.staff;
+  const p = parseScan(req.body && req.body.code);
+  const code = (p.gtin || p.code || '').toString().trim();
+  const item = code && findItem(loc, code);
+  if (!item) return res.status(404).json({ ok: false, error: 'No item is linked to that barcode here.', found: false, code });
+  const catchw = item.is_catch_weight;
+  const qty = parseFloat(catchw ? (req.body.weight != null && req.body.weight !== '' ? req.body.weight : p.weightLb) : req.body.quantity);
+  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ ok: false, error: catchw ? 'Enter the weight used.' : 'Enter a quantity used.' });
+  if (item.quantity < qty) return res.status(400).json({ ok: false, error: `Only ${item.quantity} ${item.unit} on hand.` });
+  const reason = (req.body.reason || 'kitchen use').toString().slice(0, 120);
+  db.prepare(`UPDATE inventory SET quantity=MAX(0, quantity-?), last_updated=datetime('now') WHERE id=?`).run(qty, item.id);
+  consumeFIFO(item.id, qty);
+  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'out',?,?)`).run(item.id, loc, qty, staff.id, `Used: ${reason}`);
+  logScan({ itemId: item.id, locationId: loc, action: 'use', parsed: p, quantity: qty, userId: staff.id });
+  auditLog(auditReq(staff, req.body), 'stock_used', 'inventory', item.id, { item: item.item_name, qty, reason, via: 'scanner_kiosk' });
+  res.json({ ok: true, success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id) });
+});
+
 // Smart receive of an in-stock item (catch-weight adds weight, else count; serial-dup guard).
 router.post('/kiosk/:slug/receive', throttle, (req, res) => {
   const c = ctx(req.params.slug, req.body && req.body.employee_code);
