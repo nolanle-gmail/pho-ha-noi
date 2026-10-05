@@ -54,6 +54,8 @@
   .manual{ display:flex; gap:.5rem; margin-top:.9rem; }
   .manual input{ flex:1; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; }
   .scan-gs1{ margin-top:.5rem; padding:.5rem .7rem; background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; font-size:.9rem; color:#1e3a8a; }
+  .scan-diff{ margin-top:.5rem; padding:.5rem .7rem; background:#fffbeb; border:1px solid #fcd34d; border-radius:10px; font-size:.9rem; color:#92400e; }
+  .scan-total{ align-self:center; font-weight:600; color:#b45309; white-space:nowrap; margin-left:.4rem; }
   .scan-langs{ margin-top:.5rem; padding:.5rem .7rem; background:#fdf6ec; border:1px solid #f3e2c7; border-radius:10px; font-size:1rem; color:#1f2937; line-height:1.5; }
   .scan-langs .lang-tag{ display:inline-block; min-width:1.5rem; margin-right:.25rem; padding:0 .3rem; border-radius:4px; background:#9a5b08; color:#fff; font-size:.68rem; font-weight:700; text-align:center; vertical-align:middle; }
   .scan-langs .lang-sep{ margin:0 .5rem; color:#cbbca0; }
@@ -110,6 +112,18 @@ const nf = (n) => { const x = Number(n); return Number.isInteger(x) ? String(x) 
 function scanLangs(g){ if(!g) return ''; const vi=(g.name_vi||'').trim(), es=(g.name_es||'').trim(); const p=[]; if(vi)p.push('<span class="lang-tag">VI</span> '+esc(vi)); if(es)p.push('<span class="lang-tag">ES</span> '+esc(es)); return p.length?'<div class="scan-langs">'+p.join('<span class="lang-sep">·</span>')+'</div>':''; }
 // Where the item is stored (its shelf/section).
 function scanSection(it){ return it && it.section_name ? '<div class="scan-section">📍 Stored on <b>'+esc(it.section_name)+'</b></div>' : ''; }
+// When a re-scanned item carries different box data (weight / dates / lot) than the last box on
+// hand, show the difference so the user reviews it before adding to the total.
+function boxDiffNote(d){
+  const lb = d.last_box; if (!lb) return '';
+  const diffs = [];
+  if (d.weight_lb != null && d.weight_lb !== '' && lb.net_weight_lb != null && +d.weight_lb !== +lb.net_weight_lb) diffs.push('weight '+nf(lb.net_weight_lb)+' → <b>'+nf(d.weight_lb)+'</b> lb');
+  if (d.pack_date && lb.pack_date && d.pack_date !== lb.pack_date) diffs.push('packed '+esc(lb.pack_date)+' → <b>'+esc(d.pack_date)+'</b>');
+  if (d.expiry && lb.expiry_date && d.expiry !== lb.expiry_date) diffs.push('exp '+esc(lb.expiry_date)+' → <b>'+esc(d.expiry)+'</b>');
+  if (d.lot && lb.lot_code && d.lot !== lb.lot_code) diffs.push('lot '+esc(lb.lot_code)+' → <b>'+esc(d.lot)+'</b>');
+  if (!diffs.length) return '';
+  return '<div class="scan-diff">↔ Different from the last box — '+diffs.join(' · ')+'. Review, then Add to the total.</div>';
+}
 const UOM_OPTIONS = ['lb','lbs','case','each','bottle','box','bag','can','jar','gallon','oz','kg','pack','dozen','bunch','carton','quart','pint','jug','container','tub','tube','g','liter','ml','fl oz','piece','head','crate','flat','tray','sleeve','roll','sheet','keg','cup','count','unit','pair','order','serving','portion','plate','half gallon','cl','tbsp','tsp','lug','bushel','peck','gross','pallet','sack','pouch','packet','sachet','canister','tin','drum','pail','bucket','barrel','stalk','bulb','clove','ear','sprig','leaf','root','loaf','stick','slice','fillet','rack','side','slab','block','wedge','wheel','round','scoop','ladle','dash','pinch','ream','bar','mg','ton'];
 const CATEGORY_OPTIONS = ['Produce','Herbs & Aromatics','Meat','Poultry','Seafood','Noodles','Broth & Soup Base','Rice & Grains','Sauces & Condiments','Spices & Seasonings','Oils & Vinegars','Dry Goods','Canned & Jarred','Dairy','Eggs','Frozen','Deli','Bakery & Bread','Flour & Baking','Sweeteners','Nuts & Seeds','Snacks','Beverages','Juice & Soda','Coffee & Tea','Beer','Wine','Liquor','Bar Supplies','Paper Goods','Disposables & To-Go','Packaging','Cleaning Supplies','Smallwares','Equipment','Office Supplies','Uniforms & Apparel','Other'];
 const comboHTML = (key, options, value, label) => { const cur = value == null ? '' : String(value); const inList = options.includes(cur); return `<div class="scan-combo"><label class="scan-lbl">${esc(label)}</label><select data-combo="${key}" id="cb_${key}">${options.map(o=>`<option value="${esc(o)}" ${o===cur?'selected':''}>${esc(o)}</option>`).join('')}<option value="__other__" ${(!inList&&cur)?'selected':''}>✏️ Other…</option></select><input id="cbo_${key}" placeholder="Type a ${esc((label||'').toLowerCase())}" value="${esc(!inList?cur:'')}" ${(!inList&&cur)?'':'hidden'}></div>`; };
@@ -248,11 +262,13 @@ async function handleScan(code){
   const gs1 = (d.is_gs1 || d.weight_lb || labelExpiry || labelLot) ? `<div class="scan-gs1">🏷️ Label${d.weight_lb ? ` · <b>${nf(d.weight_lb)} lb</b>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${d.expiry ? ` · exp ${esc(d.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}</div>` : '';
   if (d.found){
     const it = d.item; const cw = !!it.is_catch_weight;
-    $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${scanSection(it)}${gs1}
-      <div class="fields"><input class="qty" id="q" type="number" value="${cw ? (d.weight_lb||'') : (d.weight_lb||1)}" min="0" step="any" placeholder="${cw?'net weight':'qty'}"><select id="m"><option value="in">${cw?'➕ Add weight':'➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
+    $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${scanSection(it)}${gs1}${boxDiffNote(d)}
+      <div class="fields"><input class="qty" id="q" type="number" value="${cw ? (d.weight_lb||'') : (d.weight_lb||1)}" min="0" step="any" placeholder="${cw?'net weight':'qty'}"><select id="m"><option value="in">${cw?'➕ Add weight':'➕ Add stock'}</option><option value="count">🔢 Set count</option></select><span class="scan-total" id="qTotal"></span></div>
       <div class="fields"><input id="qExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="qLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="row"><button class="btn ok" id="apply">Apply</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
     $('again').onclick = resume;
+    const updTotal = () => { const q = parseFloat($('q').value) || 0; $('qTotal').textContent = $('m').value === 'count' ? '= '+nf(q)+' '+it.unit : '→ '+nf((+it.quantity||0)+q)+' '+it.unit; };
+    $('q').oninput = updTotal; $('m').onchange = updTotal; updTotal();
     $('apply').onclick = async () => {
       $('apply').disabled = true;
       const qv = $('q').value, mm = $('m').value;
@@ -262,7 +278,8 @@ async function handleScan(code){
         if (!r.ok){ $('apply').disabled = false; alert(r.error || 'Could not save.'); return; }
         okMsg(r); return;
       }
-      const body = { employee_code: empCode, code: key, expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined };
+      // Raw code so the server captures the full label (serial, pack/prod dates, weight).
+      const body = { employee_code: empCode, code: code, expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined };
       if (cw) body.weight = qv; else body.quantity = qv;
       let { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', body);
       if (r.duplicate){ if (!window.confirm(r.message)){ $('apply').disabled = false; return; } ({ d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', Object.assign({}, body, { confirm:true }))); }
@@ -290,15 +307,15 @@ async function handleScan(code){
         <div class="fields"><input id="nQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="nMin" type="number" placeholder="Reorder at" step="any"><input id="nPar" type="number" placeholder="Par" step="any"></div>
         <div class="fields"><input id="nExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="nLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
         <div class="fields"><input id="nVendor" list="nVendorList" placeholder="Supplier / vendor"><input id="nVCode" placeholder="Supplier item code"></div><datalist id="nVendorList"></datalist>
-        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="nGloss" checked> Also save to Glossary</label>
-        <button class="btn ok" id="nSave">Add to stock</button>`;
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="nGloss" checked> Also save to the Glossary (all locations)</label>
+        <button class="btn ok" id="nSave">✓ Confirm &amp; add to stock</button>`;
       comboWire($('sub'));
       api('/kiosk/' + encodeURIComponent(slug) + '/vendors', { employee_code: empCode }).then(({d}) => { const dl = $('nVendorList'); if (dl && d && d.vendors) dl.innerHTML = d.vendors.map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(()=>{});
       $('nSave').onclick = async () => {
         const name = ($('nName').value||'').trim(); if (!name){ alert('Enter an item name'); return; }
         $('nSave').disabled = true;
         const cwv = $('nCW').value === '1'; const savedGloss = $('nGloss').checked;
-        const body = { employee_code: empCode, barcode:key, item_name:name, category:comboVal('nCat')||'Other', unit:comboVal('nUnit')||(cwv?'lb':'each'), description:$('nDesc').value.trim()||undefined, is_catch_weight: cwv?1:0, sku:$('nSku').value.trim()||undefined, unit_cost:$('nCost').value||0, min_quantity:$('nMin').value||0, par_level:$('nPar').value||undefined, expiry_date:$('nExp').value||undefined, lot_code:$('nLot').value.trim()||undefined, vendor_name:$('nVendor').value.trim()||undefined, vendor_code:$('nVCode').value.trim()||undefined, save_to_glossary: savedGloss };
+        const body = { employee_code: empCode, barcode:code, item_name:name, category:comboVal('nCat')||'Other', unit:comboVal('nUnit')||(cwv?'lb':'each'), description:$('nDesc').value.trim()||undefined, is_catch_weight: cwv?1:0, sku:$('nSku').value.trim()||undefined, unit_cost:$('nCost').value||0, min_quantity:$('nMin').value||0, par_level:$('nPar').value||undefined, expiry_date:$('nExp').value||undefined, lot_code:$('nLot').value.trim()||undefined, vendor_name:$('nVendor').value.trim()||undefined, vendor_code:$('nVCode').value.trim()||undefined, scale_code: d.scale_code||undefined, save_to_glossary: savedGloss };
         if (cwv) body.weight = $('nQty').value; else body.quantity = $('nQty').value;
         const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/create', body);
         if (!r.ok){ $('nSave').disabled=false; alert(r.error||'Could not create.'); return; }

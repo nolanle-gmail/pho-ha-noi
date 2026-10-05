@@ -7,17 +7,18 @@
 // parallel ledger for expiry/traceability.
 const db = require('../db/database');
 
-function receiveLot({ item_id, location_id, quantity, unit_cost = 0, expiry_date = null, lot_code = null, user_id = null, serial = null, net_weight_lb = null, net_weight_kg = null }) {
+function receiveLot({ item_id, location_id, quantity, unit_cost = 0, expiry_date = null, lot_code = null, user_id = null, serial = null, net_weight_lb = null, net_weight_kg = null, pack_date = null, prod_date = null }) {
   const qty = Math.max(0, Number(quantity) || 0);
   if (!item_id || qty <= 0) return null;
-  // Store serial + net weight when the label carried them (best-effort — older DBs may
-  // lack the columns, so fall back to the original column set).
+  // Store serial + net weight + label dates when the label carried them (best-effort — older DBs
+  // may lack the columns, so fall back to the original column set).
   try {
     const r = db.prepare(`
-      INSERT INTO inventory_lots (item_id, location_id, lot_code, received_qty, quantity, unit_cost, expiry_date, received_by, serial, net_weight_lb, net_weight_kg)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO inventory_lots (item_id, location_id, lot_code, received_qty, quantity, unit_cost, expiry_date, received_by, serial, net_weight_lb, net_weight_kg, pack_date, prod_date)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(item_id, location_id || null, lot_code || null, qty, qty, Number(unit_cost) || 0, expiry_date || null, user_id || null,
-           serial || null, net_weight_lb == null ? null : Number(net_weight_lb), net_weight_kg == null ? null : Number(net_weight_kg));
+           serial || null, net_weight_lb == null ? null : Number(net_weight_lb), net_weight_kg == null ? null : Number(net_weight_kg),
+           pack_date || null, prod_date || null);
     return r.lastInsertRowid;
   } catch {
     const r = db.prepare(`

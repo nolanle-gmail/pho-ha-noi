@@ -591,6 +591,8 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: 
 .scan-card .muted { color: var(--muted, #64748b); }
 
 .scan-gs1 { margin-top: .5rem; padding: .45rem .6rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: .85rem; color: #1e3a8a; }
+.scan-diff { margin-top: .5rem; padding: .45rem .6rem; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; font-size: .85rem; color: #92400e; }
+.scan-total { align-self: center; font-weight: 600; color: #b45309; white-space: nowrap; }
 /* Vietnamese / Spanish item names for kitchen & warehouse staff */
 .scan-langs { margin-top: .4rem; padding: .4rem .6rem; background: #fdf6ec; border: 1px solid #f3e2c7; border-radius: 8px; font-size: 1rem; color: #1f2937; line-height: 1.5; }
 .scan-langs .lang-tag { display: inline-block; min-width: 1.5rem; margin-right: .25rem; padding: 0 .3rem; border-radius: 4px; background: #9a5b08; color: #fff; font-size: .68rem; font-weight: 700; text-align: center; vertical-align: middle; }

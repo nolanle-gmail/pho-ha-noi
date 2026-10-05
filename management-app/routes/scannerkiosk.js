@@ -96,6 +96,7 @@ router.post('/kiosk/:slug/resolve', throttle, (req, res) => {
   const p = info.parsed || {};
   res.json({ ok: true, found: info.in_stock, code: info.code, item: info.item || null,
     in_glossary: info.in_glossary, glossary: info.glossary || null, duplicate_box: info.duplicate_box || null,
+    last_box: info.last_box || null, scale_code: info.scale_code || null,
     gtin: p.gtin, is_gs1: p.isGs1, weight_lb: p.weightLb, weight_kg: p.weightKg,
     prod_date: p.prodDate, pack_date: p.packDate, expiry: p.expiry, lot: p.lot, serial: p.serial });
 });

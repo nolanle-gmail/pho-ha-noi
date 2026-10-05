@@ -194,6 +194,11 @@ function migrate() {
       quantity REAL NOT NULL,
       unit_cost REAL NOT NULL DEFAULT 0,
       expiry_date TEXT,
+      pack_date TEXT,
+      prod_date TEXT,
+      serial TEXT,
+      net_weight_lb REAL,
+      net_weight_kg REAL,
       received_by INTEGER REFERENCES users(id),
       received_at TEXT DEFAULT (datetime('now')),
       depleted_at TEXT
@@ -1428,6 +1433,10 @@ function migrate() {
     `ALTER TABLE inventory_lots ADD COLUMN net_weight_lb REAL`,
     `ALTER TABLE inventory_lots ADD COLUMN net_weight_kg REAL`,
     `CREATE INDEX IF NOT EXISTS idx_inventory_lots_serial ON inventory_lots(item_id, serial)`,
+    // Per-box label dates kept on the lot too (not just scan_events), so FIFO/traceability can
+    // read the production & pack dates a received box carried.
+    `ALTER TABLE inventory_lots ADD COLUMN pack_date TEXT`,
+    `ALTER TABLE inventory_lots ADD COLUMN prod_date TEXT`,
     // Catch-weight + stackable flags copied onto a stock item from its glossary entry at
     // create time, so receive/ship math knows whether `quantity` is a weight or a count.
     `ALTER TABLE inventory ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`,

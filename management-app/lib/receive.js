@@ -10,7 +10,7 @@
 //      glossary + parsed-label data so it can pre-fill the add form. Saving then creates the
 //      stock item, writes the item into the Glossary, and receives the opening amount.
 const db = require('../db/database');
-const { parseScan, logScan, dupMessage } = require('./barcode');
+const { parseScan, logScan, dupMessage, recentDuplicate } = require('./barcode');
 const { receiveLot } = require('./lots');
 const { rememberProduct, catalogGet, catalogGetByScaleCode } = require('./productLookup');
 const { resolveVendor } = require('./vendors');
@@ -43,9 +43,18 @@ function resolveScan({ locId, code }) {
   if (!gloss && key) gloss = catalogGet(key);
   const item = key ? findItem(locId, key) : null;
   const dupBox = serialOnHand({ locId, gtin: p.gtin, serial: p.serial });
+  // The most recent lot on hand here — lets the UI show "this box vs the last one" (weight/dates)
+  // before adding, so a different-weight/different-date case is reviewed, not silently merged.
+  let last_box = null;
+  if (item) {
+    try {
+      last_box = db.prepare(`SELECT net_weight_lb, net_weight_kg, expiry_date, lot_code, serial, pack_date, prod_date, received_at
+        FROM inventory_lots WHERE item_id=? AND location_id=? ORDER BY received_at DESC, id DESC LIMIT 1`).get(item.id, locId) || null;
+    } catch { /* older DB without the lot columns */ }
+  }
   return {
     code: key, parsed: p, scale_code: p.scaleCode || null, in_stock: !!item, item: item || null,
-    in_glossary: !!gloss, glossary: gloss || null,
+    in_glossary: !!gloss, glossary: gloss || null, last_box,
     duplicate_box: dupBox ? { location_id: dupBox.location_id, item_name: dupBox.item_name, serial: p.serial } : null,
   };
 }
@@ -64,17 +73,27 @@ function amountFor({ item, body, parsed }) {
 // Receive into an EXISTING stock item (add count or weight). Returns {ok}|{error}|{duplicate}.
 function receiveExisting({ locId, item, body, user }) {
   const p = parseScan(body.code || body.barcode);
-  // 1. True-duplicate guard on a GS1 serial already on hand here.
-  if (p.serial && !body.confirm) {
-    const dup = serialOnHand({ locId, gtin: p.gtin, serial: p.serial });
-    if (dup) return { duplicate: true, kind: 'serial', message: `⚠ This exact box (serial ${p.serial}) of ${item.item_name} is already in stock — not added. Add it anyway?` };
-  }
   const amt = amountFor({ item, body, parsed: p });
+  // Smart duplicate guard (skipped once the user confirms the override):
+  //  • GS1 serial already on hand here = the exact same physical box → a TRUE duplicate.
+  //  • No serial → only a rapid accidental re-scan (same item + amount within a few seconds) is
+  //    flagged; deliberate repeat receiving of identical units always just adds to the count.
+  // A different box (new serial, or a different weight/pack-date) is NOT blocked here — the
+  // scanner panel already shows that box's data and the user confirms it by tapping Add.
+  if (!body.confirm) {
+    if (p.serial) {
+      const dup = serialOnHand({ locId, gtin: p.gtin, serial: p.serial });
+      if (dup) return { duplicate: true, kind: 'serial', message: `⚠ This exact box (serial ${p.serial}) of ${item.item_name} is already in stock — not added. Add it anyway?` };
+    } else {
+      const rd = recentDuplicate({ itemId: item.id, gtin: p.gtin, serial: null, actions: ['receive', 'create'], quantity: Number.isFinite(amt.qty) ? amt.qty : null });
+      if (rd.dup) return { duplicate: true, kind: 'rapid', message: `⚠ You just received ${item.item_name} moments ago — this may be a double scan. Add it again anyway?` };
+    }
+  }
   if (!Number.isFinite(amt.qty) || amt.qty <= 0) return { error: amt.kind === 'weight' ? 'Enter the net weight to receive.' : 'Enter a quantity to receive.' };
   const expiry = body.expiry_date || p.expiry || p.packDate || p.prodDate || null;
   const lot = body.lot_code || p.lot || null;
   db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(amt.qty, item.id);
-  receiveLot({ item_id: item.id, location_id: locId, quantity: amt.qty, unit_cost: item.unit_cost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg });
+  receiveLot({ item_id: item.id, location_id: locId, quantity: amt.qty, unit_cost: item.unit_cost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg, pack_date: p.packDate, prod_date: p.prodDate });
   db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`)
     .run(item.id, locId, amt.qty, user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${p.serial ? ` · #${p.serial}` : ''}${expiry ? ` · exp ${expiry}` : ''}`);
   logScan({ itemId: item.id, locationId: locId, action: 'receive', parsed: p, quantity: amt.qty, userId: user.id });
@@ -85,7 +104,11 @@ function receiveExisting({ locId, item, body, user }) {
 // opening amount. `body` carries the form fields the user filled in. Returns {ok}|{error}.
 function createAndReceive({ locId, body, user }) {
   const p = parseScan(body.barcode || body.code);
-  const code = (p.gtin || p.code || '').toString().trim() || null;
+  let code = (p.gtin || p.code || '').toString().trim() || null;
+  // A weighed deli-scale label carries no stable GTIN, only a 2-digit scale code. Give the new
+  // item a stable key (SCALE-NN) so it links to the Glossary by scale code on every future scan.
+  const scaleCode = p.scaleCode || (body.scale_code != null && body.scale_code !== '' ? String(body.scale_code) : null);
+  if (!code && scaleCode) code = `SCALE-${String(parseInt(scaleCode, 10) || 0).padStart(2, '0')}`;
   const gloss = code ? catalogGet(code) : null;
   // Name comes from the form; fall back to the glossary entry if the operator left it blank.
   const name = String(body.item_name || body.name || (gloss && gloss.name) || '').trim();
@@ -113,7 +136,7 @@ function createAndReceive({ locId, body, user }) {
   if (openQty > 0) {
     const expiry = body.expiry_date || p.expiry || p.packDate || p.prodDate || null;
     const lot = body.lot_code || p.lot || null;
-    receiveLot({ item_id: itemId, location_id: locId, quantity: openQty, unit_cost: cost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg });
+    receiveLot({ item_id: itemId, location_id: locId, quantity: openQty, unit_cost: cost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg, pack_date: p.packDate, prod_date: p.prodDate });
     db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`)
       .run(itemId, locId, openQty, user.id, `Opening stock (scan)${p.serial ? ` · #${p.serial}` : ''}`);
   }
@@ -124,6 +147,7 @@ function createAndReceive({ locId, body, user }) {
       brand: body.brand, size: body.size, description, unit, category,
       notes: body.notes, default_unit_cost: cost, is_catch_weight: catch_weight, stackable,
       default_vendor_id: vendorId, default_vendor_code: body.vendor_code, barcode_type: body.barcode_type,
+      scale_code: scaleCode || undefined,
     });
   }
   if (code) logScan({ itemId, locationId: locId, action: 'create', parsed: p, quantity: openQty, userId: user.id });

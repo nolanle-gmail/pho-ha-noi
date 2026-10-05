@@ -774,7 +774,10 @@ router.post('/barcode/create', requireRole(ROLES.OPS), (req, res) => {
   if (!locId) return res.status(400).json({ error: 'Pick a location first.' });
   const r = createAndReceive({ locId, body: req.body, user: req.user });
   if (r.error) return res.status(400).json({ error: r.error });
-  if (isCk(locId)) { const ckItem = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(r.id); try { replicateItemFromCk(ckItem); } catch { /* best effort */ } }
+  // Scan-receiving a new item adds it to THIS hub's stock + the shared Glossary (recognized at
+  // every location), but does NOT seed 0-qty stock rows at the stores — the operator's choice,
+  // so a hub receipt doesn't clutter every store's list. (The manual Add-Item form still
+  // replicates CK items into store catalogs for ordering.)
   auditLog(req, 'item_create', 'inventory', r.id, { name: r.item.item_name, location_id: locId, received: r.received, via: 'scan' });
   res.json({ success: true, id: r.id, item: r.item, received: r.received });
 });

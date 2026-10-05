@@ -2120,6 +2120,18 @@ function scanLangs(g) {
 }
 // Where the item is stored (its shelf/section) — so staff know where to put it away or grab it.
 function scanSection(it) { return it && it.section_name ? `<div class="scan-section">📍 Stored on <strong>${esc(it.section_name)}</strong></div>` : ''; }
+// When a re-scanned item carries different box data (weight / dates / lot) than the last box on
+// hand, show the difference so staff review it before adding to the total.
+function boxDiffNote(r) {
+  const p = r.parsed || {}, lb = r.last_box; if (!lb) return '';
+  const diffs = [];
+  if (p.weightLb != null && p.weightLb !== '' && lb.net_weight_lb != null && +p.weightLb !== +lb.net_weight_lb) diffs.push(`weight ${nf(lb.net_weight_lb)} → <strong>${nf(p.weightLb)}</strong> lb`);
+  if (p.packDate && lb.pack_date && p.packDate !== lb.pack_date) diffs.push(`packed ${esc(lb.pack_date)} → <strong>${esc(p.packDate)}</strong>`);
+  if (p.expiry && lb.expiry_date && p.expiry !== lb.expiry_date) diffs.push(`exp ${esc(lb.expiry_date)} → <strong>${esc(p.expiry)}</strong>`);
+  if (p.lot && lb.lot_code && p.lot !== lb.lot_code) diffs.push(`lot ${esc(lb.lot_code)} → <strong>${esc(p.lot)}</strong>`);
+  if (!diffs.length) return '';
+  return `<div class="scan-diff">↔ Different from the last box — ${diffs.join(' · ')}. Review, then Add to the total.</div>`;
+}
 
 async function handleScan(code, panel, next) {
   panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
@@ -2134,10 +2146,12 @@ async function handleScan(code, panel, next) {
   if (r.in_stock) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
-    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}
-      <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select></div>
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${nf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}${boxDiffNote(r)}
+      <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select><span class="scan-total" id="scTotal"></span></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
+    const updTotal = () => { const q = parseFloat($('scQty').value) || 0; const mode = $('scMode').value; $('scTotal').textContent = mode === 'count' ? `= ${nf(q)} ${it.unit}` : `→ ${nf((+it.quantity || 0) + q)} ${it.unit}`; };
+    $('scQty').oninput = updTotal; $('scMode').onchange = updTotal; updTotal();
     $('scGo').onclick = async () => {
       const btn = $('scGo'); if (btn.disabled) return; btn.disabled = true;
       const qv = $('scQty').value, m = $('scMode').value;
@@ -2146,7 +2160,8 @@ async function handleScan(code, panel, next) {
           const rr = await api('/invscan/scan', { method: 'POST', body: JSON.stringify({ code: key, quantity: qv, mode: 'count', expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined }) });
           toast(`${it.item_name} count → ${nf(rr.item.quantity)} ${it.unit}`);
         } else {
-          const body = { code: key, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          // Raw code so the server captures the full label (serial, pack/prod dates, weight).
+          const body = { code: code, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
           if (cw) body.weight = qv; else body.quantity = qv;
           let rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(body) });
           if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
@@ -2177,19 +2192,19 @@ async function handleScan(code, panel, next) {
         <div class="scan-row"><input id="niQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="niMin" type="number" placeholder="Reorder at" step="any"><input id="niPar" type="number" placeholder="Par" step="any"></div>
         <div class="scan-row"><input id="niExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="niLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
         <div class="scan-row"><input id="niVendor" list="niVendorList" placeholder="Supplier / vendor"><input id="niVCode" placeholder="Supplier item code"></div><datalist id="niVendorList"></datalist>
-        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to Glossary</label>
-        <button class="btn" id="niSave">Add to stock</button></div>`;
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to the Glossary (all locations)</label>
+        <button class="btn" id="niSave">✓ Confirm &amp; add to stock</button></div>`;
       comboWire($('scSub'));
       api('/invscan/vendors/list').then(vs => { const dl = $('niVendorList'); if (dl) dl.innerHTML = (vs || []).map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(() => {});
       $('niSave').onclick = async () => {
         const name = ($('niName').value || '').trim(); if (!name) return toast('Enter an item name', true);
         const cw = $('niCW').value === '1';
-        const body = { barcode: key, item_name: name, category: comboVal('niCat') || 'Other', unit: comboVal('niUnit') || (cw ? 'lb' : 'each'),
+        const body = { barcode: code, item_name: name, category: comboVal('niCat') || 'Other', unit: comboVal('niUnit') || (cw ? 'lb' : 'each'),
           description: $('niDesc').value.trim() || undefined, is_catch_weight: cw ? 1 : 0, sku: $('niSku').value.trim() || undefined,
           unit_cost: $('niCost').value || 0, min_quantity: $('niMin').value || 0, par_level: $('niPar').value || undefined,
           expiry_date: $('niExp').value || undefined, lot_code: $('niLot').value.trim() || undefined,
           vendor_name: $('niVendor').value.trim() || undefined, vendor_code: $('niVCode').value.trim() || undefined,
-          save_to_glossary: $('niGloss').checked };
+          scale_code: r.scale_code || undefined, save_to_glossary: $('niGloss').checked };
         if (cw) body.weight = $('niQty').value; else body.quantity = $('niQty').value;
         try { await api('/invscan/receive-create', { method: 'POST', body: JSON.stringify(body) }); toast(`Added ${name}${$('niGloss').checked ? ' · glossary updated' : ''}`); next(); } catch (e) { toast(e.message, true); }
       };
