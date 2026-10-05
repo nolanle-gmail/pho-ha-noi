@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 4, 2026_
+_Last updated: October 5, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -677,17 +677,20 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
 
 The console scanner's modes depend on the section. **All store (restaurant) locations** show
 three — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — since a store has no
-orders to fulfil. The **Warehouse** and **Central Kitchen** (the distribution hubs) add a fourth,
-**📤 Shipping**, between Receiving and Transferring. Shipping and Transferring both pick a
-destination and move stock via the same `/inventory/barcode/transfer` endpoint; **Shipping** shows
-the destination's open-order fill list (order fulfillment, above), while **Transferring** is an
-ad-hoc move with no order list. The **staff app** (always store-scoped to the staffer's own store)
+orders to fulfil. The **Warehouse** and **Central Kitchen** (the distribution hubs) add two more —
+**📤 Shipping** and **🍳 Use** — for the full set **Receiving · Shipping · Transferring · Checking
+Inventory · Use**. Shipping and Transferring both pick a destination and move stock via the same
+`/inventory/barcode/transfer` endpoint; **Shipping** shows the destination's open-order fill list
+(order fulfillment, above), while **Transferring** is an ad-hoc move with no order list. **Use**
+(`POST /inventory/barcode/use`) consumes stock on site — production / prep — FIFO with an `out`
+transaction. The **staff app** (always store-scoped to the staffer's own store)
 matches the store set — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — plus the
 staff-only **🍳 Use** below. The **standalone kiosk** (`/scanner/<slug>`) is section-aware too: it
 reads its location's `type` (from `GET /kiosk/:slug`) and shows the store three, adding **Shipping**
 when the kiosk is at the Warehouse or Central Kitchen.
-- **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
-  staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
+- **🍳 Use** (staff app, and the Warehouse / Central Kitchen console) — mark stock **used** (prep /
+  production / to serve): decrements the scanned location (FIFO) and logs an `out` transaction.
+  `POST /invscan/use` (staff) / `POST /inventory/barcode/use` (console).
 
 **All scanning is done with a hardware barcode scanner** (e.g. an Inateck Hyper 160 on a USB
 dongle / Bluetooth) — the **phone-camera option was removed** on all three surfaces (console,
