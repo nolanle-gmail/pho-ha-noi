@@ -674,6 +674,14 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
   Console: `GET /inventory/ship/{targets,orders}`, `POST /inventory/barcode/transfer`.
   Staff: `GET /invscan/ship/{targets,orders}`, `POST /invscan/ship`.
   Kiosk: `POST /api/scannerkiosk/kiosk/:slug/{targets,orders,transfer}`.
+
+In the **Warehouse** and **Central Kitchen** (the distribution hubs) the console scanner splits
+this into **four labelled modes** — **📥 Receiving**, **📤 Shipping**, **🔁 Transferring**,
+**📋 Checking Inventory** — instead of the compact Receive / Ship / Check used elsewhere.
+Shipping and Transferring both pick a destination and move stock via the same
+`/inventory/barcode/transfer` endpoint; **Shipping** shows the destination's open-order fill list
+(order fulfillment, above), while **Transferring** is an ad-hoc move with no order list. (Other
+sections and the staff app / kiosk keep the compact toggle.)
 - **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
   staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
 
