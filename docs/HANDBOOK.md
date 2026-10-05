@@ -162,7 +162,7 @@ erDiagram
   locations {
     int id PK
     text name
-    text type "restaurant / central_kitchen"
+    text type "restaurant / central_kitchen / warehouse"
     text status
     int seats
   }
@@ -815,6 +815,37 @@ erDiagram
     text shift_date
   }
 ```
+
+#### Warehouses (storage & distribution hubs)
+
+`locations.type` is one of **`restaurant`** (a dining store), **`central_kitchen`**
+(the single production hub — fixed, never reassigned), or **`warehouse`**. A
+warehouse is a pure storage & distribution location: it **receives, stores and
+ships/transfers items to any location**, but has **no catalog fan-out** (items
+appear at a store only when shipped there — nothing is replicated automatically)
+and **no production or fulfillment** flows like the CK.
+
+Because a warehouse is not a dining location it is **hidden from Service / Floor /
+Waitlist / guest check-in**: `GET /api/inventory/locations` returns only
+`restaurant` rows by default, so every dining location picker (which reads
+`S.locations`) excludes warehouses and the CK. The endpoint takes `?type=warehouse`
+(storage hubs, loaded into `S.warehouses` at boot) or `?type=all`
+(restaurants + warehouses).
+
+A warehouse gets its own **🏬 Warehouse** nav section — the same dedicated-section
+pattern as the Central Kitchen. It reuses the Inventory views (Overview, Items,
+Glossary, Stock, Storage, Orders & Reorder, Transfers, Lots & Expiry, Vendors)
+scoped to the warehouse via `invLoc()` (which returns `S.whLocId` while the section
+is active). The section shows only when at least one warehouse exists; when several
+do, a picker appears in the tab bar. Overview surfaces item count / low-stock /
+value KPIs plus quick actions (incl. **scan to receive / ship**).
+
+Designate a warehouse in **Locations → Edit → Type = Warehouse** (the field is
+locked for the Central Kitchen). Location cards show a **🏬 Warehouse** / **🏭
+Central Kitchen** type badge, and ship-target / scan-stock lists tag destinations
+with **(WH)** / **(CK)**. Shipping into or out of a warehouse uses the ordinary
+scan **Ship** mode and the **Transfers** view — `GET /inventory/ship/targets`
+already offers every active location except self.
 
 ### 3.7 Menu & recipes
 
