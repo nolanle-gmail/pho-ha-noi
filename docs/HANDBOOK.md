@@ -683,7 +683,9 @@ destination and move stock via the same `/inventory/barcode/transfer` endpoint; 
 the destination's open-order fill list (order fulfillment, above), while **Transferring** is an
 ad-hoc move with no order list. The **staff app** (always store-scoped to the staffer's own store)
 matches the store set — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — plus the
-staff-only **🍳 Use** below; the standalone kiosk keeps its Receive / Ship / Check toggle.
+staff-only **🍳 Use** below. The **standalone kiosk** (`/scanner/<slug>`) is section-aware too: it
+reads its location's `type` (from `GET /kiosk/:slug`) and shows the store three, adding **Shipping**
+when the kiosk is at the Warehouse or Central Kitchen.
 - **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
   staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
 
