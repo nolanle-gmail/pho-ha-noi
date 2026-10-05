@@ -4453,10 +4453,14 @@ async function renderLocFloorPlan() {
     ? `<div class="fp-legend">${fp.areas.map((a, i) => `<button class="fp-leg ed" data-area="${a.id}"><span class="fp-dot" style="background:${FP_AREA_COLORS[i % FP_AREA_COLORS.length]}"></span>${esc(a.name)} <span class="fp-leg-n">${a.tables.length}</span></button>`).join('')}</div>`
     : `<div class="fp-legend">${Object.entries(DISPLAY_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => dispKey(t) === k).length}</span></span>`).join('')}</div>`;
   const sm = fp.summary;
+  // Full-screen TV board for this location: /Floorplan/<slug> (public, read-only). The server
+  // resolves the slug case/hyphen-insensitively, so the short location name works fine.
+  const tvSlug = String((fp.location && fp.location.name) || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+  const tvUrl = '/Floorplan/' + encodeURIComponent(tvSlug || (fp.location && fp.location.name) || '');
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div><span class="badge ok">${sm.available} available</span> <span class="badge ${sm.occupied ? 'blue' : 'gray'}">${sm.occupied} occupied</span> <span class="badge gray">${sm.tables} tables</span></div>
-      <div style="display:flex;gap:.4rem;align-items:center">${!edit ? guestsToggleBtn('fpGuests') : ''}${canEdit ? `${edit ? `<button class="btn sm" id="fpEditRoom">${S.fpEditRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn sm ghost" id="fpAddArea">+ Area</button><button class="btn sm ghost" id="fpAddTable">+ Table</button>` : ''}<button class="btn sm ${edit ? '' : 'ghost'}" id="fpToggle">${edit ? '✓ Done editing' : '✎ Edit layout'}</button>` : (edit ? '' : '<span class="badge gray">View only</span>')}</div>
+      <div style="display:flex;gap:.4rem;align-items:center">${!edit ? `<a class="btn sm ghost" href="${tvUrl}" target="_blank" rel="noopener" title="Open the full-screen floor board for a TV in the dining room (no login, read-only)">📺 TV board</a>` : ''}${!edit ? guestsToggleBtn('fpGuests') : ''}${canEdit ? `${edit ? `<button class="btn sm" id="fpEditRoom">${S.fpEditRoom ? '✓ Done room' : '▢ Edit room'}</button><button class="btn sm ghost" id="fpAddArea">+ Area</button><button class="btn sm ghost" id="fpAddTable">+ Table</button>` : ''}<button class="btn sm ${edit ? '' : 'ghost'}" id="fpToggle">${edit ? '✓ Done editing' : '✎ Edit layout'}</button>` : (edit ? '' : '<span class="badge gray">View only</span>')}</div>
     </div>
     ${legend}
     <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem;font-size:.8rem">${edit ? 'Drag tables to arrange the room; tap a table to edit; “Edit room” reshapes the walls.' : 'Tap an available table to seat a guest; tap an occupied table to change its status. Shared live with the Front Desk.'}</p>

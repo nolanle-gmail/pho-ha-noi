@@ -54,13 +54,18 @@ function estFor(status, seatedAtISO) {
   return null;
 }
 
-// ── Read: areas + tables + live status + room outline ────────────────────────
-router.get('/', requireView, (req, res) => {
-  const locId = parseInt(reqLoc(req, true), 10);
-  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
-  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+// Build the live floor map for one location: areas + tables + positions + the
+// 4-colour service-flow display buckets + room outline. Shared by the authed
+// GET below and the public read-only TV board (routes/floorboard.js).
+//   reconcile:true  → a paid table whose local visit is still open is freed in
+//     the DB (done + cleared) so a server can seat a new party. Writes need a
+//     request actor for the audit log, so pass `req`.
+//   reconcile:false → pure read (the TV board): paid tables still SHOW as freed
+//     in the response, but nothing is written to the DB.
+// Returns null when the location doesn't exist.
+function buildFloorplan(locId, { reconcile = false, req = null } = {}) {
   const loc = db.prepare(`SELECT id, name, room_outline, floor_aspect FROM locations WHERE id=?`).get(locId);
-  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  if (!loc) return null;
   const areas = db.prepare(`SELECT id, name, sort_order FROM floor_areas WHERE location_id=? ORDER BY sort_order, name`).all(locId);
   const tables = db.prepare(`SELECT id, area_id, label, seats, is_active, sort_order, pos_x, pos_y, shape, status, guest_name, party_size, seated_at, est_free_at
     FROM restaurant_tables WHERE location_id=? ORDER BY sort_order, id`).all(locId);
@@ -89,9 +94,9 @@ router.get('/', requireView, (req, res) => {
   // Overlay the live Service Flow onto the floor:
   //  • Seated / Awaiting food / In service → mark the table BUSY (these come from Toast, so the
   //    table often has no local visit and would otherwise look free).
-  //  • Paid (ready_to_bus) → the guest is done, so FREE the table (available) — and reconcile any
-  //    lingering local visit to done so a server can immediately seat new guests there. Bussing
-  //    still happens on the Cleanup board; that's separate from opening the floor spot.
+  //  • Paid (ready_to_bus) → the guest is done, so FREE the table (available) — and (when reconcile)
+  //    reconcile any lingering local visit to done so a server can immediately seat new guests there.
+  //    Bussing still happens on the Cleanup board; that's separate from opening the floor spot.
   try {
     const { computeServiceFlow } = require('../lib/toastSync');
     const flow = computeServiceFlow(locId);
@@ -104,9 +109,9 @@ router.get('/', requireView, (req, res) => {
     all.forEach(t => {
       const key = nrm(t.label);
       if (paid.has(key)) {
-        // Paid → free the spot. If a local visit is still open, close it (done) and clear the table
-        // in the DB so the seat action (which guards on table status) accepts a new party.
-        if (t.occupied || (t.status && t.status !== 'available')) {
+        // Paid → free the spot. When reconcile, also close any lingering local visit (done) and clear
+        // the table in the DB so the seat action (which guards on table status) accepts a new party.
+        if (reconcile && (t.occupied || (t.status && t.status !== 'available'))) {
           const v = db.prepare(`SELECT id, stage FROM service_visits WHERE table_id=? AND stage IN ('seated','in_service','paying') ORDER BY id DESC LIMIT 1`).get(t.id);
           if (v) { db.prepare(`UPDATE service_visits SET stage='done', done_at=? WHERE id=?`).run(nowISO(), v.id); logVisitEvent(v.id, locId, 'paid_freed', v.stage, 'done', req); }
           db.prepare(`UPDATE restaurant_tables SET status='available', guest_name=NULL, party_size=NULL, seated_at=NULL, est_free_at=NULL WHERE id=?`).run(t.id);
@@ -133,12 +138,22 @@ router.get('/', requireView, (req, res) => {
   const noArea = all.filter(t => !t.area_id);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });
   const active = all.filter(t => t.is_active);
-  res.json({
-    location: { id: loc.id, name: loc.name }, can_edit: !!isManage(req), room_outline: roomOutline(loc.room_outline),
+  return {
+    location: { id: loc.id, name: loc.name }, room_outline: roomOutline(loc.room_outline),
     aspect: loc.floor_aspect || null,
     areas: byArea, statuses: STATUSES, display_statuses: DISPLAY_STATUSES,
     summary: { tables: active.length, available: active.filter(t => !t.occupied).length, occupied: active.filter(t => t.occupied).length },
-  });
+  };
+}
+
+// ── Read: areas + tables + live status + room outline ────────────────────────
+router.get('/', requireView, (req, res) => {
+  const locId = parseInt(reqLoc(req, true), 10);
+  if (!locId) return res.status(400).json({ error: 'location_id is required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const data = buildFloorplan(locId, { reconcile: true, req });
+  if (!data) return res.status(404).json({ error: 'Location not found.' });
+  res.json({ ...data, can_edit: !!isManage(req) });
 });
 
 // Seating and status changes go through the guest-visit lifecycle (the single
@@ -293,4 +308,5 @@ router.delete('/tables/:id', requireEdit, (req, res) => {
   res.json({ success: true });
 });
 
+router.buildFloorplan = buildFloorplan;   // shared with the public TV board (routes/floorboard.js)
 module.exports = router;

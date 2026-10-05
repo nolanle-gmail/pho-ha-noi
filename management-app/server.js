@@ -37,6 +37,11 @@ app.get('/sflow/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public'
 // ready-to-bus tables; bare /cleanup lets you pick a store.
 app.get('/cleanup', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cleanup.html')));
 app.get('/cleanup/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'cleanup.html')));
+// Full-screen Floor Board for a TV in the dining room (no login, read-only). /Floorplan shows a
+// location picker; /Floorplan/<slug> pins one store (e.g. /Floorplan/SanJose, /Floorplan/Milpitas).
+// Routing is case-insensitive, so /floorplan/san-jose works too.
+app.get('/Floorplan', (req, res) => res.sendFile(path.join(__dirname, 'public', 'floorboard.html')));
+app.get('/Floorplan/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'floorboard.html')));
 
 // Activity trail — records logins, writes, and denied attempts across the API.
 app.use(require('./lib/activity').activityLogger);
@@ -58,6 +63,7 @@ app.use('/api/alerts', require('./routes/alerts'));
 app.use('/api/sf', require('./routes/sfstaff'));
 app.use('/api/sfkiosk', require('./routes/sfkiosk'));   // public Service Flow kiosk (employee code, no JWT)
 app.use('/api/cleanup', require('./routes/cleanup'));   // public busser Cleanup board (no login)
+app.use('/api/floorboard', require('./routes/floorboard')); // public full-screen Floor Board TV display (no login, read-only)
 app.use('/api/invscan', require('./routes/invscan'));
 app.use('/api/scannerkiosk', require('./routes/scannerkiosk'));
 app.use('/api/sms', require('./routes/sms'));

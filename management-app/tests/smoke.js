@@ -532,6 +532,16 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/floorplan/areas', { method: 'POST', headers: svc(), body: JSON.stringify({ location_id: loc1, name: 'Nope' }) });
     check('service key cannot edit layout (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Public full-screen Floor Board (TV display, no login, read-only) ───────
+    const fbList = await j(await fetch(base + '/api/floorboard/locations'));
+    check('floor board: public locations picker', fbList.ok === true && Array.isArray(fbList.locations) && fbList.locations.some(l => l.tables > 0), JSON.stringify((fbList.locations || []).length));
+    const fbBoard = await j(await fetch(base + '/api/floorboard/board?slug=SanJose')); // case/hyphen-insensitive slug
+    check('floor board: resolves a store by slug, no auth', fbBoard.ok === true && fbBoard.location && Array.isArray(fbBoard.areas) && fbBoard.areas.some(a => a.tables.length), JSON.stringify(fbBoard.location || {}));
+    check('floor board: carries the 4-colour display buckets', Array.isArray(fbBoard.display_statuses)
+      && fbBoard.areas.flatMap(a => a.tables).every(t => fbBoard.display_statuses.includes(t.display)), JSON.stringify(fbBoard.display_statuses));
+    r = await fetch(base + '/api/floorboard/board?slug=not-a-store');
+    check('floor board: unknown slug → 404', r.status === 404, 'status=' + r.status);
+
     // ── Guest-visit lifecycle (the six Service lists) ──────────────────────
     const V = '/api/visits';
     const vl = await j(await fetch(base + `${V}?location_id=${loc1}`, { headers: H(token) }));

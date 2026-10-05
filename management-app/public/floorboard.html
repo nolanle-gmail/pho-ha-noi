@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#7f1414" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Floor — Phở Hà Nội</title>
+<style>
+  :root{
+    --brand:#B91C1C; --brand-deep:#7f1414; --ink:#241a15; --muted:#6e5f51; --line:#e7dccc;
+    --paper:#f3ede3; --board:#fbf9f4; --wall:#cdbda4;
+    /* 5 live service-flow buckets (match the Management Floor Plan) */
+    --c-available:#1e7e34; --bg-available:#e6f4ea;
+    --c-seated:#2b5bd7;    --bg-seated:#e7eefc;
+    --c-awaiting_food:#c2410c; --bg-awaiting_food:#ffedd5;
+    --c-ready_to_pay:#6d28d9;  --bg-ready_to_pay:#ede9fe;
+    --c-cleaning:#6b7280;  --bg-cleaning:#ededed;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body{ margin:0; height:100%; overflow:hidden; }
+  body{ font:16px/1.3 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--paper); color:var(--ink); height:100vh; display:flex; flex-direction:column; }
+  header{ background:linear-gradient(180deg,var(--brand-deep),var(--brand)); color:#fff;
+    padding:calc(.5rem + env(safe-area-inset-top)) 1.1rem .55rem; display:flex; align-items:center; gap:1rem; flex:0 0 auto; }
+  header img.logo{ height:34px; width:auto; }
+  header .h-t{ font-weight:800; font-size:1.5rem; display:flex; align-items:baseline; gap:.55rem; white-space:nowrap; }
+  header .h-loc{ opacity:.95; font-weight:700; }
+  header .spacer{ flex:1; }
+  /* legend strip lives in the header so the board gets the whole screen */
+  .legend{ display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; }
+  .leg{ background:rgba(255,255,255,.14); border-radius:999px; padding:.28rem .7rem; font-weight:700; font-size:1rem;
+    display:inline-flex; align-items:center; gap:.45rem; white-space:nowrap; }
+  .leg .dot{ width:.85rem; height:.85rem; border-radius:50%; box-shadow:0 0 0 2px rgba(255,255,255,.35) inset; }
+  .leg .n{ font-variant-numeric:tabular-nums; opacity:.95; }
+  header .clock{ font-weight:800; font-size:1.35rem; font-variant-numeric:tabular-nums; letter-spacing:.01em; }
+  header .upd{ opacity:.8; font-size:.72rem; margin-top:.1rem; text-align:right; }
+  header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:800; font-size:1.2rem; padding:.3rem .6rem; cursor:pointer; }
+  header .clockwrap{ display:flex; flex-direction:column; align-items:flex-end; }
+  main{ flex:1 1 auto; position:relative; display:flex; align-items:center; justify-content:center; padding:.6rem; min-height:0; }
+
+  /* ── The floor board: a fitted coordinate space; tables sit at pos_x/pos_y % ── */
+  .board{ position:relative; background:var(--board); border:3px solid var(--wall); border-radius:14px;
+    box-shadow:0 6px 22px rgba(0,0,0,.12); }
+  .room-svg{ position:absolute; inset:0; width:100%; height:100%; }
+  .room-svg polygon{ fill:rgba(205,189,164,.12); stroke:var(--wall); stroke-width:.5; }
+  .band{ position:absolute; transform:translateY(-120%); left:1%; font-weight:800; color:var(--muted);
+    font-size:calc(var(--u) * 2.1); letter-spacing:.02em; text-transform:uppercase; opacity:.7; pointer-events:none; }
+  .t{ position:absolute; transform:translate(-50%,-50%); width:var(--tw); height:var(--tw);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;
+    border:var(--tb) solid var(--c); background:var(--bg); color:var(--c);
+    border-radius:50%; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,.1); }
+  .t.sq{ border-radius:18%; }
+  .t.off{ opacity:.25; }
+  .t .lbl{ font-weight:800; font-size:calc(var(--tw) * .40); line-height:1; }
+  .t .sub{ font-weight:700; font-size:calc(var(--tw) * .17); line-height:1.1; margin-top:.12em; color:var(--ink); opacity:.82;
+    max-width:94%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .t .srv{ font-weight:800; font-size:calc(var(--tw) * .16); line-height:1.05; margin-top:.1em; color:var(--c); }
+  .t.due{ animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ box-shadow:0 2px 6px rgba(0,0,0,.1);} 50%{ box-shadow:0 0 0 calc(var(--tb)*1.4) color-mix(in srgb,var(--c) 45%,transparent);} }
+
+  .picks{ max-width:560px; margin:auto; display:grid; gap:.7rem; width:100%; padding:1rem; }
+  .pick{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.3rem; font-size:1.35rem; font-weight:800;
+    display:flex; justify-content:space-between; align-items:center; cursor:pointer; text-decoration:none; color:var(--ink); }
+  .pick .cnt{ color:var(--muted); font-weight:600; font-size:1rem; }
+  .pick::after{ content:"›"; color:var(--muted); font-size:1.7rem; margin-left:.6rem; }
+  .note{ text-align:center; color:var(--muted); padding:3rem 1rem; font-size:1.3rem; max-width:620px; }
+  .note h2{ color:var(--ink); font-size:1.8rem; margin:.3rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="/brand.svg" alt="Phở Hà Nội" onerror="this.style.display='none'" />
+  <div class="h-t">🍽️ Floor <span class="h-loc" id="hLoc"></span></div>
+  <div class="spacer"></div>
+  <div class="legend" id="legend"></div>
+  <div class="clockwrap"><div class="clock" id="clock">—</div><div class="upd" id="upd"></div></div>
+  <button id="full" title="Fullscreen">⛶</button>
+</header>
+<main id="main"><div class="note">Loading…</div></main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const shortLoc = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || n;
+const SLUG = decodeURIComponent((location.pathname.match(/^\/floorplan\/(.+?)\/?$/i) || [, ''])[1] || '').trim();
+
+// The 5 display buckets → [label, cssVarSuffix]. Order = legend order.
+const BUCKETS = [
+  ['available', 'Available'], ['seated', 'Seated'], ['awaiting_food', 'Awaiting food'],
+  ['ready_to_pay', 'Ready to pay'], ['cleaning', 'Cleaning up'],
+];
+const LEGACY = { available:'available', waiting_to_order:'seated', served:'ready_to_pay', waiting_to_pay:'ready_to_pay', cleaning:'cleaning' };
+const dispKey = (t) => t.display || LEGACY[t.status] || 'available';
+
+let timer = null, lastData = null;
+
+async function api(path) {
+  const r = await fetch('/api/floorboard' + path, { headers: { 'Content-Type': 'application/json' } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok && !d.error) throw new Error('Something went wrong.');
+  return d;
+}
+
+// Keep the screen awake (TVs/tablets) + a live wall clock.
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { keepAwake(); if (SLUG) load(); } });
+function tickClock() { $('clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+setInterval(tickClock, 15000); tickClock();
+$('full').onclick = () => { const el = document.documentElement; if (!document.fullscreenElement) (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); else document.exitFullscreen && document.exitFullscreen(); };
+
+// ── Bare /Floorplan: pick a store ───────────────────────────────────────────
+async function pickStore() {
+  $('hLoc').textContent = ''; $('legend').innerHTML = ''; $('upd').textContent = '';
+  let d; try { d = await api('/locations'); } catch { $('main').innerHTML = '<div class="note">Couldn’t load locations. Try again.</div>'; return; }
+  if (!d.locations || !d.locations.length) { $('main').innerHTML = '<div class="note">No locations have a floor plan set up yet.</div>'; return; }
+  $('main').innerHTML = '<div class="picks"><div class="note" style="padding:0 0 .4rem">Pick a location to show on this screen — then bookmark it / add to the home screen.</div>'
+    + d.locations.map(l => `<a class="pick" href="/Floorplan/${esc(l.slug || l.name)}">${esc(shortLoc(l.name))}<span class="cnt">${l.tables} tables</span></a>`).join('') + '</div>';
+}
+
+// ── Layout: fit the whole floor on screen, preserving its aspect ratio ───────
+function layout() {
+  if (!lastData) return;
+  const board = $('board'); if (!board) return;
+  const main = $('main');
+  const availW = main.clientWidth - 16, availH = main.clientHeight - 16;
+  const ratio = (Number(lastData.aspect) > 0 ? Number(lastData.aspect) : 62) / 100; // height / width
+  let w = availW, h = w * ratio;
+  if (h > availH) { h = availH; w = h / ratio; }
+  board.style.width = w + 'px'; board.style.height = h + 'px';
+  // a unit for proportional fonts, and a table size that scales with the board
+  const u = w / 100;
+  const tw = Math.max(46, Math.min(w, h) * 0.085);
+  board.style.setProperty('--u', u + 'px');
+  board.style.setProperty('--tw', tw + 'px');
+  board.style.setProperty('--tb', Math.max(3, tw * 0.09) + 'px');
+}
+
+// ── Per-store board ──────────────────────────────────────────────────────────
+function render(d) {
+  lastData = d;
+  $('hLoc').textContent = shortLoc(d.location.name || '');
+  document.title = 'Floor · ' + shortLoc(d.location.name || '');
+  const all = (d.areas || []).flatMap(a => a.tables.map(t => ({ ...t, _area: a.name })));
+  // Legend with live counts
+  const counts = {}; all.forEach(t => { const k = dispKey(t); counts[k] = (counts[k] || 0) + 1; });
+  $('legend').innerHTML = BUCKETS.map(([k, lbl]) =>
+    `<span class="leg"><span class="dot" style="background:var(--c-${k})"></span>${lbl} <span class="n">${counts[k] || 0}</span></span>`).join('');
+  $('upd').textContent = 'updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+  if (!all.length) { $('main').innerHTML = '<div class="note"><h2>No floor plan yet</h2>Set one up in the Management app under Locations → Floor Plan.</div>'; return; }
+
+  const outline = d.room_outline || [];
+  const svg = outline.length >= 3
+    ? `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${outline.map(p => `${p.x},${p.y}`).join(' ')}"/></svg>` : '';
+  // Area name bands above each area's first row
+  const bands = (d.areas || []).map(a => {
+    const ts = (a.tables || []).filter(t => t.pos_y != null);
+    if (!ts.length || !a.name || a.name === 'Other') return '';
+    return `<div class="band" style="top:${Math.min(...ts.map(t => t.pos_y))}%">${esc(a.name)}</div>`;
+  }).join('');
+  const tiles = all.map(t => {
+    const k = dispKey(t);
+    const occ = k !== 'available';
+    const srv = occ && t.server_name ? esc(String(t.server_name).split(' ')[0]) : '';
+    const sub = occ
+      ? [t.party_size ? t.party_size + '👤' : '', t.minutes_to_free != null ? '~' + t.minutes_to_free + 'm' : ''].filter(Boolean).join(' · ')
+      : (t.seats ? t.seats + ' seats' : '');
+    const due = t.stage === 'in_service' && t.check_due;
+    return `<div class="t ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}${due ? ' due' : ''}"
+        style="left:${t.pos_x}%;top:${t.pos_y}%;--c:var(--c-${k});--bg:var(--bg-${k})"
+        title="${esc(t.label)} — ${esc(occ ? (BUCKETS.find(b => b[0] === k) || [,''])[1] : 'Available')}">
+        <div class="lbl">${esc(t.label)}</div>
+        ${sub ? `<div class="sub">${sub}</div>` : ''}
+        ${srv ? `<div class="srv">${srv}${due ? ' ⏰' : ''}</div>` : ''}
+      </div>`;
+  }).join('');
+  $('main').innerHTML = `<div class="board" id="board">${svg}${bands}${tiles}</div>`;
+  layout();
+}
+
+async function load() {
+  clearTimeout(timer);
+  if (!SLUG) return;
+  let d; try { d = await api('/board?slug=' + encodeURIComponent(SLUG)); }
+  catch (e) { if (!lastData) $('main').innerHTML = `<div class="note">${esc(e.message)}</div>`; timer = setTimeout(load, 15000); return; }
+  if (!d.ok) { $('main').innerHTML = `<div class="note"><h2>Floor board unavailable</h2>${esc(d.error || '')}</div>`; return; }
+  render(d);
+  timer = setTimeout(load, 8000);   // refresh every 8s
+}
+
+let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(layout, 150); });
+(function boot() { keepAwake(); if (SLUG) load(); else pickStore(); })();
+</script>
+</body>
+</html>

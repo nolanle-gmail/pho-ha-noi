@@ -247,6 +247,20 @@ food_, which is a Toast-derived signal). Both apps carry a matching `DISPLAY_STA
 `dispOf` helpers (with a `LEGACY_DISPLAY` fallback for an older cached response), used by the
 Management Floor Plan tab, its Details-tab snapshot, and the Staff Table Map.
 
+**Full-screen Floor Board for a TV (2026-10-05).** A no-login, read-only wall display for a TV in
+the dining room so staff can read the room without pulling out a phone. One store per URL:
+`https://pho-ha-noi-management.fly.dev/Floorplan/<slug>` — e.g. `/Floorplan/SanJose`,
+`/Floorplan/Milpitas` (the slug is matched case/hyphen-insensitively, so `/floorplan/san-jose` works
+too); bare `/Floorplan` shows a location picker. The page (`public/floorboard.html`) fits the whole
+floor to the screen (no scrolling), draws the room outline + area bands + every table positioned at
+its `pos_x`/`pos_y`, colours each table by its live **display** bucket with a legend + live counts, a
+wall clock and an "updated" stamp, auto-refreshes every 8 s, and offers a fullscreen button +
+screen-wake-lock. It's **read-only** — a wall screen can't seat, move or free a table. Served by the
+public `routes/floorboard.js` (`GET /api/floorboard/{locations,board?slug=}`, no auth, per-IP rate
+guard), which reuses the Floor Plan's own `buildFloorplan()` (extracted from `routes/floorplan.js`)
+with `reconcile:false` so the board never writes to the DB. A **📺 TV board** link in the Management
+Floor Plan tab opens the board for that location in a new tab.
+
 ```mermaid
 erDiagram
   locations ||--o{ floor_areas : "has"
