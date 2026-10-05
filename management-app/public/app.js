@@ -1433,15 +1433,21 @@ async function handleScan(code, panel, next) {
     };
     $('scNext').onclick = next;
   } else {
-    // New to stock. Prefer the Glossary entry the server already returned; fall back to an
-    // online lookup (Open Food Facts / UPCitemdb) which also caches into the Glossary.
+    // New to stock. Show the add panel IMMEDIATELY; look the name up online in the BACKGROUND so
+    // the form isn't blocked waiting on it. Nothing is written to the Glossary until you confirm
+    // and add the item (so an unconfirmed scan never pollutes the Glossary).
     let g = r.glossary || null;
-    if (!g) { try { const look = await api('/inventory/lookup/' + encodeURIComponent(code)); if (look && look.found) g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size }; else if (look && look.weighed) g = { _weighed: true, default_unit_cost: look.price }; } catch { /* offline */ } }
-    const inGloss = !!(g && g.name);
-    const note = inGloss ? ` — in Glossary as <strong>${esc(g.name)}</strong>${g.size ? ` · <span class="muted">${esc(g.size)}</span>` : ''}` : (g && g._weighed ? ` — <strong>weighed in-store item</strong>; name it below` : '');
-    panel.innerHTML = `<div class="scan-unknown">🆕 New to stock <span class="muted mono">${esc(key)}</span>${note}${gs1}
-      <div class="scan-tabs"><button class="btn sm" data-new>Add to stock${inGloss ? '' : ' + glossary'}</button><button class="btn sm ghost" data-link>Link to existing</button><button class="btn sm ghost" data-skip>Skip</button></div>
+    let lookupPending = !g && !!code && !(p.isGs1 && p.weightLb) && !r.scale_code;
+    const renderNote = () => {
+      const el = $('niNote'); if (!el) return;
+      el.innerHTML = (g && g.name) ? ` — in Glossary as <strong>${esc(g.name)}</strong>${g.size ? ` · <span class="muted">${esc(g.size)}</span>` : ''}`
+        : (g && g._weighed) ? ` — <strong>weighed in-store item</strong>; name it below`
+        : lookupPending ? ` <span class="muted">· 🔎 looking up name…</span>` : '';
+    };
+    panel.innerHTML = `<div class="scan-unknown">🆕 New to stock <span class="muted mono">${esc(key)}</span><span id="niNote"></span>${gs1}
+      <div class="scan-tabs"><button class="btn sm" data-new>Add to stock + glossary</button><button class="btn sm ghost" data-link>Link to existing</button><button class="btn sm ghost" data-skip>Skip</button></div>
       <div id="scSub"></div></div>`;
+    renderNote();
     panel.querySelector('[data-skip]').onclick = next;
     panel.querySelector('[data-new]').onclick = () => {
       const cwDefault = g && g.is_catch_weight ? '1' : '0';
@@ -1456,11 +1462,13 @@ async function handleScan(code, panel, next) {
         <div class="scan-row"><input id="niSku" placeholder="SKU (optional)"><input id="niCost" type="number" placeholder="Unit cost $" step="0.01" value="${g && g.default_unit_cost ? g.default_unit_cost : ''}"></div>
         <div class="scan-row"><input id="niQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="niMin" type="number" placeholder="Reorder at (min)" step="any"><input id="niPar" type="number" placeholder="Par level" step="any"></div>
         <div class="scan-row"><input id="niExp" type="date" title="Expiry / use-by" value="${esc(labelExpiry)}"><input id="niLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="scan-row"><input id="niShelf" list="niShelfList" placeholder="Shelf / Section (optional)"></div><datalist id="niShelfList"></datalist>
         <div class="scan-row"><input id="niVendor" list="niVendorList" placeholder="Supplier / vendor"><input id="niVCode" placeholder="Supplier item code"></div><datalist id="niVendorList"></datalist>
         <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to the Glossary (all locations)</label>
         <button class="btn" id="niSave">✓ Confirm &amp; add to stock</button></div>`;
       comboWire($('scSub'));
       api(invQ('/vendors')).then(vs => { const dl = $('niVendorList'); if (dl) dl.innerHTML = (vs || []).map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(() => {});
+      api(invQ('/sections')).then(ss => { const dl = $('niShelfList'); if (dl) dl.innerHTML = (ss || []).map(s => `<option value="${esc(s.name)}">`).join(''); }).catch(() => {});
       $('niSave').onclick = async () => {
         const name = ($('niName').value || '').trim(); if (!name) return toast('Enter an item name', true);
         const cw = $('niCW').value === '1';
@@ -1469,12 +1477,24 @@ async function handleScan(code, panel, next) {
           description: $('niDesc').value.trim() || undefined, is_catch_weight: cw ? 1 : 0, sku: $('niSku').value.trim() || undefined,
           unit_cost: $('niCost').value || 0, min_quantity: $('niMin').value || 0, par_level: $('niPar').value || undefined,
           expiry_date: $('niExp').value || undefined, lot_code: $('niLot').value.trim() || undefined,
+          section_name: $('niShelf').value.trim() || undefined,
           vendor_name: $('niVendor').value.trim() || undefined, vendor_code: $('niVCode').value.trim() || undefined,
           scale_code: r.scale_code || undefined, save_to_glossary: $('niGloss').checked };
         if (cw) body.weight = amt; else body.quantity = amt;
         try { const rr = await api('/inventory/barcode/create', { method: 'POST', body: JSON.stringify(body) }); toast(`Added ${name}${$('niGloss').checked ? ' · glossary updated' : ''}`); invRefresh(); next(); } catch (e) { toast(e.message, true); }
       };
     };
+    if (lookupPending) {
+      api('/inventory/lookup/' + encodeURIComponent(code)).then(look => {
+        if (look && look.found) {
+          g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size };
+          const nn = $('niName'); if (nn && !nn.value.trim()) nn.value = look.name;
+          const nd = $('niDesc'); if (nd && !nd.value.trim() && look.description) nd.value = look.description;
+          const nc = $('niCost'); if (nc && !nc.value && (look.default_unit_cost || look.price)) nc.value = look.default_unit_cost || look.price;
+        } else if (look && look.weighed) { g = { _weighed: true, default_unit_cost: look.price }; }
+        lookupPending = false; renderNote();
+      }).catch(() => { lookupPending = false; renderNote(); });
+    }
     panel.querySelector('[data-link]').onclick = async () => {
       $('scSub').innerHTML = '<div class="muted">Loading items…</div>';
       let items = []; try { items = await api(invQ('/')); } catch { /* ignore */ }

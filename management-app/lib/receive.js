@@ -14,6 +14,7 @@ const { parseScan, logScan, dupMessage, recentDuplicate } = require('./barcode')
 const { receiveLot } = require('./lots');
 const { rememberProduct, catalogGet, catalogGetByScaleCode } = require('./productLookup');
 const { resolveVendor } = require('./vendors');
+const { resolveSection } = require('./sections');
 
 const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const findItem = (locId, code) => db.prepare(`SELECT i.*, s.name AS section_name FROM inventory i LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.barcode=? AND i.is_active=1`).get(locId, code);
@@ -124,14 +125,15 @@ function createAndReceive({ locId, body, user }) {
   const minQ = Math.max(0, parseFloat(body.min_quantity) || 0);
   const par = body.par_level == null || body.par_level === '' ? null : Math.max(0, parseFloat(body.par_level) || 0);
   const vendorId = resolveVendor(locId, body);
+  const sectionId = resolveSection(locId, body);   // typed shelf is matched or created on the fly
   const amt = amountFor({ item: { is_catch_weight: catch_weight }, body, parsed: p });
   const openQty = Number.isFinite(amt.qty) && amt.qty > 0 ? amt.qty : 0;
   const r = db.prepare(`INSERT INTO inventory
-      (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes, barcode, vendor_id, vendor_code, is_catch_weight, stackable)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes, barcode, vendor_id, vendor_code, is_catch_weight, stackable, section_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(locId, name, category, unit, openQty, minQ, par, cost,
          (body.sku || '').toString().trim() || null, description, (body.notes || '').toString().slice(0, 500) || null,
-         code, vendorId, (body.vendor_code || '').toString().trim() || null, catch_weight, stackable);
+         code, vendorId, (body.vendor_code || '').toString().trim() || null, catch_weight, stackable, sectionId);
   const itemId = r.lastInsertRowid;
   if (openQty > 0) {
     const expiry = body.expiry_date || p.expiry || p.packDate || p.prodDate || null;

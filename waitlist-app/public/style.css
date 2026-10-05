@@ -630,8 +630,8 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: 
 .att-prog-bar i { display: block; height: 100%; background: var(--gold, #cfa941); border-radius: 4px; transition: width .15s; }
 
 /* Scanner modes + ship/check (Receive / Check / Ship / Use) */
-.scan-modes { display: flex; gap: .5rem; margin: .2rem 0 .7rem; }
-.scan-modes .btn { flex: 1; }
+.scan-modes { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 .7rem; }
+.scan-modes .btn { flex: 1 1 auto; white-space: nowrap; }
 .ship-bar { background: #f8fafc; border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: .7rem .8rem; margin-bottom: .7rem; }
 .ship-lbl { display: block; font-size: .82rem; color: var(--muted, #6b7280); margin-bottom: .3rem; }
 .ship-bar select { width: 100%; padding: .55rem .6rem; border: 1px solid var(--line, #d1d5db); border-radius: 8px; font-size: .95rem; }

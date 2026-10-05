@@ -195,13 +195,19 @@ async function lookupProduct(rawCode, userId) {
   // a Glossary entry instantly instead of waiting on lookups that will always miss.
   if (p.isGs1 && p.weightLb) return out;
 
+  // In-memory cache of external hits (per process). This keeps repeat lookups of the same
+  // not-yet-added item fast WITHOUT writing it into the Glossary — the item only enters the
+  // Glossary once the operator confirms and adds it to stock (createAndReceive).
+  if (_extCache.has(code)) { const ext = _extCache.get(code); return ext ? Object.assign(out, { found: true, name: ext.name, brand: ext.brand || null, size: clean(ext.size) || out.size, source: 'external' }) : out; }
   const ext = await externalLookup(code);
-  if (ext && clean(ext.name)) {
-    catalogUpsert(code, { ...ext, userId });
-    return Object.assign(out, { found: true, name: ext.name, brand: ext.brand || null, size: clean(ext.size) || out.size, source: 'external' });
-  }
+  const named = ext && clean(ext.name) ? ext : null;
+  if (_extCache.size > 500) _extCache.clear();   // simple bound
+  _extCache.set(code, named);
+  if (named) return Object.assign(out, { found: true, name: named.name, brand: named.brand || null, size: clean(named.size) || out.size, source: 'external' });
   return out;
 }
+// Per-process external-lookup cache (NOT the Glossary). Cleared on restart.
+const _extCache = new Map();
 
 // Remember a staff-entered name for a barcode (authoritative). Called from create/link.
 // If richer glossary fields are supplied (unit/category/description/…), write the full entry

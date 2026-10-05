@@ -116,6 +116,13 @@ router.post('/kiosk/:slug/vendors', throttle, (req, res) => {
   res.json({ ok: true, vendors: db.prepare(`SELECT id, name FROM vendors WHERE location_id=? AND is_active=1 ORDER BY name`).all(c.loc.id) });
 });
 
+// The location's shelves/sections (for the Shelf / Section picker on the create form).
+router.post('/kiosk/:slug/sections', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  res.json({ ok: true, sections: db.prepare(`SELECT id, name FROM storage_sections WHERE location_id=? AND is_active=1 ORDER BY sort_order, name`).all(c.loc.id) });
+});
+
 // Scan-to-check: how much of a scanned product every location is holding (read-only).
 router.post('/kiosk/:slug/stock', throttle, (req, res) => {
   const c = ctx(req.params.slug, req.body && req.body.employee_code);

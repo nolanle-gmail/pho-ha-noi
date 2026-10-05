@@ -63,7 +63,7 @@
   .scan-combo{ display:flex; flex-direction:column; gap:.25rem; }
   .scan-lbl{ font-size:.8rem; color:var(--muted); font-weight:600; }
   .scan-combo select, .scan-combo input{ width:100%; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; background:#fff; }
-  .modes{ display:flex; gap:.5rem; margin:0 0 .7rem; } .modes .btn{ flex:1; }
+  .modes{ display:flex; flex-wrap:wrap; gap:.4rem; margin:0 0 .7rem; } .modes .btn{ flex:1 1 auto; white-space:nowrap; }
   .ship-bar{ background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:.7rem .8rem; margin-bottom:.7rem; }
   .ship-lbl{ display:block; font-size:.82rem; color:var(--muted); margin-bottom:.35rem; }
   .ship-bar select{ width:100%; padding:.7rem; border:1px solid var(--line); border-radius:10px; font-size:1rem; }
@@ -287,15 +287,22 @@ async function handleScan(code){
       okMsg(r);
     };
   } else {
+    // Show the add panel immediately; look the name up online in the BACKGROUND (non-blocking).
+    // Nothing is written to the Glossary until the item is confirmed and added to stock.
     let g = d.glossary || null;
-    if (!g){ const { d:look } = await api('/kiosk/' + encodeURIComponent(slug) + '/lookup/' + encodeURIComponent(code)).catch(()=>({d:{}})); if (look && look.found) g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size }; else if (look && look.weighed) g = { _weighed:true, default_unit_cost: look.price }; }
-    const inGloss = !!(g && g.name);
-    const note = inGloss ? `In Glossary as <b>${esc(g.name)}</b>${g.size ? ' · ' + esc(g.size) : ''}` : (g && g._weighed ? `<b>Weighed in-store item</b> — name it below` : '');
+    let lookupPending = !g && !!(d.gtin || d.code) && !(d.is_gs1 && d.weight_lb) && !d.scale_code;
     const wt = d.weight_lb || '';
-    $('result').innerHTML = `<div class="result"><div class="name">🆕 New to stock</div><div class="sub mono">${esc(key)}</div>${note ? `<div class="sub">${note}</div>` : ''}${gs1}
-      <div class="tabs"><button class="btn sm primary" id="tNew">Add to stock${inGloss?'':' + glossary'}</button><button class="btn sm ghost" id="tLink">Link existing</button><button class="btn sm ghost" id="again">Skip</button></div>
+    const renderNote = () => {
+      const el = document.getElementById('nNote'); if (!el) return;
+      el.innerHTML = (g && g.name) ? ('In Glossary as <b>'+esc(g.name)+'</b>'+(g.size ? ' · ' + esc(g.size) : ''))
+        : (g && g._weighed) ? '<b>Weighed in-store item</b> — name it below'
+        : lookupPending ? '🔎 looking up name…' : '';
+    };
+    $('result').innerHTML = `<div class="result"><div class="name">🆕 New to stock</div><div class="sub mono">${esc(key)}</div><div class="sub" id="nNote"></div>${gs1}
+      <div class="tabs"><button class="btn sm primary" id="tNew">Add to stock + glossary</button><button class="btn sm ghost" id="tLink">Link existing</button><button class="btn sm ghost" id="again">Skip</button></div>
       <div id="sub"></div></div>`;
     $('again').onclick = resume;
+    renderNote();
     $('tNew').onclick = () => {
       const cwDefault = g && g.is_catch_weight ? '1' : '0';
       $('sub').innerHTML = `<div class="fields"><input id="nName" placeholder="Item name / description" value="${esc(g && g.name ? g.name : '')}"></div>
@@ -306,16 +313,18 @@ async function handleScan(code){
         <div class="fields"><input id="nSku" placeholder="SKU (optional)"><input id="nCost" type="number" placeholder="Unit cost $" step="0.01" value="${(g && g.default_unit_cost) || ''}"></div>
         <div class="fields"><input id="nQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="nMin" type="number" placeholder="Reorder at" step="any"><input id="nPar" type="number" placeholder="Par" step="any"></div>
         <div class="fields"><input id="nExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="nLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="fields"><input id="nShelf" list="nShelfList" placeholder="Shelf / Section (optional)"></div><datalist id="nShelfList"></datalist>
         <div class="fields"><input id="nVendor" list="nVendorList" placeholder="Supplier / vendor"><input id="nVCode" placeholder="Supplier item code"></div><datalist id="nVendorList"></datalist>
         <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="nGloss" checked> Also save to the Glossary (all locations)</label>
         <button class="btn ok" id="nSave">✓ Confirm &amp; add to stock</button>`;
       comboWire($('sub'));
       api('/kiosk/' + encodeURIComponent(slug) + '/vendors', { employee_code: empCode }).then(({d}) => { const dl = $('nVendorList'); if (dl && d && d.vendors) dl.innerHTML = d.vendors.map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(()=>{});
+      api('/kiosk/' + encodeURIComponent(slug) + '/sections', { employee_code: empCode }).then(({d}) => { const dl = $('nShelfList'); if (dl && d && d.sections) dl.innerHTML = d.sections.map(s => `<option value="${esc(s.name)}">`).join(''); }).catch(()=>{});
       $('nSave').onclick = async () => {
         const name = ($('nName').value||'').trim(); if (!name){ alert('Enter an item name'); return; }
         $('nSave').disabled = true;
         const cwv = $('nCW').value === '1'; const savedGloss = $('nGloss').checked;
-        const body = { employee_code: empCode, barcode:code, item_name:name, category:comboVal('nCat')||'Other', unit:comboVal('nUnit')||(cwv?'lb':'each'), description:$('nDesc').value.trim()||undefined, is_catch_weight: cwv?1:0, sku:$('nSku').value.trim()||undefined, unit_cost:$('nCost').value||0, min_quantity:$('nMin').value||0, par_level:$('nPar').value||undefined, expiry_date:$('nExp').value||undefined, lot_code:$('nLot').value.trim()||undefined, vendor_name:$('nVendor').value.trim()||undefined, vendor_code:$('nVCode').value.trim()||undefined, scale_code: d.scale_code||undefined, save_to_glossary: savedGloss };
+        const body = { employee_code: empCode, barcode:code, item_name:name, category:comboVal('nCat')||'Other', unit:comboVal('nUnit')||(cwv?'lb':'each'), description:$('nDesc').value.trim()||undefined, is_catch_weight: cwv?1:0, sku:$('nSku').value.trim()||undefined, unit_cost:$('nCost').value||0, min_quantity:$('nMin').value||0, par_level:$('nPar').value||undefined, expiry_date:$('nExp').value||undefined, lot_code:$('nLot').value.trim()||undefined, section_name:$('nShelf').value.trim()||undefined, vendor_name:$('nVendor').value.trim()||undefined, vendor_code:$('nVCode').value.trim()||undefined, scale_code: d.scale_code||undefined, save_to_glossary: savedGloss };
         if (cwv) body.weight = $('nQty').value; else body.quantity = $('nQty').value;
         const { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/create', body);
         if (!r.ok){ $('nSave').disabled=false; alert(r.error||'Could not create.'); return; }
@@ -336,6 +345,16 @@ async function handleScan(code){
         $('again').onclick = resume;
       };
     };
+    if (lookupPending) {
+      api('/kiosk/' + encodeURIComponent(slug) + '/lookup/' + encodeURIComponent(code)).then(({ d:look }) => {
+        if (look && look.found) {
+          g = { name: look.name, size: look.size, default_unit_cost: look.price };
+          const nn = $('nName'); if (nn && !nn.value.trim()) nn.value = look.name;
+          const nc = $('nCost'); if (nc && !nc.value && look.price) nc.value = look.price;
+        } else if (look && look.weighed) { g = { _weighed: true, default_unit_cost: look.price }; }
+        lookupPending = false; renderNote();
+      }).catch(() => { lookupPending = false; renderNote(); });
+    }
   }
 }
 
