@@ -15,6 +15,7 @@ const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barc
 const { resolveVendor } = require('../lib/vendors');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
+const { isCk, replicateItemFromCk } = require('../lib/ckReplication');
 const scanKey = (raw) => { const p = parseScan(raw); return (p.gtin || p.code || '').toString().trim(); };
 
 const router = express.Router();
@@ -253,8 +254,12 @@ router.post('/kiosk/:slug/create', throttle, (req, res) => {
   if (sentErr(res, c)) return;
   const r = createAndReceive({ locId: c.loc.id, body: req.body, user: { id: c.staff.id } });
   if (r.error) return res.status(400).json({ ok: false, error: r.error });
-  auditLog(auditReq(c.staff, req.body), 'item_create', 'inventory', r.id, { name: r.item.item_name, location_id: c.loc.id, received: r.received, via: 'scanner_kiosk' });
-  res.json({ ok: true, success: true, id: r.id, item: r.item, received: r.received });
+  // A new item scanned at the Central Kitchen seeds a 0-qty stock row at every store (same as the
+  // console and the manual Add-Item form); the Warehouse doesn't replicate. Glossary is group-wide.
+  let replicated = 0;
+  if (isCk(c.loc.id)) { const ckItem = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(r.id); try { replicated = replicateItemFromCk(ckItem); } catch { /* best effort */ } }
+  auditLog(auditReq(c.staff, req.body), 'item_create', 'inventory', r.id, { name: r.item.item_name, location_id: c.loc.id, received: r.received, replicated, via: 'scanner_kiosk' });
+  res.json({ ok: true, success: true, id: r.id, item: r.item, received: r.received, replicated });
 });
 
 module.exports = router;

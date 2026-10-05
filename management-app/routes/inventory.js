@@ -25,21 +25,9 @@ function scopeLoc(req, fromQuery) {
 // The Central Kitchen is the master: items/vendors added there fan out to every
 // restaurant location, and edits there propagate to those copies (matched via
 // `source_id`). Store-level adds stay local and never push back up to the CK.
-const ckLocId = () => (db.prepare(`SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1`).get() || {}).id || null;
-const restaurantLocs = () => db.prepare(`SELECT id FROM locations WHERE type='restaurant' AND is_active=1`).all().map(r => r.id);
-const isCk = (locId) => locId != null && String(locId) === String(ckLocId());
+// CK master-catalog replication lives in a shared lib so the kiosk replicates identically.
+const { ckLocId, restaurantLocs, isCk, replicateItemFromCk } = require('../lib/ckReplication');
 
-function replicateItemFromCk(ckItem) {
-  const ins = db.prepare(`INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, sku, description, notes, barcode, source_id)
-    VALUES (?,?,?,?,0,?,?,?,?,?,?,?,?)`);
-  const exists = db.prepare(`SELECT id FROM inventory WHERE location_id=? AND item_name=? AND is_active=1`);
-  let n = 0;
-  for (const loc of restaurantLocs()) {
-    if (exists.get(loc, ckItem.item_name)) continue;   // store already has this item — leave it
-    try { ins.run(loc, ckItem.item_name, ckItem.category, ckItem.unit, ckItem.min_quantity, ckItem.par_level, ckItem.unit_cost, ckItem.sku, ckItem.description, ckItem.notes, ckItem.barcode, ckItem.id); n++; } catch { /* skip on conflict */ }
-  }
-  return n;
-}
 function propagateItemEdit(ckId) {
   const ck = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(ckId); if (!ck) return;
   const rows = db.prepare(`SELECT id FROM inventory WHERE source_id=? AND is_active=1`).all(ckId);
