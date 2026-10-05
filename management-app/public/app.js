@@ -55,9 +55,9 @@ function showSessionBanner() {
 // Central Kitchen section, otherwise the picked Inventory location. This lets the CK
 // section reuse the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
 // scoped to the CK, while the Inventory section stays scoped to S.loc.
-const invLoc = () => (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc);
+const invLoc = () => (S.section === 'warehouse' && S.whLocId ? S.whLocId : (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc));
 const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
-const invName = () => { const id = invLoc(); const l = (S.locations || []).find(x => String(x.id) === String(id)); return l ? (l.name || '').replace('Pho Ha Noi — ', '') : (S.section === 'central' ? 'Central Kitchen' : 'this location'); };
+const invName = () => { const id = invLoc(); const l = [...(S.locations || []), ...(S.warehouses || [])].find(x => String(x.id) === String(id)); return l ? (l.name || '').replace('Pho Ha Noi — ', '') : (S.section === 'central' ? 'Central Kitchen' : (S.section === 'warehouse' ? 'Warehouse' : 'this location')); };
 
 // ── Toast ────────────────────────────────────────────────────────────────
 let toastTimer;
@@ -162,6 +162,7 @@ async function boot() {
   $('who').textContent = `${S.user.name} · ${roleLabel(S.user.role)}`;
   $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}</div>`;
   S.locations = await api('/inventory/locations').catch(() => []);
+  S.warehouses = await api('/inventory/locations?type=warehouse').catch(() => []);   // storage hubs → the 🏬 Warehouse section
   const picker = $('locPicker');
   const seesAll = roleScopeOf(S.user.role) === 'all';
   if (seesAll && S.locations.length) {
@@ -243,6 +244,7 @@ const SECTIONS = [
   ['myhours', '⏱️', 'My Hours', 'scheduled'],
   ['inventory', '📦', 'Inventory', 'ops'],
   ['central', '🏭', 'Central Kitchen', 'central'],
+  ['warehouse', '🏬', 'Warehouse', 'ops'],
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
   ['menu', '🍽️', 'Menu/Recipes', 'manage'],
   ['reports', '📈', 'Reports', 'reports'],
@@ -252,7 +254,8 @@ const SECTIONS = [
   ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
-const allowedSections = () => SECTIONS.filter(s => myCap(s[3]));
+// Warehouse section shows only when at least one storage warehouse exists (loaded at boot).
+const allowedSections = () => SECTIONS.filter(s => myCap(s[3]) && (s[0] !== 'warehouse' || (S.warehouses && S.warehouses.length)));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
@@ -382,7 +385,8 @@ function showSection(section) {
   const isReports = section === 'reports';
   const isMessages = section === 'messages';
   const isCentral = section === 'central';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral));
+  const isWarehouse = section === 'warehouse';
+  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral || isWarehouse));
   $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (SVC.timer && section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; }
@@ -394,6 +398,7 @@ function showSection(section) {
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
+  if (isWarehouse) { renderWhTabs(); renderWarehouse(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
   const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
@@ -1319,7 +1324,7 @@ async function openScanner() {
       $('shipBar').dataset.loaded = '1';
       let tgts = []; try { tgts = await api('/inventory/ship/targets?from_location_id=' + invLoc()); } catch { /* ignore */ }
       $('shipBar').innerHTML = `<label class="ship-lbl">Ship from <strong>${esc(invName())}</strong> to</label>
-        <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(shortLoc(t.name))}${t.type === 'central_kitchen' ? ' (CK)' : ''}</option>`).join('')}</select>
+        <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(shortLoc(t.name))}${t.type === 'central_kitchen' ? ' (CK)' : t.type === 'warehouse' ? ' (WH)' : ''}</option>`).join('')}</select>
         <div id="shipOrders"></div>`;
       $('shipTo').onchange = loadShipOrders;
     }
@@ -1480,7 +1485,7 @@ async function handleCheck(code, panel, next) {
   if (!r.found) { panel.innerHTML = `<div class="scan-unknown">🔍 <span class="mono">${esc(r.code)}</span> — not stocked anywhere yet. <button class="btn sm ghost" id="ckNext">OK</button></div>`; $('ckNext').onclick = next; return; }
   const ls = r.last_scan; const lastLine = ls ? [ls.weight_lb ? `${numf(ls.weight_lb)} lb` : '', ls.lot ? `lot ${esc(ls.lot)}` : '', (ls.pack_date || ls.prod_date) ? `packed ${esc(ls.pack_date || ls.prod_date)}` : '', ls.expiry ? `exp ${esc(ls.expiry)}` : ''].filter(Boolean).join(' · ') : '';
   panel.innerHTML = `<div class="scan-found">📋 <strong>${esc(r.item_name)}</strong> <span class="muted">· ${numf(r.total)} ${esc(r.unit)} across all locations</span>
-    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row"><span>${esc(shortLoc(l.location))}${l.type === 'central_kitchen' ? ' (CK)' : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${numf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row"><span>${esc(shortLoc(l.location))}${l.type === 'central_kitchen' ? ' (CK)' : l.type === 'warehouse' ? ' (WH)' : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${numf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
     ${lastLine ? `<div class="scan-gs1" style="margin-top:.5rem">🏷️ Last scan · ${lastLine}</div>` : ''}
     <button class="btn ghost" id="ckNext">Scan another</button></div>`;
   $('ckNext').onclick = next;
@@ -2691,7 +2696,7 @@ async function renderLocList() {
     </details>` : ''}
     <div class="loc-grid">
       ${locs.map(l => `<div class="loc-card${l.is_active ? '' : ' loc-hidden'}">
-        <div class="loc-card-head"><span class="loc-name">${esc(shortLoc(l.name))}</span>${statusBadgeLoc(l.status)}</div>
+        <div class="loc-card-head"><span class="loc-name">${esc(shortLoc(l.name))}</span>${l.type === 'warehouse' ? '<span class="badge gray" title="Storage & distribution hub — hidden from Service / Floor / check-in">🏬 Warehouse</span>' : l.type === 'central_kitchen' ? '<span class="badge gray">🏭 Central Kitchen</span>' : ''}${statusBadgeLoc(l.status)}</div>
         <div class="loc-meta">📍 ${esc([l.city, l.state].filter(Boolean).join(', ') || '—')}</div>
         <div class="loc-meta">📞 ${esc(l.phone || '—')}</div>
         <div class="loc-stats">
@@ -2733,6 +2738,13 @@ function locationModal(loc) {
     { key: 'break_reminder_lead_min', label: 'Break reminder lead (minutes before break)', type: 'number', step: '1', placeholder: '10', value: loc && loc.break_reminder_lead_min != null ? loc.break_reminder_lead_min : 10 },
     { key: 'status', label: 'Status', type: 'select', options: [{ value: 'active', label: 'Active' }, { value: 'draft', label: 'Draft' }, { value: 'closed', label: 'Closed (hidden)' }], value: loc ? loc.status : 'active' },
   ];
+  // Restaurant vs Warehouse. The Central Kitchen is a fixed, separate type — not editable here.
+  if (!loc || loc.type !== 'central_kitchen') {
+    fields.push({ key: 'type', label: 'Type', type: 'select', options: [
+      { value: 'restaurant', label: 'Restaurant (dining location)' },
+      { value: 'warehouse', label: 'Warehouse (storage & distribution — hidden from Service / Floor / check-in)' },
+    ], value: loc && loc.type ? loc.type : 'restaurant' });
+  }
   // Editing only: let an admin change the public URL slug (check-in / kiosk links) — e.g. after a
   // rename. Changing it updates /checkin/<slug>, /clock/<slug>, /scanner/<slug>; old QR codes break.
   if (loc) fields.push({ key: 'slug', label: 'Kiosk URL slug (staff clock & scanner links, e.g. /clock/<slug>). Update it after a rename to retire the old link. (Guest check-in URLs follow the name automatically.)', value: loc.slug || '' });
@@ -6800,6 +6812,63 @@ async function renderCentral() {
   if (!S.ckLocId) { try { const s = await api('/central/summary'); S.ckLocId = s.location && s.location.id; } catch { /* keep trying */ } }
   if (!CK_TABS.some(t => t[0] === S.ckTab)) { S.ckTab = 'overview'; renderCkTabs(); }   // stale/removed tab → reset
   (CK_RENDER[S.ckTab] || renderDashboard)();
+}
+
+// ── Warehouse module (storage & distribution hub) ───────────────────────────
+// Mirrors the Central Kitchen's dedicated-section pattern: reuses the Inventory
+// views scoped to the warehouse location via invLoc() (which returns S.whLocId
+// while S.section==='warehouse'). Unlike the CK there is NO one-way catalog
+// fan-out and no production/fulfillment — a warehouse just receives, stores and
+// ships/transfers items to any location (manual ship via the scanner/Transfers).
+const WH_TABS = [['overview', 'Overview'], ['glossary', 'Items'], ['catalog', 'Glossary'], ['stock', 'Stock'],
+  ['storage', 'Storage'], ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'],
+  ['lots', 'Lots & Expiry'], ['vendors', 'Vendors']];
+const WH_RENDER = { overview: renderWhOverview, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock,
+  storage: renderStorage, orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors };
+function renderWhTabs() {
+  const pick = (S.warehouses && S.warehouses.length > 1)
+    ? `<select id="whPick" class="wh-pick">${S.warehouses.map(w => `<option value="${w.id}" ${String(w.id) === String(S.whLocId) ? 'selected' : ''}>${esc((w.name || '').replace('Pho Ha Noi — ', ''))}</option>`).join('')}</select>`
+    : '';
+  $('tabs').innerHTML = pick + WH_TABS.map(([k, l]) => `<button data-wh="${k}" class="${(S.whTab || 'stock') === k ? 'active' : ''}">${l}</button>`).join('');
+  if ($('whPick')) $('whPick').onchange = () => { S.whLocId = $('whPick').value; renderWhTabs(); renderWarehouse(); };
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.whTab = b.dataset.wh; renderWhTabs(); renderWarehouse(); });
+}
+async function renderWarehouse() {
+  $('view').innerHTML = '<div class="empty">Loading…</div>';
+  if (!S.warehouses || !S.warehouses.length) { try { S.warehouses = await api('/inventory/locations?type=warehouse'); } catch { S.warehouses = []; } }
+  if (!S.warehouses.length) {
+    $('tabs').innerHTML = '';
+    $('view').innerHTML = `<div class="overview-hero"><h2>🏬 Warehouse</h2></div><div class="empty">No warehouse set up yet. Open <strong>Locations</strong>, edit a location and set <strong>Type = Warehouse</strong>.</div>`;
+    return;
+  }
+  // Pin the inventory views to the selected warehouse (invLoc() reads S.whLocId).
+  if (!S.whLocId || !S.warehouses.some(w => String(w.id) === String(S.whLocId))) S.whLocId = S.warehouses[0].id;
+  if (!WH_TABS.some(t => t[0] === S.whTab)) S.whTab = 'stock';
+  (WH_RENDER[S.whTab] || renderStock)();
+}
+async function renderWhOverview() {
+  const wh = (S.warehouses || []).find(w => String(w.id) === String(S.whLocId)) || {};
+  let items = [];
+  try { items = await api(invQ('/')); } catch { /* ignore */ }
+  const low = items.filter(i => i.min_quantity && i.quantity <= i.min_quantity).length;
+  const value = items.reduce((a, i) => a + (Number(i.quantity) || 0) * (Number(i.unit_cost) || 0), 0);
+  const loc = [wh.city, wh.state].filter(Boolean).join(', ');
+  $('view').innerHTML = `
+    <div class="overview-hero"><h2>🏬 ${esc((wh.name || 'Warehouse').replace('Pho Ha Noi — ', ''))}</h2>
+      <p>${esc(loc)}${loc ? ' · ' : ''}storage & distribution hub — receive, store and ship/transfer to any location</p></div>
+    <div class="kpis">
+      <div class="card"><div class="label">Items stored</div><div class="value">${items.length}</div></div>
+      <div class="card"><div class="label">Low stock</div><div class="value ${low ? 'bad' : ''}">${low}</div></div>
+      <div class="card"><div class="label">Inventory value</div><div class="value">${money(value)}</div></div>
+    </div>
+    <div class="section"><h3>Quick actions</h3><div class="quick-grid">
+      <button class="quick-card" data-whgo="stock"><span class="q-icon">📦</span><span>Stock & receive</span></button>
+      <button class="quick-card" id="whScanBtn"><span class="q-icon">📠</span><span>Scan to receive / ship</span></button>
+      <button class="quick-card" data-whgo="transfers"><span class="q-icon">🔁</span><span>Transfers</span></button>
+      <button class="quick-card" data-whgo="orders"><span class="q-icon">🛒</span><span>Orders & Reorder</span></button>
+    </div></div>`;
+  $('view').querySelectorAll('[data-whgo]').forEach(b => b.onclick = () => { S.whTab = b.dataset.whgo; renderWhTabs(); renderWarehouse(); });
+  if ($('whScanBtn') && typeof openScanner === 'function') $('whScanBtn').onclick = () => openScanner();
 }
 
 async function renderCkOverview() {

@@ -129,14 +129,16 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
   const name = (req.body.name || '').toString().trim();
   if (!name) return res.status(400).json({ error: 'Location name is required.' });
   const status = ['active', 'draft', 'closed'].includes(req.body.status) ? req.body.status : 'active';
+  // Restaurant (dining store) or Warehouse (storage/distribution hub); never create a Central Kitchen here.
+  const type = ['restaurant', 'warehouse'].includes(req.body.type) ? req.body.type : 'restaurant';
   // Unique URL slug for the clock kiosk (/clock/<slug>) — new locations get one automatically.
   let base = slugify(name) || 'location', slug = base, n = 2;
   while (db.prepare(`SELECT 1 FROM locations WHERE lower(slug)=?`).get(slug.toLowerCase())) slug = `${base}-${n++}`;
-  const r = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active,slug)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  const r = db.prepare(`INSERT INTO locations (name,address,city,state,zip,phone,email,timezone,opening_date,seats,status,is_active,slug,type)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     name, req.body.address || null, req.body.city || null, req.body.state || null, req.body.zip || null,
     req.body.phone || null, req.body.email || null, req.body.timezone || 'America/Los_Angeles',
-    req.body.opening_date || null, parseInt(req.body.seats) || 0, status, status === 'active' ? 1 : 0, slug);
+    req.body.opening_date || null, parseInt(req.body.seats) || 0, status, status === 'active' ? 1 : 0, slug, type);
   // Default operating hours: two service periods every day —
   // lunch 11:00–15:00 and dinner 17:00–21:00.
   const ih = db.prepare(`INSERT INTO location_hours (location_id,day_of_week,open_time,close_time,open_time2,close_time2,is_closed) VALUES (?,?,?,?,?,?,0)`);
@@ -158,6 +160,12 @@ router.put('/:id', requireRole(ROLES.ADMIN), (req, res) => {
   if (req.body.status !== undefined && ['active', 'draft', 'closed'].includes(req.body.status)) {
     fields.push('status=?'); vals.push(req.body.status);
     fields.push('is_active=?'); vals.push(req.body.status === 'active' ? 1 : 0);
+  }
+  // Restaurant (dining store) vs Warehouse (storage/distribution hub — hidden from Service / Floor /
+  // Waitlist, managed in the Warehouse section). The Central Kitchen type is fixed and set elsewhere,
+  // so it can't be changed here (keeps the single-CK assumption intact).
+  if (req.body.type !== undefined && ['restaurant', 'warehouse'].includes(req.body.type) && loc.type !== 'central_kitchen') {
+    fields.push('type=?'); vals.push(req.body.type);
   }
   // URL slug for the public check-in / clock / scanner kiosks (/checkin/<slug>, /clock/<slug>, …).
   // Editable so a renamed location (e.g. Oakland → San Francisco) can get a matching URL. Changing

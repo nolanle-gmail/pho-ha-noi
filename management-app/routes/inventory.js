@@ -63,8 +63,12 @@ function propagateVendorEdit(ckId) {
 }
 
 // ── Meta: locations & categories (for pickers) ─────────────────────────────
+// Inventory location picker. Default = restaurants (stores). ?type=warehouse lists storage
+// warehouses; ?type=all lists both (stores + warehouses). Central Kitchen is handled separately.
 router.get('/locations', (req, res) => {
-  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 AND type='restaurant' ORDER BY name`).all());
+  const t = req.query.type;
+  const where = t === 'warehouse' ? "type='warehouse'" : t === 'all' ? "type IN ('restaurant','warehouse')" : "type='restaurant'";
+  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 AND ${where} ORDER BY name`).all());
 });
 router.get('/categories', (req, res) => {
   const rows = db.prepare(`SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL ORDER BY category`).all();
