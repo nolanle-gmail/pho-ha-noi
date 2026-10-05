@@ -497,6 +497,10 @@ const check = (name, ok, detail = '') => {
     const svc = (extra) => ({ 'Content-Type': 'application/json', 'X-Service-Key': 'dev-floorplan-key', ...(extra || {}) });
     const fp = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(mgr.token) }));
     check('floor plan: areas + tables + status + outline', Array.isArray(fp.areas) && fp.areas.some(a => a.tables.length) && Array.isArray(fp.room_outline) && fp.summary.tables > 0 && fp.can_edit === true, JSON.stringify(fp.summary));
+    // Service-flow display buckets: every table carries a 4-colour `display` the Floor Plan paints by.
+    check('floor plan: service-flow display buckets', Array.isArray(fp.display_statuses)
+      && ['available', 'seated', 'awaiting_food', 'ready_to_pay', 'cleaning'].every(k => fp.display_statuses.includes(k))
+      && fp.areas.flatMap(a => a.tables).every(t => fp.display_statuses.includes(t.display)), JSON.stringify(fp.display_statuses));
     const aTable = fp.areas.flatMap(a => a.tables).find(t => t.status === 'available');
     r = await fetch(base + `/api/floorplan/tables/${aTable.id}/seat`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ guest_name: 'Kim', party_size: 3 }) });
     check('seat a guest → table occupied', r.status === 200, await r.text());
@@ -551,6 +555,7 @@ const check = (name, ok, detail = '') => {
     const fpOcc = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
     const occT = fpOcc.areas.flatMap(a => a.tables).find(t => t.id === T1.id);
     check('seating reflects on the floor plan', occT.occupied === true && occT.status === 'waiting_to_order', occT.status);
+    check('seated table → "Seated" bucket', occT.display === 'seated', occT.display);
     const dup = await j(await fetch(base + V, { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, guest_name: 'Dupe', party_size: 2 }) }));
     r = await fetch(base + `${V}/${dup.id}/seat`, { method: 'PUT', headers: H(token), body: JSON.stringify({ table_id: T1.id }) });
     check('cannot seat two parties at one table (409)', r.status === 409, 'status=' + r.status);
@@ -558,7 +563,9 @@ const check = (name, ok, detail = '') => {
     let cl = await j(await fetch(base + `${V}/${vid}/claim`, { method: 'PUT', headers: H(token), body: JSON.stringify({ server_id: srv.id, server_name: srv.name }) }));
     check('claim → in_service + server + check timer', cl.visit && cl.visit.stage === 'in_service' && cl.visit.server_name === srv.name && cl.visit.minutes_to_check > 0, JSON.stringify(cl.visit && { s: cl.visit.stage, m: cl.visit.minutes_to_check }));
     const fpSrv = await j(await fetch(base + `/api/floorplan?location_id=${loc1}`, { headers: H(token) }));
-    check('in-service reflects on the floor plan (served)', fpSrv.areas.flatMap(a => a.tables).find(t => t.id === T1.id).status === 'served');
+    const srvT = fpSrv.areas.flatMap(a => a.tables).find(t => t.id === T1.id);
+    check('in-service reflects on the floor plan (served)', srvT.status === 'served');
+    check('in-service table → "Ready to pay" bucket', srvT.display === 'ready_to_pay', srvT.display);
     let ck = await j(await fetch(base + `${V}/${vid}/check`, { method: 'PUT', headers: H(token), body: JSON.stringify({ note: 'all good' }) }));
     check('log a check → count up + timer reset', ck.visit.check_count >= 1 && ck.visit.minutes_to_check > 0, JSON.stringify({ c: ck.visit.check_count }));
     r = await fetch(base + `${V}/${vid}/interval`, { method: 'PUT', headers: H(token), body: JSON.stringify({ check_interval_min: 7 }) });

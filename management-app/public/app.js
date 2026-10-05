@@ -2987,8 +2987,8 @@ async function renderLocSfTab(loc) {
 // Read-only floor snapshot for the Location Details tab — a point-in-time picture
 // of who's seated. Reuses the Floor Plan status colors; no interaction.
 function fpMiniTable(t) {
-  const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
-  const occ = t.status !== 'available';
+  const [lbl, c, bg] = dispOf(t);
+  const occ = dispKey(t) !== 'available';
   const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.check_due ? ' · check overdue' : ''}` : `Available · ${t.seats} seats`;
   const sub = occ && t.party_size && showGuests() ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
   const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
@@ -2998,7 +2998,7 @@ function fpSnapshotHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
   if (!all.length) return '<div class="empty">No floor plan for this location yet. Open the Floor Plan tab to set one up.</div>';
   const sm = fp.summary;
-  const legend = `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
+  const legend = `<div class="fp-legend">${Object.entries(DISPLAY_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => dispKey(t) === k).length}</span></span>`).join('')}</div>`;
   const bands = fp.areas.map(a => {
     const ts = (a.tables || []).filter(t => t.pos_y != null);
     if (!ts.length || !a.name) return '';
@@ -4400,6 +4400,20 @@ const TABLE_STATUS = {
   waiting_to_pay: ['Waiting to pay', '#b4630b', '#fdecd8'],
   cleaning: ['Cleaning up', '#6b7280', '#ededed'],
 };
+// Live service-flow buckets the Floor Plan paints by (synced to Toast / the seated lists).
+// Four distinct colours the user asked for — Available · Seated · Awaiting food · Ready to pay —
+// plus Cleaning for a table being bussed.
+const DISPLAY_STATUS = {
+  available: ['Available', '#1e7e34', '#e6f4ea'],
+  seated: ['Seated', '#2b5bd7', '#e7eefc'],
+  awaiting_food: ['Awaiting food', '#c2410c', '#ffedd5'],
+  ready_to_pay: ['Ready to pay', '#6d28d9', '#ede9fe'],
+  cleaning: ['Cleaning up', '#6b7280', '#ededed'],
+};
+// Fallback for an older response (or cache) without the server's `display` bucket.
+const LEGACY_DISPLAY = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
+const dispKey = (t) => t.display || LEGACY_DISPLAY[t.status] || 'available';
+const dispOf = (t) => DISPLAY_STATUS[dispKey(t)] || DISPLAY_STATUS.available;
 const FP_AREA_COLORS = ['#2b5bd7', '#b4630b', '#1e7e34', '#7a1420', '#6d28d9', '#0e7490', '#be185d'];
 // Guest count is optional — some managers prefer a cleaner board. The choice is a
 // per-user preference (stored locally) and governs the party-size chip on every
@@ -4418,8 +4432,8 @@ async function renderLocFloorPlan() {
   const areaOptions = (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
   const tEl = (t) => {
     if (edit) return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}" data-tid="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${FP_AREA_COLORS[t._ci % FP_AREA_COLORS.length]}" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
-    const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
-    const occ = t.status !== 'available';
+    const [lbl, c, bg] = dispOf(t);
+    const occ = dispKey(t) !== 'available';
     const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '👤' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
     const chk = t.stage === 'in_service' && t.minutes_to_check != null ? (t.check_due ? ` · check overdue ${Math.abs(t.minutes_to_check)}m` : ` · check in ${t.minutes_to_check}m`) : '';
     const tip = occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') + (t.server_name ? ' · ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
@@ -4437,7 +4451,7 @@ async function renderLocFloorPlan() {
   const boardInner = roomSvgM(outline) + bands + (edit ? outline.map((p, i) => `<div class="room-vtx" data-vi="${i}" style="left:${p.x}%;top:${p.y}%"></div>`).join('') : '') + all.map(tEl).join('');
   const legend = edit
     ? `<div class="fp-legend">${fp.areas.map((a, i) => `<button class="fp-leg ed" data-area="${a.id}"><span class="fp-dot" style="background:${FP_AREA_COLORS[i % FP_AREA_COLORS.length]}"></span>${esc(a.name)} <span class="fp-leg-n">${a.tables.length}</span></button>`).join('')}</div>`
-    : `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
+    : `<div class="fp-legend">${Object.entries(DISPLAY_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => dispKey(t) === k).length}</span></span>`).join('')}</div>`;
   const sm = fp.summary;
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
@@ -4460,7 +4474,7 @@ async function renderLocFloorPlan() {
     $('fpToggle') && ($('fpToggle').onclick = () => { S.fpEdit = true; renderLocFloorPlan(); });
     $('locBody').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
       const t = all.find(x => String(x.id) === String(el.dataset.tbl));
-      if (t.status === 'available') openSeatModal(t); else openTableStatusModal(t);
+      if (dispKey(t) === 'available') openSeatModal(t); else openTableStatusModal(t);
     });
   }
 }
@@ -4474,7 +4488,7 @@ function openSeatModal(t) {
 }
 function openTableStatusModal(t) {
   const host = $('modalHost');
-  const [lbl] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const [lbl] = dispOf(t);
   const btns = [['waiting_to_order', 'Waiting to order'], ['served', 'Served'], ['waiting_to_pay', 'Waiting to pay'], ['cleaning', 'Cleaning up']]
     .map(([k, l]) => `<button class="btn sm ${t.status === k ? '' : 'ghost'}" data-st="${k}" style="justify-content:flex-start">${t.status === k ? '● ' : ''}${l}</button>`).join('');
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Table ${esc(t.label)} — ${lbl}</h3>

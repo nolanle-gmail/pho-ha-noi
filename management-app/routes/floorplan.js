@@ -13,6 +13,11 @@ const router = express.Router();
 
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const STATUSES = ['available', 'waiting_to_order', 'served', 'waiting_to_pay', 'cleaning'];
+// The Floor Plan paints every table in one of these live service-flow buckets.
+const DISPLAY_STATUSES = ['available', 'seated', 'awaiting_food', 'ready_to_pay', 'cleaning'];
+const DISPLAY_FROM_FLOW = { seated: 'seated', awaiting_food: 'awaiting_food', in_service: 'ready_to_pay' };
+const DISPLAY_FROM_STATUS = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
+const displayBucket = (t) => (t.flow_state && DISPLAY_FROM_FLOW[t.flow_state]) || DISPLAY_FROM_STATUS[t.status] || 'available';
 const DINE_MIN = 75; // typical time from seating to free
 
 // Auth: a valid manager JWT, OR the Waitlist service key (view + seat only).
@@ -73,6 +78,7 @@ router.get('/', requireView, (req, res) => {
       id: t.id, area_id: t.area_id, label: t.label, seats: t.seats, is_active: t.is_active, sort_order: t.sort_order,
       pos_x: t.pos_x, pos_y: t.pos_y, shape: t.shape,
       status: t.status || 'available', occupied: (t.status && t.status !== 'available'),
+      flow_state: null,
       guest_name: t.guest_name || null, party_size: t.party_size || null, seated_at: t.seated_at || null,
       minutes_to_free: minutesToFree(t.est_free_at),
       server_name: v ? (v.server_name || null) : null, stage: v ? v.stage : null,
@@ -111,11 +117,18 @@ router.get('/', requireView, (req, res) => {
       const b = busy.get(key);
       if (b && !t.occupied) {                        // free locally but active in Toast/Seated → mark busy
         t.status = FLOW_TO_STATUS[b.state] || 'served';
+        t.flow_state = b.state;                      // keep the fine state (seated vs awaiting_food vs in_service)
         t.occupied = true;
         if (!t.server_name && b.server) t.server_name = b.server;
       }
     });
   } catch (e) { console.error('[floormap] service-flow overlay:', e.message); }
+  // Fold every table into the 4 display buckets the Floor Plan colours by:
+  //   available · seated · awaiting_food · ready_to_pay  (+ cleaning).
+  // A live Toast/Seated state (flow_state) is finer than the local projection, so it wins;
+  // otherwise the table's own status maps in. "Served / in service" and "paying" both read as
+  // Ready to pay — once the food is out, the table's remaining journey is the check.
+  all.forEach(t => { t.display = displayBucket(t); });
   const byArea = areas.map(a => ({ id: a.id, name: a.name, sort_order: a.sort_order, tables: all.filter(t => t.area_id === a.id) }));
   const noArea = all.filter(t => !t.area_id);
   if (noArea.length) byArea.push({ id: null, name: 'Other', tables: noArea });
@@ -123,7 +136,7 @@ router.get('/', requireView, (req, res) => {
   res.json({
     location: { id: loc.id, name: loc.name }, can_edit: !!isManage(req), room_outline: roomOutline(loc.room_outline),
     aspect: loc.floor_aspect || null,
-    areas: byArea, statuses: STATUSES,
+    areas: byArea, statuses: STATUSES, display_statuses: DISPLAY_STATUSES,
     summary: { tables: active.length, available: active.filter(t => !t.occupied).length, occupied: active.filter(t => t.occupied).length },
   });
 });

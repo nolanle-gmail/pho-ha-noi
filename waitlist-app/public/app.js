@@ -1498,13 +1498,25 @@ const TABLE_STATUS = {
   waiting_to_pay: ['Waiting to pay', '#b4630b', '#fdecd8'],
   cleaning: ['Cleaning up', '#6b7280', '#ededed'],
 };
+// Live service-flow buckets the Table Map paints by — synced to the Management
+// Floor Plan: Available · Seated · Awaiting food · Ready to pay (+ Cleaning).
+const DISPLAY_STATUS = {
+  available: ['Available', '#16a34a', '#dcfce7'],
+  seated: ['Seated', '#2b5bd7', '#e7eefc'],
+  awaiting_food: ['Awaiting food', '#c2410c', '#ffedd5'],
+  ready_to_pay: ['Ready to pay', '#6d28d9', '#ede9fe'],
+  cleaning: ['Cleaning up', '#6b7280', '#ededed'],
+};
+const LEGACY_DISPLAY = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
+const dispKey = (t) => t.display || LEGACY_DISPLAY[t.status] || 'available';
+const dispOf = (t) => DISPLAY_STATUS[dispKey(t)] || DISPLAY_STATUS.available;
 // Guest count is optional to display — governs the party-size chip on the Table
 // Map. Stored per-device; tooltips always keep the detail on hover.
 function showGuests() { return localStorage.getItem('phn_show_guests') !== '0'; }
 function toggleGuests() { localStorage.setItem('phn_show_guests', showGuests() ? '0' : '1'); }
 function statusTableEl(t) {
-  const [lbl, c, bg] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
-  const occ = t.status !== 'available';
+  const [lbl, c, bg] = dispOf(t);
+  const occ = dispKey(t) !== 'available';
   const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '\u{1F464}' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
   const chk = t.stage === 'in_service' && t.minutes_to_check != null ? (t.check_due ? ' \u00b7 check overdue ' + Math.abs(t.minutes_to_check) + 'm' : ' \u00b7 check in ' + t.minutes_to_check + 'm') : '';
   const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') + (t.server_name ? ' \u00b7 ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
@@ -1518,7 +1530,7 @@ function fpBoardHtml(fp) {
 }
 function statusLegend(fp) {
   const all = fp.areas.flatMap(a => a.tables);
-  return `<div class="fp-legend">${Object.entries(TABLE_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => (t.status || 'available') === k).length}</span></span>`).join('')}</div>`;
+  return `<div class="fp-legend">${Object.entries(DISPLAY_STATUS).map(([k, [l, c]]) => `<span class="fp-leg"><span class="fp-dot" style="background:${c}"></span>${l} <span class="fp-leg-n">${all.filter(t => dispKey(t) === k).length}</span></span>`).join('')}</div>`;
 }
 
 // The Table Map view (Front Desk): live status, tap to seat / change status.
@@ -1536,7 +1548,7 @@ async function renderTables() {
   $('tmGuests').onclick = () => { toggleGuests(); renderTables(); };
   if (canEdit) $('view').querySelectorAll('[data-tbl]').forEach(el => el.onclick = () => {
     const t = fp.areas.flatMap(a => a.tables).find(x => String(x.id) === String(el.dataset.tbl));
-    if (t.status === 'available') seatAtTable(t.id, t.label, t.seats, () => renderTables());
+    if (dispKey(t) === 'available') seatAtTable(t.id, t.label, t.seats, () => renderTables());
     else tableStatusModal(t, () => renderTables());
   });
 }
@@ -1547,7 +1559,7 @@ function seatAtTable(tid, label, seats, after) {
 }
 function tableStatusModal(t, after) {
   const host = $('modalHost');
-  const [lbl] = TABLE_STATUS[t.status] || TABLE_STATUS.available;
+  const [lbl] = dispOf(t);
   const btns = [['waiting_to_order', 'Waiting to order'], ['served', 'Served'], ['waiting_to_pay', 'Waiting to pay'], ['cleaning', 'Cleaning up']]
     .map(([k, l]) => `<button class="btn ${t.status === k ? '' : 'ghost'}" data-st="${k}" style="justify-content:flex-start">${t.status === k ? '\u25cf ' : ''}${l}</button>`).join('');
   host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Table ${esc(t.label)} \u2014 ${lbl}</h3>

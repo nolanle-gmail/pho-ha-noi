@@ -231,6 +231,22 @@ initial grid across all locations.
 Every floor surface and seat picker reads this shared endpoint, so the whole team sees the same
 occupancy and paid tables become seatable right away.
 
+**Four-colour service-flow display (2026-10-05).** The floor map now paints each table in one of
+four live buckets the owner asked for — **🟢 Available · 🔵 Seated · 🟠 Awaiting food · 🟣 Ready to
+pay** (plus **⚪ Cleaning up** for a table being bussed). To do this without disturbing the DB-enum
+write path, `/api/floorplan` keeps `status` (the `available`/`waiting_to_order`/`served`/
+`waiting_to_pay`/`cleaning` projection used by the seat/status modals) **and** adds two read-only
+fields per table: `flow_state` (the raw Toast/seated state when the overlay set one) and `display`
+(the folded bucket the UI colours by). It also returns `display_statuses` (the five bucket keys, for
+the legend). The fold: a live `flow_state` wins — `seated→Seated`, `awaiting_food→Awaiting food`,
+`in_service→Ready to pay`; otherwise the local projection maps in — `waiting_to_order→Seated`,
+`served`/`waiting_to_pay→Ready to pay`, `cleaning→Cleaning up`. **"Served/in service" and "paying"
+both read as _Ready to pay_** — once the food is out, the table's remaining journey is the check — so
+the four labels cover the whole lifecycle (a purely local floor with no Toast won't show _Awaiting
+food_, which is a Toast-derived signal). Both apps carry a matching `DISPLAY_STATUS` map + `dispKey`/
+`dispOf` helpers (with a `LEGACY_DISPLAY` fallback for an older cached response), used by the
+Management Floor Plan tab, its Details-tab snapshot, and the Staff Table Map.
+
 ```mermaid
 erDiagram
   locations ||--o{ floor_areas : "has"
