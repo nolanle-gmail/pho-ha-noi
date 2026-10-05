@@ -675,22 +675,20 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
   Staff: `GET /invscan/ship/{targets,orders}`, `POST /invscan/ship`.
   Kiosk: `POST /api/scannerkiosk/kiosk/:slug/{targets,orders,transfer}`.
 
-The console scanner's modes depend on the section. **All store (restaurant) locations** show
-three — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — since a store has no
-orders to fulfil. The **Warehouse** and **Central Kitchen** (the distribution hubs) add two more —
-**📤 Shipping** and **🍳 Use** — for the full set **Receiving · Shipping · Transferring · Checking
-Inventory · Use**. Shipping and Transferring both pick a destination and move stock via the same
-`/inventory/barcode/transfer` endpoint; **Shipping** shows the destination's open-order fill list
-(order fulfillment, above), while **Transferring** is an ad-hoc move with no order list. **Use**
-(`POST /inventory/barcode/use`) consumes stock on site — production / prep — FIFO with an `out`
-transaction. The **staff app** (always store-scoped to the staffer's own store)
-matches the store set — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — plus the
-staff-only **🍳 Use** below. The **standalone kiosk** (`/scanner/<slug>`) is section-aware too: it
-reads its location's `type` (from `GET /kiosk/:slug`) and shows the store three, adding **Shipping**
-when the kiosk is at the Warehouse or Central Kitchen.
-- **🍳 Use** (staff app, and the Warehouse / Central Kitchen console) — mark stock **used** (prep /
+Every location (and every scan surface) can **📥 Receiving**, **🔁 Transferring**, **📋 Checking
+Inventory** and **🍳 Use**. The **Warehouse** and **Central Kitchen** (the distribution hubs) add
+one more — **📤 Shipping** — since they're the only locations with store orders to fulfil, for the
+full set **Receiving · Shipping · Transferring · Checking Inventory · Use**. Shipping and
+Transferring both pick a destination and move stock via the same `/inventory/barcode/transfer`
+endpoint; **Shipping** shows the destination's open-order fill list (order fulfillment, above),
+while **Transferring** is an ad-hoc move with no order list. **Use** consumes stock on site
+(production / prep / to serve) — FIFO with an `out` transaction. The **staff app** (always
+store-scoped to the staffer's own store) shows Receiving / Transferring / Checking Inventory / Use.
+The **standalone kiosk** (`/scanner/<slug>`) is section-aware: it reads its location's `type` (from
+`GET /kiosk/:slug`) and shows the store four, adding **Shipping** at the Warehouse or Central Kitchen.
+- **🍳 Use** (every console section, the staff app, and the kiosk) — mark stock **used** (prep /
   production / to serve): decrements the scanned location (FIFO) and logs an `out` transaction.
-  `POST /invscan/use` (staff) / `POST /inventory/barcode/use` (console).
+  `POST /inventory/barcode/use` (console) / `POST /invscan/use` (staff) / `POST /kiosk/:slug/use` (kiosk).
 
 **All scanning is done with a hardware barcode scanner** (e.g. an Inateck Hyper 160 on a USB
 dongle / Bluetooth) — the **phone-camera option was removed** on all three surfaces (console,
