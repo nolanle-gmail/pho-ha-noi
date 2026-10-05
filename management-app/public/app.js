@@ -1291,11 +1291,11 @@ function invRefresh() { if (S.section === 'central') renderCentral(); else if (S
 
 async function openScanner() {
   // The Warehouse & Central Kitchen are distribution hubs, so their scanner adds Shipping (fulfill
-  // store orders) to the set: Receiving, Shipping, Transferring (ad-hoc move), Checking Inventory.
-  // Every other location has no orders to fulfil, so it gets Receiving / Transferring / Checking.
+  // store orders) and Use (consume stock) to the set: Receiving, Shipping, Transferring (ad-hoc
+  // move), Checking Inventory, Use. Every other location gets Receiving / Transferring / Checking.
   const isDist = (S.section === 'central' || S.section === 'warehouse');
   const MODES = isDist
-    ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory']]
+    ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']]
     : [['receive', '📥 Receiving'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory']];
   const modesHtml = MODES.map((m, i) => `<button class="btn sm${i ? ' ghost' : ''}" data-mode="${m[0]}">${m[1]}</button>`).join('');
   const host = document.createElement('div'); host.className = 'scan-overlay';
@@ -1332,6 +1332,7 @@ async function openScanner() {
     $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship — open orders fill automatically.'
       : m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.'
       : m === 'check' ? 'Scan an item to see stock across all locations.'
+      : m === 'use' ? 'Scan an item to record stock used here.'
       : '📠 Ready — scan a barcode with your scanner.';
     if (wantsDest && !$('shipBar').dataset.loaded) {
       $('shipBar').dataset.loaded = '1';
@@ -1351,9 +1352,10 @@ async function openScanner() {
     if (busy) return; busy = true;
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : '📠 Ready — scan the next barcode.'); focusManual(); };
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : mode === 'use' ? 'Scan another item to record use.' : '📠 Ready — scan the next barcode.'); focusManual(); };
     if (mode === 'ship' || mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders, mode === 'transfer' ? 'Transfer' : 'Ship');
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
+    else if (mode === 'use') await handleUse(code, $('scanPanel'), done);
     else await handleScan(code, $('scanPanel'), done);
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
@@ -1510,6 +1512,28 @@ async function handleCheck(code, panel, next) {
     ${lastLine ? `<div class="scan-gs1" style="margin-top:.5rem">🏷️ Last scan · ${lastLine}</div>` : ''}
     <button class="btn ghost" id="ckNext">Scan another</button></div>`;
   $('ckNext').onclick = next;
+}
+
+// Scan-to-use: consume stock at the scanned location (kitchen prep / production / to serve).
+async function handleUse(code, panel, next) {
+  panel.innerHTML = '<div class="muted">Looking up…</div>';
+  let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to use. <button class="btn sm ghost" id="uSkip">Skip</button></div>`; $('uSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const wt = (r.parsed && r.parsed.weightLb) || '';
+  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="uQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input id="uReason" placeholder="Reason (e.g. prep, production, serve)"></div>
+    <div class="scan-act"><button class="btn" id="uGo">🍳 Record use</button><button class="btn ghost" id="uNext">Skip</button></div></div>`;
+  $('uNext').onclick = next;
+  $('uGo').onclick = async () => {
+    const btn = $('uGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('uQty').value;
+    const body = { location_id: invLoc(), code: key, reason: $('uReason').value.trim() || undefined };
+    if (cw) body.weight = qv; else body.quantity = qv;
+    try { const rr = await api('/inventory/barcode/use', { method: 'POST', body: JSON.stringify(body) }); toast(`Used ${numf(qv)} ${esc(it.unit)} · ${it.item_name} → ${numf(rr.item.quantity)} left`); invRefresh(); next(); }
+    catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
 }
 
 // Full scan history for an item — every box's weight, dates, lot, serial + all barcode data.
