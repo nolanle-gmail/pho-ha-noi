@@ -560,20 +560,32 @@ distinct things, on two tabs:
   still auto-filled from external lookups (below), but a manual entry is authoritative and is
   never overwritten by an external cache.
 
-**Smart scan-to-receive (`lib/receive.js`).** One flow at both the Central Kitchen and every
-location:
+**Smart scan-to-receive (`lib/receive.js`).** One flow at the Central Kitchen, the Warehouse and
+every store, identical across the console, the staff app and the kiosk. **The scanner sends the
+RAW scanned code**, so the server recovers the full label — GTIN, net **weight**, **serial (21)**,
+**production / pack / expiry dates**, **lot** — on every receive (not just the fields the form
+pre-filled). Everything the box carried is captured: on the `inventory_lots` row (serial, net
+weight, pack & production dates, expiry/lot, `received_at` — which drives **FIFO**) and in full in
+`scan_events`.
 
-1. A GS1 **serial `(21)` already on hand here** = the exact same physical box → a **true
-   duplicate**: warn and **do not add** (a confirm can force it).
-2. Barcode **already in stock here** → just add to it — **weight** for a catch-weight item,
-   otherwise **count**.
-3. Barcode **new to stock** → look it up in the **Glossary** and pre-fill the add form
-   (name, description, unit, category from the glossary; weight/lot/serial/dates from the
-   label). Saving **creates the stock item** and, unless you untick it, **writes the item into
-   the Glossary** too — so the next scan anywhere pre-fills everything.
+1. **New to stock** → the panel shows a **"from the label / from the Glossary" review** (name,
+   brand, weight, pack/prod/expiry dates, lot, serial) with an explicit **"✓ Confirm & add"**.
+   Confirming creates the stock item at the scanning location **and** writes a **group-wide
+   Glossary entry** (recognized at every location on the next scan). It does **not** seed 0-qty
+   stock rows at the stores — a hub receipt doesn't clutter every store's list (the manual
+   Add-Item form still replicates CK items into store catalogs for ordering).
+2. **True duplicate** → a **⚠ warning with override-to-add** when it's the exact same box (GS1
+   **serial** already on hand) **or** a rapid accidental re-scan of the same plain code.
+   Deliberate repeat receiving of identical units still just adds to the count.
+3. **Already in stock, a different box** → same GTIN with a **different weight / pack date / lot**
+   shows an amber **"↔ different from the last box"** note plus a **live new-total preview**, so
+   the operator reviews the box's data before adding to the total (**weight** for a catch-weight
+   item, otherwise **count**).
 
-Per-received-box detail (serial + net weight) is stored on the `inventory_lots` row; the stock
-item carries the `is_catch_weight` / `stackable` flags inherited from its glossary entry.
+**Deli-scale labels** resolve by the 2-digit **scale code** to pull the item name/unit/catch-weight
+straight from the Glossary (no manual entry), with the embedded net weight pre-filled; a brand-new
+scale item gets a stable **`SCALE-NN`** key and its scale code saved to the Glossary.
+
 Endpoints — console: `GET /inventory/barcode/resolve/:code`, `POST /inventory/barcode/receive`,
 `POST /inventory/barcode/create`. Staff: `GET /invscan/resolve/:code`,
 `POST /invscan/receive`, `POST /invscan/receive-create`. The standalone kiosk shares the same
