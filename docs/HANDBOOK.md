@@ -681,8 +681,9 @@ orders to fulfil. The **Warehouse** and **Central Kitchen** (the distribution hu
 **📤 Shipping**, between Receiving and Transferring. Shipping and Transferring both pick a
 destination and move stock via the same `/inventory/barcode/transfer` endpoint; **Shipping** shows
 the destination's open-order fill list (order fulfillment, above), while **Transferring** is an
-ad-hoc move with no order list. (The staff app / kiosk keep their own compact Receive / Check /
-Ship / Use toggle.)
+ad-hoc move with no order list. The **staff app** (always store-scoped to the staffer's own store)
+matches the store set — **📥 Receiving**, **🔁 Transferring**, **📋 Checking Inventory** — plus the
+staff-only **🍳 Use** below; the standalone kiosk keeps its Receive / Ship / Check toggle.
 - **🍳 Use** (staff app) — mark stock **used** for the kitchen (prep / to serve): decrements the
   staffer's own store (FIFO) and logs an `out` transaction. `POST /invscan/use`.
 
