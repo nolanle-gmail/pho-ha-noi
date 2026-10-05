@@ -4876,7 +4876,7 @@ async function renderStaffDirectory() {
   }
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Staff Directory <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${rows.length} accounts</span></h2>
-      ${canAdd ? '<button class="btn" id="addStaff">+ Add staff</button>' : (isManagerish ? '' : '<span class="badge gray">View only</span>')}</div>
+      ${canAdd ? '<div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn ghost" id="sendLogin">📱 Send Login Info to new Staff</button><button class="btn" id="addStaff">+ Add staff</button></div>' : (isManagerish ? '' : '<span class="badge gray">View only</span>')}</div>
     <div class="letter-bar">${bar}</div>
     <div style="margin:.7rem 0 1rem"><input id="staffSearch" placeholder="Search by name, phone (incl. previous), code, email or role…" value="${esc(staffSearch)}" style="max-width:360px" />
       ${searching ? `<span style="color:var(--muted);font-size:.85rem;margin-left:.5rem">${shown.length} match${shown.length === 1 ? '' : 'es'}</span>` : ''}</div>
@@ -4900,7 +4900,53 @@ async function renderStaffDirectory() {
     else if (act === 'pw') resetStaffPassword(u);
     else if (act === 'toggle') toggleStaff(u);
   });
-  if (canAdd) $('addStaff').onclick = () => renderStaffAdd(locations);
+  if (canAdd) { $('addStaff').onclick = () => renderStaffAdd(locations); $('sendLogin').onclick = () => openSendLogin(rows); }
+}
+
+// Pick a staff member (searchable list) and TEXT them their portal login. Resets their password
+// to the default; the preview shows the exact message. Backend: POST /staff/:id/send-login.
+function openSendLogin(rows) {
+  const host = $('modalHost');
+  const DEFAULT_PW = '12345678';
+  const active = (rows || []).filter(u => u.is_active !== 0 && u.phone);
+  let selId = null, q = '', preview = '';
+  const render = () => {
+    const ql = q.trim().toLowerCase(), qd = ql.replace(/\D+/g, '');
+    const list = active.filter(u => !ql
+      || (u.name + ' ' + (u.phone || '') + ' ' + roleLabel(u.role)).toLowerCase().includes(ql)
+      || (qd.length >= 3 && (u.phone || '').replace(/\D+/g, '').includes(qd)))
+      .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 60);
+    const sel = active.find(u => u.id == selId);
+    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:540px">
+      <div class="row-between"><h3 style="margin:0">📱 Send login info by text</h3><button class="btn sm ghost" id="slX">✕</button></div>
+      <p class="modal-note" style="margin:.4rem 0 .6rem">Texts the staff member their portal login. This <strong>resets their password to the default (${DEFAULT_PW})</strong> so it works right away; they change it after first login.</p>
+      <input id="slSearch" placeholder="Search staff by name or phone…" value="${esc(q)}" style="width:100%">
+      <div class="sl-list">${list.length ? list.map(u => `<button type="button" class="sl-item${u.id == selId ? ' sel' : ''}" data-pick="${u.id}"><strong>${esc(u.name)}</strong> <span class="muted">${esc(fmtPhone(u.phone))} · ${esc(roleLabel(u.role))}${u.location_name ? ' · ' + esc(shortLoc(u.location_name)) : ''}</span></button>`).join('') : '<div class="empty" style="padding:.8rem">No active staff with a phone number match.</div>'}</div>
+      ${sel ? `<div class="muted" style="font-size:.8rem;margin:.5rem 0 .3rem">Message to <strong>${esc(fmtPhone(sel.phone))}</strong>:</div><pre class="sl-msg" id="slMsg">${esc(preview || 'Loading preview…')}</pre>` : '<div class="muted" style="margin:.6rem 0">Pick a staff member to text their login.</div>'}
+      <div class="actions"><button class="btn ghost" id="slCancel">Cancel</button><button class="btn" id="slSend"${sel ? '' : ' disabled'}>📱 Send text${sel ? ' to ' + esc(fmtPhone(sel.phone)) : ''}</button></div>
+    </div></div>`;
+    const close = () => { host.innerHTML = ''; };
+    $('slX').onclick = close; $('slCancel').onclick = close;
+    const search = $('slSearch');
+    search.oninput = () => { q = search.value; const pos = search.selectionStart; render(); const s = $('slSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } };
+    host.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
+      selId = b.dataset.pick; preview = ''; render();
+      const forId = selId;
+      try { const d = await api('/staff/' + forId + '/login-message'); if (selId === forId) { preview = d.message; const m = $('slMsg'); if (m) m.textContent = preview; } }
+      catch { if (selId === forId) { const m = $('slMsg'); if (m) m.textContent = '(could not load preview)'; } }
+    });
+    const sendBtn = $('slSend');
+    if (sendBtn && sel) sendBtn.onclick = async () => {
+      sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+      try {
+        const r = await api('/staff/' + sel.id + '/send-login', { method: 'POST', body: JSON.stringify({}) });
+        if (r.sent) toast(`✅ Login info texted to ${sel.name} (${r.to})`);
+        else toast(`Password reset for ${sel.name}, but SMS isn't configured — nothing was sent.`, true);
+        close();
+      } catch (e) { toast(e.message, true); sendBtn.disabled = false; sendBtn.textContent = '📱 Send text to ' + fmtPhone(sel.phone); }
+    };
+  };
+  render();
 }
 
 // ── Staff profile (full HR record) ───────────────────────────────────────────

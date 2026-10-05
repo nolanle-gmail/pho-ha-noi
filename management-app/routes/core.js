@@ -5,9 +5,36 @@ const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
+const { sendSms, smsEnabled } = require('../lib/sms');
 
 const router = express.Router();
 router.use(verifyToken);
+
+// Default onboarding password texted with the login info. Staff are told to change it on first
+// login. 8 chars so it passes the create/reset minimum.
+const DEFAULT_STAFF_PASSWORD = '12345678';
+const PORTAL_URL = 'https://pho-ha-noi-management.fly.dev/';
+const fmtPhone = (v) => { const d = String(v == null ? '' : v).replace(/\D+/g, ''); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (v || ''); };
+// The welcome / login-info text sent to a staff member's phone.
+function loginMessage(u) {
+  return [
+    `Hello ${u.name},`,
+    ``,
+    `Welcome to the Pho Ha Noi team!`,
+    ``,
+    `We've created a login for you to use our online portal.`,
+    ``,
+    `Portal: ${PORTAL_URL}`,
+    `Phone Number: ${fmtPhone(u.phone)}`,
+    `Password: ${DEFAULT_STAFF_PASSWORD}`,
+    ``,
+    `Please change your password after your first login: open the menu, go to Account Settings, then "Change password".`,
+    ``,
+    `Add the portal to your phone's home screen:`,
+    `- iPhone (Safari): tap the Share button, then "Add to Home Screen".`,
+    `- Android (Chrome): tap the menu (3 dots), then "Add to Home screen" / "Install app".`,
+  ].join('\n');
+}
 
 // Staff directory. Owner/admin see all locations; managers see their own (view only).
 router.get('/staff', requireRole(ROLES.MANAGE), (req, res) => {
@@ -171,6 +198,29 @@ router.post('/staff/:id/reset-password', requireRole(ROLES.MANAGE), (req, res) =
   db.prepare(`UPDATE users SET password_hash=? WHERE id=?`).run(bcrypt.hashSync(String(p), 10), u.id);
   auditLog(req, 'staff_reset_password', 'user', u.id, { name: u.name });
   res.json({ success: true });
+});
+
+// Preview the welcome/login text for a staff member (no side effects).
+router.get('/staff/:id/login-message', requireRole(ROLES.MANAGE), (req, res) => {
+  const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'Staff member not found' });
+  if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only manage staff at your own location.' });
+  res.json({ message: loginMessage(u), phone: u.phone, name: u.name, sms_enabled: smsEnabled() });
+});
+
+// Reset a staff member's password to the default and TEXT them their login info.
+router.post('/staff/:id/send-login', requireRole(ROLES.MANAGE), async (req, res) => {
+  const u = db.prepare(`SELECT * FROM users WHERE id=?`).get(req.params.id);
+  if (!u) return res.status(404).json({ error: 'Staff member not found' });
+  if (!canEditStaff(req, u)) return res.status(403).json({ error: 'You can only manage staff at your own location.' });
+  if (!u.phone) return res.status(400).json({ error: 'That staff member has no phone number on file.' });
+  if (u.is_active === 0) return res.status(400).json({ error: 'That account is deactivated — reactivate it first.' });
+  // Reset to the default so the texted password actually works; staff change it on first login.
+  db.prepare(`UPDATE users SET password_hash=? WHERE id=?`).run(bcrypt.hashSync(DEFAULT_STAFF_PASSWORD, 10), u.id);
+  const r = await sendSms(u.phone, loginMessage(u));
+  auditLog(req, 'staff_send_login', 'user', u.id, { name: u.name, phone: u.phone, sent: !!r.sent, logged: !!r.logged, error: r.error || null });
+  if (!r.sent && !r.logged) return res.status(502).json({ error: `Couldn't send the text (${r.error || 'unknown'}). The password was reset to the default.`, reset: true });
+  res.json({ success: true, sent: !!r.sent, logged: !!r.logged, to: fmtPhone(u.phone), sms_enabled: smsEnabled() });
 });
 
 // ── Staff profile (full HR record) ───────────────────────────────────────────
