@@ -571,9 +571,10 @@ weight, pack & production dates, expiry/lot, `received_at` — which drives **FI
 1. **New to stock** → the panel shows a **"from the label / from the Glossary" review** (name,
    brand, weight, pack/prod/expiry dates, lot, serial) with an explicit **"✓ Confirm & add"**.
    Confirming creates the stock item at the scanning location **and** writes a **group-wide
-   Glossary entry** (recognized at every location on the next scan). It does **not** seed 0-qty
-   stock rows at the stores — a hub receipt doesn't clutter every store's list (the manual
-   Add-Item form still replicates CK items into store catalogs for ordering).
+   Glossary entry** (recognized at every location on the next scan). A new item scanned at the
+   **Central Kitchen** also seeds a 0-qty stock row at every store (linked by `source_id`) so
+   stores can order it and CK edits propagate — same as the manual Add-Item form; the **Warehouse**
+   does not replicate.
 2. **True duplicate** → a **⚠ warning with override-to-add** when it's the exact same box (GS1
    **serial** already on hand) **or** a rapid accidental re-scan of the same plain code.
    Deliberate repeat receiving of identical units still just adds to the count.
