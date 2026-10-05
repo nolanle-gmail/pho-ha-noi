@@ -4905,11 +4905,19 @@ async function renderStaffDirectory() {
 
 // Pick a staff member (searchable list) and TEXT them their portal login. Resets their password
 // to the default; the preview shows the exact message. Backend: POST /staff/:id/send-login.
+const SL_LANGS = [['en', 'English'], ['vi', 'Tiếng Việt'], ['es', 'Español']];
 function openSendLogin(rows) {
   const host = $('modalHost');
   const DEFAULT_PW = '12345678';
   const active = (rows || []).filter(u => u.is_active !== 0 && u.phone);
-  let selId = null, q = '', preview = '';
+  let selId = null, q = '', lang = 'en', preview = '';
+  // Fetch the preview for the selected staff + language; update the <pre> in place.
+  const loadPreview = async () => {
+    const forId = selId, forLang = lang;
+    preview = ''; const m = $('slMsg'); if (m) m.textContent = 'Loading preview…';
+    try { const d = await api('/staff/' + forId + '/login-message?lang=' + forLang); if (selId === forId && lang === forLang) { preview = d.message; const m2 = $('slMsg'); if (m2) m2.textContent = preview; } }
+    catch { if (selId === forId && lang === forLang) { const m2 = $('slMsg'); if (m2) m2.textContent = '(could not load preview)'; } }
+  };
   const render = () => {
     const ql = q.trim().toLowerCase(), qd = ql.replace(/\D+/g, '');
     const list = active.filter(u => !ql
@@ -4920,6 +4928,7 @@ function openSendLogin(rows) {
     host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:540px">
       <div class="row-between"><h3 style="margin:0">📱 Send login info by text</h3><button class="btn sm ghost" id="slX">✕</button></div>
       <p class="modal-note" style="margin:.4rem 0 .6rem">Texts the staff member their portal login. This <strong>resets their password to the default (${DEFAULT_PW})</strong> so it works right away; they change it after first login.</p>
+      <div class="seg" style="margin-bottom:.6rem">${SL_LANGS.map(([k, l]) => `<button type="button" class="seg-btn${lang === k ? ' active' : ''}" data-lang="${k}">${esc(l)}</button>`).join('')}</div>
       <input id="slSearch" placeholder="Search staff by name or phone…" value="${esc(q)}" style="width:100%">
       <div class="sl-list">${list.length ? list.map(u => `<button type="button" class="sl-item${u.id == selId ? ' sel' : ''}" data-pick="${u.id}"><strong>${esc(u.name)}</strong> <span class="muted">${esc(fmtPhone(u.phone))} · ${esc(roleLabel(u.role))}${u.location_name ? ' · ' + esc(shortLoc(u.location_name)) : ''}</span></button>`).join('') : '<div class="empty" style="padding:.8rem">No active staff with a phone number match.</div>'}</div>
       ${sel ? `<div class="muted" style="font-size:.8rem;margin:.5rem 0 .3rem">Message to <strong>${esc(fmtPhone(sel.phone))}</strong>:</div><pre class="sl-msg" id="slMsg">${esc(preview || 'Loading preview…')}</pre>` : '<div class="muted" style="margin:.6rem 0">Pick a staff member to text their login.</div>'}
@@ -4927,19 +4936,15 @@ function openSendLogin(rows) {
     </div></div>`;
     const close = () => { host.innerHTML = ''; };
     $('slX').onclick = close; $('slCancel').onclick = close;
+    host.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { lang = b.dataset.lang; render(); if (selId) loadPreview(); });
     const search = $('slSearch');
     search.oninput = () => { q = search.value; const pos = search.selectionStart; render(); const s = $('slSearch'); if (s) { s.focus(); s.setSelectionRange(pos, pos); } };
-    host.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => {
-      selId = b.dataset.pick; preview = ''; render();
-      const forId = selId;
-      try { const d = await api('/staff/' + forId + '/login-message'); if (selId === forId) { preview = d.message; const m = $('slMsg'); if (m) m.textContent = preview; } }
-      catch { if (selId === forId) { const m = $('slMsg'); if (m) m.textContent = '(could not load preview)'; } }
-    });
+    host.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { selId = b.dataset.pick; preview = ''; render(); loadPreview(); });
     const sendBtn = $('slSend');
     if (sendBtn && sel) sendBtn.onclick = async () => {
       sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
       try {
-        const r = await api('/staff/' + sel.id + '/send-login', { method: 'POST', body: JSON.stringify({}) });
+        const r = await api('/staff/' + sel.id + '/send-login', { method: 'POST', body: JSON.stringify({ lang }) });
         if (r.sent) toast(`✅ Login info texted to ${sel.name} (${r.to})`);
         else toast(`Password reset for ${sel.name}, but SMS isn't configured — nothing was sent.`, true);
         close();
