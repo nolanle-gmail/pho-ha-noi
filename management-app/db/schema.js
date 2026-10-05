@@ -306,11 +306,14 @@ function migrate() {
     -- ── Menu & Recipes ────────────────────────────────────────────────────
     CREATE TABLE IF NOT EXISTS menu_categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER REFERENCES locations(id),
       name TEXT NOT NULL,
-      sort_order INTEGER DEFAULT 0
+      sort_order INTEGER DEFAULT 0,
+      is_active INTEGER NOT NULL DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS menu_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id INTEGER REFERENCES locations(id),
       category_id INTEGER REFERENCES menu_categories(id),
       name TEXT NOT NULL,
       description TEXT,
@@ -1268,6 +1271,16 @@ function migrate() {
     `CREATE INDEX IF NOT EXISTS idx_toast_sel_items ON toast_selections(business_date, voided, item_name, price, quantity, check_guid)`,
     // Menu categories can be archived (hidden) like menu items — 0 = archived.
     `ALTER TABLE menu_categories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1`,
+    // Menus & recipes are now PER-LOCATION (each store owns its own, independent). Add location_id
+    // to categories & items (recipe lines inherit via their item). The previous single global menu
+    // is cleared — every location starts empty and builds its own (owner's choice, 2026-10-05).
+    `ALTER TABLE menu_categories ADD COLUMN location_id INTEGER REFERENCES locations(id)`,
+    `ALTER TABLE menu_items ADD COLUMN location_id INTEGER REFERENCES locations(id)`,
+    `DELETE FROM recipe_ingredients WHERE menu_item_id IN (SELECT id FROM menu_items WHERE location_id IS NULL)`,
+    `DELETE FROM menu_items WHERE location_id IS NULL`,
+    `DELETE FROM menu_categories WHERE location_id IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_menu_cat_loc ON menu_categories(location_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_menu_item_loc ON menu_items(location_id)`,
     // Service Flow alerts became claimable tasks with a status lifecycle. A flow
     // alert is tied to a dine-in order (flow_guid) + escalation (flow_kind); the
     // first staffer to tap "On It" claims it (claimed_by), which removes it from

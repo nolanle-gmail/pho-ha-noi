@@ -324,14 +324,17 @@ function run() {
     ]],
   ];
 
-  const insCat = db.prepare(`INSERT INTO menu_categories (name, sort_order) VALUES (?,?)`);
-  const insMenu = db.prepare(`INSERT INTO menu_items (category_id, name, description, price) VALUES (?,?,?,?)`);
+  // Menus are per-location; seed a sample menu at the flagship (San Jose = locIds[0]). Other
+  // locations start empty and build their own.
+  const menuLoc = locIds[0];
+  const insCat = db.prepare(`INSERT INTO menu_categories (location_id, name, sort_order) VALUES (?,?,?)`);
+  const insMenu = db.prepare(`INSERT INTO menu_items (location_id, category_id, name, description, price) VALUES (?,?,?,?,?)`);
   const insRec = db.prepare(`INSERT INTO recipe_ingredients (menu_item_id, item_name, quantity) VALUES (?,?,?)`);
   let menuCount = 0;
   MENU.forEach(([cat, items], ci) => {
-    const catId = insCat.run(cat, ci).lastInsertRowid;
+    const catId = insCat.run(menuLoc, cat, ci).lastInsertRowid;
     items.forEach(([name, desc, price, recipe]) => {
-      const mid = insMenu.run(catId, name, desc, price).lastInsertRowid;
+      const mid = insMenu.run(menuLoc, catId, name, desc, price).lastInsertRowid;
       recipe.forEach(([ing, qty]) => insRec.run(mid, ing, qty));
       menuCount++;
     });

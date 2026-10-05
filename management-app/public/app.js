@@ -246,7 +246,6 @@ const SECTIONS = [
   ['central', '🏭', 'Central Kitchen', 'central'],
   ['warehouse', '🏬', 'Warehouse', 'ops'],
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
-  ['menu', '🍽️', 'Menu/Recipes', 'manage'],
   ['reports', '📈', 'Reports', 'reports'],
   ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
   ['toastorders', '🧾', 'Orders', 'manage'],
@@ -380,20 +379,18 @@ function showSection(section) {
   const meta = SECTIONS.find(s => s[0] === section);
   $('pageTitle').textContent = meta ? meta[2] : 'Account Settings';
   const isInv = section === 'inventory';
-  const isMenu = section === 'menu';
   const isStaff = section === 'staff';
   const isReports = section === 'reports';
   const isMessages = section === 'messages';
   const isCentral = section === 'central';
   const isWarehouse = section === 'warehouse';
-  $('tabs').classList.toggle('hidden', !(isInv || isMenu || isStaff || isReports || isMessages || isCentral || isWarehouse));
+  $('tabs').classList.toggle('hidden', !(isInv || isStaff || isReports || isMessages || isCentral || isWarehouse));
   $('locPicker').classList.toggle('hidden', !(isInv && roleScopeOf(S.user.role) === 'all'));
   $('view').innerHTML = '<div class="empty">Loading…</div>';
   if (SVC.timer && section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; }
   if (SVC.es && section !== 'service') { SVC.es.close(); SVC.es = null; SVC.esLoc = undefined; SVC.live = ''; }
   if (section === 'service') { renderService(); return; }
   if (isInv) { renderTabs(); render(); return; }
-  if (isMenu) { renderMenuTabs(); renderMenu(); return; }
   if (isStaff) { renderStaffTabs(); renderStaffModule(); return; }
   if (isReports) { renderReportTabs(); renderReportModule(); return; }
   if (isMessages) { renderMsgTabs(); renderMessages(); refreshReqPending().then(renderMsgTabs); return; }
@@ -2851,14 +2848,15 @@ function breakLeadModal(loc) {
   }, 'Save');
 }
 
-const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service Flow'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
+const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service Flow'], ['menu', '🍽️ Menu/Recipes'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
 const LOC_ACTIVITY_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 // Service Flow tab: any manage-capability role (they can toggle & run the board for their store).
 const SF_TAB_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) =>
   (k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role)) &&
-  (k !== 'serviceflow' || SF_TAB_ROLES.includes(S.user.role)));
+  (k !== 'serviceflow' || SF_TAB_ROLES.includes(S.user.role)) &&
+  (k !== 'menu' || myCap('manage')));   // Menu/Recipes = manage-capability roles only
 function renderLocDetailTabs() {
   $('tabs').innerHTML = locTabsForMe().map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
@@ -2874,7 +2872,8 @@ async function renderLocDetail() {
   $('locBack').onclick = () => { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); };
   if (S.locTab === 'activity' && !LOC_ACTIVITY_ROLES.includes(S.user.role)) S.locTab = 'details';
   if (S.locTab === 'serviceflow' && !SF_TAB_ROLES.includes(S.user.role)) S.locTab = 'details';
-  ({ details: () => renderLocInfo(loc), serviceflow: () => renderLocSfTab(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, performance: () => renderLocPerformance(loc), floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
+  if (S.locTab === 'menu' && !myCap('manage')) S.locTab = 'details';
+  ({ details: () => renderLocInfo(loc), serviceflow: () => renderLocSfTab(loc), menu: () => renderLocMenu(loc), staff: renderLocStaff, schedule: renderLocSchedule, daytasks: renderLocDayTasks, timeclock: renderLocTimeClock, performance: () => renderLocPerformance(loc), floorplan: renderLocFloorPlan, equipment: renderLocEquipment, activity: renderLocActivity }[S.locTab])();
 }
 
 // ── Location activity trail (Owner/Admin/GM/Manager; manager = own location) ──
@@ -5285,15 +5284,18 @@ function renderPlaceholder(title, icon, subtitle) {
     </div>`;
 }
 
-// ── Menu / Recipes module (horizontal tabs) ────────────────────────────────
+// ── Menu / Recipes module — PER LOCATION (lives in the location detail page) ───
+// Each location owns its own menu, recipes and costing. The views below render into
+// #menuView inside the location detail body, scoped to S.menuLoc (= the location id).
 const MENU_TABS = [['menu', 'Menu'], ['recipes', 'Recipes'], ['costing', 'Costing']];
-function renderMenuTabs() {
-  $('tabs').innerHTML = MENU_TABS.map(([k, l]) => `<button data-mtab="${k}" class="${S.menuTab === k ? 'active' : ''}">${l}</button>`).join('');
-  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.menuTab = b.dataset.mtab; renderMenuTabs(); renderMenu(); });
-}
-function renderMenu() {
-  $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ menu: renderMenuList, recipes: renderRecipes, costing: renderCosting }[S.menuTab])();
+const menuQ = (p) => p + (p.includes('?') ? '&' : '?') + 'location_id=' + (S.menuLoc || '');
+function renderLocMenu(loc) {
+  S.menuLoc = loc.id;
+  if (!MENU_TABS.some(t => t[0] === S.menuTab)) S.menuTab = 'menu';
+  $('locBody').innerHTML = `<div class="seg" style="margin:.2rem 0 .9rem">${MENU_TABS.map(([k, l]) => `<button class="seg-btn ${S.menuTab === k ? 'active' : ''}" data-mtab="${k}">${esc(l)}</button>`).join('')}</div>
+    <div id="menuView"><div class="empty">Loading…</div></div>`;
+  $('locBody').querySelectorAll('[data-mtab]').forEach(b => b.onclick = () => { S.menuTab = b.dataset.mtab; renderLocMenu(loc); });
+  ({ menu: renderMenuList, recipes: renderRecipes, costing: renderCosting }[S.menuTab] || renderMenuList)();
 }
 function foodPctBadge(pct) {
   if (pct == null) return '<span class="badge gray">—</span>';
@@ -5305,13 +5307,13 @@ const foodClass = (pct) => pct == null ? '' : (pct <= 30 ? '' : (pct <= 40 ? 'wa
 async function renderMenuList() {
   // Fetch everything (?all=1) so we can count archived, then show only active unless
   // the "Show archived" toggle is on. Archiving hides an item without deleting it.
-  const [allItems, allCats] = await Promise.all([api('/menu/items?all=1'), api('/menu/categories?all=1')]);
+  const [allItems, allCats] = await Promise.all([api(menuQ('/menu/items?all=1')), api(menuQ('/menu/categories?all=1'))]);
   const showArch = !!S.menuShowArchived;
   const activeCats = allCats.filter(c => c.is_active);
   const archivedCount = allItems.filter(m => !m.is_active).length;
   const activeCount = allItems.length - archivedCount;
   const items = showArch ? allItems : allItems.filter(m => m.is_active);
-  $('view').innerHTML = `
+  $('menuView').innerHTML = `
     <div class="row-between"><h2 class="page">Menu <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${activeCount} active${archivedCount ? ` · ${archivedCount} archived` : ''}</span></h2>
       <div style="display:flex;gap:.5rem">
         ${archivedCount ? `<button class="btn sm ghost" id="toggleArch">${showArch ? 'Hide archived' : `Show archived (${archivedCount})`}</button>` : ''}
@@ -5335,18 +5337,18 @@ async function renderMenuList() {
         </div></td>
       </tr>`).join('') : `<tr><td colspan="7" class="empty">${archivedCount && !showArch ? 'No active menu items — click “Show archived” to see archived ones.' : 'No menu items yet.'}</td></tr>`}
     </tbody></table></div>`;
-  const tg = $('toggleArch'); if (tg) tg.onclick = () => { S.menuShowArchived = !S.menuShowArchived; renderMenu(); };
+  const tg = $('toggleArch'); if (tg) tg.onclick = () => { S.menuShowArchived = !S.menuShowArchived; renderMenuList(); };
   $('addCat').onclick = () => modal('Add category', [
     { key: 'name', label: 'Category name' }, { key: 'sort_order', label: 'Sort order', type: 'number', value: activeCats.length },
-  ], async (v) => { await api('/menu/categories', { method: 'POST', body: JSON.stringify(v) }); toast('Category added'); renderMenu(); });
+  ], async (v) => { await api('/menu/categories', { method: 'POST', body: JSON.stringify({ ...v, location_id: S.menuLoc }) }); toast('Category added'); renderMenuList(); });
   $('addMenuItem').onclick = () => menuItemModal(null, activeCats);
-  $('view').querySelectorAll('[data-mact]').forEach(b => b.onclick = () => {
+  $('menuView').querySelectorAll('[data-mact]').forEach(b => b.onclick = () => {
     const m = items.find(x => x.id == b.dataset.id);
-    if (b.dataset.mact === 'recipe') { recipeEdit.itemId = m.id; S.menuTab = 'recipes'; renderMenuTabs(); renderMenu(); }
+    if (b.dataset.mact === 'recipe') { recipeEdit.itemId = m.id; S.menuTab = 'recipes'; renderLocMenu({ id: S.menuLoc }); }
     else if (b.dataset.mact === 'edit') menuItemModal(m, activeCats);
-    else if (b.dataset.mact === 'archive') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 0 }) }).then(() => { toast(`“${m.name}” archived`); renderMenu(); }); }
-    else if (b.dataset.mact === 'restore') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 1 }) }).then(() => { toast(`“${m.name}” restored`); renderMenu(); }); }
-    else if (b.dataset.mact === 'del') modal(`Permanently delete “${m.name}”? This cannot be undone.`, [], async () => { await api('/menu/items/' + m.id, { method: 'DELETE' }); toast('Menu item deleted'); renderMenu(); }, 'Delete');
+    else if (b.dataset.mact === 'archive') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 0 }) }).then(() => { toast(`“${m.name}” archived`); renderMenuList(); }); }
+    else if (b.dataset.mact === 'restore') { api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify({ is_active: 1 }) }).then(() => { toast(`“${m.name}” restored`); renderMenuList(); }); }
+    else if (b.dataset.mact === 'del') modal(`Permanently delete “${m.name}”? This cannot be undone.`, [], async () => { await api('/menu/items/' + m.id, { method: 'DELETE' }); toast('Menu item deleted'); renderMenuList(); }, 'Delete');
   });
 }
 
@@ -5358,9 +5360,9 @@ function menuItemModal(m, cats) {
     { key: 'price', label: 'Price ($)', type: 'number', step: '0.01', value: m ? m.price : 0 },
     { key: 'description', label: 'Description', value: m ? m.description : '' },
   ], async (v) => {
-    if (isNew) { await api('/menu/items', { method: 'POST', body: JSON.stringify(v) }); toast('Menu item added'); }
+    if (isNew) { await api('/menu/items', { method: 'POST', body: JSON.stringify({ ...v, location_id: S.menuLoc }) }); toast('Menu item added'); }
     else { await api('/menu/items/' + m.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Menu item updated'); }
-    renderMenu();
+    renderMenuList();
   }, isNew ? 'Add item' : 'Save');
 }
 
@@ -5368,12 +5370,12 @@ function menuItemModal(m, cats) {
 let recipeEdit = { itemId: null, list: [] };
 let ingCostMap = {};
 async function renderRecipes() {
-  const [items, ingredients] = await Promise.all([api('/menu/items'), api('/menu/ingredients')]);
+  const [items, ingredients] = await Promise.all([api(menuQ('/menu/items')), api(menuQ('/menu/ingredients'))]);
   ingCostMap = {}; ingredients.forEach(i => { ingCostMap[i.item_name] = { unit: i.unit, avg_cost: i.avg_cost }; });
-  if (!items.length) { $('view').innerHTML = '<div class="empty">Add a menu item first.</div>'; return; }
+  if (!items.length) { $('menuView').innerHTML = '<div class="empty">Add a menu item first.</div>'; return; }
   const selId = items.some(m => m.id == recipeEdit.itemId) ? recipeEdit.itemId : items[0].id;
   recipeEdit.itemId = selId;
-  $('view').innerHTML = `
+  $('menuView').innerHTML = `
     <div class="row-between"><h2 class="page">Recipes</h2>
       <select id="recItem">${items.map(m => `<option value="${m.id}" ${m.id == selId ? 'selected' : ''}>${esc(m.name)} — ${money(m.price)}</option>`).join('')}</select></div>
     <div id="recipeEditor"><div class="empty">Loading…</div></div>`;
@@ -5424,8 +5426,8 @@ function renderRecipeEditor(ingredients, item) {
 }
 
 async function renderCosting() {
-  const data = await api('/menu/costing');
-  $('view').innerHTML = `
+  const data = await api(menuQ('/menu/costing'));
+  $('menuView').innerHTML = `
     <h2 class="page">Costing <span style="font-weight:400;color:var(--muted);font-size:.9rem">— recipe cost & food-cost %</span></h2>
     <div class="kpis">
       <div class="card"><div class="label">Priced items</div><div class="value">${data.priced_count}</div></div>
@@ -5441,7 +5443,7 @@ async function renderCosting() {
         <td>${m.ingredient_count ? foodPctBadge(m.food_cost_pct) : '<span class="badge gray">no recipe</span>'}</td>
       </tr>`).join('')}
     </tbody></table></div>
-    <p class="sub" style="margin-top:.8rem;color:var(--muted)">Food cost % uses each ingredient's average inventory unit cost across active locations. Target: ≤ 30% (green), 30–40% (amber), &gt; 40% (red).</p>`;
+    <p class="sub" style="margin-top:.8rem;color:var(--muted)">Food cost % uses each ingredient's unit cost from <strong>this location's</strong> inventory. Target: ≤ 30% (green), 30–40% (amber), &gt; 40% (red).</p>`;
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────

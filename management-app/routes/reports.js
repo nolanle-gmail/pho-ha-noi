@@ -158,10 +158,11 @@ router.get('/analytics', requireRole(ROLES.REPORTS), (req, res) => {
   if (locId) { tconds.push('t.location_id=?'); targs.push(locId); }
   const labor = db.prepare(`SELECT ROUND(COALESCE(SUM(t.worked_minutes / 60.0 * u.hourly_rate),0),2) cost FROM time_entries t
     JOIN users u ON t.user_id=u.id WHERE ${tconds.join(' AND ')}`).get(...targs).cost;
-  // Menu food-cost % (average across priced items; menu is global)
-  const costs = {}; db.prepare(`SELECT item_name, AVG(unit_cost) c FROM inventory WHERE is_active=1 GROUP BY item_name`).all().forEach(r => costs[r.item_name] = r.c || 0);
+  // Menu food-cost % (average across priced items). Menus are per-location, so scope to the
+  // selected location's menu + inventory costs; with no location, average across all stores.
+  const costs = {}; db.prepare(`SELECT item_name, AVG(unit_cost) c FROM inventory WHERE is_active=1 ${locId ? 'AND location_id=?' : ''} GROUP BY item_name`).all(...(locId ? [locId] : [])).forEach(r => costs[r.item_name] = r.c || 0);
   const fps = [];
-  db.prepare(`SELECT id, price FROM menu_items WHERE is_active=1 AND price>0`).all().forEach(it => {
+  db.prepare(`SELECT id, price FROM menu_items WHERE is_active=1 AND price>0 ${locId ? 'AND location_id=?' : ''}`).all(...(locId ? [locId] : [])).forEach(it => {
     const c = db.prepare(`SELECT item_name, quantity FROM recipe_ingredients WHERE menu_item_id=?`).all(it.id)
       .reduce((s, i) => s + i.quantity * (costs[i.item_name] || 0), 0);
     if (c > 0) fps.push(c / it.price * 100);
