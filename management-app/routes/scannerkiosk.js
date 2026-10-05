@@ -29,7 +29,7 @@ function throttle(req, res, next) {
 }
 
 const locDisplay = (name) => String(name || '').replace(/\s*[—–-]\s*/, ' ');
-const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone FROM locations WHERE is_active=1`).all()
+const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone, type FROM locations WHERE is_active=1`).all()
   .find(l => normSlug(l.slug || '') === normSlug(slug) || normSlug(l.name) === normSlug(slug));
 const greetingWord = (tz) => { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'America/Los_Angeles', hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
 const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(c);
@@ -71,7 +71,7 @@ router.get('/kiosk-locations', (req, res) => {
 router.get('/kiosk/:slug', (req, res) => {
   const loc = locBySlug(req.params.slug);
   if (!loc) return res.status(404).json({ error: 'Unknown location.' });
-  res.json({ id: loc.id, name: loc.name, display: locDisplay(loc.name) });
+  res.json({ id: loc.id, name: loc.name, display: locDisplay(loc.name), type: loc.type });
 });
 
 // Identify: enter an employee code → greeting (reveals the scanner).
