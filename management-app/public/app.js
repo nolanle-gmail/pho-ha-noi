@@ -1290,10 +1290,18 @@ function statusBadge(qty, min) {
 function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'inventory') render(); }
 
 async function openScanner() {
+  // The Warehouse & Central Kitchen are distribution hubs, so their scanner offers the full set:
+  // Receiving, Shipping (fulfill store orders), Transferring (ad-hoc move) and Checking Inventory.
+  // Other sections keep the compact Receive / Ship / Check.
+  const isDist = (S.section === 'central' || S.section === 'warehouse');
+  const MODES = isDist
+    ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory']]
+    : [['receive', '📥 Receive'], ['ship', '📤 Ship'], ['check', '📋 Check']];
+  const modesHtml = MODES.map((m, i) => `<button class="btn sm${i ? ' ghost' : ''}" data-mode="${m[0]}">${m[1]}</button>`).join('');
   const host = document.createElement('div'); host.className = 'scan-overlay';
   host.innerHTML = `<div class="scan-card">
     <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
-    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receive</button><button class="btn sm ghost" data-mode="ship">📤 Ship</button><button class="btn sm ghost" data-mode="check">📋 Check</button></div>
+    <div class="scan-modes">${modesHtml}</div>
     <div id="shipBar" class="ship-bar" hidden></div>
     <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
     <div id="scanPanel"></div>
@@ -1318,15 +1326,24 @@ async function openScanner() {
   async function setMode(m) {
     mode = m;
     host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
-    $('shipBar').hidden = m !== 'ship';
-    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : '📠 Ready — scan a barcode with your scanner.');
-    if (m === 'ship' && !$('shipBar').dataset.loaded) {
+    // Shipping and Transferring both pick a destination; only Shipping shows the order-fill list.
+    const wantsDest = (m === 'ship' || m === 'transfer');
+    $('shipBar').hidden = !wantsDest;
+    $('scanMsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship — open orders fill automatically.'
+      : m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.'
+      : m === 'check' ? 'Scan an item to see stock across all locations.'
+      : '📠 Ready — scan a barcode with your scanner.';
+    if (wantsDest && !$('shipBar').dataset.loaded) {
       $('shipBar').dataset.loaded = '1';
       let tgts = []; try { tgts = await api('/inventory/ship/targets?from_location_id=' + invLoc()); } catch { /* ignore */ }
-      $('shipBar').innerHTML = `<label class="ship-lbl">Ship from <strong>${esc(invName())}</strong> to</label>
+      $('shipBar').innerHTML = `<label class="ship-lbl" id="shipLbl">Ship from <strong>${esc(invName())}</strong> to</label>
         <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(shortLoc(t.name))}${t.type === 'central_kitchen' ? ' (CK)' : t.type === 'warehouse' ? ' (WH)' : ''}</option>`).join('')}</select>
         <div id="shipOrders"></div>`;
-      $('shipTo').onchange = loadShipOrders;
+      $('shipTo').onchange = () => { if (mode === 'ship') loadShipOrders(); };
+    }
+    if (wantsDest) {
+      const lbl = $('shipLbl'); if (lbl) lbl.innerHTML = (m === 'transfer' ? 'Transfer from ' : 'Ship from ') + `<strong>${esc(invName())}</strong> to`;
+      const ords = $('shipOrders'); if (ords) { if (m === 'ship') loadShipOrders(); else ords.innerHTML = ''; }
     }
   }
   host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
@@ -1334,8 +1351,8 @@ async function openScanner() {
     if (busy) return; busy = true;
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : (mode === 'check' ? 'Scan another item to check.' : '📠 Ready — scan the next barcode.'); focusManual(); };
-    if (mode === 'ship') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders);
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? 'Scan the next item to ship.' : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : '📠 Ready — scan the next barcode.'); focusManual(); };
+    if (mode === 'ship' || mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), loadShipOrders, mode === 'transfer' ? 'Transfer' : 'Ship');
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
     else await handleScan(code, $('scanPanel'), done);
   };
@@ -1451,19 +1468,23 @@ async function handleScan(code, panel, next) {
 
 // Scan-to-ship: move the scanned item from the current location to a chosen destination,
 // filling a matching open order line when the destination has one.
-async function handleShip(code, panel, next, to, toName, refreshOrders) {
-  if (!to) { panel.innerHTML = '<div class="scan-unknown">Pick a destination above, then scan an item to ship.</div>'; setTimeout(next, 1400); return; }
+async function handleShip(code, panel, next, to, toName, refreshOrders, verb) {
+  verb = verb || 'Ship';                                   // 'Ship' (fulfill orders) or 'Transfer' (ad-hoc)
+  const vIcon = verb === 'Transfer' ? '🔁' : '📤';
+  const vPast = verb === 'Transfer' ? 'Transferred' : 'Shipped';
+  if (!to) { panel.innerHTML = `<div class="scan-unknown">Pick a destination above, then scan an item to ${verb.toLowerCase()}.</div>`; setTimeout(next, 1400); return; }
   panel.innerHTML = '<div class="muted">Looking up…</div>';
   let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
   const key = r.code || code;
-  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to ship from here. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to ${verb.toLowerCase()} from here. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
   const it = r.item; const cw = !!it.is_catch_weight;
-  const dest = (toName || '').replace(/\s*\(CK\)\s*$/, '').trim();
+  const dest = (toName || '').replace(/\s*\((CK|WH)\)\s*$/, '').trim();
   let dflt = (r.parsed && r.parsed.weightLb) || 1;
-  try { const ords = await api('/inventory/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ }
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>${scanLangs(r.glossary)}${scanSection(it)}
-    <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any" title="Qty to ship (${esc(it.unit)})"><span class="muted">→ ${esc(dest)}</span></div>
-    <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
+  // Shipping defaults the qty to an open order's remaining; a plain transfer doesn't look at orders.
+  if (verb === 'Ship') { try { const ords = await api('/inventory/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ } }
+  panel.innerHTML = `<div class="scan-found">${vIcon} <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand here</span>${scanLangs(r.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any" title="Qty to ${verb.toLowerCase()} (${esc(it.unit)})"><span class="muted">→ ${esc(dest)}</span></div>
+    <div class="scan-act"><button class="btn" id="shGo">${vIcon} ${verb}</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
   $('shNext').onclick = next;
   $('shGo').onclick = async () => {
     const btn = $('shGo'); if (btn.disabled) return; btn.disabled = true;
@@ -1472,7 +1493,7 @@ async function handleShip(code, panel, next, to, toName, refreshOrders) {
     try {
       let rr = await api('/inventory/barcode/transfer', { method: 'POST', body: JSON.stringify(body) });
       if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/inventory/barcode/transfer', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
-      toast(`Shipped ${numf(qv)} ${esc(it.unit)} → ${esc(dest)}${rr.order ? (rr.order.shipped ? ' · order line complete ✅' : ` · order ${numf(rr.order.ck_qty)}/${numf(rr.order.requested_qty)}`) : ''}`);
+      toast(`${vPast} ${numf(qv)} ${esc(it.unit)} → ${esc(dest)}${rr.order ? (rr.order.shipped ? ' · order line complete ✅' : ` · order ${numf(rr.order.ck_qty)}/${numf(rr.order.requested_qty)}`) : ''}`);
       invRefresh(); if (refreshOrders) refreshOrders(); next();
     } catch (e) { toast(e.message, true); btn.disabled = false; }
   };
