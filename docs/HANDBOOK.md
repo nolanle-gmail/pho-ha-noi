@@ -569,7 +569,8 @@ weight, pack & production dates, expiry/lot, `received_at` — which drives **FI
 `scan_events`.
 
 1. **New to stock** → the panel shows a **"from the label / from the Glossary" review** (name,
-   brand, weight, pack/prod/expiry dates, lot, serial) with an explicit **"✓ Confirm & add"**.
+   brand, weight, pack/prod/expiry dates, lot, serial) plus editable fields including a **Shelf /
+   Section** (type-or-pick; creates the shelf on the fly), with an explicit **"✓ Confirm & add"**.
    Confirming creates the stock item at the scanning location **and** writes a **group-wide
    Glossary entry** (recognized at every location on the next scan). A new item scanned at the
    **Central Kitchen** also seeds a 0-qty stock row at every store (linked by `source_id`) so
@@ -741,17 +742,18 @@ Flow after a scan:
 chain, first hit wins, so coverage is far higher than a single food database:
 
 1. **`product_catalog`** — a **group-wide dictionary** keyed by barcode, shared across every
-   location. The first time anyone names a barcode (create or link) it's stored here as
-   `source='staff'` (authoritative); when an external source resolves one it's cached as
-   `source='external'`. So a Kirkland/private-label item named once at any store auto-fills
-   everywhere after, and repeat scans are instant.
+   location. A barcode is stored here **only when the item is confirmed and added to stock**
+   (create or link), as `source='staff'` (authoritative) — so an unconfirmed scan never
+   pollutes the dictionary. Once named at any store it auto-fills everywhere after.
 2. **Open Food Facts** + its non-food sister DBs (**Open Products / Beauty / Pet Food
    Facts**) — free, community.
 3. **UPCitemdb** free trial — broad general-merchandise catalog (name / brand / size); this
    is what catches the non-food items Open Food Facts misses.
 
-External hits are cached back into `product_catalog` (a staff name is never downgraded by a
-later external hit). **Price is deliberately not fetched** — a GTIN carries no price, and
+An online name lookup runs **in the background** (the add form opens immediately and the name
+fills in when it returns) and its result is held in a per-process **in-memory cache**, not the
+Glossary — nothing is written to `product_catalog` until the item is confirmed. **Price is
+deliberately not fetched** — a GTIN carries no price, and
 online-listing APIs return wildly varying figures; item cost is `unit_cost`, entered once.
 The one exception: **weighed / price-embedded in-store barcodes** (Type-2 UPC-A beginning
 with `2`) are detected locally and their embedded price is decoded (no lookup — that number
