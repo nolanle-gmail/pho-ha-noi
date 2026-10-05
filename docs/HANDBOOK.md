@@ -877,21 +877,31 @@ already offers every active location except self.
 
 ### 3.7 Menu & recipes
 
-Menu items belong to categories; each item's `recipe_ingredients` link to inventory
-items by name, so food cost is computed live from real stock unit costs.
+Menus & recipes are **per location** — each store owns its own, independent menu
+(`menu_categories` and `menu_items` both carry a `location_id`). They live **under
+Locations**: open a location (Locations → Manage → **🍽️ Menu/Recipes**, manage-capability
+roles only) to edit that store's Menu, Recipes and Costing. Each item's
+`recipe_ingredients` link to inventory items by name, and **costing uses that location's
+own inventory unit costs**, so food-cost % reflects the store's real costs. Endpoints are
+scoped by `?location_id=` (`/api/menu/{categories,items,ingredients,costing}` +
+`/api/menu/items/:id/recipe`).
 
 ```mermaid
 erDiagram
+  locations ||--o{ menu_categories : "owns"
+  locations ||--o{ menu_items : "owns"
   menu_categories ||--o{ menu_items : "groups"
   menu_items ||--o{ recipe_ingredients : "costs from"
-  inventory ||..o{ recipe_ingredients : "by item_name"
+  inventory ||..o{ recipe_ingredients : "by item_name (same location)"
   menu_categories {
     int id PK
+    int location_id FK
     text name
     int sort_order
   }
   menu_items {
     int id PK
+    int location_id FK
     int category_id FK
     text name
     real price
