@@ -632,15 +632,16 @@ weight, pack & production dates, expiry/lot, `received_at` — which drives **FI
    stores can order it and CK edits propagate — same as the manual Add-Item form; the **Warehouse**
    does not replicate.
 2. **True duplicate** → a **⚠ warning with override-to-add** when it's the exact same box: a GS1
-   **serial** already on hand, **or** — when a label carries no serial — the **same GTIN with the
-   same net weight AND the same label date** already in stock here (very likely the same physical box
-   scanned again): *"You may be scanning the same item again… Please confirm before adding it."* The
-   scanner must confirm before the count/weight is added. The "date" is whichever the label carries —
-   GS1 **(13) pack date OR (11) production date** (meat/case labels usually use production date) —
-   matched against the same column on the stored lot. A rapid accidental re-scan of the same plain
-   code is also flagged. Deliberate repeat receiving of genuinely different units still just adds to
-   the count. (The same-box check needs **both** a weight and a date, so a plain count item with no
-   weight is never caught this way.)
+   **serial** already on hand, **or** the **same GTIN with the same net weight AND the same label
+   date** already in stock here — **checked whether or not the label carries a serial** (meat/case
+   labels carry a per-box serial, but a re-scan of that box, or another box of the same batch with
+   the same weight + date, should still be confirmed): *"You may be scanning the same item again…
+   Please confirm before adding it."* The scanner must confirm before the count/weight is added. The
+   "date" is whichever the label carries — GS1 **(13) pack date OR (11) production date** (meat/case
+   labels usually use production date) — matched against the same column on the stored lot. A rapid
+   accidental re-scan of the same plain code is also flagged. A genuinely different box (different
+   weight *and* date) still just adds. (The same-box check needs **both** a weight and a date, so a
+   plain count item with no weight is never caught this way.)
 3. **Already in stock, a different box** → same GTIN with a **different weight / pack date / lot**
    shows an amber **"↔ different from the last box"** note plus a **live new-total preview**, so
    the operator reviews the box's data before adding to the total (**weight** for a catch-weight
