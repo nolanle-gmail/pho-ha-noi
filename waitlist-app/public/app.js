@@ -1510,6 +1510,12 @@ const DISPLAY_STATUS = {
 const LEGACY_DISPLAY = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
 const dispKey = (t) => t.display || LEGACY_DISPLAY[t.status] || 'available';
 const dispOf = (t) => DISPLAY_STATUS[dispKey(t)] || DISPLAY_STATUS.available;
+// A table's caption span, shrunk to fit inside the circle for a long label (matches the Floor Board).
+function ftLabel(label) {
+  const s = String(label == null ? '' : label);
+  const fs = s.length > 3 ? ` style="font-size:${Math.max(0.34, 2.4 / s.length).toFixed(2)}rem"` : '';
+  return `<span class="ftable-l"${fs}>${esc(s)}</span>`;
+}
 // Guest count is optional to display — governs the party-size chip on the Table
 // Map. Stored per-device; tooltips always keep the detail on hover.
 function showGuests() { return localStorage.getItem('phn_show_guests') !== '0'; }
@@ -1522,7 +1528,7 @@ function statusTableEl(t) {
   const tip = occ ? lbl + (t.guest_name ? ' \u00b7 ' + esc(t.guest_name) : '') + (t.party_size ? ' \u00b7 ' + t.party_size + ' guests' : '') + (t.server_name ? ' \u00b7 ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
   const srv = t.server_name ? `<span class="ftable-srv">${esc(t.server_name.split(' ')[0])}</span>` : '';
   const badge = t.check_due ? '<span class="ftable-due">\u23f0</span>' : '';
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} \u00b7 ${tip}">${ftLabel(t.label)}<span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
 }
 function fpBoardHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
@@ -2571,7 +2577,7 @@ function ftableEl(t, ci, mode) {
   const cls = ['ftable', t.shape === 'square' ? 'sq' : '', t.occupied ? 'occ' : '', t.is_active === 0 ? 'off' : ''].filter(Boolean).join(' ');
   const attr = mode === 'pick' ? (t.occupied ? '' : ` data-pick="${esc(t.label)}"`) : (mode === 'edit' ? ` data-tid="${t.id}"` : '');
   const title = t.occupied ? 'Occupied · ' + esc(t.guest || '') : `${esc(t.label)} · ${t.seats} seats`;
-  return `<div class="${cls}"${attr} style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${areaColorHex(ci)}" title="${title}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+  return `<div class="${cls}"${attr} style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${areaColorHex(ci)}" title="${title}">${ftLabel(t.label)}<span class="ftable-s">${t.seats}p</span></div>`;
 }
 
 // Seat a party by tapping a table on the floor map (occupied tables are greyed).
@@ -2582,7 +2588,7 @@ async function seatModal(id, name) {
   try { fp = await api(q('/floormap')); } catch { fp = { areas: [] }; }
   const tablesHtml = fp.areas.flatMap(a => a.tables).map(t => {
     if (t.status !== 'available') return statusTableEl(t); // occupied → shown greyed, not pickable
-    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats">${ftLabel(t.label)}<span class="ftable-s">${t.seats}p</span></div>`;
   }).join('');
   const body = `<p class="sub" style="margin:.1rem 0 .5rem">Tap a free (green) table for <strong>${esc(name)}</strong>.</p>
     ${statusLegend(fp)}
@@ -2658,7 +2664,7 @@ async function walkInModal() {
   try { fp = await api(q('/floormap')); } catch { fp = { areas: [] }; }
   const tablesHtml = fp.areas.flatMap(a => a.tables).map(t => {
     if (t.status !== 'available') return statusTableEl(t); // occupied → greyed, not pickable
-    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}" data-pick="${t.id}" data-label="${esc(t.label)}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:#16a34a;--abg:#dcfce7" title="${esc(t.label)} · ${t.seats} seats">${ftLabel(t.label)}<span class="ftable-s">${t.seats}p</span></div>`;
   }).join('');
   const body = `
     <label>Guest name (optional)</label><input id="wName" placeholder="e.g. Walk-in" />

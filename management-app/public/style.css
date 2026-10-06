@@ -601,7 +601,7 @@ tr:hover .order-hover { opacity: 1; }
   border-radius: 50%; background: var(--abg, #fff); border: 2px solid var(--ac, #2b5bd7); color: var(--ac, #2b5bd7);
   display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; box-shadow: 0 1px 3px #0002; user-select: none; cursor: pointer; }
 .floor-board .ftable.sq { border-radius: 9px; }
-.ftable-l { font-size: .8rem; font-weight: 800; }
+.ftable-l { font-size: .8rem; font-weight: 800; white-space: nowrap; line-height: 1; }
 .ftable-s { font-size: .56rem; font-weight: 600; opacity: .75; margin-top: 1px; }
 .floor-board.editable .ftable { cursor: grab; }
 .ftable.drag { cursor: grabbing; box-shadow: 0 8px 18px #0003; z-index: 6; }

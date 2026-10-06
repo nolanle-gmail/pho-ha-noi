@@ -2992,7 +2992,7 @@ function fpMiniTable(t) {
   const tip = occ ? `${lbl}${t.guest_name ? ' · ' + esc(t.guest_name) : ''}${t.party_size ? ' · ' + t.party_size + ' guests' : ''}${t.server_name ? ' · ' + esc(t.server_name) : ''}${t.check_due ? ' · check overdue' : ''}` : `Available · ${t.seats} seats`;
   const sub = occ && t.party_size && showGuests() ? `<span class="ftable-s">${t.party_size}👤</span>` : '';
   const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
-  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span>${sub}${badge}</div>`;
+  return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}">${ftLabel(t.label)}${sub}${badge}</div>`;
 }
 function fpSnapshotHtml(fp) {
   const all = fp.areas.flatMap(a => a.tables);
@@ -4414,6 +4414,13 @@ const DISPLAY_STATUS = {
 const LEGACY_DISPLAY = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
 const dispKey = (t) => t.display || LEGACY_DISPLAY[t.status] || 'available';
 const dispOf = (t) => DISPLAY_STATUS[dispKey(t)] || DISPLAY_STATUS.available;
+// A table's caption span, shrunk to fit inside the circle for a long label (e.g. "BAR 10A",
+// "Outdoor") — same idea as the TV Floor Board, so the two surfaces look alike.
+function ftLabel(label) {
+  const s = String(label == null ? '' : label);
+  const fs = s.length > 3 ? ` style="font-size:${Math.max(0.34, 2.4 / s.length).toFixed(2)}rem"` : '';
+  return `<span class="ftable-l"${fs}>${esc(s)}</span>`;
+}
 const FP_AREA_COLORS = ['#2b5bd7', '#b4630b', '#1e7e34', '#7a1420', '#6d28d9', '#0e7490', '#be185d'];
 // Guest count is optional — some managers prefer a cleaner board. The choice is a
 // per-user preference (stored locally) and governs the party-size chip on every
@@ -4431,7 +4438,7 @@ async function renderLocFloorPlan() {
   const all = fp.areas.flatMap((a, ai) => a.tables.map(t => ({ ...t, _ci: ai })));
   const areaOptions = (sel) => fp.areas.map(a => `<option value="${a.id}" ${String(a.id) === String(sel) ? 'selected' : ''}>${esc(a.name)}</option>`).join('');
   const tEl = (t) => {
-    if (edit) return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}" data-tid="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${FP_AREA_COLORS[t._ci % FP_AREA_COLORS.length]}" title="${esc(t.label)} · ${t.seats} seats"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${t.seats}p</span></div>`;
+    if (edit) return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}" data-tid="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${FP_AREA_COLORS[t._ci % FP_AREA_COLORS.length]}" title="${esc(t.label)} · ${t.seats} seats">${ftLabel(t.label)}<span class="ftable-s">${t.seats}p</span></div>`;
     const [lbl, c, bg] = dispOf(t);
     const occ = dispKey(t) !== 'available';
     const sub = occ ? `${showGuests() && t.party_size ? t.party_size + '👤' : ''}${t.minutes_to_free != null ? ' ~' + t.minutes_to_free + 'm' : ''}`.trim() : `${t.seats}p`;
@@ -4439,7 +4446,7 @@ async function renderLocFloorPlan() {
     const tip = occ ? lbl + (t.guest_name ? ' · ' + esc(t.guest_name) : '') + (t.server_name ? ' · ' + esc(t.server_name) : '') + chk : 'available, ' + t.seats + ' seats';
     const srv = t.server_name ? `<span class="ftable-srv">${esc(t.server_name.split(' ')[0])}</span>` : '';
     const badge = t.check_due ? '<span class="ftable-due">⏰</span>' : '';
-    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}"><span class="ftable-l">${esc(t.label)}</span><span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
+    return `<div class="ftable ${t.shape === 'square' ? 'sq' : ''}${t.check_due ? ' due' : ''}" data-tbl="${t.id}" style="left:${t.pos_x}%;top:${t.pos_y}%;--ac:${c};--abg:${bg}" title="${esc(t.label)} · ${tip}">${ftLabel(t.label)}<span class="ftable-s">${esc(sub)}</span>${badge}${srv}</div>`;
   };
   // Area name labels above each area's first row (view mode only — hidden while dragging).
   const bands = edit ? '' : fp.areas.map(a => {

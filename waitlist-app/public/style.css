@@ -315,7 +315,7 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: 
   display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
   box-shadow: 0 1px 3px #0002; user-select: none; }
 .ftable.sq { border-radius: 9px; }
-.ftable-l { font-size: .82rem; font-weight: 800; }
+.ftable-l { font-size: .82rem; font-weight: 800; white-space: nowrap; line-height: 1; }
 .ftable-s { font-size: .58rem; font-weight: 600; opacity: .7; margin-top: 1px; }
 .floor-board.editable .ftable { cursor: grab; }
 .floor-board.readonly .ftable { cursor: default; }   /* kitchen view-only floor */
