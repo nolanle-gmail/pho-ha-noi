@@ -69,7 +69,7 @@
   .apanel-h .nm{ overflow:hidden; text-overflow:ellipsis; }
   .apanel-h .ct{ color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums; }
   .apanel-b{ flex:1 1 auto; display:flex; flex-wrap:wrap; align-content:center; justify-content:center;
-    gap:calc(var(--pt) * .18); padding:calc(var(--pt) * .16); overflow:hidden; }
+    gap:8px; padding:10px; overflow:hidden; }
   .pt{ width:var(--pt); height:var(--pt); border-radius:50%; border:calc(var(--pt) * .09) solid var(--c);
     background:var(--bg); color:var(--c); display:flex; flex-direction:column; align-items:center; justify-content:center;
     text-align:center; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.1); }
@@ -206,14 +206,18 @@ function drawMap(d, availW, availH, ratio) {
   board.style.setProperty('--tb', Math.max(3, tw * 0.09) + 'px');
 }
 
-// Largest circle size so `c` tiles fit in a W×H panel body (grid-ish wrap).
+// Largest circle size so `c` tiles fit in a panel of outer size W×H. Accounts for the
+// real CSS insets (panel border ~4px, body padding 10px each side, 8px gap) so the fit is
+// exact — an over-optimistic estimate was letting tiles overflow and clip.
 function tileFit(W, H, c) {
-  if (c <= 0 || W <= 0 || H <= 0) return 40;
-  for (let t = Math.min(W, H); t > 22; t -= 2) {
-    const per = Math.max(1, Math.floor(W / (t * 1.18)));
-    if (Math.ceil(c / per) * (t * 1.18) <= H) return Math.floor(t);
+  const G = 8, P = 10, B = 4;                 // gap · body padding · panel border
+  const aw = W - B - 2 * P, ah = H - B - 2 * P;
+  if (c <= 0 || aw <= 0 || ah <= 0) return 36;
+  for (let t = Math.min(aw, ah); t > 20; t -= 2) {
+    const per = Math.max(1, Math.floor((aw + G) / (t + G)));
+    if (Math.ceil(c / per) * (t + G) - G <= ah) return Math.floor(t);
   }
-  return 22;
+  return 20;
 }
 
 // Area-panel layout: each service area is its own panel of big colour-coded
@@ -231,7 +235,7 @@ function drawPanels(areas, W, H) {
   const cols = best.cols, rows = best.rows;
   const ch = (H - (rows - 1) * gap) / rows;
   const headH = Math.max(26, Math.min(44, ch * 0.16));
-  const innerH = (ch - headH - 4) * 0.97;
+  const bodyH = ch - headH;   // panel body outer height (tileFit subtracts its own insets)
   // Column widths follow their content: a sparse area gets a narrower panel (not a big empty one),
   // weighted by sqrt(table count) so a busy area gets more room without swamping the others. The
   // width a column gets is driven by its busiest panel.
@@ -243,12 +247,15 @@ function drawPanels(areas, W, H) {
   }
   const sumWt = colWt.reduce((a, b) => a + b, 0), usableW = W - (cols - 1) * gap;
   const colPx = colWt.map(w => usableW * w / sumWt);
-  // One uniform tile size for EVERY panel — sized so the densest area still fits in its own
-  // (now content-sized) column — so a sparse area doesn't end up with bigger tiles than a busy one.
-  const pt = Math.min(...areas.map((a, i) => tileFit((colPx[i % cols] - 4) * 0.97, innerH, a.tables.length)));
-  const html = areas.map(a => {
+  // Each panel fills its own (content-sized) column — tiles aren't forced to one size, so a
+  // sparse area reads fine instead of looking shrunken. A gentle cap (1.35× the busiest area's
+  // tile) keeps the board proportionate so no one area looks dramatically bigger.
+  const raw = areas.map((a, i) => tileFit(colPx[i % cols], bodyH, a.tables.length));
+  const base = Math.min(...raw);
+  const html = areas.map((a, i) => {
     const ts = [...a.tables].sort(natCmp);
     const occ = ts.filter(t => dispKey(t) !== 'available').length;
+    const pt = Math.min(raw[i], base * 1.35);
     const tiles = ts.map(t => {
       const k = dispKey(t), occT = k !== 'available';
       const srv = occT ? (t.server_name ? esc(String(t.server_name).split(' ')[0]) : (t.party_size ? t.party_size + '👤' : '')) : '';
