@@ -803,12 +803,14 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS distribution_orders (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       to_location_id  INTEGER NOT NULL REFERENCES locations(id),  -- the ordering store
+      source_location_id INTEGER REFERENCES locations(id),        -- the hub that fills it (CK or Warehouse)
       item_id         INTEGER REFERENCES inventory(id),           -- the store's inventory row (nullable)
       item_name       TEXT NOT NULL,
       unit            TEXT DEFAULT 'units',
       requested_qty   REAL NOT NULL,
-      ck_qty          REAL NOT NULL DEFAULT 0,                     -- filled from Central Kitchen
+      ck_qty          REAL NOT NULL DEFAULT 0,                     -- the hub portion (CK/Warehouse); rest is vendor
       vendor_qty      REAL NOT NULL DEFAULT 0,                     -- shortfall routed to a vendor
+      shipped_qty     REAL NOT NULL DEFAULT 0,                     -- how much of the hub portion has shipped
       status          TEXT NOT NULL DEFAULT 'requested'
                         CHECK(status IN ('requested','approved','shipped','received','cancelled')),
       vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
@@ -1458,7 +1460,17 @@ function migrate() {
     // other bussers see a table is being handled before it's marked Bussed (Done).
     `ALTER TABLE toast_flow_state ADD COLUMN bus_claimed_at TEXT`,
     `ALTER TABLE toast_flow_state ADD COLUMN bus_claimed_by INTEGER`,
+    // Distribution orders can now be placed against a chosen hub (CK or Warehouse), and track how
+    // much of the hub portion has actually shipped (so scan-to-ship progress isn't conflated with
+    // the planned ck_qty). source_location_id is backfilled to the Central Kitchen below.
+    `ALTER TABLE distribution_orders ADD COLUMN source_location_id INTEGER REFERENCES locations(id)`,
+    `ALTER TABLE distribution_orders ADD COLUMN shipped_qty REAL NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
+  // Backfill: existing distribution orders were all Central-Kitchen orders.
+  try {
+    const ck = db.prepare(`SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1`).get();
+    if (ck) db.prepare(`UPDATE distribution_orders SET source_location_id=? WHERE source_location_id IS NULL`).run(ck.id);
+  } catch { /* table not present yet */ }
 
   // Attachments used to be restricted to CHECK(kind IN ('image','video')); relax that so
   // documents/files can be attached. SQLite can't ALTER a CHECK, so rebuild the table when

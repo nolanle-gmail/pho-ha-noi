@@ -982,6 +982,35 @@ const check = (name, ok, detail = '') => {
     const vOrder = (await j(await fetch(base + `/api/distribution/orders?scope=store&location_id=${loc2}`, { headers: H(token) }))).orders.find(o => o.item_name === 'Star Anise' && o.ck_qty === 0);
     check('vendor-only order skips CK (all vendor, settled)', !!vOrder && vOrder.vendor_qty === 6 && vOrder.status === 'received' && vOrder.vendor_order_id > 0, JSON.stringify(vOrder && { ck: vOrder.ck_qty, v: vOrder.vendor_qty, s: vOrder.status }));
 
+    // ── Hub shipping: a Warehouse order + scan-to-fulfil (under / over ship) ──────
+    const sdb = require('../db/database');
+    const whId = sdb.prepare("INSERT INTO locations (name,type,is_active,slug) VALUES ('ZZ Test Warehouse','warehouse',1,'zz-test-wh')").run().lastInsertRowid;
+    sdb.prepare("INSERT INTO inventory (location_id,item_name,category,unit,quantity,barcode,distributable,is_active) VALUES (?,?,?,?,?,?,1,1)").run(whId, 'WH Widget', 'Supplies', 'each', 100, 'WH0001');
+    const whStoreItem = sdb.prepare("INSERT INTO inventory (location_id,item_name,category,unit,quantity,is_active) VALUES (?,?,?,?,0,1)").run(loc2, 'WH Widget', 'Supplies', 'each').lastInsertRowid;
+    const po = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, source_location_id: whId, items: [{ item_id: whStoreItem, item_name: 'WH Widget', quantity: 10 }] }) }));
+    check('place a Warehouse order', po.created === 1 && po.hub && po.hub.id === whId, JSON.stringify(po));
+    const whQueue = await j(await fetch(base + `/api/distribution/ship-queue?source_location_id=${whId}`, { headers: H(token) }));
+    check('warehouse ship-queue lists the ordering store', whQueue.orders.some(o => o.store_id === loc2 && o.lines === 1 && o.remaining === 10), JSON.stringify(whQueue.orders));
+    const whLines = await j(await fetch(base + `/api/distribution/ship-queue/${loc2}?source_location_id=${whId}`, { headers: H(token) }));
+    const wline = whLines.lines.find(l => l.item_name === 'WH Widget');
+    check('ship-queue shows the line with hub on-hand + barcode', !!wline && wline.remaining === 10 && wline.on_hand === 100 && wline.barcode === 'WH0001', JSON.stringify(wline));
+    const sc1 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 4 }) }));
+    check('ship-scan under-ships (partial, stays open)', sc1.ok === true && sc1.shipped === 4 && sc1.order.remaining === 6 && sc1.order.done === false, JSON.stringify(sc1.order));
+    const sc2 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 10 }) }));
+    check('ship-scan over-ship asks to confirm', sc2.ok === false && sc2.over === true && sc2.new_total === 14, JSON.stringify(sc2));
+    const sc3 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 10, confirm: true }) }));
+    check('ship-scan over-ship confirmed raises the order count', sc3.ok === true && sc3.order.ck_qty === 14 && sc3.order.requested_qty === 14 && sc3.order.done === true, JSON.stringify(sc3.order));
+    const whOnHand = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(whId).quantity;
+    check('warehouse stock decremented by total shipped (14)', Math.abs(whOnHand - (100 - 14)) < 1e-9, 'on_hand=' + whOnHand);
+    const whOrd = sdb.prepare("SELECT id,status,shipped_qty FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND item_name='WH Widget'").get(whId, loc2);
+    check('order marked shipped after full fulfilment', whOrd.status === 'shipped' && Math.abs(whOrd.shipped_qty - 14) < 1e-9, JSON.stringify(whOrd));
+    r = await fetch(base + `/api/distribution/orders/${whOrd.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) });
+    check('receive the warehouse order', r.status === 200, await r.text());
+    const whStoreQty = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
+    check('store received the shipped qty (14)', Math.abs(whStoreQty - 14) < 1e-9, 'store=' + whStoreQty);
+    const sc4 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 1 }) }));
+    check('scanning an item no longer on the order is flagged', sc4.ok === false && sc4.not_on_order === true, JSON.stringify(sc4));
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
