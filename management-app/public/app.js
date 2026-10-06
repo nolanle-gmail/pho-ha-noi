@@ -2032,17 +2032,27 @@ async function catalogDelete(it) {
 // ── Create order (PO) — pick existing item or add a new one ────────────────
 async function openOrderModal(prefill) {
   prefill = prefill || {};
-  const [items, vendors, ckCat] = await Promise.all([api(invQ('/')), api('/inventory/vendors'), api('/distribution/ck-catalog').catch(() => ({ items: {} }))]);
-  const ckItems = (ckCat && ckCat.items) || {};
+  const atCK = S.section === 'central';
+  const [items, vendors, hubsRes] = await Promise.all([api(invQ('/')), api('/inventory/vendors'), api('/distribution/hubs').catch(() => ({ hubs: [] }))]);
+  // A store can order from any hub (Central Kitchen or a Warehouse) that stocks the item; fetch
+  // each hub's catalog so the source dropdown can offer it with on-hand qty.
+  const hubList = atCK ? [] : (hubsRes.hubs || []).filter(h => String(h.id) !== String(invLoc()));
+  const hubCats = {};
+  await Promise.all(hubList.map(async h => { try { hubCats[h.id] = (await api('/distribution/ck-catalog?source_location_id=' + h.id)).items || {}; } catch { hubCats[h.id] = {}; } }));
   const iOpts = items.map(i => `<option value="${i.id}" ${prefill.item_id == i.id ? 'selected' : ''}>${esc(i.item_name)} — ${numf(i.quantity)} ${esc(i.unit)} on hand</option>`).join('');
   const vendorTail = '<option value="">— No vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
-  // At the Central Kitchen there is no "order from the CK" — it restocks from vendors only.
-  const atCK = S.section === 'central';
-  // For a store, the source dropdown puts the Central Kitchen first and pre-selected when the
-  // item is stocked there; otherwise (and always at the CK) it's the plain vendor list.
+  // For a store, the source dropdown lists each hub that has the item (CK first, pre-selected),
+  // then vendors; at the CK itself it restocks from vendors only.
   const sourceOptionsFor = (itemName) => {
-    const avail = ckItems[itemName];
-    return (!atCK && avail > 0 ? `<option value="ck" selected>🏭 Central Kitchen — ${numf(avail)} on hand</option>` : '') + vendorTail;
+    if (atCK) return vendorTail;
+    let first = true;
+    const hubOpts = hubList.map(h => {
+      const q = (hubCats[h.id] || {})[itemName];
+      if (!(q > 0)) return '';
+      const sel = first ? ' selected' : ''; first = false;
+      return `<option value="hub:${h.id}"${sel}>🏭 ${esc(shortLoc(h.name))}${h.type === 'warehouse' ? ' (Warehouse)' : ''} — ${numf(q)} on hand</option>`;
+    }).join('');
+    return hubOpts + vendorTail;
   };
   const nameOf = (id) => { const it = items.find(x => x.id == id); return it ? it.item_name : ''; };
   const host = $('modalHost');
@@ -2080,11 +2090,12 @@ async function openOrderModal(prefill) {
       const qty = parseFloat($('oQty').value);
       if (!(qty > 0)) throw new Error('Enter a quantity greater than 0.');
       const source = $('oVendor').value, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
-      // Central Kitchen source → the CK-first distribution flow (splits any shortfall to a vendor).
-      // Never offered at the CK itself (it restocks from vendors), so this stays store-only.
-      if (!atCK && mode === 'existing' && source === 'ck') {
-        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
-        toast('Ordered — Central Kitchen first'); close();
+      // A hub source (Central Kitchen or Warehouse) → the hub-first distribution flow (splits any
+      // shortfall to a vendor). Never offered at the CK itself, so this stays store-only.
+      if (!atCK && mode === 'existing' && source.startsWith('hub:')) {
+        const hubId = source.slice(4);
+        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), source_location_id: hubId, reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
+        toast('Order placed'); close();
         if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
         return;
       }

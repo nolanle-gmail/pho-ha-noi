@@ -133,19 +133,20 @@ router.get('/availability', requireRole(ROLES.OPS), (req, res) => {
   res.json({ hub: hub ? { id: hub.id, name: hub.name, type: hub.type } : null, items });
 });
 
-// Quick lookup for the store order screen: which raw items the CK can supply right
-// now (item_name → available qty). Any OPS user (store managers included) may read it,
-// so the order modal can default the source to the Central Kitchen when it has stock.
+// Quick lookup for the store order screen: which raw items a hub can supply right now
+// (item_name → available qty). Defaults to the Central Kitchen; pass source_location_id for a
+// Warehouse. Any OPS user (store managers included) may read it so the order modal can offer the
+// hub as a source when it has stock.
 router.get('/ck-catalog', requireRole(ROLES.OPS), (req, res) => {
-  const ck = ckLoc();
+  const hub = resolveHub(req, true) || ckLoc();
   const items = {};
-  if (ck) {
+  if (hub) {
     for (const r of db.prepare(`SELECT item_name, quantity FROM inventory
-      WHERE location_id=? AND is_active=1 AND distributable=1 AND quantity > 0`).all(ck.id)) {
+      WHERE location_id=? AND is_active=1 AND distributable=1 AND quantity > 0`).all(hub.id)) {
       items[r.item_name] = r3(r.quantity);
     }
   }
-  res.json({ items });
+  res.json({ hub: hub ? { id: hub.id, name: hub.name, type: hub.type } : null, items });
 });
 
 // Create one or more distribution orders. Each item is split CK-first: ck_qty from
