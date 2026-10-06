@@ -56,6 +56,18 @@ const check = (name, ok, detail = '') => {
       body: JSON.stringify({ location_id: loc1, item_name: 'Test Chili Oil', category: 'Pantry', unit: 'bottle', quantity: 10, min_quantity: 4, par_level: 20, unit_cost: 3.5 }) });
     check('create item', r.status === 200, await r.text());
 
+    // ── Scan-to-receive: same GTIN + same weight + same pack date warns before adding ──
+    const sbScan = '(01)94000000000017(3202)004294(13)260818'; // 42.94 lb · pack 2026-08-18 · no serial
+    r = await fetch(base + '/api/inventory/barcode/create', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ location_id: loc1, barcode: sbScan, item_name: 'Smoke SameBox Beef', category: 'Protein', unit: 'lb', is_catch_weight: true }) });
+    check('scan-create a catch-weight item (opening weight)', r.status === 200, await r.text());
+    const sb1 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: sbScan }) }));
+    check('re-scan same weight + pack date warns (same_box)', sb1.duplicate === true && sb1.kind === 'same_box', JSON.stringify(sb1).slice(0, 90));
+    const sb2 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: sbScan, confirm: true }) }));
+    check('confirm adds the same box', sb2.success === true && sb2.added > 0, JSON.stringify(sb2).slice(0, 90));
+    const sb3 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: '(01)94000000000017(3202)005000(13)260818' }) }));
+    check('a different weight is not flagged as the same box', sb3.success === true && sb3.added > 0, JSON.stringify(sb3).slice(0, 90));
+
     // Receive by item_id (adds a lot)
     r = await fetch(base + '/api/inventory/receive', { method: 'POST', headers: H(token),
       body: JSON.stringify({ item_id: beef.id, quantity: 20, expiry_date: '2030-01-01', lot_code: 'SMOKE1' }) });
