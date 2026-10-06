@@ -105,24 +105,24 @@ function receiveExisting({ locId, item, body, user }) {
   const p = parseScan(body.code || body.barcode);
   const amt = amountFor({ item, body, parsed: p });
   // Smart duplicate guard (skipped once the user confirms the override):
-  //  • GS1 serial already on hand here = the exact same physical box → a TRUE duplicate.
-  //  • No serial → only a rapid accidental re-scan (same item + amount within a few seconds) is
-  //    flagged; deliberate repeat receiving of identical units always just adds to the count.
-  // A different box (new serial, or a different weight/pack-date) is NOT blocked here — the
-  // scanner panel already shows that box's data and the user confirms it by tapping Add.
+  //  1) GS1 serial already on hand here = the exact same physical box → a TRUE duplicate.
+  //  2) Same GTIN + same weight + same label date already on hand → likely the same item scanned
+  //     again. This runs **regardless of serial** (a case label often has a per-box serial, but two
+  //     scans of the same box — or of the same batch's weight+date — should still be confirmed).
+  //  3) No serial → also guard a rapid accidental re-scan of a plain code.
+  // A genuinely different box (new serial AND a different weight/date) still just adds.
   if (!body.confirm) {
     if (p.serial) {
       const dup = serialOnHand({ locId, gtin: p.gtin, serial: p.serial });
       if (dup) return { duplicate: true, kind: 'serial', message: `⚠ This exact box (serial ${p.serial}) of ${item.item_name} is already in stock — not added. Add it anyway?` };
-    } else {
-      // Same GTIN + same weight + same pack date as a box already on hand → very likely the same
-      // physical box scanned again. Ask the scanner to confirm before increasing the count.
-      const same = sameBoxOnHand({ locId, itemId: item.id, weightLb: p.weightLb, weightKg: p.weightKg, packDate: p.packDate, prodDate: p.prodDate });
-      if (same) {
-        const w = p.weightLb != null ? `${round3(p.weightLb)} lb` : `${round3(p.weightKg)} kg`;
-        const date = p.packDate || p.prodDate;
-        return { duplicate: true, kind: 'same_box', message: `⚠ You may be scanning the same item again — same weight (${w}) and date (${date}) as a box of ${item.item_name} already in stock. Please confirm before adding it.` };
-      }
+    }
+    const same = sameBoxOnHand({ locId, itemId: item.id, weightLb: p.weightLb, weightKg: p.weightKg, packDate: p.packDate, prodDate: p.prodDate });
+    if (same) {
+      const w = p.weightLb != null ? `${round3(p.weightLb)} lb` : `${round3(p.weightKg)} kg`;
+      const date = p.packDate || p.prodDate;
+      return { duplicate: true, kind: 'same_box', message: `⚠ You may be scanning the same item again — same weight (${w}) and date (${date}) as a box of ${item.item_name} already in stock. Please confirm before adding it.` };
+    }
+    if (!p.serial) {
       const rd = recentDuplicate({ itemId: item.id, gtin: p.gtin, serial: null, actions: ['receive', 'create'], quantity: Number.isFinite(amt.qty) ? amt.qty : null });
       if (rd.dup) return { duplicate: true, kind: 'rapid', message: `⚠ You just received ${item.item_name} moments ago — this may be a double scan. Add it again anyway?` };
     }

@@ -68,6 +68,10 @@ const check = (name, ok, detail = '') => {
     check('confirm adds the same box', sb2.success === true && sb2.added > 0, JSON.stringify(sb2).slice(0, 90));
     const sb3 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: '(01)94000000000017(3202)005000(11)260818' }) }));
     check('a different weight is not flagged as the same box', sb3.success === true && sb3.added > 0, JSON.stringify(sb3).slice(0, 90));
+    // A label that DOES carry a serial must still warn on a weight+date match (the serial here is not
+    // on hand, but the same weight+date is) — the weight+date check runs regardless of serial.
+    const sb4 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: '(01)94000000000017(3202)004294(11)260818(21)SMOKESER1' }) }));
+    check('serialed label still warns on same weight + date (same_box)', sb4.duplicate === true && sb4.kind === 'same_box', JSON.stringify(sb4).slice(0, 90));
 
     // Receive by item_id (adds a lot)
     r = await fetch(base + '/api/inventory/receive', { method: 'POST', headers: H(token),
