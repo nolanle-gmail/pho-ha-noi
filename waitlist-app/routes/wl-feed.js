@@ -49,4 +49,19 @@ router.get('/notifications/:id', (req, res) => {
   res.json({ notifications: rows });
 });
 
+// Mark a waiting party seated — called by the Management app when a guest is seated on the
+// floor / visits side (ANY seat that carries the party's waitlist_ref, not just the Front Desk
+// "Seat" button). This keeps a seated guest from lingering on the waitlist board. Idempotent:
+// only flips a row that's still 'waiting', and broadcasts so the Front Desk board updates at once.
+router.put('/seat/:id', (req, res) => {
+  const w = db.prepare(`SELECT id, location_id, status FROM waitlist WHERE id=?`).get(req.params.id);
+  if (!w) return res.status(404).json({ ok: false, error: 'not found' });
+  if (w.status === 'waiting') {
+    const table = req.body && req.body.table_number ? String(req.body.table_number).slice(0, 20) : null;
+    db.prepare(`UPDATE waitlist SET status='seated', seated_at=datetime('now'), table_number=COALESCE(?, table_number) WHERE id=? AND status='waiting'`).run(table, w.id);
+    try { require('../lib/events').emitWaitlist(w.location_id); } catch { /* bus optional */ }
+  }
+  res.json({ ok: true, status: 'seated' });
+});
+
 module.exports = router;

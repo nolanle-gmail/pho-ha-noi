@@ -179,7 +179,7 @@ async function startCurrent() {
   KV().innerHTML = '<div class="k-loading">Loading…</div>';
   await renderCurrent();
   stopPolling();
-  K.pollTimer = setInterval(renderCurrent, 15000);
+  K.pollTimer = setInterval(renderCurrent, 8000);   // refresh often so a seated party drops off promptly
 }
 
 // Boot: the public live-list route, a restored check-in, or the join form.

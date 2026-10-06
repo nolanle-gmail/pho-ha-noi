@@ -8,6 +8,7 @@ const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
 const { auditLog } = require('../lib/audit');
+const { markWaitlistSeated } = require('../lib/waitlistSync');
 
 const router = express.Router();
 
@@ -193,6 +194,8 @@ router.put('/tables/:id/seat', requireView, (req, res) => {
   logVisitEvent(v.id, t.location_id, 'created', null, 'waiting', req);
   logVisitEvent(v.id, t.location_id, 'seated', 'waiting', 'seated', req);
   syncTableFromStage(t, 'seated', v);
+  // If this seat came from the waitlist, drop that party off the waitlist board (best-effort).
+  if (req.body.waitlist_ref) markWaitlistSeated(req.body.waitlist_ref, t.label);
   auditLog(req, 'table_seat', 'table', t.id, { location_id: t.location_id, label: t.label, guest, visit_id: v.id });
   res.json({ success: true, status: 'waiting_to_order', visit_id: v.id });
 });

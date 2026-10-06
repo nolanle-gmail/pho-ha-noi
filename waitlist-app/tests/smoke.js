@@ -177,6 +177,22 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/activity-feed', { headers: H(host.token) });
     check('non-owner blocked from activity feed (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Management back-sync: a seat on the Management side drops a party off the waitlist ──
+    // wl-feed/seat/:id (service key) flips a still-waiting party seated, so a guest seated from
+    // the floor/visits side doesn't linger on the waitlist board.
+    const svcK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
+    const bs = await j(await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'BackSync Party', party_size: 2 }) }));
+    r = await fetch(base + '/api/wl-feed/seat/' + bs.id, { method: 'PUT', headers: svcK, body: JSON.stringify({ table_number: 'B9' }) });
+    check('wl-feed seat via service key (200)', r.status === 200, 'status=' + r.status);
+    const waitingNow = await j(await fetch(base + `/api/waitlist/?location_id=${loc}`, { headers: H(token) }));
+    check('back-synced party drops off the waitlist board', !waitingNow.some(p => p.id === bs.id), 'ids=' + waitingNow.map(p => p.id).join(','));
+    r = await fetch(base + '/api/wl-feed/seat/' + bs.id, { method: 'PUT', headers: svcK, body: '{}' });
+    check('wl-feed seat is idempotent (already seated → 200)', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + '/api/wl-feed/seat/99999999', { method: 'PUT', headers: svcK, body: '{}' });
+    check('wl-feed seat unknown id → 404', r.status === 404, 'status=' + r.status);
+    r = await fetch(base + '/api/wl-feed/seat/' + bs.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    check('wl-feed seat without service key → 401', r.status === 401, 'status=' + r.status);
+
     // ── PWA: installable Staff app (manifest + service worker + icons) ─────
     const mani = await fetch(base + '/manifest.webmanifest');
     check('PWA manifest served', mani.status === 200);
