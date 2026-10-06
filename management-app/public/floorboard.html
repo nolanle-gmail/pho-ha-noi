@@ -231,10 +231,14 @@ function drawPanels(areas, W, H) {
   const cols = best.cols, rows = best.rows;
   const cw = (W - (cols - 1) * gap) / cols, ch = (H - (rows - 1) * gap) / rows;
   const headH = Math.max(26, Math.min(44, ch * 0.16));
+  const innerW = (cw - 4) * 0.97, innerH = (ch - headH - 4) * 0.97;
+  // One uniform tile size for EVERY panel — sized so the densest area still fits — so a
+  // sparse area doesn't end up with big tiles next to a busy area's small tiles. Sparse
+  // panels just keep more breathing room around their (same-size) tables.
+  const pt = Math.min(...areas.map(a => tileFit(innerW, innerH, a.tables.length)));
   const html = areas.map(a => {
     const ts = [...a.tables].sort(natCmp);
     const occ = ts.filter(t => dispKey(t) !== 'available').length;
-    const pt = tileFit((cw - 4) * 0.97, (ch - headH - 4) * 0.97, ts.length);
     const tiles = ts.map(t => {
       const k = dispKey(t), occT = k !== 'available';
       const srv = occT ? (t.server_name ? esc(String(t.server_name).split(' ')[0]) : (t.party_size ? t.party_size + '👤' : '')) : '';
