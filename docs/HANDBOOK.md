@@ -269,8 +269,10 @@ public `routes/floorboard.js` (`GET /api/floorboard/{locations,board?slug=}`, no
 guard), which reuses the Floor Plan's own `buildFloorplan()` (extracted from `routes/floorplan.js`)
 with `reconcile:false` so the board never writes to the DB. A **📺 TV board** link in the Management
 Floor Plan tab opens the board for that location in a new tab. A long table caption (e.g. "BAR 10A",
-"Outdoor") **shrinks its font to fit inside the circle** (`labelFont` scales by label length), on
-both the scaled map and the area-panel layouts.
+"Outdoor") **shrinks its font to fit inside the circle** (scales by label length), on the TV board
+(both the scaled map and the area-panel layouts) **and the Management Floor Plan tab, its Details-tab
+snapshot, and the Staff Table Map** (`ftLabel()` in each app's SPA + `white-space:nowrap` on
+`.ftable-l`), so all the floor surfaces look alike.
 
 **Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
 own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch
