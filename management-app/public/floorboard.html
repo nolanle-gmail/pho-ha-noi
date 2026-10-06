@@ -52,7 +52,7 @@
     border-radius:50%; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,.1); }
   .t.sq{ border-radius:18%; }
   .t.off{ opacity:.25; }
-  .t .lbl{ font-weight:800; font-size:calc(var(--tw) * .40); line-height:1; }
+  .t .lbl{ font-weight:800; font-size:calc(var(--tw) * .40); line-height:1; white-space:nowrap; }
   .t .sub{ font-weight:700; font-size:calc(var(--tw) * .17); line-height:1.1; margin-top:.12em; color:var(--ink); opacity:.82;
     max-width:94%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .t .srv{ font-weight:800; font-size:calc(var(--tw) * .16); line-height:1.05; margin-top:.1em; color:var(--c); }
@@ -75,7 +75,7 @@
     text-align:center; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.1); }
   .pt.sq{ border-radius:18%; }
   .pt.off{ opacity:.25; }
-  .pt .l{ font-weight:800; line-height:1; }
+  .pt .l{ font-weight:800; line-height:1; white-space:nowrap; }
   .pt .s{ font-weight:700; line-height:1.05; margin-top:.1em; color:var(--c); max-width:94%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pt.due{ animation:pulse 1.6s ease-in-out infinite; }
 
@@ -108,10 +108,12 @@ const SLUG = decodeURIComponent((location.pathname.match(/^\/floorplan\/(.+?)\/?
 // The 5 display buckets → [label, cssVarSuffix]. Order = legend order.
 const BUCKETS = [
   ['available', 'Available'], ['seated', 'Seated'], ['awaiting_food', 'Awaiting food'],
-  ['ready_to_pay', 'Ready to pay'], ['cleaning', 'Cleaning up'],
+  ['ready_to_pay', 'Paid'], ['cleaning', 'Cleaning up'],
 ];
 const LEGACY = { available:'available', waiting_to_order:'seated', served:'ready_to_pay', waiting_to_pay:'ready_to_pay', cleaning:'cleaning' };
 const dispKey = (t) => t.display || LEGACY[t.status] || 'available';
+// Shrink a table label's font so a long caption still fits inside the circle (e.g. "BAR 10A", "Outdoor").
+const labelFont = (size, label) => (size * Math.min(0.40, 1.3 / Math.max(1, String(label).length))).toFixed(1);
 
 let timer = null, lastData = null;
 
@@ -175,6 +177,8 @@ function draw() {
 // Faithful scaled map: the real room outline + tables at their pos_x/pos_y.
 function drawMap(d, availW, availH, ratio) {
   const all = (d.areas || []).flatMap(a => a.tables);
+  let w = availW, h = w * ratio; if (h > availH) { h = availH; w = h / ratio; }
+  const tw = Math.max(46, Math.min(w, h) * 0.085);   // tile size, needed up front for label fitting
   const outline = d.room_outline || [];
   const svg = outline.length >= 3
     ? `<svg class="room-svg" viewBox="0 0 100 100" preserveAspectRatio="none"><polygon points="${outline.map(p => `${p.x},${p.y}`).join(' ')}"/></svg>` : '';
@@ -193,14 +197,12 @@ function drawMap(d, availW, availH, ratio) {
     return `<div class="t ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}${due ? ' due' : ''}"
         style="left:${t.pos_x}%;top:${t.pos_y}%;--c:var(--c-${k});--bg:var(--bg-${k})"
         title="${esc(t.label)} — ${esc(occ ? bucketLabel(k) : 'Available')}">
-        <div class="lbl">${esc(t.label)}</div>${sub ? `<div class="sub">${sub}</div>` : ''}${srv ? `<div class="srv">${srv}${due ? ' ⏰' : ''}</div>` : ''}
+        <div class="lbl" style="font-size:${labelFont(tw, t.label)}px">${esc(t.label)}</div>${sub ? `<div class="sub">${sub}</div>` : ''}${srv ? `<div class="srv">${srv}${due ? ' ⏰' : ''}</div>` : ''}
       </div>`;
   }).join('');
   $('main').innerHTML = `<div class="board" id="board">${svg}${bands}${tiles}</div>`;
   const board = $('board');
-  let w = availW, h = w * ratio; if (h > availH) { h = availH; w = h / ratio; }
   board.style.width = w + 'px'; board.style.height = h + 'px';
-  const tw = Math.max(46, Math.min(w, h) * 0.085);
   board.style.setProperty('--u', (w / 100) + 'px');
   board.style.setProperty('--tw', tw + 'px');
   board.style.setProperty('--tb', Math.max(3, tw * 0.09) + 'px');
@@ -262,7 +264,7 @@ function drawPanels(areas, W, H) {
       const due = t.stage === 'in_service' && t.check_due;
       return `<div class="pt ${t.shape === 'square' ? 'sq' : ''}${t.is_active ? '' : ' off'}${due ? ' due' : ''}"
           style="--c:var(--c-${k});--bg:var(--bg-${k})" title="${esc(t.label)} — ${esc(occT ? bucketLabel(k) : 'Available')}">
-          <div class="l" style="font-size:${(pt * 0.4).toFixed(1)}px">${esc(t.label)}</div>
+          <div class="l" style="font-size:${labelFont(pt, t.label)}px">${esc(t.label)}</div>
           ${pt >= 46 && srv ? `<div class="s" style="font-size:${(pt * 0.18).toFixed(1)}px">${srv}${due ? ' ⏰' : ''}</div>` : ''}
         </div>`;
     }).join('');

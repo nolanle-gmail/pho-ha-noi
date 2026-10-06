@@ -1504,7 +1504,7 @@ const DISPLAY_STATUS = {
   available: ['Available', '#16a34a', '#dcfce7'],
   seated: ['Seated', '#2b5bd7', '#e7eefc'],
   awaiting_food: ['Awaiting food', '#c2410c', '#ffedd5'],
-  ready_to_pay: ['Ready to pay', '#6d28d9', '#ede9fe'],
+  ready_to_pay: ['Paid', '#6d28d9', '#ede9fe'],
   cleaning: ['Cleaning up', '#6b7280', '#ededed'],
 };
 const LEGACY_DISPLAY = { available: 'available', waiting_to_order: 'seated', served: 'ready_to_pay', waiting_to_pay: 'ready_to_pay', cleaning: 'cleaning' };
