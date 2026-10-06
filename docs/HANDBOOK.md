@@ -232,20 +232,22 @@ Every floor surface and seat picker reads this shared endpoint, so the whole tea
 occupancy and paid tables become seatable right away.
 
 **Four-colour service-flow display (2026-10-05).** The floor map now paints each table in one of
-four live buckets the owner asked for — **🟢 Available · 🔵 Seated · 🟠 Awaiting food · 🟣 Ready to
-pay** (plus **⚪ Cleaning up** for a table being bussed). To do this without disturbing the DB-enum
+four live buckets the owner asked for — **🟢 Available · 🔵 Seated · 🟠 Awaiting food · 🟣 Paid**
+(plus **⚪ Cleaning up** for a table being bussed). To do this without disturbing the DB-enum
 write path, `/api/floorplan` keeps `status` (the `available`/`waiting_to_order`/`served`/
 `waiting_to_pay`/`cleaning` projection used by the seat/status modals) **and** adds two read-only
 fields per table: `flow_state` (the raw Toast/seated state when the overlay set one) and `display`
 (the folded bucket the UI colours by). It also returns `display_statuses` (the five bucket keys, for
 the legend). The fold: a live `flow_state` wins — `seated→Seated`, `awaiting_food→Awaiting food`,
-`in_service→Ready to pay`; otherwise the local projection maps in — `waiting_to_order→Seated`,
-`served`/`waiting_to_pay→Ready to pay`, `cleaning→Cleaning up`. **"Served/in service" and "paying"
-both read as _Ready to pay_** — once the food is out, the table's remaining journey is the check — so
+`in_service→Paid`; otherwise the local projection maps in — `waiting_to_order→Seated`,
+`served`/`waiting_to_pay→Paid`, `cleaning→Cleaning up`. **"Served/in service" and "paying"
+both read as _Paid_** — once the food is out, the table's remaining journey is the check — so
 the four labels cover the whole lifecycle (a purely local floor with no Toast won't show _Awaiting
 food_, which is a Toast-derived signal). Both apps carry a matching `DISPLAY_STATUS` map + `dispKey`/
 `dispOf` helpers (with a `LEGACY_DISPLAY` fallback for an older cached response), used by the
-Management Floor Plan tab, its Details-tab snapshot, and the Staff Table Map.
+Management Floor Plan tab, its Details-tab snapshot, and the Staff Table Map. (The `ready_to_pay`
+bucket's **label was renamed from "Ready to pay" to "Paid" on 2026-10-06** to match the Service Flow
+board; the bucket key is unchanged.)
 
 **Full-screen Floor Board for a TV (2026-10-05).** A no-login, read-only wall display for a TV in
 the dining room so staff can read the room without pulling out a phone. One store per URL:
@@ -266,7 +268,21 @@ identical). Served by the
 public `routes/floorboard.js` (`GET /api/floorboard/{locations,board?slug=}`, no auth, per-IP rate
 guard), which reuses the Floor Plan's own `buildFloorplan()` (extracted from `routes/floorplan.js`)
 with `reconcile:false` so the board never writes to the DB. A **📺 TV board** link in the Management
-Floor Plan tab opens the board for that location in a new tab.
+Floor Plan tab opens the board for that location in a new tab. A long table caption (e.g. "BAR 10A",
+"Outdoor") **shrinks its font to fit inside the circle** (`labelFont` scales by label length), on
+both the scaled map and the area-panel layouts.
+
+**Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
+own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch
+it, so a guest seated anywhere other than the Front Desk "Seat" button (whose JS fires a companion
+`PUT /api/waitlist/:id/seat`) used to linger on the waitlist board. Now any seat that carries the
+party's `waitlist_ref` **back-syncs**: management-app `lib/waitlistSync.js` `markWaitlistSeated(ref)`
+fires a best-effort (fire-and-forget, never blocks the seat) `PUT ${WAITLIST_URL}/api/wl-feed/seat/:id`
+over the shared service key, from both `routes/floorplan.js` and `routes/visits.js` seat endpoints.
+The waitlist side (`routes/wl-feed.js` `PUT /seat/:id`, service-key auth) flips a still-`waiting` row
+to `seated` (idempotent) and emits a waitlist event so the Front Desk board updates at once. Every
+waitlist board filters `status='waiting'`, so the guest drops off all of them; the public live list
+(`/checkin/<slug>/current`) also refreshes every **8 s** (was 15 s) so it clears promptly.
 
 ```mermaid
 erDiagram
