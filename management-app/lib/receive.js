@@ -4,8 +4,9 @@
 // Decision tree (what the user asked for):
 //   1. A GS1 serial (21) that is already ON HAND at this location = the exact same physical
 //      box → a TRUE duplicate. Warn and do nothing (unless `confirm` forces it).
-//   1b. No serial, but the SAME GTIN with the SAME net weight AND the SAME pack date is already
-//      on hand → likely the same box scanned again. Warn and require `confirm` before adding.
+//   1b. No serial, but the SAME GTIN with the SAME net weight AND the SAME label date (GS1 (13)
+//      pack date OR (11) production date) is already on hand → likely the same box scanned again.
+//      Warn and require `confirm` before adding.
 //   2. Barcode already a stock item here → just add to it: catch-weight items add net WEIGHT,
 //      everything else adds COUNT (the ~10s double-scan guard still applies to plain repeats).
 //   3. Barcode new to stock → look it up in the Glossary (and the label). Hand the caller the
@@ -34,21 +35,28 @@ function serialOnHand({ locId, gtin, serial }) {
   } catch { return null; }
 }
 
-// Is a box with the SAME net weight AND the SAME pack date already on hand here for this item?
-// When a label carries no unique serial, matching both the weight and the pack date is a strong
-// sign the SAME physical box is being scanned a second time — so we warn and ask for confirmation
-// before adding to the count. Both a weight and a pack date are required to call it the same box
-// (so a plain count item with no weight, or a box with no pack date, is never flagged this way).
-function sameBoxOnHand({ locId, itemId, weightLb, weightKg, packDate }) {
-  if (!itemId || !packDate) return null;
+// Is a box with the SAME net weight AND the SAME label date already on hand here for this item?
+// When a label carries no unique serial, matching both the weight and the date is a strong sign the
+// SAME physical box is being scanned a second time — so we warn and ask for confirmation before
+// adding to the count. The "date" is whichever the label carries — GS1 (13) PACK date OR (11)
+// PRODUCTION date (meat/case labels usually use production date) — matched against the same column
+// on the stored lot. Both a weight AND a date are required (so a plain count item with no weight, or
+// a box with no date, is never flagged this way).
+function sameBoxOnHand({ locId, itemId, weightLb, weightKg, packDate, prodDate }) {
+  if (!itemId) return null;
   const wLb = weightLb != null && weightLb !== '' && Number.isFinite(Number(weightLb)) ? Number(weightLb) : null;
   const wKg = weightKg != null && weightKg !== '' && Number.isFinite(Number(weightKg)) ? Number(weightKg) : null;
-  if (wLb == null && wKg == null) return null;
+  if (wLb == null && wKg == null) return null;        // need a weight
+  if (!packDate && !prodDate) return null;            // …and a date (pack or production)
   try {
-    const args = [itemId, locId, packDate];
-    let sql = `SELECT id FROM inventory_lots WHERE item_id=? AND location_id=? AND quantity>0 AND pack_date=?`;
+    const args = [itemId, locId];
+    let sql = `SELECT id FROM inventory_lots WHERE item_id=? AND location_id=? AND quantity>0`;
     if (wLb != null) { sql += ` AND net_weight_lb IS NOT NULL AND ABS(net_weight_lb - ?) < 0.005`; args.push(wLb); }
     else { sql += ` AND net_weight_kg IS NOT NULL AND ABS(net_weight_kg - ?) < 0.005`; args.push(wKg); }
+    const dateConds = [];
+    if (packDate) { dateConds.push(`pack_date = ?`); args.push(packDate); }
+    if (prodDate) { dateConds.push(`prod_date = ?`); args.push(prodDate); }
+    sql += ` AND (${dateConds.join(' OR ')})`;
     return db.prepare(sql + ` LIMIT 1`).get(...args) || null;
   } catch { return null; }
 }
@@ -109,10 +117,11 @@ function receiveExisting({ locId, item, body, user }) {
     } else {
       // Same GTIN + same weight + same pack date as a box already on hand → very likely the same
       // physical box scanned again. Ask the scanner to confirm before increasing the count.
-      const same = sameBoxOnHand({ locId, itemId: item.id, weightLb: p.weightLb, weightKg: p.weightKg, packDate: p.packDate });
+      const same = sameBoxOnHand({ locId, itemId: item.id, weightLb: p.weightLb, weightKg: p.weightKg, packDate: p.packDate, prodDate: p.prodDate });
       if (same) {
         const w = p.weightLb != null ? `${round3(p.weightLb)} lb` : `${round3(p.weightKg)} kg`;
-        return { duplicate: true, kind: 'same_box', message: `⚠ You may be scanning the same item again — same weight (${w}) and pack date (${p.packDate}) as a box of ${item.item_name} already in stock. Please confirm before adding it.` };
+        const date = p.packDate || p.prodDate;
+        return { duplicate: true, kind: 'same_box', message: `⚠ You may be scanning the same item again — same weight (${w}) and date (${date}) as a box of ${item.item_name} already in stock. Please confirm before adding it.` };
       }
       const rd = recentDuplicate({ itemId: item.id, gtin: p.gtin, serial: null, actions: ['receive', 'create'], quantity: Number.isFinite(amt.qty) ? amt.qty : null });
       if (rd.dup) return { duplicate: true, kind: 'rapid', message: `⚠ You just received ${item.item_name} moments ago — this may be a double scan. Add it again anyway?` };
