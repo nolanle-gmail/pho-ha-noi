@@ -258,8 +258,10 @@ stamp, auto-refreshes every 8 s, and offers a fullscreen button + screen-wake-lo
 a wide floor (e.g. Milpitas) shows the exact scaled room map — outline + area bands + every table at
 its `pos_x`/`pos_y`, fitted to the screen with no scrolling; a floor too tall to fill a landscape TV
 (the Toast-regrouped stores like San Jose, whose `floor_aspect` stacks the service areas vertically)
-switches to an **area-panel** layout — each service area is its own panel of big tiles, arranged in a
-grid (chosen to fill the screen with no empty cells) so the tables stay large and readable. Served by the
+switches to an **area-panel** layout — each service area is its own panel of big tiles. Every tile is
+**one uniform size** across all panels (so a sparse area doesn't get bigger tiles than a busy one),
+and each panel's **width follows its table count** (weighted by `sqrt(count)`), so a busy area gets a
+wider panel and a sparse area a narrower one rather than a big empty box. Served by the
 public `routes/floorboard.js` (`GET /api/floorboard/{locations,board?slug=}`, no auth, per-IP rate
 guard), which reuses the Floor Plan's own `buildFloorplan()` (extracted from `routes/floorplan.js`)
 with `reconcile:false` so the board never writes to the DB. A **📺 TV board** link in the Management
