@@ -251,11 +251,15 @@ Management Floor Plan tab, its Details-tab snapshot, and the Staff Table Map.
 the dining room so staff can read the room without pulling out a phone. One store per URL:
 `https://pho-ha-noi-management.fly.dev/Floorplan/<slug>` — e.g. `/Floorplan/SanJose`,
 `/Floorplan/Milpitas` (the slug is matched case/hyphen-insensitively, so `/floorplan/san-jose` works
-too); bare `/Floorplan` shows a location picker. The page (`public/floorboard.html`) fits the whole
-floor to the screen (no scrolling), draws the room outline + area bands + every table positioned at
-its `pos_x`/`pos_y`, colours each table by its live **display** bucket with a legend + live counts, a
-wall clock and an "updated" stamp, auto-refreshes every 8 s, and offers a fullscreen button +
-screen-wake-lock. It's **read-only** — a wall screen can't seat, move or free a table. Served by the
+too); bare `/Floorplan` shows a location picker. The page (`public/floorboard.html`) colours each
+table by its live **display** bucket with a legend + live counts, a wall clock and an "updated"
+stamp, auto-refreshes every 8 s, and offers a fullscreen button + screen-wake-lock. It's
+**read-only** — a wall screen can't seat, move or free a table. **It picks the layout automatically**:
+a wide floor (e.g. Milpitas) shows the exact scaled room map — outline + area bands + every table at
+its `pos_x`/`pos_y`, fitted to the screen with no scrolling; a floor too tall to fill a landscape TV
+(the Toast-regrouped stores like San Jose, whose `floor_aspect` stacks the service areas vertically)
+switches to an **area-panel** layout — each service area is its own panel of big tiles, arranged in a
+grid (chosen to fill the screen with no empty cells) so the tables stay large and readable. Served by the
 public `routes/floorboard.js` (`GET /api/floorboard/{locations,board?slug=}`, no auth, per-IP rate
 guard), which reuses the Floor Plan's own `buildFloorplan()` (extracted from `routes/floorplan.js`)
 with `reconcile:false` so the board never writes to the DB. A **📺 TV board** link in the Management
