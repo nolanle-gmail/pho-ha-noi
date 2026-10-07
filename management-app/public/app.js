@@ -1258,7 +1258,7 @@ async function svcIntervalModal(v) {
 const TABS = [
   ['dashboard', 'Dashboard'], ['stock', 'Stock'], ['storage', 'Storage'], ['orders', 'Orders & Reorder'],
   ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
-  ['reports', 'Reports'], ['activity', 'Activity'], ['glossary', 'Items'], ['catalog', 'Glossary'],
+  ['reports', 'Reports'], ['activity', 'Activity'], ['catalog', 'Glossary'],
 ];
 function renderTabs() {
   $('tabs').innerHTML = TABS.map(([k, l]) => `<button data-tab="${k}" class="${S.tab === k ? 'active' : ''}">${l}</button>`).join('');
@@ -1726,35 +1726,32 @@ async function renderStock() {
         <button class="btn ghost" id="scanBtn">📠 Scan</button>
         <button class="btn ghost" id="receiveSku">Receive by SKU</button>
       </div></div>
-    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} items stocked here · levels, cost, descriptions &amp; notes in one place. The shared product dictionary is on the <strong>Glossary</strong> tab.${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
-    <div class="table-wrap"><table><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Description</th><th>Notes</th><th>Actions</th>
+    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} items stocked here · levels, cost, and each item's description &amp; notes in one place. The shared product dictionary is on the <strong>Glossary</strong> tab. <span class="muted" style="font-size:.82rem">Hover an action icon for what it does.</span>${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
+    <div class="table-wrap"><table class="stock-tbl"><thead><tr>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min / Par</th><th class="num">Unit cost</th><th>Status</th><th class="acts">Actions</th>
     </tr></thead><tbody>
-      ${items.map(i => `<tr>
-        <td><strong>${esc(i.item_name)}</strong></td>
+      ${items.map(i => { const sub = [i.description, i.notes].filter(Boolean).join(' · '); return `<tr>
+        <td style="max-width:280px"><strong>${esc(i.item_name)}</strong>${sub ? `<div class="item-sub" title="${esc(sub)}">${esc(sub)}</div>` : ''}</td>
         <td class="mono">${esc(i.sku || '—')}</td>
         <td>${esc(i.category)}</td>
         <td>${i.section_name ? `<span class="shelf-chip">📍 ${esc(i.section_name)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
         <td>${i.vendor_name ? esc(i.vendor_name) + (i.vendor_code ? ` <span class="mono" style="color:var(--muted)">#${esc(i.vendor_code)}</span>` : '') : '<span style="color:var(--muted)">—</span>'}</td>
         <td>${esc(i.unit || '—')}</td>
         <td class="num">${numf(i.quantity)}</td>
-        <td class="num">${numf(i.min_quantity)}</td>
-        <td class="num">${i.par_level == null ? '—' : numf(i.par_level)}</td>
+        <td class="num">${numf(i.min_quantity)} / ${i.par_level == null ? '—' : numf(i.par_level)}</td>
         <td class="num">${money(i.unit_cost)}</td>
         <td>${statusBadge(i.quantity, i.min_quantity)}</td>
-        <td style="max-width:260px;min-width:140px;color:var(--ink,#374151)">${i.description ? esc(i.description) : '<span style="color:var(--muted)">—</span>'}</td>
-        <td style="max-width:180px;min-width:120px;color:var(--ink,#374151)">${i.notes ? esc(i.notes) : '<span style="color:var(--muted)">—</span>'}</td>
-        <td><div class="actions-cell" style="flex-wrap:nowrap">
-          <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
-          <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove this item from stock (history is kept)">🗑 Delete</button>
-          <button class="btn sm order-hover" data-act="order" data-id="${i.id}" title="Create a purchase order for this item">🛒 Order</button>
-          <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}">Receive</button>
-          <button class="btn sm ghost" data-act="waste" data-id="${i.id}" data-name="${esc(i.item_name)}">Waste</button>
-          <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}">Count</button>
+        <td class="acts"><div class="actions-cell" style="flex-wrap:nowrap">
+          <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Receive stock">📥</button>
+          <button class="btn sm order-hover" data-act="order" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Create a purchase order">🛒</button>
+          <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Cycle count">🔢</button>
+          <button class="btn sm ghost" data-act="waste" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Log waste">♻️</button>
           <button class="btn sm ghost" data-act="costs" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Cost history — the price paid at each purchase">💲</button>
           <button class="btn sm ghost" data-act="log" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Scan history — weight, dates, lot, serial">📜</button>
+          <button class="btn sm ghost" data-act="edit" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Edit item">✏️</button>
+          <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove from stock (history is kept)">🗑</button>
         </div></td>
-      </tr>`).join('')}
+      </tr>`; }).join('')}
     </tbody></table></div>`;
 
   $('addItem').onclick = () => openAddItemModal(items);

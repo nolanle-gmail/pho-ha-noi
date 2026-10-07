@@ -555,6 +555,14 @@ td.num, th.num { text-align: right; }
 .toast.bad { background: var(--out); }
 .actions-cell { display: flex; gap: .3rem; flex-wrap: wrap; align-items: center; }
 
+/* Stock table: description/notes shown as a muted line under the item name. */
+.item-sub { font-size: .76rem; color: var(--muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: .12rem; }
+/* Pin the Actions column to the right so its buttons stay on screen even when the
+   (wide) table scrolls horizontally — nothing gets hidden off the edge. */
+.stock-tbl td.acts, .stock-tbl th.acts { position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 10px -8px rgba(0, 0, 0, .18); }
+.stock-tbl .actions-cell { flex-wrap: nowrap; }
+.stock-tbl .actions-cell .btn.sm { padding: .3rem .5rem; }
+
 /* Day-task proof-photo gallery (manager view) */
 .photo-gallery { max-width: 720px; }
 .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: .8rem; margin-top: 1rem; }
