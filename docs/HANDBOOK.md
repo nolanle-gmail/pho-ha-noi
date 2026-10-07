@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 6, 2026_
+_Last updated: October 7, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -731,6 +731,21 @@ dates, lot, serial, who scanned it, and an "all barcode data" line listing every
 `GET /inventory/:id/scan-history`; the **Check** mode shows the item's most recent scan detail.)
 The **net weight drives the quantity**: it pre-fills the amount on receive (added) and on ship
 (subtracted), so a 42.94 lb case adds/removes 42.94 with one tap.
+
+**Per-purchase cost layers (2026-10-07).** The same item's cost moves with the market — Flank bought
+at $5.20, then $5.40, then $6.00 — so the unit cost is kept **per purchase**, not as one frozen
+number on the stock row. Each scan-to-receive is its own **cost layer** (an `inventory_lots` row)
+carrying the price actually paid that time; the receive panel has a **Unit cost** field (defaults to
+the last price, editable to today's; blank keeps the last) on all three surfaces. `inventory.unit_cost`
+becomes the **latest** purchase price (so reorder estimates use today's market) while the lot ledger
+keeps every batch's true cost. No new table — `inventory_lots` already *is* the per-purchase ledger
+and already drives FIFO. A **💲 Cost history** button on every **Stock** and **Central Kitchen** row
+opens the layers — each purchase's date, qty bought, qty remaining, weight and unit cost — with
+on-hand value (each layer at its own cost), total purchased, and the weighted-average cost; the
+**unit cost is editable inline** (correct a typo or enter the real invoice price later — the newest
+layer also updates the item's current price). **FIFO Use** draws the oldest layer first and reports
+the true **COGS** valued at each layer's cost. API: `GET /inventory/:id/cost-history`,
+`PATCH /inventory/lots/:id/cost`; `receiveExisting` + `consumeFIFOCosted` in `lib/receive.js` / `lib/lots.js`.
 
 **Scan modes.** The **console scanner**, the **staff app**, and the **per-location kiosk**
 (`/scanner/<slug>`) have a mode toggle:
