@@ -103,6 +103,17 @@ const check = (name, ok, detail = '') => {
     const use = await j(await fetch(base + '/api/inventory/barcode/use', { method: 'POST', headers: H(token),
       body: JSON.stringify({ location_id: loc1, code: `(01)${flGtin}`, weight: 25, reason: 'smoke prep' }) }));
     check('FIFO use reports true COGS at each layer cost', use.success === true && Math.abs(use.cogs - (20 * 5.25 + 5 * 5.40)) < 0.05, JSON.stringify(use.cogs));
+    // The same per-purchase ledger is reachable from the standalone kiosk (employee-code auth,
+    // location-scoped). San Jose = loc1; owner code E0001 sees all locations.
+    const kH = { 'Content-Type': 'application/json' };
+    const kch = await j(await fetch(base + '/api/scannerkiosk/kiosk/san-jose/cost-history', { method: 'POST', headers: kH, body: JSON.stringify({ employee_code: 'E0001', item_id: flId }) }));
+    check('kiosk cost history returns the purchase layers', kch.ok === true && kch.totals.purchases === 3, JSON.stringify(kch.totals || kch));
+    const kedit = await j(await fetch(base + '/api/scannerkiosk/kiosk/san-jose/lot-cost', { method: 'POST', headers: kH, body: JSON.stringify({ employee_code: 'E0001', lot_id: oldest.id, unit_cost: 5.30 }) }));
+    check('kiosk can correct a purchase cost', kedit.ok === true && kedit.unit_cost === 5.30, JSON.stringify(kedit));
+    const kch2 = await j(await fetch(base + '/api/scannerkiosk/kiosk/san-jose/cost-history', { method: 'POST', headers: kH, body: JSON.stringify({ employee_code: 'E0001', item_id: flId }) }));
+    check('kiosk cost edit persisted', (kch2.lots.find(l => l.id === oldest.id) || {}).unit_cost === 5.30, JSON.stringify((kch2.lots.find(l => l.id === oldest.id) || {}).unit_cost));
+    const kchOther = await j(await fetch(base + '/api/scannerkiosk/kiosk/milpitas/cost-history', { method: 'POST', headers: kH, body: JSON.stringify({ employee_code: 'E0001', item_id: flId }) }));
+    check('kiosk refuses an item from another location', kchOther.ok !== true, JSON.stringify(kchOther).slice(0, 60));
 
     // Receive by item_id (adds a lot)
     r = await fetch(base + '/api/inventory/receive', { method: 'POST', headers: H(token),

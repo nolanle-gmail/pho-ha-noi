@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
-const { receiveLot, consumeFIFO, consumeFIFOCosted } = require('../lib/lots');
+const { receiveLot, consumeFIFO, consumeFIFOCosted, costHistory, setLotCost } = require('../lib/lots');
 const { lookupProduct, rememberProduct } = require('../lib/productLookup');
 const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
 const { resolveVendor } = require('../lib/vendors');
@@ -669,25 +669,7 @@ router.get('/:id/scan-history', requireRole(ROLES.OPS), (req, res) => {
 router.get('/:id/cost-history', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT id, item_name, unit, quantity, unit_cost FROM inventory WHERE id=?`).get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
-  const lots = db.prepare(`
-    SELECT lo.id, lo.received_at, lo.received_qty, lo.quantity AS remaining, lo.unit_cost,
-           lo.net_weight_lb, lo.net_weight_kg, lo.lot_code, lo.serial, lo.pack_date, lo.prod_date,
-           lo.expiry_date, lo.depleted_at, u.name AS received_by
-    FROM inventory_lots lo LEFT JOIN users u ON u.id=lo.received_by
-    WHERE lo.item_id=? ORDER BY lo.received_at DESC, lo.id DESC LIMIT 200`).all(item.id)
-    .map(r => ({
-      ...r,
-      extended_remaining: Math.round((r.remaining || 0) * (r.unit_cost || 0) * 100) / 100,
-      extended_purchased: Math.round((r.received_qty || 0) * (r.unit_cost || 0) * 100) / 100,
-    }));
-  const onHandQty = lots.reduce((s, l) => s + (l.remaining || 0), 0);
-  const onHandValue = Math.round(lots.reduce((s, l) => s + l.extended_remaining, 0) * 100) / 100;
-  const purchasedValue = Math.round(lots.reduce((s, l) => s + l.extended_purchased, 0) * 100) / 100;
-  const avgCost = onHandQty > 0 ? Math.round((onHandValue / onHandQty) * 1000) / 1000 : (item.unit_cost || 0);
-  res.json({
-    item: { id: item.id, item_name: item.item_name, unit: item.unit, quantity: item.quantity, unit_cost: item.unit_cost },
-    lots, totals: { on_hand_qty: Math.round(onHandQty * 1000) / 1000, on_hand_value: onHandValue, purchased_value: purchasedValue, avg_cost: avgCost, purchases: lots.length },
-  });
+  res.json(costHistory(item));
 });
 
 // Scan-to-adjust: add stock ('in') or set a cycle count on the item matching a barcode.
@@ -835,11 +817,7 @@ router.patch('/lots/:id/cost', requireRole(ROLES.OPS), (req, res) => {
   if (!seesAllLocations(req.user.role) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const cost = parseFloat(req.body.unit_cost);
   if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ error: 'Enter a valid unit cost.' });
-  const c = Math.round(cost * 1000) / 1000;
-  db.prepare(`UPDATE inventory_lots SET unit_cost=? WHERE id=?`).run(c, lot.id);
-  // If this is the item's latest purchase, keep inventory.unit_cost (current price) in step.
-  const latest = db.prepare(`SELECT id FROM inventory_lots WHERE item_id=? ORDER BY received_at DESC, id DESC LIMIT 1`).get(lot.item_id);
-  if (latest && latest.id === lot.id) db.prepare(`UPDATE inventory SET unit_cost=? WHERE id=?`).run(c, lot.item_id);
+  const c = setLotCost(lot, cost);
   const item = db.prepare(`SELECT item_name FROM inventory WHERE id=?`).get(lot.item_id);
   auditLog(req, 'lot_cost_edited', 'inventory', lot.item_id, { lot_id: lot.id, item: item && item.item_name, from: lot.unit_cost, to: c });
   res.json({ success: true, lot_id: lot.id, unit_cost: c });

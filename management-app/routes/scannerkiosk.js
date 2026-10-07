@@ -8,7 +8,7 @@ const express = require('express');
 const db = require('../db/database');
 const { normSlug } = require('../lib/slug');
 const { auditLog } = require('../lib/audit');
-const { receiveLot, consumeFIFO } = require('../lib/lots');
+const { receiveLot, consumeFIFO, costHistory, setLotCost } = require('../lib/lots');
 const { seesAllLocations } = require('../lib/auth');
 const { lookupProduct, rememberProduct } = require('../lib/productLookup');
 const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
@@ -229,8 +229,32 @@ router.post('/kiosk/:slug/receive', throttle, (req, res) => {
   const r = receiveExisting({ locId: c.loc.id, item: info.item, body: req.body, user: { id: c.staff.id } });
   if (r.duplicate) return res.json({ ok: true, duplicate: true, kind: r.kind, message: r.message });
   if (r.error) return res.status(400).json({ ok: false, error: r.error });
-  auditLog(auditReq(c.staff, req.body), 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, via: 'scanner_kiosk' });
-  res.json({ ok: true, success: true, item: r.item, added: r.added, kind: r.kind });
+  auditLog(auditReq(c.staff, req.body), 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, unit_cost: r.unit_cost, via: 'scanner_kiosk' });
+  res.json({ ok: true, success: true, item: r.item, added: r.added, kind: r.kind, lot_id: r.lot_id, unit_cost: r.unit_cost });
+});
+
+// Cost / purchase history for an item stocked at THIS kiosk's location — every purchase (lot) with
+// the price paid that time. Scoped to the kiosk's location (an item_id from another store is refused).
+router.post('/kiosk/:slug/cost-history', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  const item = db.prepare(`SELECT id, item_name, unit, quantity, unit_cost, location_id FROM inventory WHERE id=? AND is_active=1`).get(req.body && req.body.item_id);
+  if (!item || item.location_id !== c.loc.id) return res.status(404).json({ ok: false, error: 'That item is not stocked at this location.' });
+  res.json({ ok: true, ...costHistory(item) });
+});
+
+// Correct one purchase's (lot's) unit cost from the kiosk — must belong to this kiosk's location.
+router.post('/kiosk/:slug/lot-cost', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  const lot = db.prepare(`SELECT * FROM inventory_lots WHERE id=?`).get(req.body && req.body.lot_id);
+  if (!lot || lot.location_id !== c.loc.id) return res.status(404).json({ ok: false, error: 'Purchase not found at this location.' });
+  const cost = parseFloat(req.body && req.body.unit_cost);
+  if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ ok: false, error: 'Enter a valid unit cost.' });
+  const newCost = setLotCost(lot, cost);
+  const item = db.prepare(`SELECT item_name FROM inventory WHERE id=?`).get(lot.item_id);
+  auditLog(auditReq(c.staff, req.body), 'lot_cost_edited', 'inventory', lot.item_id, { lot_id: lot.id, item: item && item.item_name, from: lot.unit_cost, to: newCost, via: 'scanner_kiosk' });
+  res.json({ ok: true, lot_id: lot.id, unit_cost: newCost });
 });
 
 // Add stock ('in') or set a cycle count on the item matching a barcode.

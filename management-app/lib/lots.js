@@ -86,4 +86,38 @@ function consumeFIFOCosted(itemId, qty) {
   return out;
 }
 
-module.exports = { receiveLot, consumeFIFO, consumeFIFOCosted };
+// Cost / purchase history for one item: every lot (newest-first) is a cost layer with the price
+// paid that time, plus roll-ups. Shared by the console route and the kiosk so they can't drift.
+function costHistory(item) {
+  const lots = db.prepare(`
+    SELECT lo.id, lo.received_at, lo.received_qty, lo.quantity AS remaining, lo.unit_cost,
+           lo.net_weight_lb, lo.net_weight_kg, lo.lot_code, lo.serial, lo.pack_date, lo.prod_date,
+           lo.expiry_date, lo.depleted_at, u.name AS received_by
+    FROM inventory_lots lo LEFT JOIN users u ON u.id=lo.received_by
+    WHERE lo.item_id=? ORDER BY lo.received_at DESC, lo.id DESC LIMIT 200`).all(item.id)
+    .map(r => ({
+      ...r,
+      extended_remaining: Math.round((r.remaining || 0) * (r.unit_cost || 0) * 100) / 100,
+      extended_purchased: Math.round((r.received_qty || 0) * (r.unit_cost || 0) * 100) / 100,
+    }));
+  const onHandQty = lots.reduce((s, l) => s + (l.remaining || 0), 0);
+  const onHandValue = Math.round(lots.reduce((s, l) => s + l.extended_remaining, 0) * 100) / 100;
+  const purchasedValue = Math.round(lots.reduce((s, l) => s + l.extended_purchased, 0) * 100) / 100;
+  const avgCost = onHandQty > 0 ? Math.round((onHandValue / onHandQty) * 1000) / 1000 : (item.unit_cost || 0);
+  return {
+    item: { id: item.id, item_name: item.item_name, unit: item.unit, quantity: item.quantity, unit_cost: item.unit_cost },
+    lots, totals: { on_hand_qty: Math.round(onHandQty * 1000) / 1000, on_hand_value: onHandValue, purchased_value: purchasedValue, avg_cost: avgCost, purchases: lots.length },
+  };
+}
+
+// Correct one lot's unit cost. If it's the item's newest layer, keep inventory.unit_cost (the
+// "current price") in step. Returns the rounded cost. Caller handles auth + the audit log.
+function setLotCost(lot, cost) {
+  const c = Math.round((Number(cost) || 0) * 1000) / 1000;
+  db.prepare(`UPDATE inventory_lots SET unit_cost=? WHERE id=?`).run(c, lot.id);
+  const latest = db.prepare(`SELECT id FROM inventory_lots WHERE item_id=? ORDER BY received_at DESC, id DESC LIMIT 1`).get(lot.item_id);
+  if (latest && latest.id === lot.id) db.prepare(`UPDATE inventory SET unit_cost=? WHERE id=?`).run(c, lot.item_id);
+  return c;
+}
+
+module.exports = { receiveLot, consumeFIFO, consumeFIFOCosted, costHistory, setLotCost };
