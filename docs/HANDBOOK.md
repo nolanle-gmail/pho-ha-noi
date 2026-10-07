@@ -743,9 +743,12 @@ and already drives FIFO. A **💲 Cost history** button on every **Stock** and *
 opens the layers — each purchase's date, qty bought, qty remaining, weight and unit cost — with
 on-hand value (each layer at its own cost), total purchased, and the weighted-average cost; the
 **unit cost is editable inline** (correct a typo or enter the real invoice price later — the newest
-layer also updates the item's current price). **FIFO Use** draws the oldest layer first and reports
-the true **COGS** valued at each layer's cost. API: `GET /inventory/:id/cost-history`,
-`PATCH /inventory/lots/:id/cost`; `receiveExisting` + `consumeFIFOCosted` in `lib/receive.js` / `lib/lots.js`.
+layer also updates the item's current price). The **standalone kiosk** has the same view: a
+**💲 Cost history** button on a scanned item's receive panel, scoped to the kiosk's location. **FIFO
+Use** draws the oldest layer first and reports the true **COGS** valued at each layer's cost. API:
+`GET /inventory/:id/cost-history`, `PATCH /inventory/lots/:id/cost` (console) and
+`POST /api/scannerkiosk/kiosk/:slug/{cost-history,lot-cost}` (kiosk), all over the shared
+`costHistory` / `setLotCost` / `consumeFIFOCosted` helpers in `lib/lots.js` + `lib/receive.js`.
 
 **Scan modes.** The **console scanner**, the **staff app**, and the **per-location kiosk**
 (`/scanner/<slug>`) have a mode toggle:
