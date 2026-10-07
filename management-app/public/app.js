@@ -1726,8 +1726,9 @@ async function renderStock() {
         <button class="btn ghost" id="scanBtn">📠 Scan</button>
         <button class="btn ghost" id="receiveSku">Receive by SKU</button>
       </div></div>
+    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} items stocked here · levels, cost, descriptions &amp; notes in one place. The shared product dictionary is on the <strong>Glossary</strong> tab.${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
     <div class="table-wrap"><table><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Actions</th>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min</th><th class="num">Par</th><th class="num">Unit cost</th><th>Status</th><th>Description</th><th>Notes</th><th>Actions</th>
     </tr></thead><tbody>
       ${items.map(i => `<tr>
         <td><strong>${esc(i.item_name)}</strong></td>
@@ -1741,7 +1742,9 @@ async function renderStock() {
         <td class="num">${i.par_level == null ? '—' : numf(i.par_level)}</td>
         <td class="num">${money(i.unit_cost)}</td>
         <td>${statusBadge(i.quantity, i.min_quantity)}</td>
-        <td><div class="actions-cell">
+        <td style="max-width:260px;min-width:140px;color:var(--ink,#374151)">${i.description ? esc(i.description) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td style="max-width:180px;min-width:120px;color:var(--ink,#374151)">${i.notes ? esc(i.notes) : '<span style="color:var(--muted)">—</span>'}</td>
+        <td><div class="actions-cell" style="flex-wrap:nowrap">
           <button class="btn sm ghost" data-act="edit" data-id="${i.id}">Edit</button>
           <button class="btn sm ghost danger" data-act="delete" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Remove this item from stock (history is kept)">🗑 Delete</button>
           <button class="btn sm order-hover" data-act="order" data-id="${i.id}" title="Create a purchase order for this item">🛒 Order</button>
@@ -7072,7 +7075,9 @@ async function openAddChatMembers(gid, existingIds) {
 // The CK reuses the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
 // scoped to the Central Kitchen location via invLoc(). Items & vendors added on the
 // CK's Glossary/Vendors tabs fan out one-way to every restaurant (handled server-side).
-const CK_TABS = [['overview', 'Overview'], ['glossary', 'Items'], ['catalog', 'Glossary'], ['stock', 'Stock'], ['orders', 'Orders & Reorder'],
+// 'Items' (per-location catalog) was merged into 'Stock' — one tab now shows levels + the catalog
+// fields (description/notes). 'Glossary' (the group-wide product dictionary) stays separate.
+const CK_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'], ['orders', 'Orders & Reorder'],
   ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'], ['reports', 'Reports'], ['distribution', 'Distribution'],
   ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
 const CK_RENDER = { overview: renderDashboard, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock, orders: renderOrders,
@@ -7096,7 +7101,7 @@ async function renderCentral() {
 // while S.section==='warehouse'). Unlike the CK there is NO one-way catalog
 // fan-out and no production/fulfillment — a warehouse just receives, stores and
 // ships/transfers items to any location (manual ship via the scanner/Transfers).
-const WH_TABS = [['overview', 'Overview'], ['glossary', 'Items'], ['catalog', 'Glossary'], ['stock', 'Stock'],
+const WH_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'],
   ['storage', 'Storage'], ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'],
   ['lots', 'Lots & Expiry'], ['vendors', 'Vendors']];
 const WH_RENDER = { overview: renderWhOverview, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock,
