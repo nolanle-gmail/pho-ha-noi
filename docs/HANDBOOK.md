@@ -757,6 +757,10 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
   `PUT /distribution/orders/:id` → `received`). A disabled hook (`DIST_NOTIFY_SENDER`) will text the
   order's requester when it ships (enabled later). Orders are placed against a chosen hub on the store
   order screen — the "Order from" dropdown lists each hub (CK + Warehouse) that stocks the item.
+  The same flow runs on the **standalone kiosk** — `POST /api/scannerkiosk/kiosk/:slug/ship-queue`
+  (no body → the hub's order queue; `to_location_id` → that store's lines) and `POST .../ship-scan` —
+  so a hub staffer can fulfil orders from the tablet at the dock. Console and kiosk share one core
+  (`lib/shipOrder.js`: `hubQueue` / `storeLines` / `shipScanOrder`) so the two can never drift.
 
 Every location (and every scan surface) can **📥 Receiving**, **🔁 Transferring**, **📋 Checking
 Inventory** and **🍳 Use**. The **Warehouse** and **Central Kitchen** (the distribution hubs) add
