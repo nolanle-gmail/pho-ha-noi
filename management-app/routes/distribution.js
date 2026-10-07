@@ -32,19 +32,12 @@ function storeScope(req, fromQuery) {
 function ckAvailable(itemName) { return hubAvailable(ckLoc() ? ckLoc().id : null, itemName); }
 
 // ── Distribution hubs (Central Kitchen + Warehouse) ──────────────────────────
-// A store can order from, and a hub ships, raw stock. Both the Central Kitchen and
-// a Warehouse act as fulfilment hubs. Generalises the CK-only helpers above.
-const HUB_TYPES = ['central_kitchen', 'warehouse'];
+// A store can order from, and a hub ships, raw stock. Both the Central Kitchen and a Warehouse act
+// as fulfilment hubs. The scan-to-fulfil core is shared with the kiosk in lib/shipOrder.js.
+const { hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender } = require('../lib/shipOrder');
 function hubs() { return db.prepare(`SELECT id, name, type FROM locations WHERE type IN ('central_kitchen','warehouse') AND is_active=1 ORDER BY (type='central_kitchen') DESC, name`).all(); }
-function hubById(id) { const h = db.prepare(`SELECT id, name, type FROM locations WHERE id=? AND is_active=1`).get(id); return h && HUB_TYPES.includes(h.type) ? h : null; }
 // Is this person allowed to run that hub? (leadership, or a staffer based at the hub.)
 function isHubStaff(req, hubId) { return seesAllLocations(req.user.role) || String(req.user.location_id) === String(hubId); }
-// On-hand, distributable quantity of an item at a given hub.
-function hubAvailable(hubId, itemName) {
-  if (!hubId) return 0;
-  const row = db.prepare(`SELECT quantity FROM inventory WHERE location_id=? AND item_name=? AND is_active=1 AND distributable=1`).get(hubId, itemName);
-  return row ? Math.max(0, row.quantity) : 0;
-}
 // Resolve the hub a request is for: an explicit source_location_id (validated as a hub), else the
 // staffer's own hub if they're based at one, else the Central Kitchen (back-compat default).
 function resolveHub(req, fromQuery) {
@@ -53,26 +46,6 @@ function resolveHub(req, fromQuery) {
   const own = hubById(req.user.location_id);
   if (own) return own;
   return ckLoc();
-}
-// Open order lines for a store from a specific hub, with how much is still to ship.
-function hubOrderLines(hubId, storeId) {
-  return db.prepare(`SELECT id, item_id, item_name, unit, requested_qty, ck_qty, shipped_qty, status
-    FROM distribution_orders
-    WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')
-    ORDER BY item_name`).all(hubId, storeId)
-    .map(o => ({ ...o, remaining: r3(Math.max(0, o.ck_qty - o.shipped_qty)) }))
-    .filter(o => o.remaining > 0.0005 || o.shipped_qty > 0);
-}
-
-// Notify the order's requester that it shipped. DISABLED for now (owner will enable later) — the
-// hook is here so turning it on is a one-line flag. requested_by holds the sender.
-const NOTIFY_SENDER = process.env.DIST_NOTIFY_SENDER === '1';
-function notifySender(order, hubName) {
-  if (!NOTIFY_SENDER || !order || !order.requested_by) return;
-  try {
-    const u = db.prepare(`SELECT name, phone FROM users WHERE id=?`).get(order.requested_by);
-    if (u && u.phone) require('../lib/sms').sendSms(u.phone, `${hubName} shipped ${r3(order.shipped_qty)} ${order.unit || ''} of ${order.item_name} on your order.`);
-  } catch { /* best-effort; never breaks a ship */ }
 }
 
 // ── CK raw-stock warehouse (CK staff) ────────────────────────────────────────
@@ -253,7 +226,7 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
         VALUES (?,?,?,?,'transfer_sent',?,?)`).run(src.id, hub.id, d.to_location_id, outstanding, req.user.id, `${hub.name} distribution`);
     }
     db.prepare(`UPDATE distribution_orders SET status='shipped', shipped_qty=ck_qty, approved_by=?, updated_at=datetime('now') WHERE id=?`).run(req.user.id, d.id);
-    if (NOTIFY_SENDER) notifySender(db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(d.id), hub.name);
+    notifySender(db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(d.id), hub.name);   // self-gated (disabled by default)
     auditLog(req, 'distribution_ship', 'distribution_order', d.id, { item: d.item_name, qty: d.ck_qty, hub: hub.name, to: d.to_location_id });
     return res.json({ success: true });
   }
@@ -287,14 +260,7 @@ router.get('/ship-queue', requireRole(ROLES.OPS), (req, res) => {
   const hub = resolveHub(req, true);
   if (!hub) return res.status(404).json({ error: 'Open the scanner from a Central Kitchen or Warehouse to ship orders.' });
   if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
-  const rows = db.prepare(`
-    SELECT d.to_location_id AS store_id, l.name AS store_name,
-           COUNT(*) AS lines, SUM(d.ck_qty - d.shipped_qty) AS remaining, MIN(d.created_at) AS oldest_at,
-           SUM(CASE WHEN d.shipped_qty > 0 THEN 1 ELSE 0 END) AS started
-    FROM distribution_orders d JOIN locations l ON l.id = d.to_location_id
-    WHERE d.source_location_id=? AND d.status IN ('requested','approved') AND (d.ck_qty - d.shipped_qty) > 0.0005
-    GROUP BY d.to_location_id ORDER BY oldest_at`).all(hub.id);
-  res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, orders: rows.map(r => ({ ...r, remaining: r3(r.remaining) })) });
+  res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, orders: hubQueue(hub.id) });
 });
 
 // 2) One store's open order lines from this hub, with the hub's on-hand + barcode for matching.
@@ -304,11 +270,7 @@ router.get('/ship-queue/:storeId', requireRole(ROLES.OPS), (req, res) => {
   if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
   const store = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(req.params.storeId);
   if (!store) return res.status(404).json({ error: 'Store not found.' });
-  const lines = hubOrderLines(hub.id, store.id).map(o => {
-    const inv = db.prepare(`SELECT quantity, unit, barcode, is_catch_weight FROM inventory WHERE location_id=? AND item_name=? AND is_active=1`).get(hub.id, o.item_name);
-    return { ...o, on_hand: inv ? r3(inv.quantity) : 0, barcode: inv ? inv.barcode : null, is_catch_weight: inv ? !!inv.is_catch_weight : false };
-  });
-  res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, store, lines });
+  res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, store, lines: storeLines(hub.id, store.id) });
 });
 
 // 3) Scan an item to fulfil a line of this store's order. Decrements the hub (FIFO), advances the
@@ -318,61 +280,12 @@ router.post('/ship-scan', requireRole(ROLES.OPS), (req, res) => {
   const hub = resolveHub(req, false);
   if (!hub) return res.status(404).json({ error: 'Open the scanner from a Central Kitchen or Warehouse to ship.' });
   if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
-  const storeId = parseInt(req.body.to_location_id, 10);
-  if (!storeId) return res.status(400).json({ error: 'Pick the store whose order you are filling.' });
-  const p = parseScan(req.body.code);
-  const key = (p.gtin || p.code || '').toString().trim();
-  if (!key) return res.status(400).json({ error: 'A barcode is required.' });
-  const src = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(hub.id, key);
-  if (!src) return res.status(404).json({ found: false, code: key, error: `That barcode isn't stocked at ${hub.name}, so there's nothing to ship.` });
-  // Must be an item on this store's open order from this hub.
-  const line = db.prepare(`SELECT * FROM distribution_orders
-    WHERE source_location_id=? AND to_location_id=? AND item_name=? AND status IN ('requested','approved')
-    ORDER BY id LIMIT 1`).get(hub.id, storeId, src.item_name);
-  if (!line) return res.status(200).json({ ok: false, not_on_order: true, item_name: src.item_name, error: `${src.item_name} isn't on this store's order from ${hub.name}.` });
-
-  const catchw = !!src.is_catch_weight;
-  const qty = parseFloat(catchw && (req.body.weight != null && req.body.weight !== '') ? req.body.weight
-    : (req.body.quantity != null && req.body.quantity !== '') ? req.body.quantity
-    : (p.weightLb != null ? p.weightLb : NaN));
-  if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: catchw ? 'Enter the weight to ship.' : 'Enter a quantity to ship.' });
-  if (src.quantity < qty - 0.0005) return res.status(400).json({ error: `Only ${r3(src.quantity)} ${src.unit} of ${src.item_name} on hand at ${hub.name}.` });
-
-  const remaining = r3(Math.max(0, line.ck_qty - line.shipped_qty));
-  const newShipped = r3(line.shipped_qty + qty);
-  const over = newShipped > line.ck_qty + 0.0005;
-  // Over-ship (more than the order asked for) needs an explicit confirm; on confirm we raise the
-  // order's count to what actually shipped.
-  if (over && !req.body.confirm) {
-    return res.json({ ok: false, over: true, item_name: src.item_name, unit: src.unit,
-      remaining, scanned: r3(qty), new_total: newShipped, ordered: r3(line.ck_qty),
-      message: `You scanned ${r3(qty)} ${src.unit} of ${src.item_name}, but only ${remaining} ${src.unit} is left on the order. Accept the extra and update the order to ${newShipped} ${src.unit}?` });
-  }
-
-  db.exec('BEGIN');
-  try {
-    // Decrement the hub (FIFO) — the stock is now in transit to the store.
-    db.prepare(`UPDATE inventory SET quantity=quantity-?, last_updated=datetime('now') WHERE id=?`).run(qty, src.id);
-    consumeFIFO(src.id, qty);
-    db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes)
-      VALUES (?,?,?,?,'transfer_sent',?,?)`).run(src.id, hub.id, storeId, qty, req.user.id, `Order ship (scan) · order #${line.id}`);
-    // Advance the order line. Over-ship raises ck_qty (and requested_qty by the same delta) to the
-    // actually-shipped amount; otherwise just record progress. Fully shipped ⇒ status 'shipped'.
-    let ckQty = line.ck_qty, requested = line.requested_qty;
-    if (over) { const delta = r3(newShipped - line.ck_qty); ckQty = newShipped; requested = r3(line.requested_qty + delta); }
-    const done = newShipped >= ckQty - 0.0005;
-    db.prepare(`UPDATE distribution_orders SET shipped_qty=?, ck_qty=?, requested_qty=?, status=?, approved_by=?, updated_at=datetime('now') WHERE id=?`)
-      .run(newShipped, ckQty, requested, done ? 'shipped' : line.status, req.user.id, line.id);
-    db.exec('COMMIT');
-    logScan({ itemId: src.id, locationId: hub.id, action: 'ship', parsed: p, quantity: qty, userId: req.user.id });
-    auditLog(req, 'distribution_ship_scan', 'distribution_order', line.id, { item: src.item_name, qty: r3(qty), hub: hub.name, to: storeId, over: !!over });
-    const fresh = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(line.id);
-    if (done) notifySender(fresh, hub.name);
-    const anyLeft = hubOrderLines(hub.id, storeId).length > 0;
-    return res.json({ ok: true, success: true, item_name: src.item_name, unit: src.unit, shipped: r3(qty),
-      order: { id: line.id, requested_qty: r3(requested), ck_qty: r3(ckQty), shipped_qty: newShipped, remaining: r3(Math.max(0, ckQty - newShipped)), done, raised: !!over },
-      store_done: !anyLeft, on_hand: r3(Math.max(0, src.quantity - qty)) });
-  } catch (e) { try { db.exec('ROLLBACK'); } catch { /* */ } return res.status(500).json({ error: 'Could not ship that item.' }); }
+  const r = shipScanOrder({ hubId: hub.id, storeId: req.body.to_location_id, code: req.body.code, quantity: req.body.quantity, weight: req.body.weight, confirm: req.body.confirm, userId: req.user.id });
+  if (r.not_on_order) return res.json({ ok: false, not_on_order: true, item_name: r.item_name, error: r.error });
+  if (r.over) return res.json({ ok: false, ...r });
+  if (r.error) return res.status(r.status || 400).json({ error: r.error, found: r.found, code: r.code });
+  auditLog(req, 'distribution_ship_scan', 'distribution_order', r.line_id, { item: r.item_name, qty: r.shipped, hub: hub.name, to: parseInt(req.body.to_location_id, 10), over: r.over });
+  res.json(r);
 });
 
 module.exports = router;

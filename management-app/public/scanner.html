@@ -70,6 +70,11 @@
   .ship-ord-h{ font-size:.75rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin:.6rem 0 .3rem; }
   .ship-ord{ display:flex; justify-content:space-between; gap:.5rem; padding:.35rem .5rem; background:#fff; border:1px solid var(--line); border-radius:8px; margin-bottom:.25rem; font-size:.9rem; }
   .ship-ord.done{ opacity:.5; text-decoration:line-through; }
+  .ship-ord-h b{ color:var(--ink,#111); }
+  .ship-queue{ display:flex; flex-direction:column; gap:.3rem; }
+  button.ship-ord.pick{ width:100%; text-align:left; cursor:pointer; align-items:center; font:inherit; font-size:.95rem; transition:background .12s, border-color .12s; }
+  button.ship-ord.pick:hover, button.ship-ord.pick:active{ background:#f1f5f9; border-color:var(--brand,#2563eb); }
+  button.ship-ord.pick .mono{ color:var(--muted); white-space:nowrap; }
   [hidden]{ display:none !important; }
 </style>
 </head>
@@ -131,7 +136,7 @@ function comboWire(root){ (root||document).querySelectorAll('[data-combo]').forE
 const comboVal = (key) => { const sel=document.getElementById('cb_'+key); if(!sel) return ''; return sel.value==='__other__' ? (((document.getElementById('cbo_'+key)||{}).value)||'').trim() : sel.value; };
 const slug = decodeURIComponent(location.pathname.replace(/^\/scanner\/?/, '')).trim();
 let empCode = '';
-let scanMode = 'receive', shipToId = '', shipToName = '', LOC_NAME = '', LOC_TYPE = '';
+let scanMode = 'receive', shipToId = '', shipToName = '', shipStore = null, LOC_NAME = '', LOC_TYPE = '';
 
 async function api(path, body){
   const opts = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {};
@@ -157,7 +162,7 @@ async function handleCode(code){
   $('scanmsg').textContent = 'Scanned: ' + code;
   await onScanned(code);
 }
-const onScanned = (code) => (scanMode === 'ship' || scanMode === 'transfer') ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : (scanMode === 'use' ? handleUse(code) : handleScan(code)));
+const onScanned = (code) => scanMode === 'ship' ? handleShipOrder(code) : (scanMode === 'transfer' ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : (scanMode === 'use' ? handleUse(code) : handleScan(code))));
 
 // ── Check mode: stock of a scanned item across all locations ──────────────
 async function handleCheck(code){
@@ -177,28 +182,76 @@ async function handleCheck(code){
 async function setMode(m){
   scanMode = m;
   document.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm ' + (b.dataset.mode === m ? 'primary' : 'ghost'));
-  // Shipping and Transferring both pick a destination; only Shipping shows the order-fill list.
-  const wantsDest = (m === 'ship' || m === 'transfer');
-  $('shipBar').hidden = !wantsDest;
-  $('scanmsg').textContent = m === 'ship' ? 'Choose a destination, then scan to ship — open orders fill automatically.' : (m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock at every location.' : (m === 'use' ? 'Scan an item to record stock used here.' : '📠 Ready — scan a barcode with your scanner.')));
-  if (wantsDest && !$('shipBar').dataset.loaded){
-    $('shipBar').dataset.loaded = '1';
+  // Shipping fills open orders (queue → store → scan); Transferring is an ad-hoc move to a destination.
+  const wantsBar = (m === 'ship' || m === 'transfer');
+  $('shipBar').hidden = !wantsBar;
+  $('shipBar').dataset.loaded = '';
+  $('scanmsg').textContent = m === 'ship' ? 'Pick an order below, then scan the items to ship them.' : (m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock at every location.' : (m === 'use' ? 'Scan an item to record stock used here.' : '📠 Ready — scan a barcode with your scanner.')));
+  if (m === 'ship'){ await renderShipQueue(); }
+  else if (m === 'transfer'){
     const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/targets', { employee_code: empCode });
     const tgts = (d && d.targets) || [];
-    $('shipBar').innerHTML = `<label class="ship-lbl" id="shipLbl">Ship from <b>${esc(LOC_NAME)}</b> to</label><select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc((t.name||'').replace('Pho Ha Noi — ',''))}${t.type==='central_kitchen'?' (CK)':t.type==='warehouse'?' (WH)':''}</option>`).join('')}</select><div id="shipOrders"></div>`;
-    $('shipTo').onchange = () => { shipToId = $('shipTo').value; shipToName = $('shipTo').selectedOptions[0] ? $('shipTo').selectedOptions[0].textContent.replace(/\s*\((CK|WH)\)\s*$/,'').trim() : ''; if (scanMode === 'ship') loadShipOrders(); else { const b = $('shipOrders'); if (b) b.innerHTML = ''; } };
-  }
-  if (wantsDest){
-    const lbl = $('shipLbl'); if (lbl) lbl.innerHTML = (m === 'transfer' ? 'Transfer from ' : 'Ship from ') + `<b>${esc(LOC_NAME)}</b> to`;
-    const b = $('shipOrders'); if (b){ if (m === 'ship') loadShipOrders(); else b.innerHTML = ''; }
+    $('shipBar').innerHTML = `<label class="ship-lbl">Transfer from <b>${esc(LOC_NAME)}</b> to</label><select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc((t.name||'').replace('Pho Ha Noi — ',''))}${t.type==='central_kitchen'?' (CK)':t.type==='warehouse'?' (WH)':''}</option>`).join('')}</select>`;
+    $('shipTo').onchange = () => { shipToId = $('shipTo').value; shipToName = $('shipTo').selectedOptions[0] ? $('shipTo').selectedOptions[0].textContent.replace(/\s*\((CK|WH)\)\s*$/,'').trim() : ''; };
   }
 }
-async function loadShipOrders(){
-  const box = $('shipOrders'); if (!box) return;
-  if (!shipToId){ box.innerHTML = ''; return; }
-  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/orders', { employee_code: empCode, to_location_id: shipToId });
-  const ords = (d && d.orders) || [];
-  box.innerHTML = ords.length ? '<div class="ship-ord-h">Open order to fill:</div>' + ords.map(o => `<div class="ship-ord${o.remaining<=0?' done':''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.ck_qty)}/${nf(o.requested_qty)} ${esc(o.unit||'')}</span></div>`).join('') : '<div class="sub" style="color:var(--muted)">No open orders — scanning ships ad-hoc.</div>';
+// Shipping queue: the stores with open orders waiting on THIS hub.
+async function renderShipQueue(){
+  const box = $('shipBar'); if (!box || scanMode !== 'ship') return;
+  if (shipStore) return renderShipStore();
+  box.innerHTML = '<div class="sub" style="color:var(--muted)">Loading orders…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/ship-queue', { employee_code: empCode });
+  if (!box || scanMode !== 'ship') return;
+  if (!d || !d.ok){ box.innerHTML = `<div class="sub" style="color:var(--muted)">${esc((d && d.error) || 'Could not load orders.')}</div>`; return; }
+  const ords = d.orders || [];
+  box.innerHTML = `<div class="ship-ord-h">📦 Orders waiting to ship from <b>${esc(LOC_NAME)}</b></div>` +
+    (ords.length ? `<div class="ship-queue">${ords.map(o => `<button class="ship-ord pick" data-store="${o.store_id}" data-name="${esc(o.store_name)}"><span>${esc((o.store_name||'').replace('Pho Ha Noi — ',''))}</span><span class="mono">${o.lines} item${o.lines===1?'':'s'}${o.started?' · started':''} ›</span></button>`).join('')}</div>`
+      : '<div class="sub" style="color:var(--muted)">No orders waiting to ship. ✅</div>');
+  box.querySelectorAll('[data-store]').forEach(b => b.onclick = () => { shipStore = { id: b.dataset.store, name: b.dataset.name }; renderShipStore(); });
+}
+// One store's open order: lines + how much is shipped / still needed.
+async function renderShipStore(){
+  const box = $('shipBar'); if (!box || !shipStore) return;
+  box.innerHTML = '<div class="sub" style="color:var(--muted)">Loading order…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/ship-queue', { employee_code: empCode, to_location_id: shipStore.id });
+  if (!box || !shipStore) return;
+  if (!d || !d.ok){ box.innerHTML = `<div class="sub" style="color:var(--muted)">${esc((d && d.error) || 'Could not load order.')}</div>`; return; }
+  const lines = d.lines || [], sn = (shipStore.name||'').replace('Pho Ha Noi — ','');
+  box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <b>${esc(sn)}</b> — scan items to ship</div>` +
+    (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining<=0.0005?' done':''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.shipped_qty)}/${nf(o.ck_qty)} ${esc(o.unit||'')}${o.on_hand<=0.0005?' · ⚠ none here':''}</span></div>`).join('')}</div>`
+      : '<div class="sub" style="color:var(--muted)">This order is fully shipped. ✅</div>');
+  const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
+}
+const refreshShip = () => { if (scanMode === 'ship'){ shipStore ? renderShipStore() : renderShipQueue(); } };
+// Scan an item to fill the picked store's order.
+async function handleShipOrder(code){
+  if (!shipStore){ $('result').innerHTML = `<div class="panel err">Pick an order above first, then scan its items.</div><button class="btn ghost" id="again">OK</button>`; $('again').onclick = resume; return; }
+  $('result').innerHTML = '<div class="result">Looking up…</div>';
+  const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/resolve', { employee_code: empCode, code });
+  if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Error')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
+  const key = d.code || code;
+  if (!d.found){ $('result').innerHTML = `<div class="result"><div class="name">🚫 Not stocked here</div><div class="sub mono">${esc(key)}</div><div class="sub">Nothing to ship from ${esc(LOC_NAME)}.</div><button class="btn ghost" id="again">Scan another</button></div>`; $('again').onclick = resume; return; }
+  const it = d.item, sn = (shipStore.name||'').replace('Pho Ha Noi — ','');
+  let line = null;
+  try { const { d:q } = await api('/kiosk/' + encodeURIComponent(slug) + '/ship-queue', { employee_code: empCode, to_location_id: shipStore.id }); line = ((q && q.lines) || []).find(l => l.item_name === it.item_name && l.remaining > 0.0005); } catch {}
+  if (!line){ $('result').innerHTML = `<div class="result"><div class="name">⚠ ${esc(it.item_name)}</div><div class="sub">isn't on ${esc(sn)}'s order (or already fully shipped).</div><button class="btn ghost" id="again">Scan another</button></div>`; $('again').onclick = resume; return; }
+  const dflt = d.weight_lb || line.remaining || 1;
+  $('result').innerHTML = `<div class="result"><div class="name">📤 ${esc(it.item_name)}</div><div class="sub">${nf(it.quantity)} ${esc(it.unit)} on hand · order needs ${nf(line.remaining)} ${esc(line.unit||it.unit)} → <b>${esc(sn)}</b></div>${scanLangs(d.glossary)}${scanSection(it)}
+    <div class="fields"><input class="qty" id="shq" type="number" value="${dflt}" min="0" step="any"></div>
+    <div class="row"><button class="btn ok" id="shGo">📤 Ship</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
+  $('again').onclick = resume;
+  $('shGo').onclick = async () => {
+    $('shGo').disabled = true;
+    const body = { employee_code: empCode, to_location_id: shipStore.id, code: key, quantity: $('shq').value };
+    let { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/ship-scan', body);
+    if (r && r.over){ if (!window.confirm(r.message)){ $('shGo').disabled = false; return; } ({ d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/ship-scan', Object.assign({}, body, { confirm:true }))); }
+    if (r && r.not_on_order){ $('shGo').disabled = false; alert(r.error || 'That item is not on this order.'); return; }
+    if (!r || !r.ok){ $('shGo').disabled = false; alert((r && r.error) || 'Could not ship that item.'); return; }
+    const o = r.order;
+    $('result').innerHTML = `<div class="panel info"><span class="big">Shipped ${nf(r.shipped)} ${esc(r.unit||it.unit)} → ${esc(sn)}</span>${o ? (o.done ? 'Order line complete ✅' : `${nf(o.shipped_qty)}/${nf(o.ck_qty)} ${esc(r.unit||'')}`) : ''}${o && o.raised ? ' · order raised to match' : ''}</div><button class="btn primary" id="again">Scan another</button>`;
+    $('again').onclick = resume;
+    refreshShip();
+  };
 }
 async function handleShip(code){
   const isShip = scanMode === 'ship';

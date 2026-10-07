@@ -14,6 +14,7 @@ const { lookupProduct, rememberProduct } = require('../lib/productLookup');
 const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
 const { resolveVendor } = require('../lib/vendors');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
+const { hubById, hubQueue, storeLines, shipScanOrder } = require('../lib/shipOrder');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
 const { isCk, replicateItemFromCk } = require('../lib/ckReplication');
 const scanKey = (raw) => { const p = parseScan(raw); return (p.gtin || p.code || '').toString().trim(); };
@@ -151,6 +152,36 @@ router.post('/kiosk/:slug/orders', throttle, (req, res) => {
   const c = ctx(req.params.slug, req.body && req.body.employee_code);
   if (sentErr(res, c)) return;
   res.json({ ok: true, orders: openOrders(req.body && req.body.to_location_id) });
+});
+
+// ── Shipping from a hub kiosk (CK / Warehouse): the scan-to-fulfil order flow ──
+// The kiosk's own location is the hub. Without a store → the order queue; with a to_location_id →
+// that store's open order lines (+ the hub's on-hand + barcode for matching).
+router.post('/kiosk/:slug/ship-queue', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  const hub = hubById(c.loc.id);
+  if (!hub) return res.status(400).json({ ok: false, error: 'Shipping is only available at a Central Kitchen or Warehouse.' });
+  const storeId = req.body && req.body.to_location_id;
+  if (storeId) {
+    const store = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(storeId);
+    if (!store) return res.status(404).json({ ok: false, error: 'Store not found.' });
+    return res.json({ ok: true, hub: { id: hub.id, name: hub.name, type: hub.type }, store, lines: storeLines(hub.id, store.id) });
+  }
+  res.json({ ok: true, hub: { id: hub.id, name: hub.name, type: hub.type }, orders: hubQueue(hub.id) });
+});
+
+// Scan an item to fulfil a line of the chosen store's order from this hub kiosk.
+router.post('/kiosk/:slug/ship-scan', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  if (!hubById(c.loc.id)) return res.status(400).json({ ok: false, error: 'Shipping is only available at a Central Kitchen or Warehouse.' });
+  const r = shipScanOrder({ hubId: c.loc.id, storeId: req.body && req.body.to_location_id, code: req.body && req.body.code, quantity: req.body && req.body.quantity, weight: req.body && req.body.weight, confirm: req.body && req.body.confirm, userId: c.staff.id });
+  if (r.not_on_order) return res.json({ ok: false, not_on_order: true, item_name: r.item_name, error: r.error });
+  if (r.over) return res.json({ ok: false, ...r });
+  if (r.error) return res.status(r.status || 400).json({ ok: false, error: r.error, found: r.found, code: r.code });
+  auditLog(auditReq(c.staff, req.body), 'distribution_ship_scan', 'distribution_order', r.line_id, { item: r.item_name, qty: r.shipped, hub: c.loc.name, to: parseInt(req.body.to_location_id, 10), via: 'scanner_kiosk', over: r.over });
+  res.json(r);
 });
 
 // Scan-to-ship: move the scanned item from this kiosk's location to a destination.
