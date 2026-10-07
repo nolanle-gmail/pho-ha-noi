@@ -581,9 +581,12 @@ catalog.
 **The Glossary — a shared product dictionary (2026-09-23 redesign).** There are now two
 distinct things, on two tabs:
 
-- **Items** (formerly the "Glossary" tab) — the **per-location stock list** (the `inventory`
-  table for the selected location: on-hand, cost, lots, supplier).
-- **Glossary** (new tab) — the **group-wide product dictionary** (`product_catalog`), **one row
+- **Items** — the **per-location stock list** (the `inventory` table for the selected location).
+  **At the Central Kitchen and Warehouse this was merged into the "Stock" tab (2026-10-07)**: Stock
+  now shows the stock levels *and* the catalog fields (Description / Notes) in one place — plus, at
+  the CK, the "master copies to every location" note — so a hub has a single inventory tab instead
+  of two overlapping ones. The store **Inventory** section still has both an Items and a Stock tab.
+- **Glossary** — the **group-wide product dictionary** (`product_catalog`), **one row
   per GTIN, shared across the Central Kitchen and every location**. Managed by hand (search /
   **+ Add product** / edit / delete) and used to **pre-fill the scan-to-receive form**. Fields:
   **GTIN, Name (English), Name (Vietnamese), Name (Spanish), Brand, Category, Unit of measure,
