@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
-const { receiveLot, consumeFIFO } = require('../lib/lots');
+const { receiveLot, consumeFIFO, consumeFIFOCosted } = require('../lib/lots');
 const { lookupProduct, rememberProduct } = require('../lib/productLookup');
 const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
 const { resolveVendor } = require('../lib/vendors');
@@ -661,6 +661,35 @@ router.get('/:id/scan-history', requireRole(ROLES.OPS), (req, res) => {
   res.json(rows);
 });
 
+// Cost / purchase history for an item — every purchase (lot) is one cost layer with its own
+// unit cost, so the true cost of each batch is kept as the market price moves. Returns each lot
+// (newest first) with received date/qty, remaining qty, weight and unit cost, plus roll-ups:
+// on-hand value (remaining × each layer's cost), total purchased, and the weighted-average cost
+// of what's still on hand. FIFO drawdown (lib/lots) consumes the oldest layers first.
+router.get('/:id/cost-history', requireRole(ROLES.OPS), (req, res) => {
+  const item = db.prepare(`SELECT id, item_name, unit, quantity, unit_cost FROM inventory WHERE id=?`).get(req.params.id);
+  if (!item) return res.status(404).json({ error: 'Item not found' });
+  const lots = db.prepare(`
+    SELECT lo.id, lo.received_at, lo.received_qty, lo.quantity AS remaining, lo.unit_cost,
+           lo.net_weight_lb, lo.net_weight_kg, lo.lot_code, lo.serial, lo.pack_date, lo.prod_date,
+           lo.expiry_date, lo.depleted_at, u.name AS received_by
+    FROM inventory_lots lo LEFT JOIN users u ON u.id=lo.received_by
+    WHERE lo.item_id=? ORDER BY lo.received_at DESC, lo.id DESC LIMIT 200`).all(item.id)
+    .map(r => ({
+      ...r,
+      extended_remaining: Math.round((r.remaining || 0) * (r.unit_cost || 0) * 100) / 100,
+      extended_purchased: Math.round((r.received_qty || 0) * (r.unit_cost || 0) * 100) / 100,
+    }));
+  const onHandQty = lots.reduce((s, l) => s + (l.remaining || 0), 0);
+  const onHandValue = Math.round(lots.reduce((s, l) => s + l.extended_remaining, 0) * 100) / 100;
+  const purchasedValue = Math.round(lots.reduce((s, l) => s + l.extended_purchased, 0) * 100) / 100;
+  const avgCost = onHandQty > 0 ? Math.round((onHandValue / onHandQty) * 1000) / 1000 : (item.unit_cost || 0);
+  res.json({
+    item: { id: item.id, item_name: item.item_name, unit: item.unit, quantity: item.quantity, unit_cost: item.unit_cost },
+    lots, totals: { on_hand_qty: Math.round(onHandQty * 1000) / 1000, on_hand_value: onHandValue, purchased_value: purchasedValue, avg_cost: avgCost, purchases: lots.length },
+  });
+});
+
 // Scan-to-adjust: add stock ('in') or set a cycle count on the item matching a barcode.
 router.post('/barcode/scan', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, false);
@@ -688,9 +717,12 @@ router.post('/barcode/scan', requireRole(ROLES.OPS), (req, res) => {
       const d = recentDuplicate({ itemId: item.id, gtin: p.gtin, serial: p.serial, actions: ['receive', 'create'], quantity: qty });
       if (d.dup) return res.json({ duplicate: true, kind: d.kind, code, message: dupMessage(d, 'receive', item.item_name, p.serial) });
     }
+    const paid = (req.body.unit_cost != null && req.body.unit_cost !== '') ? parseFloat(req.body.unit_cost) : NaN;
+    const lotCost = Number.isFinite(paid) && paid >= 0 ? Math.round(paid * 1000) / 1000 : item.unit_cost;
     db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(qty, item.id);
-    receiveLot({ item_id: item.id, location_id: locId, quantity: qty, unit_cost: item.unit_cost, expiry_date: expiry, lot_code: lot, user_id: req.user.id });
-    db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`).run(item.id, locId, qty, req.user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${expiry ? ` · exp ${expiry}` : ''}`);
+    if (Number.isFinite(paid) && paid >= 0) db.prepare(`UPDATE inventory SET unit_cost=? WHERE id=?`).run(lotCost, item.id);
+    receiveLot({ item_id: item.id, location_id: locId, quantity: qty, unit_cost: lotCost, expiry_date: expiry, lot_code: lot, user_id: req.user.id });
+    db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`).run(item.id, locId, qty, req.user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${expiry ? ` · exp ${expiry}` : ''} · @ $${lotCost}/${item.unit}`);
     auditLog(req, 'stock_received', 'inventory', item.id, { item: item.item_name, qty, lot, expiry, via: 'scan' });
     logScan({ itemId: item.id, locationId: locId, action: 'receive', parsed: p, quantity: qty, userId: req.user.id });
   }
@@ -712,11 +744,11 @@ router.post('/barcode/use', requireRole(ROLES.OPS), (req, res) => {
   if (item.quantity < qty) return res.status(400).json({ error: `Only ${item.quantity} ${item.unit} on hand.` });
   const reason = (req.body.reason || 'kitchen use').toString().slice(0, 120);
   db.prepare(`UPDATE inventory SET quantity=MAX(0, quantity-?), last_updated=datetime('now') WHERE id=?`).run(qty, item.id);
-  consumeFIFO(item.id, qty);
-  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'out',?,?)`).run(item.id, locId, qty, req.user.id, `Used: ${reason}`);
+  const cogs = consumeFIFOCosted(item.id, qty);
+  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'out',?,?)`).run(item.id, locId, qty, req.user.id, `Used: ${reason} · COGS $${cogs.cost}`);
   logScan({ itemId: item.id, locationId: locId, action: 'use', parsed: p, quantity: qty, userId: req.user.id });
-  auditLog(req, 'stock_used', 'inventory', item.id, { item: item.item_name, qty, reason, via: 'scan' });
-  res.json({ success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id) });
+  auditLog(req, 'stock_used', 'inventory', item.id, { item: item.item_name, qty, reason, cogs: cogs.cost, via: 'scan' });
+  res.json({ success: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id), cogs: cogs.cost });
 });
 
 // ── Smart scan-to-receive (glossary-aware) ─────────────────────────────────
@@ -738,8 +770,8 @@ router.post('/barcode/receive', requireRole(ROLES.OPS), (req, res) => {
   const r = receiveExisting({ locId, item: info.item, body: req.body, user: req.user });
   if (r.duplicate) return res.json({ duplicate: true, kind: r.kind, message: r.message });
   if (r.error) return res.status(400).json({ error: r.error });
-  auditLog(req, 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, via: 'scan' });
-  res.json({ success: true, item: r.item, added: r.added, kind: r.kind });
+  auditLog(req, 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, unit_cost: r.unit_cost, via: 'scan' });
+  res.json({ success: true, item: r.item, added: r.added, kind: r.kind, lot_id: r.lot_id, unit_cost: r.unit_cost });
 });
 
 // Create a new stock item from the scan form, write it into the Glossary, and receive opening stock.
@@ -792,6 +824,25 @@ router.get('/expiring', requireRole(ROLES.OPS), (req, res) => {
   `).all(...args);
   const expired = rows.filter(r => r.days_left < 0).length;
   res.json({ days, expired, soon: rows.length - expired, lots: rows });
+});
+
+// Correct the unit cost recorded for one purchase (lot) — e.g. the real invoice price came in
+// after the scan, or an operator fixed a typo. Updates that cost layer; if it's the item's most
+// recent purchase, inventory.unit_cost (the "current price") is refreshed to match. Audited.
+router.patch('/lots/:id/cost', requireRole(ROLES.OPS), (req, res) => {
+  const lot = db.prepare(`SELECT * FROM inventory_lots WHERE id=?`).get(req.params.id);
+  if (!lot) return res.status(404).json({ error: 'Purchase not found' });
+  if (!seesAllLocations(req.user.role) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  const cost = parseFloat(req.body.unit_cost);
+  if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ error: 'Enter a valid unit cost.' });
+  const c = Math.round(cost * 1000) / 1000;
+  db.prepare(`UPDATE inventory_lots SET unit_cost=? WHERE id=?`).run(c, lot.id);
+  // If this is the item's latest purchase, keep inventory.unit_cost (current price) in step.
+  const latest = db.prepare(`SELECT id FROM inventory_lots WHERE item_id=? ORDER BY received_at DESC, id DESC LIMIT 1`).get(lot.item_id);
+  if (latest && latest.id === lot.id) db.prepare(`UPDATE inventory SET unit_cost=? WHERE id=?`).run(c, lot.item_id);
+  const item = db.prepare(`SELECT item_name FROM inventory WHERE id=?`).get(lot.item_id);
+  auditLog(req, 'lot_cost_edited', 'inventory', lot.item_id, { lot_id: lot.id, item: item && item.item_name, from: lot.unit_cost, to: c });
+  res.json({ success: true, lot_id: lot.id, unit_cost: c });
 });
 
 router.post('/lots/:id/discard', requireRole(ROLES.OPS), (req, res) => {

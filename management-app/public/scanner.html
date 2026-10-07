@@ -318,6 +318,7 @@ async function handleScan(code){
     $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${scanSection(it)}${gs1}${boxDiffNote(d)}
       <div class="fields"><input class="qty" id="q" type="number" value="${cw ? (d.weight_lb||'') : (d.weight_lb||1)}" min="0" step="any" placeholder="${cw?'net weight':'qty'}"><select id="m"><option value="in">${cw?'➕ Add weight':'➕ Add stock'}</option><option value="count">🔢 Set count</option></select><span class="scan-total" id="qTotal"></span></div>
       <div class="fields"><input id="qExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="qLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="fields"><input class="qty" id="qCost" type="number" step="0.01" min="0" value="${it.unit_cost != null ? it.unit_cost : ''}" placeholder="unit cost" title="Unit cost — price per ${esc(it.unit)} you paid this time (kept as this purchase's cost layer; blank keeps the last price)"><span class="scan-total">$ / ${esc(it.unit)} this purchase</span></div>
       <div class="row"><button class="btn ok" id="apply">Apply</button><button class="btn ghost" id="again">Scan another</button></div></div>`;
     $('again').onclick = resume;
     const updTotal = () => { const q = parseFloat($('q').value) || 0; $('qTotal').textContent = $('m').value === 'count' ? '= '+nf(q)+' '+it.unit : '→ '+nf((+it.quantity||0)+q)+' '+it.unit; };
@@ -332,7 +333,7 @@ async function handleScan(code){
         okMsg(r); return;
       }
       // Raw code so the server captures the full label (serial, pack/prod dates, weight).
-      const body = { employee_code: empCode, code: code, expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined };
+      const body = { employee_code: empCode, code: code, expiry_date: $('qExp').value || undefined, lot_code: $('qLot').value.trim() || undefined, unit_cost: ($('qCost') && $('qCost').value !== '') ? $('qCost').value : undefined };
       if (cw) body.weight = qv; else body.quantity = qv;
       let { d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', body);
       if (r.duplicate){ if (!window.confirm(r.message)){ $('apply').disabled = false; return; } ({ d:r } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive', Object.assign({}, body, { confirm:true }))); }

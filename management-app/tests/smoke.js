@@ -73,6 +73,37 @@ const check = (name, ok, detail = '') => {
     const sb4 = await j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, code: '(01)94000000000017(3202)004294(11)260818(21)SMOKESER1' }) }));
     check('serialed label still warns on same weight + date (same_box)', sb4.duplicate === true && sb4.kind === 'same_box', JSON.stringify(sb4).slice(0, 90));
 
+    // ── Per-purchase cost layers (true cost per receive, editable, FIFO COGS) ──────────────────
+    // Flank bought 3 times at moving market prices: each receive is its own cost layer (lot).
+    const flGtin = '95000000000011';
+    await fetch(base + '/api/inventory/barcode/create', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ location_id: loc1, barcode: `(01)${flGtin}`, item_name: 'Smoke Flank Cost', category: 'Protein', unit: 'lb', is_catch_weight: true }) });
+    const flRes = await j(await fetch(base + `/api/inventory/barcode/resolve/${encodeURIComponent('(01)' + flGtin)}?location_id=${loc1}`, { headers: H(token) }));
+    const flId = flRes.item && flRes.item.id;
+    // Three receives, distinct weights (so no same-box warning) and distinct unit costs.
+    const recv = async (w, cost) => j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ location_id: loc1, code: `(01)${flGtin}(3202)${w}`, unit_cost: cost }) }));
+    const fl1 = await recv('002000', 5.20);   // 20.00 lb @ $5.20
+    const fl2 = await recv('002001', 5.40);   // 20.01 lb @ $5.40
+    const fl3 = await recv('002002', 6.00);   // 20.02 lb @ $6.00
+    check('each receive records the price paid', fl1.unit_cost === 5.2 && fl2.unit_cost === 5.4 && fl3.unit_cost === 6, JSON.stringify([fl1.unit_cost, fl2.unit_cost, fl3.unit_cost]));
+    check('latest purchase becomes the item current cost', fl3.item && fl3.item.unit_cost === 6, JSON.stringify(fl3.item && fl3.item.unit_cost));
+    const ch = await j(await fetch(base + `/api/inventory/${flId}/cost-history`, { headers: H(token) }));
+    check('cost history lists one layer per purchase', ch.totals.purchases === 3 && ch.lots.length === 3, JSON.stringify(ch.totals));
+    check('cost history values the layers at their own cost', Math.abs(ch.totals.on_hand_value - (20 * 5.2 + 20.01 * 5.4 + 20.02 * 6)) < 0.05, JSON.stringify(ch.totals));
+    // Edit the OLDEST layer's cost (the real invoice came in later): 5.20 → 5.25.
+    const oldest = ch.lots[ch.lots.length - 1];   // lots are newest-first
+    const edit = await j(await fetch(base + `/api/inventory/lots/${oldest.id}/cost`, { method: 'PATCH', headers: H(token), body: JSON.stringify({ unit_cost: 5.25 }) }));
+    check('a purchase cost can be corrected later', edit.success === true && edit.unit_cost === 5.25, JSON.stringify(edit));
+    const ch2 = await j(await fetch(base + `/api/inventory/${flId}/cost-history`, { headers: H(token) }));
+    const oldest2 = ch2.lots.find(l => l.id === oldest.id);
+    check('edited cost is reflected in the history', oldest2 && oldest2.unit_cost === 5.25, JSON.stringify(oldest2 && oldest2.unit_cost));
+    check('editing an older layer does NOT change current cost', ch2.item.unit_cost === 6, JSON.stringify(ch2.item.unit_cost));
+    // Use 25 lb → FIFO draws the oldest layer first: 20 @ $5.25 + 5 @ $5.40 = $132.00 COGS.
+    const use = await j(await fetch(base + '/api/inventory/barcode/use', { method: 'POST', headers: H(token),
+      body: JSON.stringify({ location_id: loc1, code: `(01)${flGtin}`, weight: 25, reason: 'smoke prep' }) }));
+    check('FIFO use reports true COGS at each layer cost', use.success === true && Math.abs(use.cogs - (20 * 5.25 + 5 * 5.40)) < 0.05, JSON.stringify(use.cogs));
+
     // Receive by item_id (adds a lot)
     r = await fetch(base + '/api/inventory/receive', { method: 'POST', headers: H(token),
       body: JSON.stringify({ item_id: beef.id, quantity: 20, expiry_date: '2030-01-01', lot_code: 'SMOKE1' }) });

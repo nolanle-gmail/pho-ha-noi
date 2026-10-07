@@ -1420,6 +1420,7 @@ async function handleScan(code, panel, next) {
     panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}${boxDiffNote(r)}
       <div class="scan-act"><input id="scQty" type="number" value="${qDflt}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}" title="${cw ? 'Net weight to add (' + esc(it.unit) + ')' : 'Quantity (' + esc(it.unit) + ')'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select><span class="scan-total" id="scTotal"></span></div>
       <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="scan-act"><input id="scCost" type="number" step="0.01" min="0" value="${it.unit_cost != null ? it.unit_cost : ''}" placeholder="unit cost" title="Unit cost — the price per ${esc(it.unit)} you paid THIS time. Kept as this purchase's cost layer; blank keeps the last price."><span class="muted" style="font-size:.82rem">$ / ${esc(it.unit)} this purchase</span></div>
       <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
     const updTotal = () => { const q = parseFloat($('scQty').value) || 0; const mode = $('scMode').value; $('scTotal').textContent = mode === 'count' ? `= ${numf(q)} ${it.unit}` : `→ ${numf((+it.quantity || 0) + q)} ${it.unit}`; };
     $('scQty').oninput = updTotal; $('scMode').onchange = updTotal; updTotal();
@@ -1434,7 +1435,7 @@ async function handleScan(code, panel, next) {
         } else {
           // Send the RAW scanned code so the server recovers the full label (serial, pack/prod
           // dates, weight) for capture + the serial-duplicate guard; the fields below override it.
-          const body = { location_id: invLoc(), code: code, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          const body = { location_id: invLoc(), code: code, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined, unit_cost: ($('scCost') && $('scCost').value !== '') ? $('scCost').value : undefined };
           if (cw) body.weight = qv; else body.quantity = qv;
           let rr = await api('/inventory/barcode/receive', { method: 'POST', body: JSON.stringify(body) });
           if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/inventory/barcode/receive', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
@@ -1638,6 +1639,54 @@ async function openScanHistory(id, name) {
   </tbody></table></div>`;
 }
 
+// Cost / purchase history — every purchase (lot) is its own cost layer with the price paid that
+// time. Unit cost is editable inline (fix a typo or add the real invoice price after scanning);
+// FIFO use draws the oldest layer first. Shows on-hand value, total purchased, and avg cost.
+async function openCostHistory(id, name) {
+  const host = $('modalHost');
+  const close = () => { host.innerHTML = ''; };
+  const ts = (s) => { try { return new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch { return s || '—'; } };
+  host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:820px"><div class="row-between"><h3 style="margin:0">💲 Cost history — ${esc(name)}</h3><button class="btn sm ghost" id="chX">✕</button></div><div id="chBody"><div class="empty">Loading…</div></div></div></div>`;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('chX').onclick = close;
+  async function load() {
+    let d; try { d = await api('/inventory/' + id + '/cost-history'); } catch (e) { $('chBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    const unit = d.item.unit || '';
+    if (!d.lots.length) { $('chBody').innerHTML = '<div class="empty">No purchases recorded yet. Scan this item in (receive) and each purchase — with the price paid — appears here.</div>'; return; }
+    $('chBody').innerHTML = `
+      <div class="kpis" style="margin:.4rem 0 .8rem">
+        <div class="card"><div class="label">On-hand value</div><div class="value">${money(d.totals.on_hand_value)}</div></div>
+        <div class="card"><div class="label">On hand</div><div class="value">${numf(d.totals.on_hand_qty)} ${esc(unit)}</div></div>
+        <div class="card"><div class="label">Avg cost / ${esc(unit || 'unit')}</div><div class="value">${money(d.totals.avg_cost)}</div></div>
+        <div class="card"><div class="label">Total purchased</div><div class="value">${money(d.totals.purchased_value)}</div></div>
+      </div>
+      <p class="muted" style="margin:.2rem 0 .6rem;font-size:.85rem">Each row is one purchase (a FIFO cost layer). Edit the unit cost to record the true price paid — the newest purchase also updates the item's current price.</p>
+      <div class="table-wrap"><table><thead><tr><th>Purchased</th><th>Who</th><th class="num">Qty bought</th><th class="num">Remaining</th><th class="num">Weight</th><th class="num">Unit cost</th><th class="num">On-hand value</th><th></th></tr></thead><tbody>
+        ${d.lots.map(l => `<tr data-lot="${l.id}" ${l.remaining <= 0.0005 ? 'style="opacity:.55"' : ''}>
+          <td>${esc(ts(l.received_at))}${l.lot_code ? ` <span class="mono" style="color:var(--muted)">lot ${esc(l.lot_code)}</span>` : ''}${l.remaining <= 0.0005 ? ' <span class="badge gray">used up</span>' : ''}</td>
+          <td>${esc(l.received_by || '—')}</td>
+          <td class="num">${numf(l.received_qty)} ${esc(unit)}</td>
+          <td class="num">${numf(l.remaining)} ${esc(unit)}</td>
+          <td class="num">${l.net_weight_lb ? numf(l.net_weight_lb) + ' lb' : '—'}</td>
+          <td class="num"><input class="ch-cost" data-lot="${l.id}" type="number" step="0.01" min="0" value="${l.unit_cost}" style="width:6.5rem;text-align:right"></td>
+          <td class="num">${money(l.extended_remaining)}</td>
+          <td><button class="btn sm" data-save="${l.id}" disabled>Save</button></td>
+        </tr>`).join('')}
+      </tbody></table></div>`;
+    $('chBody').querySelectorAll('.ch-cost').forEach(inp => {
+      const lotId = inp.dataset.lot, orig = inp.value;
+      const btn = $('chBody').querySelector(`[data-save="${lotId}"]`);
+      inp.oninput = () => { btn.disabled = (inp.value === orig || inp.value === '' || !(parseFloat(inp.value) >= 0)); };
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try { await api('/inventory/lots/' + lotId + '/cost', { method: 'PATCH', body: JSON.stringify({ unit_cost: inp.value }) }); toast('Cost updated'); await load(); }
+        catch (e) { alert(e.message || 'Could not update cost.'); btn.disabled = false; }
+      };
+    });
+  }
+  await load();
+}
+
 // ── Dashboard ────────────────────────────────────────────────────────────
 async function renderDashboard() {
   const [d, low, exp] = await Promise.all([
@@ -1699,6 +1748,7 @@ async function renderStock() {
           <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}">Receive</button>
           <button class="btn sm ghost" data-act="waste" data-id="${i.id}" data-name="${esc(i.item_name)}">Waste</button>
           <button class="btn sm ghost" data-act="count" data-id="${i.id}" data-name="${esc(i.item_name)}">Count</button>
+          <button class="btn sm ghost" data-act="costs" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Cost history — the price paid at each purchase">💲</button>
           <button class="btn sm ghost" data-act="log" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Scan history — weight, dates, lot, serial">📜</button>
         </div></td>
       </tr>`).join('')}
@@ -1772,6 +1822,7 @@ function itemAction(act, id, name, items) {
     { key: 'counted_quantity', label: 'Counted quantity', type: 'number' },
   ], async (v) => { const r = await api('/inventory/count', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast(`Variance ${r.variance > 0 ? '+' : ''}${r.variance}`); render(); });
   if (act === 'log') return openScanHistory(id, name);
+  if (act === 'costs') return openCostHistory(id, name);
   if (act === 'edit') {
     const it = items.find(x => x.id == id);
     return glossaryEdit(it);   // one full editor for both Stock and Glossary (all fields, UOM + Supplier pickers)
@@ -1857,6 +1908,7 @@ async function renderGlossary() {
         <td class="num">${money(i.unit_cost)}</td>
         <td><div class="actions-cell">
           <button class="btn sm" data-g="order" data-id="${i.id}">Order</button>
+          <button class="btn sm ghost" data-g="costs" data-id="${i.id}" title="Cost history — the price paid at each purchase">💲</button>
           <button class="btn sm ghost" data-g="log" data-id="${i.id}" title="Scan history">📜</button>
           <button class="btn sm ghost" data-g="edit" data-id="${i.id}">Edit</button>
           <button class="btn sm ghost" data-g="del" data-id="${i.id}">Remove</button>
@@ -1869,6 +1921,7 @@ async function renderGlossary() {
     const it = items.find(x => x.id == b.dataset.id);
     if (b.dataset.g === 'order') return openOrderModal({ item_id: it.id, suggested_qty: suggestQty(it) });
     if (b.dataset.g === 'log') return openScanHistory(it.id, it.item_name);
+    if (b.dataset.g === 'costs') return openCostHistory(it.id, it.item_name);
     if (b.dataset.g === 'edit') return glossaryEdit(it);
     if (b.dataset.g === 'del') return confirmDelete(it);
   });

@@ -130,12 +130,20 @@ function receiveExisting({ locId, item, body, user }) {
   if (!Number.isFinite(amt.qty) || amt.qty <= 0) return { error: amt.kind === 'weight' ? 'Enter the net weight to receive.' : 'Enter a quantity to receive.' };
   const expiry = body.expiry_date || p.expiry || p.packDate || p.prodDate || null;
   const lot = body.lot_code || p.lot || null;
+  // Per-purchase cost: the price actually paid THIS time. Each receive is its own cost layer
+  // (inventory_lots row) so the true cost of every batch is kept even when market prices move.
+  // Blank → fall back to the item's current cost (backward-compatible). A real price also refreshes
+  // inventory.unit_cost to this latest purchase, so reorder estimates use today's market price while
+  // the lot ledger keeps every batch's true cost.
+  const paid = (body.unit_cost != null && body.unit_cost !== '') ? parseFloat(body.unit_cost) : NaN;
+  const lotCost = Number.isFinite(paid) && paid >= 0 ? round3(paid) : item.unit_cost;
   db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(amt.qty, item.id);
-  receiveLot({ item_id: item.id, location_id: locId, quantity: amt.qty, unit_cost: item.unit_cost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg, pack_date: p.packDate, prod_date: p.prodDate });
+  if (Number.isFinite(paid) && paid >= 0) db.prepare(`UPDATE inventory SET unit_cost=? WHERE id=?`).run(lotCost, item.id);
+  const lotId = receiveLot({ item_id: item.id, location_id: locId, quantity: amt.qty, unit_cost: lotCost, expiry_date: expiry, lot_code: lot, user_id: user.id, serial: p.serial, net_weight_lb: p.weightLb, net_weight_kg: p.weightKg, pack_date: p.packDate, prod_date: p.prodDate });
   db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`)
-    .run(item.id, locId, amt.qty, user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${p.serial ? ` · #${p.serial}` : ''}${expiry ? ` · exp ${expiry}` : ''}`);
+    .run(item.id, locId, amt.qty, user.id, `Scanned in${lot ? ` · lot ${lot}` : ''}${p.serial ? ` · #${p.serial}` : ''}${expiry ? ` · exp ${expiry}` : ''} · @ $${round3(lotCost)}/${item.unit}`);
   logScan({ itemId: item.id, locationId: locId, action: 'receive', parsed: p, quantity: amt.qty, userId: user.id });
-  return { ok: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id), added: round3(amt.qty), kind: amt.kind };
+  return { ok: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(item.id), added: round3(amt.qty), kind: amt.kind, lot_id: lotId, unit_cost: round3(lotCost) };
 }
 
 // Create a NEW stock item from the scan form, write it into the Glossary, and receive the
