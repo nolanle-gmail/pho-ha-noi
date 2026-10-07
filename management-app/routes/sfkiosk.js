@@ -28,7 +28,7 @@ router.use((req, res, next) => {
 });
 
 const auditReq = (staff, body) => ({ user: { id: staff.id }, body });
-const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(String(c || '').trim());
+const validCode = (c) => /^[A-Za-z0-9-]{4,20}$/.test(String(c || '').trim());
 function staffByCode(code) {
   const c = String(code || '').trim();
   if (!validCode(c)) return null;

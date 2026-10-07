@@ -34,7 +34,7 @@ const locDisplay = (name) => String(name || '').replace(/\s*[—–-]\s*/, ' ');
 const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone, type FROM locations WHERE is_active=1`).all()
   .find(l => normSlug(l.slug || '') === normSlug(slug) || normSlug(l.name) === normSlug(slug));
 const greetingWord = (tz) => { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz || 'America/Los_Angeles', hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
-const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(c);
+const validCode = (c) => /^[A-Za-z0-9-]{4,20}$/.test(c);
 
 function authorizedAt(staff, locId) {
   if (String(staff.location_id) === String(locId)) return true;

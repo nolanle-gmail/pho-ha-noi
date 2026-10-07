@@ -53,7 +53,7 @@ const locDisplay = (name) => String(name || '').replace(/\s*[—–-]\s*/, ' ');
 const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone FROM locations WHERE is_active=1`).all()
   .find(l => normSlug(l.slug || '') === normSlug(slug) || normSlug(l.name) === normSlug(slug));
 function greetingWord(tz) { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
-const validCode = (c) => /^[A-Za-z0-9-]{6,20}$/.test(c);
+const validCode = (c) => /^[A-Za-z0-9-]{4,20}$/.test(c);
 const hhmmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
 // The people who lead a location: any active staffer assigned there whose role
 // carries the 'manage' cap — managers, assistant/kitchen managers AND shift leads

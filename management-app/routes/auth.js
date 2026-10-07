@@ -66,7 +66,7 @@ router.post('/verify-code', (req, res) => {
   const key = req.headers['x-service-key'] || req.query.key;
   if (!key || key !== KIOSK_KEY) return res.status(401).json({ ok: false, error: 'unauthorized' });
   const code = String((req.body && req.body.code) || '').trim();
-  if (!/^[A-Za-z0-9-]{6,20}$/.test(code)) return res.json({ ok: false });
+  if (!/^[A-Za-z0-9-]{4,20}$/.test(code)) return res.json({ ok: false });
   const u = db.prepare(`SELECT id, name, email, role, location_id FROM users WHERE employee_code=? AND is_active=1`).get(code);
   if (!u) return res.json({ ok: false });
   let authorized = true;
