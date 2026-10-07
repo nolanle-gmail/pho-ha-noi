@@ -741,24 +741,29 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
   (per-location on-hand + total), so staff can look up stock **anywhere** (their own store is
   flagged). Console `GET /inventory/barcode/stock/:code`, staff `GET /invscan/check/:code`,
   kiosk `POST /kiosk/:slug/stock`.
-- **📤 Ship / transfer** — pick a destination, then scan items to transfer them there
-  (decrements here via FIFO, adds/creates at the destination, logged as `transfer_sent`). For
-  the Central Kitchen (or a manager) this is **order fulfillment**: if the destination store has
-  open order lines (`distribution_orders`), they show as a fill-list and **scanning fills the
-  matching line** (bumps `ck_qty`, marks it `shipped` when complete); anything else ships ad-hoc.
-  A location staffer can view every location's stock but **acts only at their own store** (they
-  ship *from* their store — by request or in an emergency). Shared core `lib/transfer.js`.
-  Console: `GET /inventory/ship/{targets,orders}`, `POST /inventory/barcode/transfer`.
-  Staff: `GET /invscan/ship/{targets,orders}`, `POST /invscan/ship`.
-  Kiosk: `POST /api/scannerkiosk/kiosk/:slug/{targets,orders,transfer}`.
+- **🔁 Transfer** — an ad-hoc move: pick a destination, then scan items to transfer them there
+  (decrements here via FIFO, adds/creates at the destination, logged as `transfer_sent`). Shared
+  core `lib/transfer.js`. Console `POST /inventory/barcode/transfer`; staff `POST /invscan/ship`;
+  kiosk `POST /kiosk/:slug/transfer`.
+- **📤 Shipping (hubs only — Central Kitchen / Warehouse)** — order fulfilment (2026-10-07 rework).
+  Tapping Shipping shows the **queue of orders waiting to ship** for this hub, grouped per store
+  (`GET /distribution/ship-queue?source_location_id=<hub>`); tap a store to see its open items
+  (`GET /distribution/ship-queue/:storeId`, with the hub's on-hand + barcode for matching), then scan
+  an item on the order (`POST /distribution/ship-scan`). The scan shows the item name, its on-hand,
+  and what the order still needs, and confirms a quantity: **under**-ship leaves the line open
+  (partial — progress tracked in `shipped_qty`); **over**-ship asks to confirm and then **raises the
+  order's count** to what actually shipped. Each scan **decrements the hub** (FIFO) and the stock goes
+  **in transit** (`transfer_sent`); the store then **receives** it to add it to on-hand (two-step,
+  `PUT /distribution/orders/:id` → `received`). A disabled hook (`DIST_NOTIFY_SENDER`) will text the
+  order's requester when it ships (enabled later). Orders are placed against a chosen hub on the store
+  order screen — the "Order from" dropdown lists each hub (CK + Warehouse) that stocks the item.
 
 Every location (and every scan surface) can **📥 Receiving**, **🔁 Transferring**, **📋 Checking
 Inventory** and **🍳 Use**. The **Warehouse** and **Central Kitchen** (the distribution hubs) add
 one more — **📤 Shipping** — since they're the only locations with store orders to fulfil, for the
-full set **Receiving · Shipping · Transferring · Checking Inventory · Use**. Shipping and
-Transferring both pick a destination and move stock via the same `/inventory/barcode/transfer`
-endpoint; **Shipping** shows the destination's open-order fill list (order fulfillment, above),
-while **Transferring** is an ad-hoc move with no order list. **Use** consumes stock on site
+full set **Receiving · Shipping · Transferring · Checking Inventory · Use**. **Shipping** is the
+order-queue fulfilment flow above (pick an order, scan its items — `/distribution/ship-scan`), while
+**Transferring** is an ad-hoc destination move (`/inventory/barcode/transfer`). **Use** consumes stock on site
 (production / prep / to serve) — FIFO with an `out` transaction. The **staff app** (always
 store-scoped to the staffer's own store) shows Receiving / Transferring / Checking Inventory / Use.
 The **standalone kiosk** (`/scanner/<slug>`) is section-aware: it reads its location's `type` (from
@@ -1161,7 +1166,7 @@ erDiagram
 | `ck_products` | Central K. | Items the central kitchen produces |
 | `ck_recipe_ingredients` | Central K. | Master recipe per product |
 | `store_requests` | Central K. | Daily item requests from each store |
-| `distribution_orders` | Central K. | A store's raw-food order to the CK, with its CK-fill / vendor-shortfall split |
+| `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split and `shipped_qty` (how much of the hub portion has shipped) |
 | `ck_production_runs` | Central K. | Batch runs with yield & shrinkage |
 | `ck_tasks` | Central K. | Photo-verified kitchen tasks |
 | `ck_shifts` | Central K. | Central-kitchen shift schedule |
