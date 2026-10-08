@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 7, 2026_
+_Last updated: October 8, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -752,7 +752,8 @@ and already drives FIFO. A **💲 Cost history** button on every **Stock** and *
 opens the layers — each purchase's date, qty bought, qty remaining, weight and unit cost — with
 on-hand value (each layer at its own cost), total purchased, and the weighted-average cost; the
 **unit cost is editable inline** (correct a typo or enter the real invoice price later — the newest
-layer also updates the item's current price). The **standalone kiosk** has the same view: a
+layer also updates the item's current price). Saving a lot's price **refreshes the Stock view right
+away**, so the Stock "Unit cost" total reflects the change without navigating. The **standalone kiosk** has the same view: a
 **💲 Cost history** button on a scanned item's receive panel, scoped to the kiosk's location. **FIFO
 Use** draws the oldest layer first and reports the true **COGS** valued at each layer's cost. API:
 `GET /inventory/:id/cost-history`, `PATCH /inventory/lots/:id/cost` (console) and
