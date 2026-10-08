@@ -1284,7 +1284,7 @@ function statusBadge(qty, min) {
 // active location (or the Central Kitchen). Unknown codes → look up a name (Open Food
 // Facts) and create or link. Input is a USB/Bluetooth barcode scanner (keyboard-wedge)
 // typing into the auto-focused field — no phone camera.
-function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'inventory') render(); }
+function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'warehouse') renderWarehouse(); else if (S.section === 'inventory') render(); }
 
 async function openScanner() {
   // Every location can Receive, Transfer, Check Inventory and Use (consume) stock. The Warehouse &
@@ -1679,7 +1679,7 @@ async function openCostHistory(id, name) {
       inp.oninput = () => { btn.disabled = (inp.value === orig || inp.value === '' || !(parseFloat(inp.value) >= 0)); };
       btn.onclick = async () => {
         btn.disabled = true;
-        try { await api('/inventory/lots/' + lotId + '/cost', { method: 'PATCH', body: JSON.stringify({ unit_cost: inp.value }) }); toast('Cost updated'); await load(); }
+        try { await api('/inventory/lots/' + lotId + '/cost', { method: 'PATCH', body: JSON.stringify({ unit_cost: inp.value }) }); toast('Cost updated'); await load(); invRefresh(); }
         catch (e) { alert(e.message || 'Could not update cost.'); btn.disabled = false; }
       };
     });
