@@ -1099,6 +1099,22 @@ const check = (name, ok, detail = '') => {
     const mr = await j(await fetch(base + '/api/inventory/transfer-request/' + tx2.transfer_id, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) }));
     check('Mark received closes an in-transit transfer', mr.success === true && mr.transfer && mr.transfer.closed === true, JSON.stringify(mr.transfer || mr));
 
+    // ── Store orders: order number, priority, multi-item, CK-team notification ─────────────────
+    const ckL = sdb.prepare("SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1").get().id;
+    sdb.prepare("INSERT OR IGNORE INTO users (name, phone, email, password_hash, role, location_id, is_active, employee_code) VALUES ('Nha Le Smoke','5550000199','nhale.smoke@phn.test','x','manager',?,1,'NHA-199')").run(ckL);
+    const ckStocked = sdb.prepare("SELECT item_name FROM inventory WHERE location_id=? AND quantity>0 AND distributable=1 ORDER BY id LIMIT 2").all(ckL).map(r => r.item_name);
+    const l1Items = ckStocked.map(nm => sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, nm)).filter(Boolean);
+    const sord = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, priority: 'urgent', items: l1Items.map((it, i) => ({ item_id: it.id, item_name: ckStocked[i], quantity: 5 })) }) }));
+    check('multi-item order returns a tracked order number + priority', sord.success === true && sord.created === l1Items.length && /^[A-Z0-9]+-\d{6}-\d{2}$/.test(sord.order_no || '') && sord.priority === 'urgent', JSON.stringify({ order_no: sord.order_no, created: sord.created, priority: sord.priority }));
+    const sordLines = sdb.prepare("SELECT order_no, priority, requested_by FROM distribution_orders WHERE order_no=?").all(sord.order_no);
+    check('all lines of one order share the order number + priority', sordLines.length === l1Items.length && sordLines.every(l => l.order_no === sord.order_no && l.priority === 'urgent' && l.requested_by), 'sordLines=' + sordLines.length);
+    const sseq = s => parseInt((s || '').split('-').pop(), 10);
+    const sord2 = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: l1Items[0].id, item_name: ckStocked[0], quantity: 2 }] }) }));
+    check('same-day order increments the sequence', sseq(sord2.order_no) === sseq(sord.order_no) + 1 && sord2.priority === 'standard', JSON.stringify({ first: sord.order_no, second: sord2.order_no }));
+    const nha = sdb.prepare("SELECT id FROM users WHERE email='nhale.smoke@phn.test'").get();
+    const sordNote = sdb.prepare("SELECT m.subject FROM messages m JOIN message_recipients r ON r.message_id=m.id WHERE r.user_id=? AND m.subject LIKE ? ORDER BY m.id DESC LIMIT 1").get(nha.id, '%' + sord.order_no + '%');
+    check('CK team (Nha Le) is notified on order submit', !!sordNote && /order/i.test(sordNote.subject || ''), JSON.stringify(sordNote));
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);

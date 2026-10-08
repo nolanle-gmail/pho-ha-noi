@@ -2125,99 +2125,120 @@ async function catalogDelete(it) {
 // ── Create order (PO) — pick existing item or add a new one ────────────────
 async function openOrderModal(prefill) {
   prefill = prefill || {};
-  const atCK = S.section === 'central';
-  const [items, vendors, hubsRes] = await Promise.all([api(invQ('/')), api('/inventory/vendors'), api('/distribution/hubs').catch(() => ({ hubs: [] }))]);
-  // A store can order from any hub (Central Kitchen or a Warehouse) that stocks the item; fetch
-  // each hub's catalog so the source dropdown can offer it with on-hand qty.
-  const hubList = atCK ? [] : (hubsRes.hubs || []).filter(h => String(h.id) !== String(invLoc()));
+  const host = $('modalHost');
+  const close = () => host.innerHTML = '';
+  const atHub = S.section === 'central' || S.section === 'warehouse';
+  const [items, vendors, hubsRes] = await Promise.all([
+    api(invQ('/')), api('/inventory/vendors'),
+    atHub ? Promise.resolve({ hubs: [] }) : api('/distribution/hubs').catch(() => ({ hubs: [] })),
+  ]);
+
+  // A hub (Central Kitchen / Warehouse) restocks itself from vendors — a simple vendor order.
+  if (atHub) {
+    const vtail = '<option value="">— pick a vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
+    host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Vendor order</h3><div class="err" id="mErr"></div>
+      <label>Item</label><select id="oItem">${items.map(i => `<option value="${i.id}" ${prefill.item_id == i.id ? 'selected' : ''}>${esc(i.item_name)} — ${numf(i.quantity)} ${esc(i.unit)} on hand</option>`).join('')}</select>
+      <label>Quantity</label><input id="oQty" type="number" value="${prefill.suggested_qty || ''}">
+      <label>Vendor</label><select id="oVendor">${vtail}</select>
+      <label>Expected date (optional)</label><input id="oDate" type="date">
+      <label>Reason / note</label><input id="oNotes" placeholder="why you're ordering">
+      <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Create order</button></div></div></div>`;
+    $('mCancel').onclick = close; host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    $('mOk').onclick = async () => {
+      try {
+        const qty = parseFloat($('oQty').value); if (!(qty > 0)) throw new Error('Enter a quantity greater than 0.');
+        await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_id: $('oItem').value, quantity: qty, vendor_id: $('oVendor').value || null, expected_date: $('oDate').value || null, notes: $('oNotes').value.trim() || null, reason: $('oNotes').value.trim() || '' }) });
+        toast('Vendor order created'); close(); invRefresh();
+      } catch (e) { $('mErr').textContent = e.message; }
+    };
+    return;
+  }
+
+  // A STORE places one multi-item order to ONE hub (Central Kitchen OR a Warehouse — they ship from
+  // different places, so an order can't mix hubs). Only items that hub stocks can be added.
+  const hubList = (hubsRes.hubs || []).filter(h => String(h.id) !== String(invLoc()));
+  if (!hubList.length) {
+    host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Create order</h3><p class="sub" style="color:var(--muted)">No Central Kitchen or Warehouse is set up to order from.</p><div class="actions"><button class="btn" id="mCancel">OK</button></div></div></div>`;
+    $('mCancel').onclick = close; return;
+  }
   const hubCats = {};
   await Promise.all(hubList.map(async h => { try { hubCats[h.id] = (await api('/distribution/ck-catalog?source_location_id=' + h.id)).items || {}; } catch { hubCats[h.id] = {}; } }));
-  const iOpts = items.map(i => `<option value="${i.id}" ${prefill.item_id == i.id ? 'selected' : ''}>${esc(i.item_name)} — ${numf(i.quantity)} ${esc(i.unit)} on hand</option>`).join('');
-  const vendorTail = '<option value="">— No vendor —</option>' + vendors.map(v => `<option value="${v.id}">${esc(v.name)}</option>`).join('');
-  // For a store, the source dropdown lists each hub that has the item (CK first, pre-selected),
-  // then vendors; at the CK itself it restocks from vendors only.
-  const sourceOptionsFor = (itemName) => {
-    if (atCK) return vendorTail;
-    let first = true;
-    const hubOpts = hubList.map(h => {
-      const q = (hubCats[h.id] || {})[itemName];
-      if (!(q > 0)) return '';
-      const sel = first ? ' selected' : ''; first = false;
-      return `<option value="hub:${h.id}"${sel}>🏭 ${esc(shortLoc(h.name))}${h.type === 'warehouse' ? ' (Warehouse)' : ''} — ${numf(q)} on hand</option>`;
-    }).join('');
-    return hubOpts + vendorTail;
+  let hubId = hubList[0].id, pri = 'standard', notes = '';
+  let rows = [{ item_id: prefill.item_id || '', qty: prefill.suggested_qty || '' }];
+  if (prefill.item_id) { const nm = (items.find(i => String(i.id) === String(prefill.item_id)) || {}).item_name; const h = hubList.find(h => (hubCats[h.id] || {})[nm] > 0); if (h) hubId = h.id; }
+
+  const hubItems = () => items.filter(i => ((hubCats[hubId] || {})[i.item_name]) > 0);
+  const nameOf = (id) => (items.find(i => String(i.id) === String(id)) || {}).item_name || '';
+  const itemOpts = (sel) => `<option value="">— pick an item —</option>` + hubItems().map(i => `<option value="${i.id}" ${String(sel) === String(i.id) ? 'selected' : ''}>${esc(i.item_name)} — ${numf((hubCats[hubId] || {})[i.item_name])} at hub</option>`).join('');
+  const prOpt = (v, l) => `<option value="${v}" ${pri === v ? 'selected' : ''}>${l}</option>`;
+  const readState = () => {
+    rows = [...host.querySelectorAll('.ord-row')].map(el => ({ item_id: el.querySelector('.ord-item').value, qty: el.querySelector('.ord-qty').value }));
+    if ($('oPri')) pri = $('oPri').value; if ($('oNotes')) notes = $('oNotes').value;
   };
-  const nameOf = (id) => { const it = items.find(x => x.id == id); return it ? it.item_name : ''; };
-  const host = $('modalHost');
-  host.innerHTML = `<div class="modal-bg"><div class="modal">
-    <h3>Create order</h3><div class="err" id="mErr"></div>
-    <div class="seg"><button type="button" class="seg-btn active" data-mode="existing">Existing item</button><button type="button" class="seg-btn" data-mode="new">+ New item</button></div>
-    <div id="existBlock"><label>Item</label><select id="oItem">${iOpts}</select></div>
-    <div id="newBlock" class="hidden">
-      <label>New item name</label><input id="nName" placeholder="e.g. Chili Oil" />
-      <div style="display:flex;gap:.6rem"><div style="flex:1"><label>Category</label><input id="nCat" value="Pantry" /></div><div style="flex:1"><label>Unit</label><input id="nUnit" value="bottle" /></div></div>
-      <label>Unit cost ($)</label><input id="nCost" type="number" step="0.01" value="0" />
-    </div>
-    <label>Quantity to order</label><input id="oQty" type="number" value="${prefill.suggested_qty || ''}" />
-    <label>Order from${atCK ? ' <span style="font-weight:400;color:var(--muted)">(the Central Kitchen restocks from vendors)</span>' : ''}</label><select id="oVendor">${sourceOptionsFor(nameOf(prefill.item_id))}</select>
-    <label>Expected date (optional)</label><input id="oDate" type="date" />
-    <label>Reason / note (for audit)</label><input id="oNotes" placeholder="why you're ordering — kept on the order & the audit log" />
-    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Create order</button></div>
-  </div></div>`;
-  let mode = 'existing';
-  const close = () => host.innerHTML = '';
-  $('mCancel').onclick = close;
-  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
-  // Re-pick the source list whenever the chosen existing item changes.
-  $('oItem').onchange = () => { $('oVendor').innerHTML = sourceOptionsFor(nameOf($('oItem').value)); };
-  host.querySelectorAll('.seg-btn').forEach(b => b.onclick = () => {
-    mode = b.dataset.mode;
-    host.querySelectorAll('.seg-btn').forEach(x => x.classList.toggle('active', x === b));
-    $('existBlock').classList.toggle('hidden', mode !== 'existing');
-    $('newBlock').classList.toggle('hidden', mode !== 'new');
-    // A brand-new item can't already be at the Central Kitchen — vendors only.
-    $('oVendor').innerHTML = mode === 'new' ? vendorTail : sourceOptionsFor(nameOf($('oItem').value));
-  });
-  $('mOk').onclick = async () => {
-    try {
-      const qty = parseFloat($('oQty').value);
-      if (!(qty > 0)) throw new Error('Enter a quantity greater than 0.');
-      const source = $('oVendor').value, expected_date = $('oDate').value || null, notes = $('oNotes').value.trim() || null;
-      // A hub source (Central Kitchen or Warehouse) → the hub-first distribution flow (splits any
-      // shortfall to a vendor). Never offered at the CK itself, so this stays store-only.
-      if (!atCK && mode === 'existing' && source.startsWith('hub:')) {
-        const hubId = source.slice(4);
-        await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), source_location_id: hubId, reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
-        toast('Order placed'); close();
-        if (['orders', 'glossary', 'stock'].includes(invTab())) invRefresh();
-        return;
-      }
-      let item_id;
-      if (mode === 'new') {
-        const name = $('nName').value.trim();
-        if (!name) throw new Error('Enter the new item name.');
-        const created = await api('/inventory/', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_name: name, category: $('nCat').value.trim() || 'Other', unit: $('nUnit').value.trim() || 'units', unit_cost: $('nCost').value, quantity: 0, min_quantity: 0, reason: notes || '' }) });
-        item_id = created.id;
-      } else { item_id = $('oItem').value; }
-      await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_id, quantity: qty, vendor_id: source || null, expected_date, notes, reason: notes || '' }) });
-      toast('Order created'); close();
-      if (['orders', 'glossary', 'stock'].includes(invTab())) invRefresh();
-    } catch (e) { $('mErr').textContent = e.message; }
+  const render = () => {
+    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:560px"><h3>New order to a hub</h3><div class="err" id="mErr"></div>
+      <div style="display:flex;gap:.6rem">
+        <div style="flex:1"><label>Order from</label><select id="oHub">${hubList.map(h => `<option value="${h.id}" ${String(h.id) === String(hubId) ? 'selected' : ''}>${esc(shortLoc(h.name))}${h.type === 'warehouse' ? ' (Warehouse)' : ''}</option>`).join('')}</select></div>
+        <div style="flex:1"><label>Priority</label><select id="oPri">${prOpt('urgent', 'Urgent')}${prOpt('high', 'High')}${prOpt('standard', 'Standard')}${prOpt('low', 'Low')}</select></div>
+      </div>
+      <label style="margin-top:.6rem">Items <span style="font-weight:400;color:var(--muted);font-size:.85rem">only what this hub stocks</span></label>
+      <div id="ordRows">${rows.map(r => `<div class="ord-row" style="display:flex;gap:.5rem;align-items:center;margin:.3rem 0"><select class="ord-item" style="flex:1">${itemOpts(r.item_id)}</select><input class="ord-qty" type="number" min="0" step="any" value="${r.qty}" placeholder="qty" style="width:5.5rem"><button type="button" class="btn sm ghost danger ord-del" ${rows.length > 1 ? '' : 'disabled'}>✕</button></div>`).join('')}</div>
+      <button type="button" class="btn ghost sm" id="addRow" style="margin-top:.2rem">+ Add item</button>
+      <label style="margin-top:.6rem">Reason / note (optional)</label><input id="oNotes" value="${esc(notes)}" placeholder="why you're ordering">
+      <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Submit order</button></div></div></div>`;
+    $('mCancel').onclick = close; host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+    $('oHub').onchange = () => { readState(); hubId = $('oHub').value; rows.forEach(r => { if (!hubItems().some(i => String(i.id) === String(r.item_id))) r.item_id = ''; }); render(); };
+    $('addRow').onclick = () => { readState(); rows.push({ item_id: '', qty: '' }); render(); };
+    host.querySelectorAll('.ord-del').forEach((b, idx) => b.onclick = () => { readState(); rows.splice(idx, 1); render(); });
+    $('mOk').onclick = async () => {
+      try {
+        readState();
+        const lines = rows.filter(r => r.item_id && parseFloat(r.qty) > 0).map(r => ({ item_id: r.item_id, item_name: nameOf(r.item_id), quantity: parseFloat(r.qty) }));
+        if (!lines.length) throw new Error('Add at least one item with a quantity.');
+        const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), source_location_id: hubId, priority: pri, reason: notes.trim() || '', items: lines }) });
+        toast(`Order ${r.order_no} placed — ${r.created} item${r.created === 1 ? '' : 's'}`); close(); invRefresh();
+      } catch (e) { $('mErr').textContent = e.message; }
+    };
   };
+  render();
 }
 
 // ── Orders & Reorder ─────────────────────────────────────────────────────
+const priorityBadge = (p) => { const m = { urgent: ['out', 'Urgent'], high: ['gold', 'High'], standard: ['gray', 'Standard'], low: ['gray', 'Low'] }; const [c, l] = m[p] || m.standard; return `<span class="badge ${c}">${l}</span>`; };
+// A hub-orders block (Central Kitchen or a Warehouse), grouped by order number so a multi-item
+// order shows as one tracked order with its lines beneath it.
+function hubOrdersBlock(title, list) {
+  if (!list || !list.length) return `<div class="section"><h3>${esc(title)}</h3><div class="empty">No orders yet.</div></div>`;
+  const groups = {};
+  list.forEach(o => { const k = o.order_no || ('#' + o.id); (groups[k] = groups[k] || []).push(o); });
+  const rows = Object.values(groups).map(items => {
+    const h = items[0];
+    const hdr = `<tr class="grp"><td colspan="6"><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}</span></td></tr>`;
+    const body = items.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${distBadge(o.status)}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('');
+    return hdr + body;
+  }).join('');
+  return `<div class="section"><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">Received</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+}
 async function renderOrders() {
   // The Central Kitchen restocks from vendors (never itself); every store orders CK-first.
   const atCK = S.section === 'central';
   const distQ = (p) => `/distribution${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
-  const [avail, ckSugg, orders, vendors, ckOrders] = await Promise.all([
+  const [avail, ckSugg, orders, vendors, ckOrders, hubsRes] = await Promise.all([
     atCK ? Promise.resolve({ items: [] }) : api(distQ('/availability')),
     atCK ? api('/inventory/reorder-suggestions?location_id=' + invLoc()) : Promise.resolve([]),
     api(invQ('/supply-orders')), api('/inventory/vendors'),
     atCK ? Promise.resolve({ orders: [] }) : api(distQ('/orders?scope=store')),
+    atCK ? Promise.resolve({ hubs: [] }) : api('/distribution/hubs').catch(() => ({ hubs: [] })),
   ]);
   const sugg = atCK ? ckSugg : avail.items;
+  // Split a store's hub orders into separate blocks by source — Central Kitchen vs each Warehouse
+  // (they ship from different locations, so they're tracked separately).
+  const hubs = hubsRes.hubs || [];
+  const bySource = {}; (ckOrders.orders || []).forEach(o => { (bySource[o.source_location_id] = bySource[o.source_location_id] || []).push(o); });
+  const ckHub = hubs.find(h => h.type === 'central_kitchen');
+  const whHubs = hubs.filter(h => h.type === 'warehouse');
+  const ckBlock = atCK ? '' : hubOrdersBlock('Central Kitchen orders', (ckHub && bySource[ckHub.id]) || []);
+  const whBlocks = atCK ? '' : whHubs.map(w => hubOrdersBlock(shortLoc(w.name) + ' orders', bySource[w.id] || [])).join('');
   const needOf = (s) => (atCK ? s.suggested_qty : s.need);
   const ckTotal = atCK ? 0 : sugg.reduce((a, s) => a + s.from_ck, 0);
   $('view').innerHTML = `
@@ -2233,13 +2254,7 @@ async function renderOrders() {
       </tbody></table></div>
       ${atCK ? '' : `<p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen can cover <strong>${numf(ckTotal)}</strong> unit${ckTotal === 1 ? '' : 's'} right now; the rest is auto-drafted as vendor POs.</p>`}` : '<div class="empty">No items below par. Nothing to reorder.</div>'}
     </div>
-    ${atCK ? '' : `<div class="section">
-      <h3>Central Kitchen orders <span style="font-weight:400;color:var(--muted);font-size:.85rem">raw food from the warehouse</span></h3>
-      ${ckOrders.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num" title="What you originally ordered — this never changes">Ordered</th><th class="num" title="Actually shipped from the hub (may differ from what you ordered)">Shipped</th><th class="num">CK</th><th class="num">Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-        ${ckOrders.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold" title="more than ordered">over</span>' : (o.status !== 'requested' && o.shipped_qty < o.requested_qty - 0.0005 ? ' <span class="badge low" title="less than ordered">short</span>' : '')}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${numf(o.ck_qty)}</td><td class="num">${o.vendor_qty > 0 ? numf(o.vendor_qty) : '—'}</td><td>${distBadge(o.status)}</td>
-          <td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('')}
-      </tbody></table></div>` : '<div class="empty">No Central Kitchen orders yet.</div>'}
-    </div>`}
+    ${ckBlock}${whBlocks}
     <div class="section">
       <h3>Purchase / supply orders${atCK ? ' <span style="font-weight:400;color:var(--muted);font-size:.85rem">Central Kitchen → vendors</span>' : ''}</h3>
       ${orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>Vendor</th><th>Status</th><th>Ordered by</th><th>Actions</th></tr></thead><tbody>

@@ -817,6 +817,8 @@ function migrate() {
       shipped_qty     REAL NOT NULL DEFAULT 0,                     -- how much of the hub portion has shipped
       received_qty    REAL NOT NULL DEFAULT 0,                     -- how much the store has actually scanned in
       received_by     INTEGER REFERENCES users(id),               -- who received it at the store
+      order_no        TEXT,                                        -- human order #, e.g. SJ-251008-01 (groups a multi-item order's lines)
+      priority        TEXT NOT NULL DEFAULT 'standard',            -- urgent / high / standard / low
       status          TEXT NOT NULL DEFAULT 'requested'
                         CHECK(status IN ('requested','approved','shipped','received','cancelled')),
       vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
@@ -1480,6 +1482,10 @@ function migrate() {
     `ALTER TABLE transfer_requests ADD COLUMN received_by INTEGER REFERENCES users(id)`,
     `ALTER TABLE transfer_requests ADD COLUMN unit TEXT DEFAULT 'units'`,
     `ALTER TABLE transfer_requests ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`,
+    // Store orders to a hub get a trackable order number + priority; a multi-item order shares one
+    // order_no across its line rows (grouped for display).
+    `ALTER TABLE distribution_orders ADD COLUMN order_no TEXT`,
+    `ALTER TABLE distribution_orders ADD COLUMN priority TEXT NOT NULL DEFAULT 'standard'`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders were all Central-Kitchen orders.
   try {

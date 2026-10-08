@@ -10,11 +10,39 @@ const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/au
 const { auditLog } = require('../lib/audit');
 const { receiveLot, consumeFIFO } = require('../lib/lots');
 const { parseScan, logScan } = require('../lib/barcode');
+const { notify } = require('./messages');
 
 const router = express.Router();
 router.use(verifyToken);
 
 const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+const PRIORITIES = ['urgent', 'high', 'standard', 'low'];
+
+// A short, unique code per location for order numbers (San Jose → SJ, Milpitas → MIL, Milbrae → MILB
+// when MIL is taken). Computed across all locations so no two collide.
+function locCodes() {
+  const locs = db.prepare(`SELECT id, name FROM locations ORDER BY id`).all();
+  const used = new Set(), map = {};
+  for (const l of locs) {
+    const clean = String(l.name).replace(/ph[oở] h[aà] n[oộ]i/i, '').replace(/[—–-]/g, ' ').replace(/[^a-z0-9 ]/gi, '').trim();
+    const words = clean.split(/\s+/).filter(Boolean);
+    const letters = clean.replace(/[^a-z0-9]/gi, '').toUpperCase();
+    let base = words.length > 1 ? words.map(w => w[0]).join('').toUpperCase() : letters.slice(0, 3);
+    if (!base) base = 'LOC';
+    let code = base, i = base.length, n = 2;
+    while (used.has(code)) { code = letters.slice(0, ++i).toUpperCase() || (base + n++); if (i > 10) { code = base + n++; } }
+    used.add(code); map[l.id] = code;
+  }
+  return map;
+}
+// Next order number for a store today: <CODE>-<YYMMDD>-<NN> (NN = daily sequence, per store).
+function nextOrderNo(locId) {
+  const code = locCodes()[locId] || 'LOC';
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: '2-digit', month: '2-digit', day: '2-digit' }).format(new Date()).replace(/-/g, '');
+  const prefix = `${code}-${ymd}-`;
+  const n = db.prepare(`SELECT COUNT(DISTINCT order_no) c FROM distribution_orders WHERE to_location_id=? AND order_no LIKE ?`).get(locId, prefix + '%').c;
+  return prefix + String(n + 1).padStart(2, '0');
+}
 function ckLoc() { return db.prepare(`SELECT * FROM locations WHERE type='central_kitchen' LIMIT 1`).get(); }
 // CK-side actions are for whoever runs the kitchen: anyone who sees all locations,
 // or a person whose home location IS the Central Kitchen.
@@ -135,14 +163,18 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   const items = Array.isArray(req.body.items) ? req.body.items : [];
   if (!items.length) return res.status(400).json({ error: 'No items to order.' });
   const vendorOnly = req.body.source === 'vendor';
+  const priority = PRIORITIES.includes((req.body.priority || '').toLowerCase()) ? req.body.priority.toLowerCase() : 'standard';
+  // One order number for the whole (multi-item) order; its lines are grouped by it for tracking.
+  const orderNo = nextOrderNo(locId);
+  const store = db.prepare(`SELECT name FROM locations WHERE id=?`).get(locId);
 
   const insDist = db.prepare(`INSERT INTO distribution_orders
-    (to_location_id, source_location_id, item_id, item_name, unit, requested_qty, ck_qty, vendor_qty, status, vendor_order_id, requested_by, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (to_location_id, source_location_id, item_id, item_name, unit, requested_qty, ck_qty, vendor_qty, status, vendor_order_id, requested_by, notes, order_no, priority)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const insPO = db.prepare(`INSERT INTO supply_orders (item_id, item_name, location_id, quantity, vendor, vendor_id, notes, status, ordered_by)
     VALUES (?,?,?,?,?,?,?,'pending',?)`);
 
-  let created = 0;
+  let created = 0, hubLines = 0; const summary = [];
   db.exec('BEGIN');
   try {
     for (const it of items) {
@@ -162,14 +194,28 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
       // Nothing for the hub to ship ⇒ the order is settled by the vendor PO alone.
       const status = ckQty > 0 ? 'requested' : 'received';
       insDist.run(locId, hub.id, inv.id, inv.item_name, inv.unit || it.unit || 'units', qty, ckQty, vendorQty,
-        status, vendorOrderId, req.user.id, it.notes || null);
+        status, vendorOrderId, req.user.id, it.notes || null, orderNo, priority);
+      if (ckQty > 0) hubLines++;
+      summary.push(`• ${inv.item_name} — ${r3(qty)} ${inv.unit || ''}`.trim());
       created++;
     }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not place the order.' }); }
   if (!created) return res.status(400).json({ error: 'No valid items to order.' });
-  auditLog(req, 'distribution_order', 'location', locId, { count: created, hub: hub.name, source: vendorOnly ? 'vendor' : 'hub-first' });
-  res.json({ success: true, created, hub: { id: hub.id, name: hub.name, type: hub.type } });
+  auditLog(req, 'distribution_order', 'location', locId, { order_no: orderNo, count: created, hub: hub.name, priority, source: vendorOnly ? 'vendor' : 'hub-first' });
+  // Notify the fulfilment team that a new order came in (hub-fulfilled orders only). Recipient is
+  // Nha Le for now (owner will change later). Best-effort — never blocks the order.
+  if (hubLines > 0 && !vendorOnly) {
+    try {
+      const nha = db.prepare(`SELECT id FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get();
+      if (nha) {
+        const pri = priority !== 'standard' ? ` · priority: ${priority.toUpperCase()}` : '';
+        notify(req.user.id, nha.id, `New ${hub.name} order ${orderNo}${pri}`,
+          `${(store && store.name) || 'A store'} placed order ${orderNo} to ${hub.name} — ${created} item${created === 1 ? '' : 's'}${pri}.\n${summary.join('\n')}`);
+      }
+    } catch { /* notify is best-effort */ }
+  }
+  res.json({ success: true, created, order_no: orderNo, priority, hub: { id: hub.id, name: hub.name, type: hub.type } });
 });
 
 // The fulfilment hubs a store can order from (Central Kitchen + any Warehouse).
