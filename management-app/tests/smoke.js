@@ -115,6 +115,21 @@ const check = (name, ok, detail = '') => {
     const kchOther = await j(await fetch(base + '/api/scannerkiosk/kiosk/milpitas/cost-history', { method: 'POST', headers: kH, body: JSON.stringify({ employee_code: 'E0001', item_id: flId }) }));
     check('kiosk refuses an item from another location', kchOther.ok !== true, JSON.stringify(kchOther).slice(0, 60));
 
+    // Stock "Unit cost" = TOTAL value of the on-hand lots, all-or-nothing if any lot is unpriced.
+    const lvGtin = '95000000000035';
+    await fetch(base + '/api/inventory/barcode/create', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, barcode: `(01)${lvGtin}`, item_name: 'Smoke LotValue', category: 'Pantry', unit: 'ea', unit_cost: 0 }) });
+    const lvRecv = async (qty, cost) => j(await fetch(base + '/api/inventory/barcode/receive', { method: 'POST', headers: H(token), body: JSON.stringify(Object.assign({ location_id: loc1, code: `(01)${lvGtin}`, quantity: qty }, cost == null ? {} : { unit_cost: cost })) }));
+    await lvRecv(10, 2.00); await lvRecv(5, 3.00);
+    const lvId = (await j(await fetch(base + `/api/inventory/barcode/resolve/${encodeURIComponent('(01)' + lvGtin)}?location_id=${loc1}`, { headers: H(token) }))).item.id;
+    const lvRow = async () => (await j(await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(token) }))).find(i => i.id === lvId);
+    check('Stock unit cost = total value of the priced lots', Math.abs((await lvRow()).lots_value - (10 * 2 + 5 * 3)) < 0.005, JSON.stringify((await lvRow()).lots_value));
+    await lvRecv(4, 0);   // a lot with no price
+    check('one unpriced lot drops Stock unit cost to $0 (all-or-nothing)', (await lvRow()).lots_value === 0, JSON.stringify((await lvRow()).lots_value));
+    const lvHist = await j(await fetch(base + `/api/inventory/${lvId}/cost-history`, { headers: H(token) }));
+    const lvUnpriced = lvHist.lots.find(l => l.remaining > 0 && (!l.unit_cost || l.unit_cost <= 0));
+    await fetch(base + `/api/inventory/lots/${lvUnpriced.id}/cost`, { method: 'PATCH', headers: H(token), body: JSON.stringify({ unit_cost: 1.50 }) });
+    check('pricing the last lot restores the total', Math.abs((await lvRow()).lots_value - (10 * 2 + 5 * 3 + 4 * 1.5)) < 0.005, JSON.stringify((await lvRow()).lots_value));
+
     // Receive by item_id (adds a lot)
     r = await fetch(base + '/api/inventory/receive', { method: 'POST', headers: H(token),
       body: JSON.stringify({ item_id: beef.id, quantity: 20, expiry_date: '2030-01-01', lot_code: 'SMOKE1' }) });
@@ -1041,7 +1056,7 @@ const check = (name, ok, detail = '') => {
     const sc2 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 10 }) }));
     check('ship-scan over-ship asks to confirm', sc2.ok === false && sc2.over === true && sc2.new_total === 14, JSON.stringify(sc2));
     const sc3 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 10, confirm: true }) }));
-    check('ship-scan over-ship confirmed raises the order count', sc3.ok === true && sc3.order.ck_qty === 14 && sc3.order.requested_qty === 14 && sc3.order.done === true, JSON.stringify(sc3.order));
+    check('ship-scan over-ship keeps the ORIGINAL request, records what shipped', sc3.ok === true && sc3.order.requested_qty === 10 && sc3.order.ck_qty === 10 && sc3.order.shipped_qty === 14 && sc3.order.done === true, JSON.stringify(sc3.order));
     const whOnHand = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(whId).quantity;
     check('warehouse stock decremented by total shipped (14)', Math.abs(whOnHand - (100 - 14)) < 1e-9, 'on_hand=' + whOnHand);
     const whOrd = sdb.prepare("SELECT id,status,shipped_qty FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND item_name='WH Widget'").get(whId, loc2);
@@ -1050,6 +1065,8 @@ const check = (name, ok, detail = '') => {
     check('receive the warehouse order', r.status === 200, await r.text());
     const whStoreQty = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
     check('store received the shipped qty (14)', Math.abs(whStoreQty - 14) < 1e-9, 'store=' + whStoreQty);
+    const whOrdFinal = sdb.prepare("SELECT requested_qty, shipped_qty FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND item_name='WH Widget'").get(whId, loc2);
+    check('original ordered qty (10) kept alongside shipped (14)', whOrdFinal.requested_qty === 10 && Math.abs(whOrdFinal.shipped_qty - 14) < 1e-9, JSON.stringify(whOrdFinal));
     const sc4 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 1 }) }));
     check('scanning an item no longer on the order is flagged', sc4.ok === false && sc4.not_on_order === true, JSON.stringify(sc4));
 

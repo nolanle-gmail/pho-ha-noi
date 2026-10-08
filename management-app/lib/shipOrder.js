@@ -90,8 +90,8 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
   const newShipped = r3(line.shipped_qty + qty);
   const over = newShipped > line.ck_qty + 0.0005;
   if (over && !confirm) {
-    return { over: true, item_name: src.item_name, unit: src.unit, remaining, scanned: r3(qty), new_total: newShipped, ordered: r3(line.ck_qty),
-      message: `You scanned ${r3(qty)} ${src.unit} of ${src.item_name}, but only ${remaining} ${src.unit} is left on the order. Accept the extra and update the order to ${newShipped} ${src.unit}?` };
+    return { over: true, item_name: src.item_name, unit: src.unit, remaining, scanned: r3(qty), new_total: newShipped, ordered: r3(line.requested_qty),
+      message: `You scanned ${r3(qty)} ${src.unit} of ${src.item_name} — more than the ${remaining} ${src.unit} left on this order (originally ${r3(line.requested_qty)} ${src.unit}). Accept the extra? The order keeps the original ${r3(line.requested_qty)} ${src.unit} and records ${newShipped} ${src.unit} shipped.` };
   }
 
   db.exec('BEGIN');
@@ -100,8 +100,10 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
     consumeFIFO(src.id, qty);
     db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes)
       VALUES (?,?,?,?,'transfer_sent',?,?)`).run(src.id, hub.id, storeId, qty, userId || null, `Order ship (scan) · order #${line.id}`);
-    let ckQty = line.ck_qty, requested = line.requested_qty;
-    if (over) { const delta = r3(newShipped - line.ck_qty); ckQty = newShipped; requested = r3(line.requested_qty + delta); }
+    // The order's ORIGINAL amounts stay frozen — the store's request (requested_qty) and the hub's
+    // planned portion (ck_qty) are never overwritten. Only shipped_qty moves, so the requester always
+    // sees what they ordered next to what actually shipped (under, exact, or over).
+    const ckQty = line.ck_qty, requested = line.requested_qty;
     const done = newShipped >= ckQty - 0.0005;
     db.prepare(`UPDATE distribution_orders SET shipped_qty=?, ck_qty=?, requested_qty=?, status=?, approved_by=?, updated_at=datetime('now') WHERE id=?`)
       .run(newShipped, ckQty, requested, done ? 'shipped' : line.status, userId || null, line.id);

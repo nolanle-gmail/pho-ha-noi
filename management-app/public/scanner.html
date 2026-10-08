@@ -218,7 +218,7 @@ async function renderShipStore(){
   if (!d || !d.ok){ box.innerHTML = `<div class="sub" style="color:var(--muted)">${esc((d && d.error) || 'Could not load order.')}</div>`; return; }
   const lines = d.lines || [], sn = (shipStore.name||'').replace('Pho Ha Noi — ','');
   box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <b>${esc(sn)}</b> — scan items to ship</div>` +
-    (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining<=0.0005?' done':''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.shipped_qty)}/${nf(o.ck_qty)} ${esc(o.unit||'')}${o.on_hand<=0.0005?' · ⚠ none here':''}</span></div>`).join('')}</div>`
+    (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining<=0.0005?' done':''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.shipped_qty)} shipped / ${nf(o.requested_qty)} ordered ${esc(o.unit||'')}${o.shipped_qty > o.requested_qty + 0.0005 ? ' · over' : ''}${o.on_hand<=0.0005?' · ⚠ none here':''}</span></div>`).join('')}</div>`
       : '<div class="sub" style="color:var(--muted)">This order is fully shipped. ✅</div>');
   const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
 }
@@ -248,7 +248,7 @@ async function handleShipOrder(code){
     if (r && r.not_on_order){ $('shGo').disabled = false; alert(r.error || 'That item is not on this order.'); return; }
     if (!r || !r.ok){ $('shGo').disabled = false; alert((r && r.error) || 'Could not ship that item.'); return; }
     const o = r.order;
-    $('result').innerHTML = `<div class="panel info"><span class="big">Shipped ${nf(r.shipped)} ${esc(r.unit||it.unit)} → ${esc(sn)}</span>${o ? (o.done ? 'Order line complete ✅' : `${nf(o.shipped_qty)}/${nf(o.ck_qty)} ${esc(r.unit||'')}`) : ''}${o && o.raised ? ' · order raised to match' : ''}</div><button class="btn primary" id="again">Scan another</button>`;
+    $('result').innerHTML = `<div class="panel info"><span class="big">Shipped ${nf(r.shipped)} ${esc(r.unit||it.unit)} → ${esc(sn)}</span>${o ? (o.done ? 'Order line complete ✅' : `${nf(o.shipped_qty)} of ${nf(o.requested_qty)} ordered ${esc(r.unit||'')}`) : ''}${o && o.raised ? ' · over — original kept' : ''}</div><button class="btn primary" id="again">Scan another</button>`;
     $('again').onclick = resume;
     refreshShip();
   };

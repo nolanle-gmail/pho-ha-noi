@@ -1334,7 +1334,7 @@ async function openScanner() {
     catch (e) { box.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
     const lines = d.lines || [];
     box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <strong>${esc(shortLoc(shipStore.name))}</strong> — scan items to ship</div>`
-      + (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining <= 0.0005 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${numf(o.shipped_qty)}/${numf(o.ck_qty)} ${esc(o.unit || '')}${o.on_hand <= 0.0005 ? ' · ⚠ none here' : ''}</span></div>`).join('')}</div>`
+      + (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining <= 0.0005 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${numf(o.shipped_qty)} shipped / ${numf(o.requested_qty)} ordered ${esc(o.unit || '')}${o.shipped_qty > o.requested_qty + 0.0005 ? ' · over' : ''}${o.on_hand <= 0.0005 ? ' · ⚠ none here' : ''}</span></div>`).join('')}</div>`
         : '<div class="muted" style="font-size:.85rem">This order is fully shipped. ✅ <span>Pick another order above.</span></div>');
     const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
   }
@@ -1582,7 +1582,7 @@ async function handleShipOrder(code, panel, next, store, hubLoc, refreshShip) {
       if (rr && rr.not_on_order) { toast(rr.error || 'Not on this order', true); btn.disabled = false; return; }
       if (!rr || !rr.ok) { toast((rr && rr.error) || 'Could not ship.', true); btn.disabled = false; return; }
       const o = rr.order;
-      toast(`📤 Shipped ${numf(rr.shipped)} ${esc(rr.unit || it.unit)} → ${esc(shortLoc(store.name))}${o ? (o.done ? ' · line complete ✅' : ` · ${numf(o.shipped_qty)}/${numf(o.ck_qty)}`) : ''}${o && o.raised ? ' · order raised' : ''}`);
+      toast(`📤 Shipped ${numf(rr.shipped)} ${esc(rr.unit || it.unit)} → ${esc(shortLoc(store.name))}${o ? (o.done ? ' · line complete ✅' : ` · ${numf(o.shipped_qty)} of ${numf(o.requested_qty)} ordered`) : ''}${o && o.raised ? ' · over (original kept)' : ''}`);
       invRefresh(); if (refreshShip) refreshShip(); next();
     } catch (e) { toast(e.message, true); btn.disabled = false; }
   };
@@ -1728,7 +1728,7 @@ async function renderStock() {
       </div></div>
     <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">${items.length} items stocked here · levels, cost, and each item's description &amp; notes in one place. The shared product dictionary is on the <strong>Glossary</strong> tab. <span class="muted" style="font-size:.82rem">Hover an action icon for what it does.</span>${S.section === 'central' ? ' <strong>Central Kitchen master</strong> — new or edited items copy to every location.' : ''}</p>
     <div class="table-wrap"><table class="stock-tbl"><thead><tr>
-      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min / Par</th><th class="num">Unit cost</th><th>Status</th><th class="acts">Actions</th>
+      <th>Item</th><th>SKU</th><th>Category</th><th>Shelf / Section</th><th>Supplier</th><th>Unit</th><th class="num">On hand</th><th class="num">Min / Par</th><th class="num" title="Total cost of the on-hand lots, from the price paid at each purchase. Shows $0.00 until every lot has a price (see 💲 Cost history).">Unit cost</th><th>Status</th><th class="acts">Actions</th>
     </tr></thead><tbody>
       ${items.map(i => { const sub = [i.description, i.notes].filter(Boolean).join(' · '); return `<tr>
         <td style="max-width:280px"><strong>${esc(i.item_name)}</strong>${sub ? `<div class="item-sub" title="${esc(sub)}">${esc(sub)}</div>` : ''}</td>
@@ -1739,7 +1739,7 @@ async function renderStock() {
         <td>${esc(i.unit || '—')}</td>
         <td class="num">${numf(i.quantity)}</td>
         <td class="num">${numf(i.min_quantity)} / ${i.par_level == null ? '—' : numf(i.par_level)}</td>
-        <td class="num">${money(i.unit_cost)}</td>
+        <td class="num">${money(i.lots_value)}</td>
         <td>${statusBadge(i.quantity, i.min_quantity)}</td>
         <td class="acts"><div class="actions-cell" style="flex-wrap:nowrap">
           <button class="btn sm" data-act="receive" data-id="${i.id}" data-name="${esc(i.item_name)}" title="Receive stock">📥</button>
@@ -2195,8 +2195,8 @@ async function renderOrders() {
     </div>
     ${atCK ? '' : `<div class="section">
       <h3>Central Kitchen orders <span style="font-weight:400;color:var(--muted);font-size:.85rem">raw food from the warehouse</span></h3>
-      ${ckOrders.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">CK</th><th class="num">Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-        ${ckOrders.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${numf(o.ck_qty)}</td><td class="num">${o.vendor_qty > 0 ? numf(o.vendor_qty) : '—'}</td><td>${distBadge(o.status)}</td>
+      ${ckOrders.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th class="num" title="What you originally ordered — this never changes">Ordered</th><th class="num" title="Actually shipped from the hub (may differ from what you ordered)">Shipped</th><th class="num">CK</th><th class="num">Vendor</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        ${ckOrders.orders.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold" title="more than ordered">over</span>' : (o.status !== 'requested' && o.shipped_qty < o.requested_qty - 0.0005 ? ' <span class="badge low" title="less than ordered">short</span>' : '')}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${numf(o.ck_qty)}</td><td class="num">${o.vendor_qty > 0 ? numf(o.vendor_qty) : '—'}</td><td>${distBadge(o.status)}</td>
           <td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No Central Kitchen orders yet.</div>'}
     </div>`}

@@ -90,12 +90,20 @@ router.get('/audit', requireRole(ROLES.OPS), (req, res) => {
 });
 
 // ── Inventory levels ───────────────────────────────────────────────────────
+// The Stock "Unit cost" is derived from the purchase lots: the TOTAL cost of what's on hand —
+// sum(remaining qty × that lot's unit cost) across the item's on-hand lots. All-or-nothing: if any
+// on-hand lot has no price yet (unit_cost null/0), show 0 until every lot is priced (so a missing
+// price never understates the total). Computed live so it always matches Lots & Expiry.
+const LOTS_VALUE = `(CASE
+    WHEN EXISTS (SELECT 1 FROM inventory_lots lo WHERE lo.item_id=i.id AND lo.quantity>0 AND (lo.unit_cost IS NULL OR lo.unit_cost<=0)) THEN 0
+    ELSE COALESCE((SELECT ROUND(SUM(lo.quantity*lo.unit_cost),2) FROM inventory_lots lo WHERE lo.item_id=i.id AND lo.quantity>0),0)
+  END) AS lots_value`;
 router.get('/', requireRole(ROLES.OPS), (req, res) => {
   const locId = scopeLoc(req, true);
   if (!locId) {
-    return res.json(db.prepare(`SELECT i.*, l.name as location_name, v.name AS vendor_name, s.name AS section_name FROM inventory i JOIN locations l ON i.location_id=l.id LEFT JOIN vendors v ON v.id=i.vendor_id LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.is_active=1 ORDER BY l.name, i.category, i.item_name`).all());
+    return res.json(db.prepare(`SELECT i.*, ${LOTS_VALUE}, l.name as location_name, v.name AS vendor_name, s.name AS section_name FROM inventory i JOIN locations l ON i.location_id=l.id LEFT JOIN vendors v ON v.id=i.vendor_id LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.is_active=1 ORDER BY l.name, i.category, i.item_name`).all());
   }
-  res.json(db.prepare(`SELECT i.*, v.name AS vendor_name, s.name AS section_name FROM inventory i LEFT JOIN vendors v ON v.id=i.vendor_id LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.is_active=1 ORDER BY i.category, i.item_name`).all(locId));
+  res.json(db.prepare(`SELECT i.*, ${LOTS_VALUE}, v.name AS vendor_name, s.name AS section_name FROM inventory i LEFT JOIN vendors v ON v.id=i.vendor_id LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.is_active=1 ORDER BY i.category, i.item_name`).all(locId));
 });
 
 // Warehouse view — one row per item, quantities across all locations.
