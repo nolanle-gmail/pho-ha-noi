@@ -742,9 +742,12 @@ The **net weight drives the quantity**: it pre-fills the amount on receive (adde
 at $5.20, then $5.40, then $6.00 — so the unit cost is kept **per purchase**, not as one frozen
 number on the stock row. Each scan-to-receive is its own **cost layer** (an `inventory_lots` row)
 carrying the price actually paid that time; the receive panel has a **Unit cost** field (defaults to
-the last price, editable to today's; blank keeps the last) on all three surfaces. `inventory.unit_cost`
-becomes the **latest** purchase price (so reorder estimates use today's market) while the lot ledger
-keeps every batch's true cost. No new table — `inventory_lots` already *is* the per-purchase ledger
+the last price, editable to today's; blank keeps the last) on all three surfaces. The **Stock "Unit
+cost" column shows the TOTAL cost of the on-hand lots** (2026-10-07) — `Σ(remaining qty × that lot's
+price)`, computed live so it matches Lots & Expiry — with an **all-or-nothing** rule: if any on-hand
+lot has no price yet, the column reads **$0.00** until every lot is priced (a missing price never
+understates the total). The underlying per-unit `inventory.unit_cost` (kept at the **latest** purchase
+price) is untouched, so recipe costing and valuation stay correct. No new table — `inventory_lots` already *is* the per-purchase ledger
 and already drives FIFO. A **💲 Cost history** button on every **Stock** and **Central Kitchen** row
 opens the layers — each purchase's date, qty bought, qty remaining, weight and unit cost — with
 on-hand value (each layer at its own cost), total purchased, and the weighted-average cost; the
@@ -775,8 +778,11 @@ Use** draws the oldest layer first and reports the true **COGS** valued at each 
   (`GET /distribution/ship-queue/:storeId`, with the hub's on-hand + barcode for matching), then scan
   an item on the order (`POST /distribution/ship-scan`). The scan shows the item name, its on-hand,
   and what the order still needs, and confirms a quantity: **under**-ship leaves the line open
-  (partial — progress tracked in `shipped_qty`); **over**-ship asks to confirm and then **raises the
-  order's count** to what actually shipped. Each scan **decrements the hub** (FIFO) and the stock goes
+  (partial — progress tracked in `shipped_qty`); **over**-ship asks to confirm, then records the extra
+  in `shipped_qty`. The order's **original ordered amount (`requested_qty`) is never overwritten**
+  (2026-10-07) — the requester always sees what they ordered next to what actually shipped (e.g.
+  order 40, ship 41.63 → the store's order shows **Ordered 40 / Shipped 41.63 (over)**), and the
+  store **receives the actual shipped amount**. Each scan **decrements the hub** (FIFO) and the stock goes
   **in transit** (`transfer_sent`); the store then **receives** it to add it to on-hand (two-step,
   `PUT /distribution/orders/:id` → `received`). A disabled hook (`DIST_NOTIFY_SENDER`) will text the
   order's requester when it ships (enabled later). Orders are placed against a chosen hub on the store
