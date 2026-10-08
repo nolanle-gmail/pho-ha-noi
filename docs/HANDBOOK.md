@@ -769,10 +769,25 @@ Use** draws the oldest layer first and reports the true **COGS** valued at each 
   (per-location on-hand + total), so staff can look up stock **anywhere** (their own store is
   flagged). Console `GET /inventory/barcode/stock/:code`, staff `GET /invscan/check/:code`,
   kiosk `POST /kiosk/:slug/stock`.
-- **🔁 Transfer** — an ad-hoc move: pick a destination, then scan items to transfer them there
-  (decrements here via FIFO, adds/creates at the destination, logged as `transfer_sent`). Shared
-  core `lib/transfer.js`. Console `POST /inventory/barcode/transfer`; staff `POST /invscan/ship`;
-  kiosk `POST /kiosk/:slug/transfer`.
+- **🔁 Transfer** — an ad-hoc move to another location. **Two-step (2026-10-08):** the sender's scan
+  decrements the source (FIFO) and creates an **in-transit** transfer (`transfer_requests`, status
+  `in_transit`); the stock is **not** added to the destination until someone there **receives** it
+  (by scanning — see below — or **Mark received** on the Transfers tab). Shared core `lib/transfer.js`.
+  Console `POST /inventory/barcode/transfer`; staff `POST /invscan/ship`; kiosk `POST /kiosk/:slug/transfer`.
+  The Transfers tab shows in-transit transfers with received progress and **Mark received / Cancel**
+  (cancel returns the undelivered remainder to the source).
+
+> **📥 Order/transfer-aware receiving (2026-10-08).** When a store **Receives** a scan, it first
+> checks whether the item is on an open **shipped order** (from the CK/Warehouse) or an **in-transit
+> transfer** to this location. If so it offers *"📦 incoming order/transfer from X — Shipped N,
+> remaining M → Receive"* (a confirm step) instead of a plain add: the stock lands at the **source's
+> cost**, `received_qty` advances, and the order/transfer **closes only on an exact qty/weight match**.
+> A short or over receipt still lands what physically arrived but leaves the line **open and flagged
+> for review** (never silently closed) — so a 60 lb order can arrive as several boxes that accumulate
+> until it's complete. No match → the normal new-item / increase-count receive. Shared core
+> `lib/inbound.js` (`inboundMatches` / `receiveAgainstOrder` / `receiveAgainstTransfer`); surfaced via
+> `resolveScan().inbound` and `POST .../receive-inbound` on all three surfaces (console, staff, kiosk).
+> `distribution_orders` now carries `received_qty` (Ordered → Shipped → **Received**).
 - **📤 Shipping (hubs only — Central Kitchen / Warehouse)** — order fulfilment (2026-10-07 rework).
   Tapping Shipping shows the **queue of orders waiting to ship** for this hub, grouped per store
   (`GET /distribution/ship-queue?source_location_id=<hub>`); tap a store to see its open items
