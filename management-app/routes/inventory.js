@@ -8,6 +8,7 @@ const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barc
 const { resolveVendor } = require('../lib/vendors');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
+const { receiveAgainstOrder, receiveAgainstTransfer } = require('../lib/inbound');
 
 const router = express.Router();
 // Reduce any scanned barcode (plain UPC/EAN or a GS1-128 case label) to its stable key.
@@ -470,33 +471,37 @@ router.post('/transfer-request', requireRole(ROLES.OPS), (req, res) => {
   res.json({ success: true });
 });
 
+// Receive (close) or cancel an in-transit transfer. Receiving lands the remaining amount at the
+// destination (delegates to the shared inbound logic — source was already decremented when it
+// shipped); cancelling returns the not-yet-received remainder to the source.
 router.put('/transfer-request/:id', requireRole(ROLES.OPS), (req, res) => {
-  const { status, tracking_number, notes } = req.body;
-  const valid = ['approved', 'in_transit', 'received', 'cancelled'];
-  if (!valid.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const { status } = req.body;
   const tr = db.prepare(`SELECT * FROM transfer_requests WHERE id=?`).get(req.params.id);
-  if (!tr) return res.status(404).json({ error: 'Transfer request not found' });
-  let fromItem = null;
+  if (!tr) return res.status(404).json({ error: 'Transfer not found' });
+  const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
+  const remaining = r3(Math.max(0, tr.quantity - tr.received_qty));
   if (status === 'received') {
-    fromItem = db.prepare(`SELECT * FROM inventory WHERE item_name=? AND location_id=?`).get(tr.item_name, tr.from_location_id);
-    if (fromItem && fromItem.quantity < tr.quantity) return res.status(409).json({ error: `Insufficient stock: ${fromItem.quantity} ${fromItem.unit} available, ${tr.quantity} requested` });
+    if (tr.status !== 'in_transit') return res.status(400).json({ error: `Only an in-transit transfer can be received (this is ${tr.status}).` });
+    const r = receiveAgainstTransfer({ transferId: tr.id, qty: remaining, userId: req.user.id });
+    if (r.error) return res.status(r.status || 400).json({ error: r.error });
+    auditLog(req, 'transfer_received', 'transfer_request', Number(req.params.id), { item: tr.item_name, received: remaining });
+    return res.json({ success: true, ...r });
   }
-  const fields = [`status=?`, `updated_at=datetime('now')`], vals = [status];
-  if (tracking_number) { fields.push('tracking_number=?'); vals.push(tracking_number); }
-  if (notes) { fields.push('notes=?'); vals.push(notes); }
-  if (status === 'approved') { fields.push('approved_by=?'); vals.push(req.user.id); }
-  vals.push(req.params.id);
-  db.prepare(`UPDATE transfer_requests SET ${fields.join(',')} WHERE id=?`).run(...vals);
-  if (status === 'received' && fromItem) {
-    db.prepare(`UPDATE inventory SET quantity=quantity-? WHERE id=?`).run(tr.quantity, fromItem.id);
-    consumeFIFO(fromItem.id, tr.quantity);
-    db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id) VALUES (?,?,?,?,'transfer_sent',?)`).run(fromItem.id, tr.from_location_id, tr.to_location_id, tr.quantity, req.user.id);
-    const toItem = db.prepare(`SELECT * FROM inventory WHERE item_name=? AND location_id=?`).get(tr.item_name, tr.to_location_id);
-    if (toItem) db.prepare(`UPDATE inventory SET quantity=quantity+? WHERE id=?`).run(tr.quantity, toItem.id);
-    else db.prepare(`INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity) SELECT ?,item_name,category,unit,?,min_quantity FROM inventory WHERE id=?`).run(tr.to_location_id, tr.quantity, fromItem.id);
+  if (status === 'cancelled') {
+    if (tr.status === 'received' || tr.status === 'cancelled') return res.status(400).json({ error: `Can't cancel a ${tr.status} transfer.` });
+    if (remaining > 0) {   // return the undelivered remainder to the source
+      const fromItem = db.prepare(`SELECT * FROM inventory WHERE item_name=? AND location_id=?`).get(tr.item_name, tr.from_location_id);
+      if (fromItem) {
+        db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(remaining, fromItem.id);
+        receiveLot({ item_id: fromItem.id, location_id: tr.from_location_id, quantity: remaining, unit_cost: fromItem.unit_cost || 0, user_id: req.user.id });
+        db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`).run(fromItem.id, tr.from_location_id, remaining, req.user.id, `Transfer #${tr.id} cancelled — returned`);
+      }
+    }
+    db.prepare(`UPDATE transfer_requests SET status='cancelled', updated_at=datetime('now') WHERE id=?`).run(tr.id);
+    auditLog(req, 'transfer_cancel', 'transfer_request', Number(req.params.id), { item: tr.item_name, returned: remaining });
+    return res.json({ success: true });
   }
-  auditLog(req, status === 'received' ? 'transfer_received' : 'transfer_status', 'transfer_request', Number(req.params.id), { status, item: tr.item_name, quantity: tr.quantity });
-  res.json({ success: true });
+  return res.status(400).json({ error: 'Unsupported transfer status.' });
 });
 
 router.post('/transfer', requireRole(ROLES.OPS), (req, res) => {
@@ -505,14 +510,17 @@ router.post('/transfer', requireRole(ROLES.OPS), (req, res) => {
   const src = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=?`).get(item_id, from_location_id);
   if (!src) return res.status(404).json({ error: 'Source item not found' });
   if (src.quantity < quantity) return res.status(400).json({ error: 'Insufficient stock' });
+  // Two-step: decrement the source now (the goods leave) and create an IN-TRANSIT transfer. It is
+  // NOT added to the destination until someone there receives it (by scanning, or the "Mark received"
+  // button on the Transfers tab) — so stock never appears before it physically arrives.
   db.prepare(`UPDATE inventory SET quantity=quantity-? WHERE id=? AND location_id=?`).run(quantity, item_id, from_location_id);
   consumeFIFO(item_id, quantity);
-  const dest = db.prepare(`SELECT * FROM inventory WHERE item_name=? AND location_id=?`).get(src.item_name, to_location_id);
-  if (dest) db.prepare(`UPDATE inventory SET quantity=quantity+? WHERE id=?`).run(quantity, dest.id);
-  else db.prepare(`INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity) SELECT ?,item_name,category,unit,?,min_quantity FROM inventory WHERE id=?`).run(to_location_id, quantity, item_id);
-  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id) VALUES (?,?,?,?,'transfer_sent',?)`).run(item_id, from_location_id, to_location_id, quantity, req.user.id);
-  auditLog(req, 'transfer', 'inventory', item_id, { quantity, from: from_location_id, to: to_location_id });
-  res.json({ success: true });
+  const tr = db.prepare(`INSERT INTO transfer_requests (item_name, quantity, unit, is_catch_weight, from_location_id, to_location_id, requested_by, status, notes)
+    VALUES (?,?,?,?,?,?,?, 'in_transit', ?)`).run(src.item_name, quantity, src.unit || 'units', src.is_catch_weight ? 1 : 0, from_location_id, to_location_id, req.user.id, 'Direct transfer');
+  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,?,'transfer_sent',?,?)`)
+    .run(item_id, from_location_id, to_location_id, quantity, req.user.id, `Transfer #${tr.lastInsertRowid} · in transit`);
+  auditLog(req, 'transfer', 'inventory', item_id, { quantity, from: from_location_id, to: to_location_id, transfer_id: Number(tr.lastInsertRowid) });
+  res.json({ success: true, in_transit: true, transfer_id: Number(tr.lastInsertRowid) });
 });
 
 // ── Transaction ledger ─────────────────────────────────────────────────────
@@ -762,6 +770,21 @@ router.post('/barcode/receive', requireRole(ROLES.OPS), (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   auditLog(req, 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, unit_cost: r.unit_cost, via: 'scan' });
   res.json({ success: true, item: r.item, added: r.added, kind: r.kind, lot_id: r.lot_id, unit_cost: r.unit_cost });
+});
+
+// Receive a scanned item AGAINST an open shipped order or in-transit transfer to this location.
+// Lands the stock, advances received_qty, and closes the line only on an exact qty/weight match.
+router.post('/barcode/receive-inbound', requireRole(ROLES.OPS), (req, res) => {
+  const locId = scopeLoc(req, false);
+  if (!locId) return res.status(400).json({ error: 'Pick a location first.' });
+  const qty = (req.body.weight != null && req.body.weight !== '') ? req.body.weight : req.body.quantity;
+  const args = { qty, code: req.body.code, userId: req.user.id, locId };
+  const r = req.body.order_id ? receiveAgainstOrder({ orderId: req.body.order_id, ...args })
+    : req.body.transfer_id ? receiveAgainstTransfer({ transferId: req.body.transfer_id, ...args })
+    : { error: 'Pick the order or transfer to receive against.', status: 400 };
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  auditLog(req, 'stock_received', 'inventory', null, { item: r.item_name, received: r.received, kind: r.kind, line: r.line_id, closed: (r.order || r.transfer).closed, via: 'scan-inbound' });
+  res.json(r);
 });
 
 // Create a new stock item from the scan form, write it into the Glossary, and receive opening stock.

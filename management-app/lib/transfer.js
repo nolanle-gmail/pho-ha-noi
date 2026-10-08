@@ -29,24 +29,17 @@ function shipByBarcode({ fromLoc, toLoc, code, quantity, userId, confirm }) {
     const d = recentDuplicate({ itemId: src.id, gtin: p.gtin, serial: p.serial, actions: ['ship'], quantity: qty });
     if (d.dup) return { ok: false, duplicate: true, status: 200, message: dupMessage(d, 'ship', src.item_name, p.serial) };
   }
+  // Two-step transfer: decrement the source now; the stock is IN TRANSIT and is NOT added to the
+  // destination yet. The destination scans it to receive (lib/inbound.receiveAgainstTransfer), which
+  // lands it there and closes the transfer. (Orders are filled via the Shipping flow, not here.)
   db.prepare(`UPDATE inventory SET quantity=quantity-?, last_updated=datetime('now') WHERE id=?`).run(qty, src.id);
   consumeFIFO(src.id, qty);
-  const dest = db.prepare(`SELECT * FROM inventory WHERE item_name=? AND location_id=? AND is_active=1`).get(src.item_name, to);
-  let destId;
-  if (dest) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(qty, dest.id); destId = dest.id; }
-  else { destId = db.prepare(`INSERT INTO inventory (location_id, item_name, category, unit, quantity, min_quantity, unit_cost, barcode, vendor_code) SELECT ?, item_name, category, unit, ?, min_quantity, unit_cost, barcode, vendor_code FROM inventory WHERE id=?`).run(to, qty, src.id).lastInsertRowid; }
-  receiveLot({ item_id: destId, location_id: to, quantity: qty, unit_cost: src.unit_cost, user_id: userId });
-  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,?, 'transfer_sent', ?, ?)`).run(src.id, from, to, qty, userId, 'Scanned ship');
+  const tr = db.prepare(`INSERT INTO transfer_requests (item_name, quantity, unit, is_catch_weight, from_location_id, to_location_id, requested_by, status, notes)
+    VALUES (?,?,?,?,?,?,?, 'in_transit', ?)`).run(src.item_name, qty, src.unit || 'units', src.is_catch_weight ? 1 : 0, from, to, userId || null, 'Scanned transfer');
+  db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,?, 'transfer_sent', ?, ?)`)
+    .run(src.id, from, to, qty, userId, `Transfer #${tr.lastInsertRowid} · in transit`);
   logScan({ itemId: src.id, locationId: from, action: 'ship', parsed: p, quantity: qty, userId });
-  let order = null;
-  const line = db.prepare(`SELECT * FROM distribution_orders WHERE to_location_id=? AND item_name=? AND status IN ('requested','approved') ORDER BY id LIMIT 1`).get(to, src.item_name);
-  if (line) {
-    const ckq = Math.round((line.ck_qty + qty) * 1000) / 1000;
-    const done = ckq >= line.requested_qty;
-    db.prepare(`UPDATE distribution_orders SET ck_qty=?, status=? WHERE id=?`).run(ckq, done ? 'shipped' : line.status, line.id);
-    order = { id: line.id, item_name: line.item_name, requested_qty: line.requested_qty, ck_qty: ckq, remaining: Math.max(0, Math.round((line.requested_qty - ckq) * 1000) / 1000), shipped: done };
-  }
-  return { ok: true, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(src.id), to, order, src };
+  return { ok: true, in_transit: true, transfer_id: tr.lastInsertRowid, item: db.prepare(`SELECT * FROM inventory WHERE id=?`).get(src.id), to, src };
 }
 
 module.exports = { shipByBarcode, openOrders };

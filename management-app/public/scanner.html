@@ -337,7 +337,7 @@ async function showCostHistory(itemId, name, unit){
   });
 }
 
-async function handleScan(code){
+async function handleScan(code, skipInbound){
   $('result').innerHTML = '<div class="result">Looking up…</div>';
   const { d } = await api('/kiosk/' + encodeURIComponent(slug) + '/resolve', { employee_code: empCode, code });
   if (!d.ok){ $('result').innerHTML = `<div class="panel err">${esc(d.error || 'Something went wrong.')}</div><button class="btn ghost" id="again">Scan another</button>`; $('again').onclick = resume; return; }
@@ -346,6 +346,45 @@ async function handleScan(code){
   const labelExpiry = d.expiry || packed || '';
   const labelLot = d.lot || '';
   const gs1 = (d.is_gs1 || d.weight_lb || labelExpiry || labelLot) ? `<div class="scan-gs1">🏷️ Label${d.weight_lb ? ` · <b>${nf(d.weight_lb)} lb</b>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${d.expiry ? ` · exp ${esc(d.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}</div>` : '';
+  // Order/transfer-aware receiving: receive against an open shipped order / in-transit transfer first.
+  const inboundLines = (d.inbound ? [...(d.inbound.orders||[]), ...(d.inbound.transfers||[])] : []);
+  if (!skipInbound && inboundLines.length){
+    const name = (d.item && d.item.item_name) || (d.glossary && d.glossary.name) || key;
+    const unit = (d.item && d.item.unit) || (inboundLines[0] && inboundLines[0].unit) || '';
+    const cw = !!(d.item && d.item.is_catch_weight);
+    const sl = (s) => (s||'').replace('Pho Ha Noi — ','');
+    const showOne = (L) => {
+      const shipped = L.kind==='order' ? L.shipped_qty : L.quantity;
+      const dflt = d.weight_lb || L.remaining;
+      $('result').innerHTML = `<div class="result"><div class="name">📦 ${esc(name)}</div>
+        <div class="sub">Incoming ${L.kind==='order'?'order':'transfer'} from <b>${esc(sl(L.source_name))}</b></div>
+        <div class="sub" style="color:var(--muted);font-size:.82rem">${L.kind==='order'?`Ordered ${nf(L.requested_qty)} · `:''}Shipped <b>${nf(shipped)} ${esc(unit)}</b> · received ${nf(L.received_qty)} · <b>remaining ${nf(L.remaining)}</b> — closes on an exact match</div>${gs1}
+        <div class="fields"><input class="qty" id="riQty" type="number" value="${dflt}" min="0" step="any" placeholder="${cw?'weight received':'qty received'}"></div>
+        <div class="row"><button class="btn ok" id="riGo">📦 Receive</button>${inboundLines.length>1?'<button class="btn ghost" id="riBack">← Other lines</button>':''}</div>
+        <div class="row"><button class="btn ghost" id="riNew">Not on an order — add as new</button></div></div>`;
+      $('riGo').onclick = async () => {
+        $('riGo').disabled = true;
+        const body = { employee_code: empCode, code };
+        body[L.kind==='order'?'order_id':'transfer_id'] = L.id;
+        if (cw) body.weight = $('riQty').value; else body.quantity = $('riQty').value;
+        const { d:rr } = await api('/kiosk/' + encodeURIComponent(slug) + '/receive-inbound', body);
+        if (!rr || !rr.ok){ $('riGo').disabled = false; alert((rr && rr.error) || 'Could not receive.'); return; }
+        const o = rr.order || rr.transfer;
+        $('result').innerHTML = `<div class="panel info"><span class="big">${o.closed ? '✅ Received & closed' : 'Received '+nf(rr.received)+' '+esc(unit)}</span>${o.closed ? '' : (o.over ? 'over what shipped — left open for review' : nf(o.remaining)+' still due (open)')}</div><button class="btn primary" id="again">Scan another</button>`;
+        $('again').onclick = resume;
+      };
+      if ($('riBack')) $('riBack').onclick = showChooser;
+      $('riNew').onclick = () => handleScan(code, true);
+    };
+    const showChooser = () => {
+      $('result').innerHTML = `<div class="result"><div class="name">📦 ${esc(name)}</div><div class="sub">${inboundLines.length} incoming lines — pick one:</div>
+        <div class="ship-queue" style="margin:.5rem 0">${inboundLines.map((L,i)=>`<button class="ship-ord pick" data-ri="${i}"><span>${L.kind==='order'?'📦 Order':'🔁 Transfer'} from ${esc(sl(L.source_name))}</span><span class="mono">${nf(L.remaining)} ${esc(unit)} left</span></button>`).join('')}</div>
+        <button class="btn ghost" id="riNew">Not on these — add as new</button></div>`;
+      $('result').querySelectorAll('[data-ri]').forEach(b => b.onclick = () => showOne(inboundLines[+b.dataset.ri]));
+      $('riNew').onclick = () => handleScan(code, true);
+    };
+    return inboundLines.length===1 ? showOne(inboundLines[0]) : showChooser();
+  }
   if (d.found){
     const it = d.item; const cw = !!it.is_catch_weight;
     $('result').innerHTML = `<div class="result"><div class="name">✅ ${esc(it.item_name)}</div><div class="sub">On hand ${nf(it.quantity)} ${esc(it.unit)}${cw?' ⚖':''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</div>${scanLangs(d.glossary)}${scanSection(it)}${gs1}${boxDiffNote(d)}

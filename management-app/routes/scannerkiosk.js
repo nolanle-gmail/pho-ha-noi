@@ -16,6 +16,7 @@ const { resolveVendor } = require('../lib/vendors');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
 const { hubById, hubQueue, storeLines, shipScanOrder } = require('../lib/shipOrder');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
+const { receiveAgainstOrder, receiveAgainstTransfer } = require('../lib/inbound');
 const { isCk, replicateItemFromCk } = require('../lib/ckReplication');
 const scanKey = (raw) => { const p = parseScan(raw); return (p.gtin || p.code || '').toString().trim(); };
 
@@ -98,7 +99,7 @@ router.post('/kiosk/:slug/resolve', throttle, (req, res) => {
   const p = info.parsed || {};
   res.json({ ok: true, found: info.in_stock, code: info.code, item: info.item || null,
     in_glossary: info.in_glossary, glossary: info.glossary || null, duplicate_box: info.duplicate_box || null,
-    last_box: info.last_box || null, scale_code: info.scale_code || null,
+    last_box: info.last_box || null, scale_code: info.scale_code || null, inbound: info.inbound || { orders: [], transfers: [] },
     gtin: p.gtin, is_gs1: p.isGs1, weight_lb: p.weightLb, weight_kg: p.weightKg,
     prod_date: p.prodDate, pack_date: p.packDate, expiry: p.expiry, lot: p.lot, serial: p.serial });
 });
@@ -231,6 +232,20 @@ router.post('/kiosk/:slug/receive', throttle, (req, res) => {
   if (r.error) return res.status(400).json({ ok: false, error: r.error });
   auditLog(auditReq(c.staff, req.body), 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, unit_cost: r.unit_cost, via: 'scanner_kiosk' });
   res.json({ ok: true, success: true, item: r.item, added: r.added, kind: r.kind, lot_id: r.lot_id, unit_cost: r.unit_cost });
+});
+
+// Receive a scanned item against an open shipped order / in-transit transfer to this kiosk's location.
+router.post('/kiosk/:slug/receive-inbound', throttle, (req, res) => {
+  const c = ctx(req.params.slug, req.body && req.body.employee_code);
+  if (sentErr(res, c)) return;
+  const qty = (req.body.weight != null && req.body.weight !== '') ? req.body.weight : req.body.quantity;
+  const args = { qty, code: req.body.code, userId: c.staff.id, locId: c.loc.id };
+  const r = req.body.order_id ? receiveAgainstOrder({ orderId: req.body.order_id, ...args })
+    : req.body.transfer_id ? receiveAgainstTransfer({ transferId: req.body.transfer_id, ...args })
+    : { error: 'Pick the order or transfer to receive against.', status: 400 };
+  if (r.error) return res.status(r.status || 400).json({ ok: false, error: r.error });
+  auditLog(auditReq(c.staff, req.body), 'stock_received', 'inventory', null, { item: r.item_name, received: r.received, line: r.line_id, via: 'scanner_kiosk_inbound' });
+  res.json(r);
 });
 
 // Cost / purchase history for an item stocked at THIS kiosk's location — every purchase (lot) with

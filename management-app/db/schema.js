@@ -239,11 +239,15 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS transfer_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       item_name TEXT NOT NULL,
-      quantity REAL NOT NULL,
+      quantity REAL NOT NULL,                                       -- how much the sender shipped (in transit)
+      received_qty REAL NOT NULL DEFAULT 0,                         -- how much the destination has scanned in
+      unit TEXT DEFAULT 'units',
+      is_catch_weight INTEGER NOT NULL DEFAULT 0,
       from_location_id INTEGER NOT NULL REFERENCES locations(id),
       to_location_id INTEGER NOT NULL REFERENCES locations(id),
       requested_by INTEGER NOT NULL REFERENCES users(id),
       approved_by INTEGER REFERENCES users(id),
+      received_by INTEGER REFERENCES users(id),
       status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','in_transit','received','cancelled')),
       tracking_number TEXT,
       notes TEXT,
@@ -811,6 +815,8 @@ function migrate() {
       ck_qty          REAL NOT NULL DEFAULT 0,                     -- the hub portion (CK/Warehouse); rest is vendor
       vendor_qty      REAL NOT NULL DEFAULT 0,                     -- shortfall routed to a vendor
       shipped_qty     REAL NOT NULL DEFAULT 0,                     -- how much of the hub portion has shipped
+      received_qty    REAL NOT NULL DEFAULT 0,                     -- how much the store has actually scanned in
+      received_by     INTEGER REFERENCES users(id),               -- who received it at the store
       status          TEXT NOT NULL DEFAULT 'requested'
                         CHECK(status IN ('requested','approved','shipped','received','cancelled')),
       vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
@@ -1465,6 +1471,15 @@ function migrate() {
     // the planned ck_qty). source_location_id is backfilled to the Central Kitchen below.
     `ALTER TABLE distribution_orders ADD COLUMN source_location_id INTEGER REFERENCES locations(id)`,
     `ALTER TABLE distribution_orders ADD COLUMN shipped_qty REAL NOT NULL DEFAULT 0`,
+    // Order/transfer-aware receiving: the store scans incoming items to receive against the shipped
+    // order or in-transit transfer; received_qty tracks what actually landed (closes only on an
+    // exact match to what shipped). Transfers are now two-step (in_transit → received).
+    `ALTER TABLE distribution_orders ADD COLUMN received_qty REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE distribution_orders ADD COLUMN received_by INTEGER REFERENCES users(id)`,
+    `ALTER TABLE transfer_requests ADD COLUMN received_qty REAL NOT NULL DEFAULT 0`,
+    `ALTER TABLE transfer_requests ADD COLUMN received_by INTEGER REFERENCES users(id)`,
+    `ALTER TABLE transfer_requests ADD COLUMN unit TEXT DEFAULT 'units'`,
+    `ALTER TABLE transfer_requests ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders were all Central-Kitchen orders.
   try {

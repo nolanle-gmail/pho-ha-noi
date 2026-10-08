@@ -1404,7 +1404,7 @@ function boxDiffNote(r) {
   return `<div class="scan-diff">↔ Different from the last box — ${diffs.join(' · ')}. Review, then Add to the total.</div>`;
 }
 
-async function handleScan(code, panel, next) {
+async function handleScan(code, panel, next, skipInbound) {
   panel.innerHTML = '<div class="muted">Looking up…</div>';
   let r; try { r = await api(invQ('/barcode/resolve/' + encodeURIComponent(code))); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
   const p = r.parsed || {};
@@ -1415,6 +1415,44 @@ async function handleScan(code, panel, next) {
   const wt = p.weightLb || '';
   // A GS1 case/meat label carries real data — show what we read off it.
   const gs1 = (p.isGs1 || wt || labelExpiry || labelLot || p.serial) ? `<div class="scan-gs1">🏷️ Label${wt ? ` · <strong>${numf(wt)} lb</strong>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${p.expiry ? ` · exp ${esc(p.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}${p.serial ? ` · #${esc(p.serial)}` : ''}</div>` : '';
+  // Order/transfer-aware receiving: if this item is on an open shipped order or in-transit transfer
+  // to this location, receive it against that line (match qty → close) before any plain add.
+  const inboundLines = (r.inbound ? [...(r.inbound.orders || []), ...(r.inbound.transfers || [])] : []);
+  if (!skipInbound && inboundLines.length) {
+    const name = (r.item && r.item.item_name) || (r.glossary && r.glossary.name) || key;
+    const unit = (r.item && r.item.unit) || (inboundLines[0] && inboundLines[0].unit) || '';
+    const cw = !!(r.item && r.item.is_catch_weight);
+    const addNew = `<button class="btn ghost" id="riNew">Not on an order — add as new stock</button>`;
+    const showOne = (L) => {
+      const shipped = L.kind === 'order' ? L.shipped_qty : L.quantity;
+      const dflt = wt || L.remaining;
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — incoming ${L.kind === 'order' ? 'order' : 'transfer'} from <strong>${esc(shortLoc(L.source_name || ''))}</strong>${gs1}
+        <div class="muted" style="font-size:.85rem;margin:.3rem 0">${L.kind === 'order' ? `Ordered ${numf(L.requested_qty)} ${esc(unit)} · ` : ''}Shipped <strong>${numf(shipped)} ${esc(unit)}</strong> · received ${numf(L.received_qty)} · <strong>remaining ${numf(L.remaining)}</strong> — closes on an exact match</div>
+        <div class="scan-act"><input id="riQty" type="number" value="${dflt}" min="0" step="any" placeholder="${cw ? 'weight received' : 'qty received'}"><button class="btn" id="riGo">📦 Receive</button></div>
+        <div class="scan-act">${inboundLines.length > 1 ? '<button class="btn ghost" id="riBack">← Other lines</button>' : ''}${addNew}</div></div>`;
+      $('riGo').onclick = async () => {
+        const btn = $('riGo'); btn.disabled = true;
+        const body = { location_id: invLoc(), code };
+        body[L.kind === 'order' ? 'order_id' : 'transfer_id'] = L.id;
+        if (cw) body.weight = $('riQty').value; else body.quantity = $('riQty').value;
+        try {
+          const rr = await api('/inventory/barcode/receive-inbound', { method: 'POST', body: JSON.stringify(body) });
+          const o = rr.order || rr.transfer;
+          toast(o.closed ? `✅ ${L.kind === 'order' ? 'Order' : 'Transfer'} received & closed` : (o.over ? `Received ${numf(rr.received)} — OVER what shipped; left open for review` : `Received ${numf(rr.received)} — ${numf(o.remaining)} still due (open)`));
+          invRefresh(); next();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      };
+      if ($('riBack')) $('riBack').onclick = showChooser;
+      $('riNew').onclick = () => handleScan(code, panel, next, true);
+    };
+    const showChooser = () => {
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — ${inboundLines.length} incoming lines for this location:
+        <div class="ship-queue" style="margin:.5rem 0">${inboundLines.map((L, i) => `<button class="ship-ord pick" data-ri="${i}"><span>${L.kind === 'order' ? '📦 Order' : '🔁 Transfer'} from ${esc(shortLoc(L.source_name || ''))}</span><span class="mono">${numf(L.remaining)} ${esc(unit)} left</span></button>`).join('')}</div>${addNew}</div>`;
+      panel.querySelectorAll('[data-ri]').forEach(b => b.onclick = () => showOne(inboundLines[+b.dataset.ri]));
+      $('riNew').onclick = () => handleScan(code, panel, next, true);
+    };
+    return inboundLines.length === 1 ? showOne(inboundLines[0]) : showChooser();
+  }
   if (r.in_stock) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
@@ -2249,15 +2287,24 @@ async function renderTransfers() {
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Transfers</h2>
       <button class="btn" id="newTransfer" ${others.length ? '' : 'disabled'}>+ Direct transfer</button></div>
-    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th>From → To</th><th>Status</th><th>Requested by</th></tr></thead><tbody>
-      ${reqs.length ? reqs.map(r => `<tr><td>${esc(r.item_name)}</td><td class="num">${numf(r.quantity)}</td><td>${esc(r.from_location_name)} → ${esc(r.to_location_name)}</td><td>${orderBadge(r.status)}</td><td>${esc(r.requested_by_name)}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">No transfer requests.</td></tr>'}
+    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">Transfers are two-step: the stock leaves the source right away and sits <strong>in transit</strong> until the destination <strong>receives</strong> it (by scanning, or Mark received here).</p>
+    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Received</th><th>From → To</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+      ${reqs.length ? reqs.map(r => { const toMe = String(r.to_location_id) === String(invLoc()), fromMe = String(r.from_location_id) === String(invLoc());
+        return `<tr><td>${esc(r.item_name)}</td><td class="num">${numf(r.quantity)} ${esc(r.unit || '')}</td><td class="num">${r.received_qty > 0 ? `${numf(r.received_qty)}/${numf(r.quantity)}` : '<span style="color:var(--muted)">—</span>'}</td><td>${esc(r.from_location_name)} → ${esc(r.to_location_name)}</td><td>${orderBadge(r.status)}</td>
+          <td><div class="actions-cell">${r.status === 'in_transit' && toMe ? `<button class="btn sm" data-trecv="${r.id}">Mark received</button>` : ''}${r.status === 'in_transit' && fromMe ? `<button class="btn sm ghost danger" data-tcancel="${r.id}">Cancel</button>` : ''}</div></td></tr>`; }).join('') : '<tr><td colspan="6" class="empty">No transfers.</td></tr>'}
     </tbody></table></div>`;
+  $('view').querySelectorAll('[data-trecv]').forEach(b => b.onclick = async () => {
+    try { const r = await api('/inventory/transfer-request/' + b.dataset.trecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast(r.transfer && r.transfer.closed ? 'Transfer received & closed' : 'Received (still open)'); invRefresh(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $('view').querySelectorAll('[data-tcancel]').forEach(b => b.onclick = () => modal('Cancel this transfer?', [{ key: 'ok', label: 'The undelivered amount is returned to the source. Type CANCEL to confirm.', placeholder: 'CANCEL' }],
+    async (v) => { if ((v.ok || '').trim().toUpperCase() !== 'CANCEL') throw new Error('Type CANCEL to confirm.'); await api('/inventory/transfer-request/' + b.dataset.tcancel, { method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }); toast('Transfer cancelled — stock returned'); invRefresh(); }, 'Cancel transfer'));
   const nt = $('newTransfer');
   if (nt && others.length) nt.onclick = () => modal('Direct transfer', [
     { key: 'item_id', label: 'Item', type: 'select', options: items.map(i => ({ value: i.id, label: `${i.item_name} (${numf(i.quantity)} ${i.unit})` })) },
     { key: 'to_location_id', label: 'To location', type: 'select', options: others.map(l => ({ value: l.id, label: l.name })) },
     { key: 'quantity', label: 'Quantity', type: 'number' },
-  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: invLoc(), to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Transferred'); invRefresh(); });
+  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: invLoc(), to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Sent — now in transit, awaiting receipt'); invRefresh(); });
 }
 
 // ── Lots & Expiry ──────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ const { receiveLot } = require('./lots');
 const { rememberProduct, catalogGet, catalogGetByScaleCode } = require('./productLookup');
 const { resolveVendor } = require('./vendors');
 const { resolveSection } = require('./sections');
+const { inboundMatches } = require('./inbound');
 
 const round3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const findItem = (locId, code) => db.prepare(`SELECT i.*, s.name AS section_name FROM inventory i LEFT JOIN storage_sections s ON s.id=i.section_id WHERE i.location_id=? AND i.barcode=? AND i.is_active=1`).get(locId, code);
@@ -82,9 +83,15 @@ function resolveScan({ locId, code }) {
         FROM inventory_lots WHERE item_id=? AND location_id=? ORDER BY received_at DESC, id DESC LIMIT 1`).get(item.id, locId) || null;
     } catch { /* older DB without the lot columns */ }
   }
+  // Order/transfer-aware receiving: is this item on an open SHIPPED order or IN-TRANSIT transfer to
+  // this location? If so the UI offers to receive it against that line (match qty → close) instead of
+  // a plain add. Matched by item name (the order/transfer carries the name).
+  const inboundName = item ? item.item_name : (gloss ? gloss.name : null);
+  let inbound = { orders: [], transfers: [] };
+  if (inboundName) { try { inbound = inboundMatches(locId, inboundName); } catch { /* older DB */ } }
   return {
     code: key, parsed: p, scale_code: p.scaleCode || null, in_stock: !!item, item: item || null,
-    in_glossary: !!gloss, glossary: gloss || null, last_box,
+    in_glossary: !!gloss, glossary: gloss || null, last_box, inbound,
     duplicate_box: dupBox ? { location_id: dupBox.location_id, item_name: dupBox.item_name, serial: p.serial } : null,
   };
 }

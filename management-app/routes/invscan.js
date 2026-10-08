@@ -11,6 +11,7 @@ const { lookupProduct, rememberProduct } = require('../lib/productLookup');
 const { parseScan, logScan, recentDuplicate, dupMessage } = require('../lib/barcode');
 const { resolveVendor } = require('../lib/vendors');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
+const { receiveAgainstOrder, receiveAgainstTransfer } = require('../lib/inbound');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
 
 const router = express.Router();
@@ -147,6 +148,19 @@ router.post('/receive', (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   auditLog(req, 'stock_received', 'inventory', info.item.id, { item: info.item.item_name, added: r.added, kind: r.kind, via: 'scan' });
   res.json({ success: true, item: r.item, added: r.added, kind: r.kind });
+});
+
+// Receive a scanned item against an open shipped order / in-transit transfer to this store.
+router.post('/receive-inbound', (req, res) => {
+  const loc = storeLoc(req); if (!loc) return res.status(400).json({ error: 'No store for this account.' });
+  const qty = (req.body.weight != null && req.body.weight !== '') ? req.body.weight : req.body.quantity;
+  const args = { qty, code: req.body.code, userId: req.user.id, locId: loc };
+  const r = req.body.order_id ? receiveAgainstOrder({ orderId: req.body.order_id, ...args })
+    : req.body.transfer_id ? receiveAgainstTransfer({ transferId: req.body.transfer_id, ...args })
+    : { error: 'Pick the order or transfer to receive against.', status: 400 };
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  auditLog(req, 'stock_received', 'inventory', null, { item: r.item_name, received: r.received, line: r.line_id, via: 'scan-inbound' });
+  res.json(r);
 });
 
 // Create a new stock item from the scan form + write it to the Glossary + receive opening stock.

@@ -1070,6 +1070,35 @@ const check = (name, ok, detail = '') => {
     const sc4 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: whId, to_location_id: loc2, code: 'WH0001', quantity: 1 }) }));
     check('scanning an item no longer on the order is flagged', sc4.ok === false && sc4.not_on_order === true, JSON.stringify(sc4));
 
+    // ── Order/transfer-aware RECEIVING at a store ──────────────────────────────────────────────
+    // A fresh SHIPPED order to the store, received in two scans — closes only on an EXACT match.
+    const roId = sdb.prepare(`INSERT INTO distribution_orders (to_location_id, source_location_id, item_name, unit, requested_qty, ck_qty, shipped_qty, received_qty, status) VALUES (?,?,?,?,8,8,8,0,'shipped')`).run(loc2, whId, 'WH Widget', 'each').lastInsertRowid;
+    const wwBefore = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
+    const ri1 = await j(await fetch(base + '/api/inventory/barcode/receive-inbound', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, order_id: roId, quantity: 3 }) }));
+    check('receive-inbound partial keeps the order open', ri1.ok === true && ri1.order.received_qty === 3 && ri1.order.closed === false, JSON.stringify(ri1.order));
+    const ri2 = await j(await fetch(base + '/api/inventory/barcode/receive-inbound', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, order_id: roId, quantity: 5 }) }));
+    check('receive-inbound exact match closes the order', ri2.ok === true && ri2.order.received_qty === 8 && ri2.order.closed === true, JSON.stringify(ri2.order));
+    const wwAfter = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
+    check('received stock landed at the store (+8)', Math.abs(wwAfter - wwBefore - 8) < 1e-9, 'before=' + wwBefore + ' after=' + wwAfter);
+    const ri3 = await j(await fetch(base + '/api/inventory/barcode/receive-inbound', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, order_id: roId, quantity: 1 }) }));
+    check('cannot receive an already-closed order', !!ri3.error, JSON.stringify(ri3));
+
+    // Two-step transfer loc2 → loc1: source decremented now, destination gets it only on receipt.
+    const wwItem2 = sdb.prepare("SELECT id,quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2);
+    const l1Before = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc1) || { quantity: 0 }).quantity;
+    const tx = await j(await fetch(base + '/api/inventory/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ item_id: wwItem2.id, from_location_id: loc2, to_location_id: loc1, quantity: 5 }) }));
+    check('direct transfer is now two-step (in transit)', tx.in_transit === true && tx.transfer_id > 0, JSON.stringify(tx));
+    const l2Mid = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
+    const l1Mid = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc1) || { quantity: 0 }).quantity;
+    check('transfer decrements source, destination unchanged until received', Math.abs(l2Mid - (wwItem2.quantity - 5)) < 1e-9 && Math.abs(l1Mid - l1Before) < 1e-9, `l2=${l2Mid} l1=${l1Mid}`);
+    const trr = await j(await fetch(base + '/api/inventory/barcode/receive-inbound', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, transfer_id: tx.transfer_id, quantity: 5 }) }));
+    check('receive-inbound closes the transfer', trr.ok === true && trr.transfer.closed === true, JSON.stringify(trr.transfer));
+    const l1After = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc1).quantity;
+    check('transfer stock landed at the destination (+5)', Math.abs(l1After - l1Before - 5) < 1e-9, 'before=' + l1Before + ' after=' + l1After);
+    const tx2 = await j(await fetch(base + '/api/inventory/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ item_id: wwItem2.id, from_location_id: loc2, to_location_id: loc1, quantity: 2 }) }));
+    const mr = await j(await fetch(base + '/api/inventory/transfer-request/' + tx2.transfer_id, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) }));
+    check('Mark received closes an in-transit transfer', mr.success === true && mr.transfer && mr.transfer.closed === true, JSON.stringify(mr.transfer || mr));
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);

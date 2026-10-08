@@ -2151,7 +2151,7 @@ function boxDiffNote(r) {
   return `<div class="scan-diff">↔ Different from the last box — ${diffs.join(' · ')}. Review, then Add to the total.</div>`;
 }
 
-async function handleScan(code, panel, next) {
+async function handleScan(code, panel, next, skipInbound) {
   panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
   let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
   const p = r.parsed || {};
@@ -2161,6 +2161,44 @@ async function handleScan(code, panel, next) {
   const labelLot = p.lot || '';
   const wt = p.weightLb || '';
   const gs1 = (p.isGs1 || wt || labelExpiry || labelLot || p.serial) ? `<div class="scan-gs1">🏷️ Label${wt ? ` · <strong>${nf(wt)} lb</strong>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${p.expiry ? ` · exp ${esc(p.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}${p.serial ? ` · #${esc(p.serial)}` : ''}</div>` : '';
+  // Order/transfer-aware receiving: receive against an open shipped order / in-transit transfer first.
+  const inboundLines = (r.inbound ? [...(r.inbound.orders || []), ...(r.inbound.transfers || [])] : []);
+  if (!skipInbound && inboundLines.length) {
+    const name = (r.item && r.item.item_name) || (r.glossary && r.glossary.name) || key;
+    const unit = (r.item && r.item.unit) || (inboundLines[0] && inboundLines[0].unit) || '';
+    const cw = !!(r.item && r.item.is_catch_weight);
+    const sl = (s) => (s || '').replace('Pho Ha Noi — ', '');
+    const showOne = (L) => {
+      const shipped = L.kind === 'order' ? L.shipped_qty : L.quantity;
+      const dflt = wt || L.remaining;
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — incoming ${L.kind === 'order' ? 'order' : 'transfer'} from <strong>${esc(sl(L.source_name || ''))}</strong>${gs1}
+        <div class="muted" style="font-size:.85rem;margin:.3rem 0">${L.kind === 'order' ? `Ordered ${nf(L.requested_qty)} ${esc(unit)} · ` : ''}Shipped <strong>${nf(shipped)} ${esc(unit)}</strong> · received ${nf(L.received_qty)} · <strong>remaining ${nf(L.remaining)}</strong> — closes on an exact match</div>
+        <div class="scan-act"><input id="riQty" type="number" value="${dflt}" min="0" step="any" placeholder="${cw ? 'weight received' : 'qty received'}"><button class="btn" id="riGo">📦 Receive</button></div>
+        <div class="scan-act">${inboundLines.length > 1 ? '<button class="btn ghost" id="riBack">← Other lines</button>' : ''}<button class="btn ghost" id="riNew">Not on an order — add as new</button></div></div>`;
+      $('riGo').onclick = async () => {
+        const btn = $('riGo'); btn.disabled = true;
+        const body = { code };
+        body[L.kind === 'order' ? 'order_id' : 'transfer_id'] = L.id;
+        if (cw) body.weight = $('riQty').value; else body.quantity = $('riQty').value;
+        try {
+          const rr = await api('/invscan/receive-inbound', { method: 'POST', body: JSON.stringify(body) });
+          const o = rr.order || rr.transfer;
+          toast(o.closed ? `✅ ${L.kind === 'order' ? 'Order' : 'Transfer'} received & closed` : (o.over ? `Received ${nf(rr.received)} — over; left open` : `Received ${nf(rr.received)} — ${nf(o.remaining)} still due`));
+          next();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      };
+      if ($('riBack')) $('riBack').onclick = showChooser;
+      $('riNew').onclick = () => handleScan(code, panel, next, true);
+    };
+    const showChooser = () => {
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — ${inboundLines.length} incoming lines:
+        <div class="ship-orders" style="margin:.5rem 0">${inboundLines.map((L, i) => `<button class="ship-ord" data-ri="${i}" style="width:100%;text-align:left;cursor:pointer"><span>${L.kind === 'order' ? '📦 Order' : '🔁 Transfer'} from ${esc(sl(L.source_name || ''))}</span><span class="mono">${nf(L.remaining)} ${esc(unit)} left</span></button>`).join('')}</div>
+        <button class="btn ghost" id="riNew">Not on these — add as new</button></div>`;
+      panel.querySelectorAll('[data-ri]').forEach(b => b.onclick = () => showOne(inboundLines[+b.dataset.ri]));
+      $('riNew').onclick = () => handleScan(code, panel, next, true);
+    };
+    return inboundLines.length === 1 ? showOne(inboundLines[0]) : showChooser();
+  }
   if (r.in_stock) {
     const it = r.item;
     const cw = !!it.is_catch_weight;
