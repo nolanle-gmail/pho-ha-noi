@@ -56,6 +56,8 @@ function showSessionBanner() {
 // section reuse the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
 // scoped to the CK, while the Inventory section stays scoped to S.loc.
 const invLoc = () => (S.section === 'warehouse' && S.whLocId ? S.whLocId : (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc));
+// The active inventory-family tab regardless of section (stores use S.tab, CK S.ckTab, WH S.whTab).
+const invTab = () => (S.section === 'central' ? S.ckTab : S.section === 'warehouse' ? S.whTab : S.tab);
 const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
 const invName = () => { const id = invLoc(); const l = [...(S.locations || []), ...(S.warehouses || [])].find(x => String(x.id) === String(id)); return l ? (l.name || '').replace('Pho Ha Noi — ', '') : (S.section === 'central' ? 'Central Kitchen' : (S.section === 'warehouse' ? 'Warehouse' : 'this location')); };
 
@@ -1760,7 +1762,7 @@ async function renderStock() {
   $('receiveSku').onclick = () => modal('Receive by SKU', [
     { key: 'sku', label: 'SKU' }, { key: 'quantity', label: 'Quantity', type: 'number' },
     { key: 'expiry_date', label: 'Expiry (YYYY-MM-DD, optional)' }, { key: 'lot_code', label: 'Lot code (optional)' },
-  ], async (v) => { const r = await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(`Received into ${r.item_name}`); render(); });
+  ], async (v) => { const r = await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(`Received into ${r.item_name}`); invRefresh(); });
 
   $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => itemAction(b.dataset.act, b.dataset.id, b.dataset.name, items));
 }
@@ -1814,13 +1816,13 @@ function itemAction(act, id, name, items) {
   if (act === 'receive') return modal(`Receive — ${name}`, [
     { key: 'quantity', label: 'Quantity', type: 'number' },
     { key: 'expiry_date', label: 'Expiry (YYYY-MM-DD, optional)' }, { key: 'lot_code', label: 'Lot code (optional)' },
-  ], async (v) => { await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast('Stock received'); render(); });
+  ], async (v) => { await api('/inventory/receive', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast('Stock received'); invRefresh(); });
   if (act === 'waste') return modal(`Log waste — ${name}`, [
     { key: 'quantity', label: 'Quantity', type: 'number' }, { key: 'reason', label: 'Reason' },
-  ], async (v) => { await api('/inventory/waste', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast('Waste logged'); render(); });
+  ], async (v) => { await api('/inventory/waste', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast('Waste logged'); invRefresh(); });
   if (act === 'count') return modal(`Cycle count — ${name}`, [
     { key: 'counted_quantity', label: 'Counted quantity', type: 'number' },
-  ], async (v) => { const r = await api('/inventory/count', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast(`Variance ${r.variance > 0 ? '+' : ''}${r.variance}`); render(); });
+  ], async (v) => { const r = await api('/inventory/count', { method: 'POST', body: JSON.stringify(Object.assign({ item_id: id }, v)) }); toast(`Variance ${r.variance > 0 ? '+' : ''}${r.variance}`); invRefresh(); });
   if (act === 'log') return openScanHistory(id, name);
   if (act === 'costs') return openCostHistory(id, name);
   if (act === 'edit') {
@@ -1875,7 +1877,7 @@ async function openAddItemModal(existing) {
         quantity: $('aiQty').value, min_quantity: $('aiMin').value, par_level: $('aiPar').value,
         unit_cost: $('aiCost').value, sku: $('aiSku').value.trim() || null, reason: $('aiReason').value.trim(),
       }) });
-      toast('Item added'); close(); render();
+      toast('Item added'); close(); invRefresh();
     } catch (e) { $('mErr').textContent = e.message; }
   };
 }
@@ -1987,7 +1989,7 @@ async function glossaryEdit(it) {
   modal(isNew ? 'Add item' : `Edit — ${it.item_name}`, fields, async (v) => {
     if (isNew) { const r = await api('/inventory/', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, v)) }); toast(r.replicated ? `Item added — copied to ${r.replicated} location${r.replicated === 1 ? '' : 's'}` : 'Item added'); }
     else { await api('/inventory/' + it.id, { method: 'PUT', body: JSON.stringify(v) }); toast('Item updated'); }
-    render();
+    invRefresh();
   }, isNew ? 'Add item' : 'Save');
 }
 
@@ -1997,7 +1999,7 @@ function confirmDelete(it) {
     { key: 'reason', label: 'Reason / note (for audit)' },
   ], async (v) => {
     if ((v._ || '').trim().toUpperCase() !== 'REMOVE') throw new Error('Type REMOVE to confirm.');
-    await api('/inventory/' + it.id, { method: 'DELETE', body: JSON.stringify({ reason: v.reason || '' }) }); toast('Item removed'); render();
+    await api('/inventory/' + it.id, { method: 'DELETE', body: JSON.stringify({ reason: v.reason || '' }) }); toast('Item removed'); invRefresh();
   }, 'Remove');
 }
 
@@ -2149,7 +2151,7 @@ async function openOrderModal(prefill) {
         const hubId = source.slice(4);
         await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), source_location_id: hubId, reason: notes || '', items: [{ item_id: $('oItem').value, item_name: nameOf($('oItem').value), quantity: qty, notes }] }) });
         toast('Order placed'); close();
-        if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
+        if (['orders', 'glossary', 'stock'].includes(invTab())) invRefresh();
         return;
       }
       let item_id;
@@ -2161,7 +2163,7 @@ async function openOrderModal(prefill) {
       } else { item_id = $('oItem').value; }
       await api('/inventory/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), item_id, quantity: qty, vendor_id: source || null, expected_date, notes, reason: notes || '' }) });
       toast('Order created'); close();
-      if (['orders', 'glossary', 'stock'].includes(S.tab)) render();
+      if (['orders', 'glossary', 'stock'].includes(invTab())) invRefresh();
     } catch (e) { $('mErr').textContent = e.message; }
   };
 }
@@ -2212,21 +2214,21 @@ async function renderOrders() {
   const orderCK = $('orderCK');
   if (orderCK) orderCK.onclick = () => modal('Order all — Central Kitchen first', [
     { key: 'reason', label: 'Reason / note (for audit)' },
-  ], async (v) => { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); render(); }, 'Place order');
+  ], async (v) => { const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, item_name: s.item_name, quantity: s.need })) }) }); toast(`Placed ${r.created} order${r.created === 1 ? '' : 's'} — Central Kitchen first`); invRefresh(); }, 'Place order');
   const createPO = $('createPO');
   if (createPO) createPO.onclick = () => {
     const vOpts = [{ value: '', label: '— No vendor —' }].concat(vendors.map(v => ({ value: v.id, label: v.name })));
     modal(atCK ? 'Central Kitchen — vendor purchase order' : 'Vendor purchase order (skip Central Kitchen)', [
       { key: 'vendor_id', label: 'Vendor', type: 'select', options: vOpts, value: '' },
       { key: 'reason', label: 'Reason / note (for audit)' },
-    ], async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), vendor_id: v.vendor_id || null, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, quantity: needOf(s) })) }) }); toast(`Created ${r.created} vendor order lines`); render(); }, 'Create PO');
+    ], async (v) => { const r = await api('/inventory/reorder/create', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), vendor_id: v.vendor_id || null, reason: v.reason || '', items: sugg.map(s => ({ item_id: s.id, quantity: needOf(s) })) }) }); toast(`Created ${r.created} vendor order lines`); invRefresh(); }, 'Create PO');
   };
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
-    try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); render(); }
+    try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); invRefresh(); }
     catch (e) { toast(e.message, true); }
   });
   $('view').querySelectorAll('[data-order]').forEach(b => b.onclick = async () => {
-    try { await api('/inventory/order/' + b.dataset.order, { method: 'PUT', body: JSON.stringify({ status: b.dataset.status }) }); toast('Order ' + b.dataset.status); render(); }
+    try { await api('/inventory/order/' + b.dataset.order, { method: 'PUT', body: JSON.stringify({ status: b.dataset.status }) }); toast('Order ' + b.dataset.status); invRefresh(); }
     catch (e) { toast(e.message, true); }
   });
 }
@@ -2255,7 +2257,7 @@ async function renderTransfers() {
     { key: 'item_id', label: 'Item', type: 'select', options: items.map(i => ({ value: i.id, label: `${i.item_name} (${numf(i.quantity)} ${i.unit})` })) },
     { key: 'to_location_id', label: 'To location', type: 'select', options: others.map(l => ({ value: l.id, label: l.name })) },
     { key: 'quantity', label: 'Quantity', type: 'number' },
-  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: invLoc(), to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Transferred'); render(); });
+  ], async (v) => { await api('/inventory/transfer', { method: 'POST', body: JSON.stringify({ item_id: v.item_id, from_location_id: invLoc(), to_location_id: v.to_location_id, quantity: v.quantity }) }); toast('Transferred'); invRefresh(); });
 }
 
 // ── Lots & Expiry ──────────────────────────────────────────────────────────
@@ -2272,7 +2274,7 @@ async function renderLots() {
       ${lots.length ? lots.map(l => `<tr><td>${esc(l.item_name)}</td><td class="mono">${esc(l.lot_code || '—')}</td><td class="num">${numf(l.quantity)} ${esc(l.unit)}</td><td class="num">${money(l.unit_cost)}</td><td>${l.expiry_date ? esc(l.expiry_date) : '<span class="badge gray">none</span>'}</td><td class="mono">${esc((l.received_at || '').slice(0, 10))}</td><td><button class="btn sm ghost" data-discard="${l.id}">Discard</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty">No active lots.</td></tr>'}
     </tbody></table></div>`;
   $('view').querySelectorAll('[data-discard]').forEach(b => b.onclick = () => modal('Discard lot', [{ key: 'reason', label: 'Reason', value: 'Expired' }],
-    async (v) => { await api('/inventory/lots/' + b.dataset.discard + '/discard', { method: 'POST', body: JSON.stringify(v) }); toast('Lot discarded'); render(); }, 'Discard'));
+    async (v) => { await api('/inventory/lots/' + b.dataset.discard + '/discard', { method: 'POST', body: JSON.stringify(v) }); toast('Lot discarded'); invRefresh(); }, 'Discard'));
 }
 
 // ── Vendors ────────────────────────────────────────────────────────────────
@@ -2294,11 +2296,11 @@ async function renderVendors() {
   const av = $('addVendor');
   if (av) av.onclick = () => modal('Add vendor', vfields(null), async (val) => {
     const r = await api('/inventory/vendors', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: invLoc() }, val)) });
-    toast(r.replicated ? `Vendor added — copied to ${r.replicated} location${r.replicated === 1 ? '' : 's'}` : 'Vendor added'); render();
+    toast(r.replicated ? `Vendor added — copied to ${r.replicated} location${r.replicated === 1 ? '' : 's'}` : 'Vendor added'); invRefresh();
   });
   $('view').querySelectorAll('[data-ved]').forEach(b => b.onclick = () => {
     const v = vendors.find(x => x.id == b.dataset.ved);
-    modal(`Edit — ${v.name}`, vfields(v), async (val) => { await api('/inventory/vendors/' + v.id, { method: 'PUT', body: JSON.stringify(val) }); toast(inCk ? 'Vendor updated — synced to all locations' : 'Vendor updated'); render(); }, 'Save');
+    modal(`Edit — ${v.name}`, vfields(v), async (val) => { await api('/inventory/vendors/' + v.id, { method: 'PUT', body: JSON.stringify(val) }); toast(inCk ? 'Vendor updated — synced to all locations' : 'Vendor updated'); invRefresh(); }, 'Save');
   });
 }
 
