@@ -2228,16 +2228,29 @@ async function openOrderModal(prefill) {
 
 // ── Orders & Reorder ─────────────────────────────────────────────────────
 const priorityBadge = (p) => { const m = { urgent: ['out', 'Urgent'], high: ['gold', 'High'], standard: ['gray', 'Standard'], low: ['gray', 'Low'] }; const [c, l] = m[p] || m.standard; return `<span class="badge ${c}">${l}</span>`; };
+// A yes/no confirmation (clearer than modal() when the action itself is a "cancel", so the
+// dismiss button doesn't also read "Cancel"). noteHtml is trusted markup built by the caller.
+function confirmModal(title, noteHtml, yesLabel, onYes) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>${esc(title)}</h3><div class="err" id="cmErr"></div><p class="modal-note">${noteHtml}</p><div class="actions"><button class="btn ghost" id="cmNo">Keep it</button><button class="btn ghost danger" id="cmYes">${esc(yesLabel)}</button></div></div></div>`;
+  const close = () => host.innerHTML = '';
+  $('cmNo').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('cmYes').onclick = async () => { try { await onYes(); close(); } catch (e) { const el = $('cmErr'); if (el) el.textContent = e.message; else toast(e.message, true); } };
+}
 // A hub-orders block (Central Kitchen or a Warehouse), grouped by order number so a multi-item
 // order shows as one tracked order with its lines beneath it.
 function hubOrdersBlock(title, list) {
   if (!list || !list.length) return `<div class="section"><h3>${esc(title)}</h3><div class="empty">No orders yet.</div></div>`;
   const groups = {};
   list.forEach(o => { const k = o.order_no || ('#' + o.id); (groups[k] = groups[k] || []).push(o); });
+  // A line can still be cancelled by the requester until it ships (nothing shipped yet).
+  const canCancelLine = (o) => (o.status === 'requested' || o.status === 'approved') && !(o.shipped_qty > 0.0005);
   const rows = Object.values(groups).map(items => {
     const h = items[0];
-    const hdr = `<tr class="grp"><td colspan="6"><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}</span></td></tr>`;
-    const body = items.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${distBadge(o.status)}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}</div></td></tr>`).join('');
+    const anyCancelable = h.order_no && items.some(canCancelLine);
+    const hdr = `<tr class="grp"><td colspan="6"><div class="row-between" style="align-items:center;gap:.6rem"><div><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}</span></div>${anyCancelable ? `<button class="btn sm ghost danger" data-ocancel="${esc(h.order_no)}">Cancel order</button>` : ''}</div></td></tr>`;
+    const body = items.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${distBadge(o.status)}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}${canCancelLine(o) ? `<button class="btn sm ghost danger" data-dcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Cancel</button>` : ''}</div></td></tr>`).join('');
     return hdr + body;
   }).join('');
   return `<div class="section"><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">Received</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
@@ -2302,6 +2315,20 @@ async function renderOrders() {
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
     try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); invRefresh(); }
     catch (e) { toast(e.message, true); }
+  });
+  // Requester cancels a single item from an order (before it ships).
+  $('view').querySelectorAll('[data-dcancel]').forEach(b => b.onclick = () => {
+    confirmModal(`Cancel ${b.dataset.item || 'this item'}?`,
+      `This removes <strong>${esc(b.dataset.item || 'the item')}</strong>${b.dataset.ono ? ` from order <strong>${esc(b.dataset.ono)}</strong>` : ''} and cancels any vendor order drafted for its shortfall. You can re-order it anytime.`,
+      'Cancel item',
+      async () => { await api('/distribution/orders/' + b.dataset.dcancel, { method: 'PUT', body: JSON.stringify({ status: 'cancelled' }) }); toast('Item cancelled'); invRefresh(); });
+  });
+  // Requester cancels a whole (multi-item) order by its order number (lines not yet shipped).
+  $('view').querySelectorAll('[data-ocancel]').forEach(b => b.onclick = () => {
+    confirmModal(`Cancel order ${b.dataset.ocancel}?`,
+      `This cancels every item on order <strong>${esc(b.dataset.ocancel)}</strong> that hasn't shipped yet, plus any vendor orders drafted for the shortfall. Anything already shipped or received is kept.`,
+      'Cancel order',
+      async () => { const r = await api('/distribution/cancel-order', { method: 'POST', body: JSON.stringify({ order_no: b.dataset.ocancel }) }); toast(`Order cancelled — ${r.cancelled} item${r.cancelled === 1 ? '' : 's'}${r.blocked ? ` (${r.blocked} kept — already shipped)` : ''}`); invRefresh(); });
   });
   $('view').querySelectorAll('[data-order]').forEach(b => b.onclick = async () => {
     try { await api('/inventory/order/' + b.dataset.order, { method: 'PUT', body: JSON.stringify({ status: b.dataset.status }) }); toast('Order ' + b.dataset.status); invRefresh(); }

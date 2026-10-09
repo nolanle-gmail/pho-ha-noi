@@ -247,6 +247,13 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   res.json({ orders: rows });
 });
 
+// Cancel one order line: mark it cancelled and cancel any linked vendor PO (the store no longer
+// wants the shortfall). Caller must have already checked permission + that it's still cancellable.
+function cancelDistLine(d) {
+  db.prepare(`UPDATE distribution_orders SET status='cancelled', updated_at=datetime('now') WHERE id=?`).run(d.id);
+  if (d.vendor_order_id) db.prepare(`UPDATE supply_orders SET status='cancelled' WHERE id=? AND status NOT IN ('received','cancelled')`).run(d.vendor_order_id);
+}
+
 // Advance a CK order: requested → shipped (decrement CK stock, in transit) →
 // received (land it in the store). Cancel is allowed before shipping.
 router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
@@ -257,9 +264,12 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
   const hub = hubById(d.source_location_id) || ck;                 // the hub that fills this order
   const isStoreOwner = String(req.user.location_id) === String(d.to_location_id);
   const isSrcHubStaff = !!hub && isHubStaff(req, hub.id);
-  // Shipping and cancelling are the hub's calls; receiving can be done by the hub or the store.
+  // Shipping is the hub's call; receiving and CANCELLING can be done by the hub or the store that
+  // placed the order (the requester may change their mind or no longer want it, before it ships).
   const canReceive = isSrcHubStaff || isStoreOwner;
-  if ((status === 'shipped' || status === 'cancelled') && !isSrcHubStaff) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} staff only.` });
+  const canCancel = isSrcHubStaff || isStoreOwner;
+  if (status === 'shipped' && !isSrcHubStaff) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} staff only.` });
+  if (status === 'cancelled' && !canCancel) return res.status(403).json({ error: 'Not your order.' });
   if (status === 'received' && !canReceive) return res.status(403).json({ error: 'Not your order.' });
 
   if (status === 'shipped') {
@@ -296,11 +306,43 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
   }
   if (status === 'cancelled') {
     if (d.status === 'received' || d.status === 'shipped') return res.status(400).json({ error: `Can't cancel an order that is ${d.status}.` });
-    db.prepare(`UPDATE distribution_orders SET status='cancelled', updated_at=datetime('now') WHERE id=?`).run(d.id);
-    auditLog(req, 'distribution_cancel', 'distribution_order', d.id, { item: d.item_name });
+    if (d.shipped_qty > 0) return res.status(400).json({ error: `Part of this item has already shipped — receive it, or ask ${hub ? hub.name : 'the hub'} before cancelling.` });
+    cancelDistLine(d);
+    auditLog(req, 'distribution_cancel', 'distribution_order', d.id, { item: d.item_name, by: isStoreOwner && !isSrcHubStaff ? 'requester' : 'hub' });
     return res.json({ success: true });
   }
   return res.status(400).json({ error: 'Unsupported status change.' });
+});
+
+// Cancel a whole (multi-item) order by its order number — the requester changed their mind or no
+// longer wants it. Cancels every line not yet shipped (and each line's linked vendor PO); lines
+// already shipped/received are left untouched. Scoped to the caller's store unless they see all.
+router.post('/cancel-order', requireRole(ROLES.OPS), (req, res) => {
+  const orderNo = String((req.body && req.body.order_no) || '').trim();
+  if (!orderNo) return res.status(400).json({ error: 'Order number required.' });
+  const seesAll = seesAllLocations(req.user.role);
+  const where = seesAll ? 'order_no=?' : 'order_no=? AND to_location_id=?';
+  const args = seesAll ? [orderNo] : [orderNo, req.user.location_id];
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE ${where}`).all(...args);
+  if (!lines.length) return res.status(404).json({ error: 'Order not found.' });
+  let cancelled = 0, blocked = 0;
+  db.exec('BEGIN');
+  try {
+    for (const d of lines) {
+      if (d.status === 'cancelled') continue;
+      const canStore = seesAll || String(req.user.location_id) === String(d.to_location_id);
+      const hub = hubById(d.source_location_id);
+      const canHub = !!hub && isHubStaff(req, hub.id);
+      if (!canStore && !canHub) { blocked++; continue; }
+      if (d.status === 'received' || d.status === 'shipped' || d.shipped_qty > 0) { blocked++; continue; }
+      cancelDistLine(d);
+      cancelled++;
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not cancel the order.' }); }
+  if (!cancelled) return res.status(400).json({ error: blocked ? 'Nothing to cancel — those items have already shipped or been received.' : 'Nothing to cancel.' });
+  auditLog(req, 'distribution_cancel_order', 'location', lines[0].to_location_id, { order_no: orderNo, cancelled, blocked });
+  res.json({ success: true, cancelled, blocked });
 });
 
 // ── Shipping from a hub (CK / Warehouse): the scan-to-fulfil order flow ───────

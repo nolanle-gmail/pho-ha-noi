@@ -1098,6 +1098,22 @@ const check = (name, ok, detail = '') => {
     const sordNote = sdb.prepare("SELECT m.subject FROM messages m JOIN message_recipients r ON r.message_id=m.id WHERE r.user_id=? AND m.subject LIKE ? ORDER BY m.id DESC LIMIT 1").get(nha.id, '%' + sord.order_no + '%');
     check('CK team (Nha Le) is notified on order submit', !!sordNote && /order/i.test(sordNote.subject || ''), JSON.stringify(sordNote));
 
+    // Requester cancels an order after submitting (changed their mind / no longer needs it).
+    r = await fetch(base + '/api/distribution/cancel-order', { method: 'POST', headers: H(token), body: JSON.stringify({ order_no: sord2.order_no }) });
+    const cxl = await j(r);
+    check('cancel a whole order by its number', r.status === 200 && cxl.cancelled === 1, JSON.stringify({ status: r.status, cxl }));
+    check('cancelled order lines are marked cancelled', (sdb.prepare("SELECT status FROM distribution_orders WHERE order_no=?").get(sord2.order_no) || {}).status === 'cancelled');
+    r = await fetch(base + '/api/distribution/cancel-order', { method: 'POST', headers: H(token), body: JSON.stringify({ order_no: sord2.order_no }) });
+    check('re-cancelling an already-cancelled order is rejected (400)', r.status === 400, 'status=' + r.status);
+    const sordLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND status='requested' LIMIT 1").get(sord.order_no);
+    r = await fetch(base + `/api/distribution/orders/${sordLine.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'cancelled' }) });
+    check('cancel a single item from a multi-item order', r.status === 200);
+    check('that line is cancelled, the rest of the order stands',
+      (sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(sordLine.id) || {}).status === 'cancelled'
+      && sdb.prepare("SELECT COUNT(*) c FROM distribution_orders WHERE order_no=? AND status='requested'").get(sord.order_no).c === l1Items.length - 1);
+    r = await fetch(base + `/api/distribution/orders/${dord.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'cancelled' }) });
+    check('cannot cancel an order that already shipped/received (400)', r.status === 400, 'status=' + r.status);
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
