@@ -974,23 +974,6 @@ const check = (name, ok, detail = '') => {
     const deliveryTxn = (await j(await fetch(base + `/api/inventory/transactions?location_id=${fulStore.location_id}`, { headers: H(token) }))).some(t => t.notes === 'Central Kitchen delivery');
     check('CK delivery logged in store ledger', deliveryTxn);
 
-    const ckStaff = await j(await fetch(base + '/api/central/staff', { headers: H(token) }));
-    check('CK staff with PINs', ckStaff.length === 3 && ckStaff.every(s => s.has_pin));
-    const ckTasks = await j(await fetch(base + '/api/central/tasks', { headers: H(token) }));
-    check('CK tasks (some photo-verified)', ckTasks.length >= 4 && ckTasks.some(t => t.requires_photo));
-    const photoTask = ckTasks.find(t => t.requires_photo && t.status !== 'done');
-    r = await fetch(base + `/api/central/tasks/${photoTask.id}/complete`, { method: 'PUT', headers: H(token), body: '{}' });
-    check('photo task needs a photo (400)', r.status === 400, 'status=' + r.status);
-    r = await fetch(base + `/api/central/tasks/${photoTask.id}/complete`, { method: 'PUT', headers: H(token), body: JSON.stringify({ photo_url: 'https://example.com/p.jpg' }) });
-    check('complete photo task with photo', r.status === 200);
-
-    const cin = await j(await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '2222' }) }));
-    check('PIN clock-in', cin.success && cin.action === 'clock_in', JSON.stringify(cin.action));
-    const cout = await j(await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '2222' }) }));
-    check('PIN clock-out', cout.success && cout.action === 'clock_out', JSON.stringify(cout.action));
-    r = await fetch(base + '/api/central/clock', { method: 'POST', headers: H(token), body: JSON.stringify({ pin: '0000' }) });
-    check('bad PIN rejected (404)', r.status === 404, 'status=' + r.status);
-
     // Auto-generate store requests from each store's recent sales (7-day covers).
     const gen = await j(await fetch(base + '/api/central/generate-requests', { method: 'POST', headers: H(token), body: '{}' }));
     check('CK generate requests from sales', gen.success && gen.generated > 0 && gen.stores > 0, JSON.stringify({ g: gen.generated, s: gen.stores }));

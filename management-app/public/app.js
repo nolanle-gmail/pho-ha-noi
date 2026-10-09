@@ -2965,7 +2965,7 @@ async function renderLocList() {
           <div><span>Equipment</span><strong>${l.equipment_count}${l.equipment_issues ? ` <span class="badge low">${l.equipment_issues}⚠</span>` : ''}</strong></div>
         </div>
         <div class="loc-card-actions">
-          <button class="btn ghost sm" data-manage="${l.id}">Manage →</button>
+          <button class="btn ghost sm" data-manage="${l.id}" data-type="${esc(l.type || 'restaurant')}">Manage →</button>
           ${canAdd ? `<button class="btn ghost sm" data-editloc="${l.id}">✎ Edit</button>${l.is_active
             ? `<button class="btn ghost sm" data-hideloc="${l.id}" data-name="${esc(shortLoc(l.name))}">🙈 Hide</button>`
             : `<button class="btn sm" data-showloc="${l.id}" data-name="${esc(shortLoc(l.name))}">↩ Unhide</button>`}` : ''}
@@ -2973,7 +2973,7 @@ async function renderLocList() {
       </div>`).join('')}
     </div>`;
   if (canAdd) $('addLoc').onclick = () => locationModal(null);
-  $('view').querySelectorAll('[data-manage]').forEach(b => b.onclick = () => { S.locDetailId = b.dataset.manage; S.locView = 'detail'; S.locTab = 'details'; renderLocationsSection(); });
+  $('view').querySelectorAll('[data-manage]').forEach(b => b.onclick = () => { S.locDetailId = b.dataset.manage; S.locDetailType = b.dataset.type; S.locView = 'detail'; S.locTab = 'details'; renderLocationsSection(); });
   const setLocStatus = async (id, status, msg) => { await api('/locations/' + id, { method: 'PUT', body: JSON.stringify({ status }) }); S.locations = await api('/inventory/locations').catch(() => S.locations); toast(msg); renderLocList(); };
   $('view').querySelectorAll('[data-editloc]').forEach(b => b.onclick = () => { const l = locs.find(x => String(x.id) === b.dataset.editloc); if (l) locationModal(l); });
   $('view').querySelectorAll('[data-hideloc]').forEach(b => b.onclick = () => modal(`Hide “${b.dataset.name}”?`, [
@@ -3034,16 +3034,25 @@ const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service
 const LOC_ACTIVITY_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 // Service Flow tab: any manage-capability role (they can toggle & run the board for their store).
 const SF_TAB_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+// Dining-only tabs — hidden for a hub location (Central Kitchen / Warehouse), which has no
+// guests, menu or floor. Hubs keep Details, Staff, Schedule, Day Tasks, Time Clock, Equipment, Activity.
+const HUB_HIDDEN_TABS = ['serviceflow', 'menu', 'floorplan', 'performance'];
+const isHubLoc = () => S.locDetailType === 'central_kitchen' || S.locDetailType === 'warehouse';
 const locTabsForMe = () => LOC_DETAIL_TABS.filter(([k]) =>
   (k !== 'activity' || LOC_ACTIVITY_ROLES.includes(S.user.role)) &&
   (k !== 'serviceflow' || SF_TAB_ROLES.includes(S.user.role)) &&
-  (k !== 'menu' || myCap('manage')));   // Menu/Recipes = manage-capability roles only
+  (k !== 'menu' || myCap('manage')) &&   // Menu/Recipes = manage-capability roles only
+  !(isHubLoc() && HUB_HIDDEN_TABS.includes(k)));
 function renderLocDetailTabs() {
   $('tabs').innerHTML = locTabsForMe().map(([k, l]) => `<button data-ltab="${k}" class="${S.locTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.locTab = b.dataset.ltab; renderLocDetailTabs(); renderLocDetail(); });
 }
 async function renderLocDetail() {
   const loc = await api('/locations/' + S.locDetailId);
+  // Keep the tab list correct for the location's type (hub vs dining); if the active tab isn't
+  // offered for this location, fall back to Details and re-render the tab bar.
+  if (loc.type !== S.locDetailType) { S.locDetailType = loc.type; renderLocDetailTabs(); }
+  if (!locTabsForMe().some(([k]) => k === S.locTab)) { S.locTab = 'details'; renderLocDetailTabs(); }
   $('view').innerHTML = `
     <div class="loc-detail-head">
       <button class="btn ghost sm" id="locBack">← Locations</button>
@@ -5022,7 +5031,7 @@ async function openStaffEdit(id) {
   try {
     const [d, locations, staff] = await Promise.all([
       api('/staff/' + id + '/profile'),
-      api('/inventory/locations').catch(() => S.locations || []),
+      api('/inventory/locations?type=staffable').catch(() => S.locations || []),
       api('/staff').catch(() => []),
     ]);
     staffProfileEdit(d, locations, staff);
@@ -5031,7 +5040,7 @@ async function openStaffEdit(id) {
 
 async function renderStaffDirectory() {
   let rows, locations;
-  try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations').catch(() => S.locations)]); }
+  try { [rows, locations] = await Promise.all([api('/staff'), api('/inventory/locations?type=staffable').catch(() => S.locations)]); }
   catch (e) { return renderPlaceholder('Staff', '👥', e.message); }
   const canAdd = ORG_ADMIN.includes(S.user.role);
   const isManagerish = MGR_EDIT_ROLES.includes(S.user.role);
@@ -7138,12 +7147,15 @@ async function openAddChatMembers(gid, existingIds) {
 // CK's Glossary/Vendors tabs fan out one-way to every restaurant (handled server-side).
 // 'Items' (per-location catalog) was merged into 'Stock' — one tab now shows levels + the catalog
 // fields (description/notes). 'Glossary' (the group-wide product dictionary) stays separate.
+// Staff / scheduling / tasks / clock for the Central Kitchen live in the unified systems —
+// the main Staff Directory and the location's own Staff · Schedule · Day Tasks · Time Clock tabs
+// under Locations (the CK is a normal location there), so there's no CK-only staff tab.
 const CK_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'], ['storage', 'Storage'],
   ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
-  ['reports', 'Reports'], ['distribution', 'Distribution'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+  ['reports', 'Reports'], ['distribution', 'Distribution'], ['fulfillment', 'Fulfillment']];
 const CK_RENDER = { overview: renderDashboard, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock, storage: renderStorage,
   orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors, reports: renderReports,
-  distribution: renderHubDistribution, fulfillment: renderCkFulfillment, staff: renderHubStaff };
+  distribution: renderHubDistribution, fulfillment: renderCkFulfillment };
 function renderCkTabs() {
   $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
@@ -7162,13 +7174,15 @@ async function renderCentral() {
 // while S.section==='warehouse'). Unlike the CK there is NO one-way catalog
 // fan-out and no production/fulfillment — a warehouse just receives, stores and
 // ships/transfers items to any location (manual ship via the scanner/Transfers).
+// Warehouse staff/scheduling/tasks/clock live in the unified systems too (see the CK note above) —
+// manage them under Locations → this warehouse → Staff · Schedule · Day Tasks · Time Clock.
 const WH_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'],
   ['storage', 'Storage'], ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'],
   ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'], ['reports', 'Reports'],
-  ['distribution', 'Distribution'], ['staff', 'Warehouse Staff']];
+  ['distribution', 'Distribution']];
 const WH_RENDER = { overview: renderWhOverview, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock,
   storage: renderStorage, orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors,
-  reports: renderReports, distribution: renderHubDistribution, staff: renderHubStaff };
+  reports: renderReports, distribution: renderHubDistribution };
 function renderWhTabs() {
   const pick = (S.warehouses && S.warehouses.length > 1)
     ? `<select id="whPick" class="wh-pick">${S.warehouses.map(w => `<option value="${w.id}" ${String(w.id) === String(S.whLocId) ? 'selected' : ''}>${esc((w.name || '').replace('Pho Ha Noi — ', ''))}</option>`).join('')}</select>`
@@ -7451,52 +7465,6 @@ async function renderCkFulfillment() {
   $('view').querySelectorAll('[data-fulfill]').forEach(b => b.onclick = async () => {
     try { const r = await api('/central/fulfill/' + b.dataset.fulfill, { method: 'POST', body: '{}' }); toast(`Fulfilled ${r.fulfilled} lines for ${b.dataset.name}`); renderCentral(); }
     catch (e) { toast(e.message, true); }
-  });
-}
-
-// Hub HR (staff · PIN clock · schedule · tasks), shared by the Central Kitchen and every Warehouse.
-// Scoped to the current hub via ?location_id= (and location_id in the clock/task bodies).
-async function renderHubStaff() {
-  const hubId = invLoc();
-  const hubName = invName();
-  const lq = 'location_id=' + hubId;
-  const [staff, tasks, sched, clock] = await Promise.all([
-    api('/central/staff?' + lq), api('/central/tasks?' + lq), api('/central/schedule?' + lq), api('/central/timeclock?' + lq)]);
-  $('view').innerHTML = `
-    <h2 class="page">${esc(hubName)} HR</h2>
-    <div class="acct-grid">
-      <div class="section"><h3>PIN time clock <span style="font-weight:400;color:var(--muted);font-size:.82rem">terminal</span></h3>
-        <div class="err" id="ckClockErr"></div>
-        <div class="ck-clock"><input id="ckPin" inputmode="numeric" placeholder="Enter PIN" maxlength="8"><button class="btn" id="ckClockBtn">Clock in / out</button></div>
-        <div class="ck-clock-log">${clock.slice(0, 6).map(c => `<div class="ck-clock-row"><span>${esc(c.name)}</span><span class="mono">${esc((c.clock_in || '').slice(11, 16))}${c.clock_out ? '–' + esc((c.clock_out || '').slice(11, 16)) : ' <span class="badge ok">on shift</span>'}</span></div>`).join('') || '<span style="color:var(--muted)">No clock activity.</span>'}</div>
-      </div>
-      <div class="section"><h3>Today's schedule</h3>
-        ${sched.length ? sched.map(s => `<div class="profile-row"><span>${esc(s.name)}</span><strong>${esc(s.start_time || '')}–${esc(s.end_time || '')}</strong></div>`).join('') : '<div class="empty">No shifts scheduled.</div>'}
-      </div>
-    </div>
-    <div class="section"><div class="row-between"><h3>Task assignments</h3><button class="btn sm" id="ckAddTask">+ Add task</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Task</th><th>Assigned to</th><th>Verify</th><th>Status</th><th></th></tr></thead><tbody>
-        ${tasks.map(t => `<tr><td><strong>${esc(t.title)}</strong></td><td>${esc(t.assigned_name || '—')}</td><td>${t.requires_photo ? '<span class="badge gold">📷 photo</span>' : '—'}</td><td>${t.status === 'done' ? '<span class="badge ok">done</span>' : '<span class="badge low">assigned</span>'}</td><td>${t.status === 'done' ? '' : `<button class="btn sm ghost" data-ckdone="${t.id}" data-photo="${t.requires_photo}">Complete</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No tasks yet.</td></tr>'}
-      </tbody></table></div></div>
-    <div class="section"><h3>Staff</h3>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th class="num">Rate</th><th>PIN</th></tr></thead><tbody>
-        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No staff based at this hub yet.</td></tr>'}
-      </tbody></table></div></div>`;
-  $('ckClockBtn').onclick = async () => {
-    $('ckClockErr').textContent = '';
-    try { const r = await api('/central/clock', { method: 'POST', body: JSON.stringify({ pin: $('ckPin').value, location_id: hubId }) }); toast(`${r.name}: ${r.action === 'clock_in' ? 'clocked in' : 'clocked out (' + numf(r.hours) + 'h)'}`); invRefresh(); }
-    catch (e) { $('ckClockErr').textContent = e.message; }
-  };
-  $('ckAddTask').onclick = () => modal('Add task', [
-    { key: 'title', label: 'Task' },
-    { key: 'assigned_to', label: 'Assign to', type: 'select', options: staff.map(u => ({ value: u.id, label: u.name })) },
-    { key: 'requires_photo', label: 'Requires photo?', type: 'select', options: [{ value: '', label: 'No' }, { value: '1', label: 'Yes' }] },
-    { key: 'reason', label: 'Reason / note (for audit)' },
-  ], async (v) => { await api('/central/tasks', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: hubId }, v)) }); toast('Task added'); invRefresh(); });
-  $('view').querySelectorAll('[data-ckdone]').forEach(b => b.onclick = () => {
-    if (b.dataset.photo === '1') modal('Complete task (photo required)', [{ key: 'photo_url', label: 'Photo URL / reference' }],
-      async (v) => { await api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: JSON.stringify(v) }); toast('Task completed'); invRefresh(); }, 'Complete');
-    else api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: '{}' }).then(() => { toast('Task completed'); invRefresh(); });
   });
 }
 

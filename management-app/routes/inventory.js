@@ -56,8 +56,13 @@ function propagateVendorEdit(ckId) {
 // warehouses; ?type=all lists both (stores + warehouses). Central Kitchen is handled separately.
 router.get('/locations', (req, res) => {
   const t = req.query.type;
-  const where = t === 'warehouse' ? "type='warehouse'" : t === 'all' ? "type IN ('restaurant','warehouse')" : "type='restaurant'";
-  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 AND ${where} ORDER BY name`).all());
+  // staffable = every place a person can be based or clock in (stores + the Central Kitchen +
+  // warehouses), used by the staff forms so CK/Warehouse appear in the location pickers.
+  const where = t === 'warehouse' ? "type='warehouse'"
+    : t === 'all' ? "type IN ('restaurant','warehouse')"
+    : t === 'staffable' ? "type IN ('restaurant','central_kitchen','warehouse')"
+    : "type='restaurant'";
+  res.json(db.prepare(`SELECT * FROM locations WHERE is_active=1 AND ${where} ORDER BY (type='restaurant') DESC, name`).all());
 });
 router.get('/categories', (req, res) => {
   const rows = db.prepare(`SELECT DISTINCT category FROM inventory WHERE category IS NOT NULL ORDER BY category`).all();
