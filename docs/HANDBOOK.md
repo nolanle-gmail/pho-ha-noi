@@ -2083,8 +2083,12 @@ carrying its **stage**, over per-item **approval** decisions on the lines. The l
    it's on the way).
 4. **In Transit** → *Mark delivered* (hand-off at the store) — lands the approved items in
    the store's inventory → **Received** (or **Partially Received** when some items were
-   held). The barcode **load-scan** (at the hub) and **hand-off scan** (at the store) plug
-   into the Load and Deliver steps later; for now they're manual buttons.
+   held). The **Load** and **Deliver** steps are **scanner-driven**: at the hub a
+   **📠 Scan to load** (the scanner's Ship mode, now listing only approved items) scans each
+   item onto the truck — when every approved item is scanned the order moves to *Loaded*;
+   at the store the ordinary **Receive** scan is the **hand-off** — scanning the items in
+   lands them and moves the order to *Delivered* once all are received. The manual *Load /
+   Mark delivered* buttons remain as a fallback for items without a barcode.
 
 **Resolving held items.** A held item isn't orphaned after the approved part delivers — the
 order stays **active** on the board (flagged *⏸N held*, action *Resolve held*) until every
