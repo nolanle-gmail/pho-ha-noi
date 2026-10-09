@@ -1216,7 +1216,7 @@ erDiagram
 | `ck_products` | Central K. | Items the central kitchen produces |
 | `ck_recipe_ingredients` | Central K. | Master recipe per product |
 | `store_requests` | Central K. | Daily item requests from each store |
-| `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split and `shipped_qty` (how much of the hub portion has shipped) |
+| `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split, `shipped_qty` (how much of the hub portion has shipped) and `received_qty`/`received_by`. A multi-item order's lines share one `order_no` (`LOC-YYMMDD-NN`) and carry a `priority` + `requested_by` |
 | `ck_production_runs` | Central K. | Batch runs with yield & shrinkage |
 | `ck_tasks` | Central K. | Photo-verified kitchen tasks |
 | `ck_shifts` | Central K. | Central-kitchen shift schedule |
@@ -2046,6 +2046,24 @@ never from itself**: in the Central Kitchen section the Orders & Reorder page is
 **vendor-only** (plain below-par suggestions → "Create vendor PO"; no CK-first split, no
 "order from the Central Kitchen" source), and `POST /distribution/order` hard-refuses a
 CK-location order. Every store, by contrast, gets the CK-first split above.
+
+**A store's "+ New order" is a multi-item order with a tracking number.** One order
+can carry several items (one line each), and the whole order shares a single
+**order number** — a short, human-readable `LOCATION-YYMMDD-NN` (e.g. `SJ-261008-01`:
+San Jose, 8 Oct 2026, first order that day). Location codes are de-duplicated across
+the chain (Milpitas `MIL` vs Milbrae `MILB`) and the sequence counts that store's
+distinct orders for the day. The modal's **Order from** dropdown picks the hub —
+Central Kitchen or a Warehouse — and only items that hub actually stocks are
+selectable; because the two hubs ship from different locations, **each is a separate
+order (and a separate tracking block)**. A **priority** (Urgent / High / Standard /
+Low) is chosen before sending and rides with the order. `distribution_orders` stays
+one row per item, now stamped with `order_no`, `priority` and `requested_by` (who
+placed it); lines of one order are grouped by `order_no` for tracking. On the store's
+**Orders & Reorder** page the open orders render as grouped blocks — **Central Kitchen
+orders** and one block per warehouse (e.g. **Senter Warehouse orders**) — each group
+headed by its order number, priority badge, date and who submitted it. On submit the
+fulfilment team is **notified** (direct message + web/OS push); the recipient is **Nha
+Le** for now (configurable later). The notify is best-effort and never blocks the order.
 
 The CK warehouse is a real stock holding, so the **org-wide inventory report**
 (Reports → Items with no location selected) counts it alongside the ten stores — its
