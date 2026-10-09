@@ -2100,6 +2100,17 @@ and asks whether to still add it. The requester can **Back to edit** (state pres
 **Add anyway & submit**. Orders fully within the hub's stock submit straight through. The
 check is hub-agnostic, so it applies to the Central Kitchen and every Warehouse.
 
+**Cancelling after submit (2026-10-09).** The store that placed an order can cancel it
+**before it ships** — to change it or because it's no longer needed (previously only the
+hub could cancel). On **Orders & Reorder** each not-yet-shipped line has a **Cancel**
+button, and each order group has a **Cancel order** button (cancels every line not yet
+shipped); both confirm first. Cancelling a line also **cancels its linked vendor-shortfall
+PO**. A line that has already shipped (`shipped_qty > 0`) or been received can't be
+cancelled — receive it, or ask the hub. Backend: `PUT /distribution/orders/:id`
+(`status: cancelled`) now permits the requester's store as well as hub staff, and
+`POST /distribution/cancel-order` cancels a whole order by its number atomically (scoped
+to the caller's store).
+
 The CK warehouse is a real stock holding, so the **org-wide inventory report**
 (Reports → Items with no location selected) counts it alongside the ten stores — its
 value shows up in the total, the by-category and by-location breakdowns, and the top
