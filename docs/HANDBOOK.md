@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 8, 2026_
+_Last updated: October 9, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2091,6 +2091,14 @@ orders** and one block per warehouse (e.g. **Senter Warehouse orders**) — each
 headed by its order number, priority badge, date and who submitted it. On submit the
 fulfilment team is **notified** (direct message + web/OS push); the recipient is **Nha
 Le** for now (configurable later). The notify is best-effort and never blocks the order.
+
+**Over-stock confirmation (2026-10-09).** Each item in the picker shows the hub's
+current on-hand ("— N at hub"). If a line asks for **more than the hub has on hand**,
+submitting first pops a confirmation listing each over-stock line (Ordered / At hub /
+Short) — the hub ships what it has and the **shortfall is auto-ordered from a vendor** —
+and asks whether to still add it. The requester can **Back to edit** (state preserved) or
+**Add anyway & submit**. Orders fully within the hub's stock submit straight through. The
+check is hub-agnostic, so it applies to the Central Kitchen and every Warehouse.
 
 The CK warehouse is a real stock holding, so the **org-wide inventory report**
 (Reports → Items with no location selected) counts it alongside the ten stores — its
