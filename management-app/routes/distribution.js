@@ -6,7 +6,7 @@
 // transfer flows this reuses.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { receiveLot, consumeFIFO } = require('../lib/lots');
 const { parseScan, logScan } = require('../lib/barcode');
@@ -74,6 +74,42 @@ function resolveHub(req, fromQuery) {
   const own = hubById(req.user.location_id);
   if (own) return own;
   return ckLoc();
+}
+// A hub MANAGER (or org leadership) — the people who may review/approve orders.
+function isHubManager(req, hubId) {
+  if (seesAllLocations(req.user.role)) return true;
+  return String(req.user.location_id) === String(hubId) && roleHasCap(req.user.role, 'manage');
+}
+
+// ── Order headers & the fulfilment stage machine ─────────────────────────────
+// A multi-item order has one header (keyed by order_no) carrying its STAGE; the per-item review
+// decision (approved/held/rejected) lives on the lines. The board shows one row per order.
+const PRIORITY_RANK = { urgent: 0, high: 1, standard: 2, low: 3 };
+function headerOf(orderNo) { return orderNo ? db.prepare(`SELECT * FROM distribution_order_headers WHERE order_no=?`).get(orderNo) : null; }
+// The display label for an order: maps (stage + per-item approvals + receipt) onto the board labels.
+function orderStatusLabel(h, lines) {
+  if (!h) return 'Unknown';
+  if (h.stage === 'cancelled') return 'Cancelled';
+  if (h.stage === 'rejected') return 'Rejected';
+  const hubLines = lines.filter(l => l.ck_qty > 0.0005 && l.status !== 'cancelled');
+  const approved = hubLines.filter(l => l.approval === 'approved').length;
+  const held = hubLines.filter(l => l.approval === 'held').length;
+  const rejected = lines.filter(l => l.approval === 'rejected').length;
+  if (h.stage === 'new') return (h.reviewed_at && approved === 0 && held > 0) ? 'Holding' : 'New Order';
+  if (h.stage === 'approved') return (held || rejected) ? 'Partially Approved' : 'Approved';
+  if (h.stage === 'loaded') return 'Loaded';
+  if (h.stage === 'in_transit') return 'In Transit';
+  if (h.stage === 'delivered') {
+    const recv = hubLines.filter(l => l.approval === 'approved' && (l.received_qty > 0.0005 || l.status === 'received')).length;
+    return (approved && recv < approved) ? 'Partially Received' : 'Received';
+  }
+  return h.stage;
+}
+// Once every hub line of an order is cancelled, mark its header cancelled (called after cancels).
+function syncCancelled(orderNo) {
+  if (!orderNo) return;
+  const hub = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005`).all(orderNo);
+  if (hub.length && hub.every(l => l.status === 'cancelled')) db.prepare(`UPDATE distribution_order_headers SET stage='cancelled', updated_at=datetime('now') WHERE order_no=?`).run(orderNo);
 }
 
 // ── CK raw-stock warehouse (CK staff) ────────────────────────────────────────
@@ -170,8 +206,8 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   const store = db.prepare(`SELECT name FROM locations WHERE id=?`).get(locId);
 
   const insDist = db.prepare(`INSERT INTO distribution_orders
-    (to_location_id, source_location_id, item_id, item_name, unit, requested_qty, ck_qty, vendor_qty, status, vendor_order_id, requested_by, notes, order_no, priority)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (to_location_id, source_location_id, item_id, item_name, unit, requested_qty, ck_qty, vendor_qty, status, approval, vendor_order_id, requested_by, notes, order_no, priority)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   const insPO = db.prepare(`INSERT INTO supply_orders (item_id, item_name, location_id, quantity, vendor, vendor_id, notes, status, ordered_by)
     VALUES (?,?,?,?,?,?,?,'pending',?)`);
 
@@ -192,14 +228,20 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
         vendorOrderId = insPO.run(inv.id, inv.item_name, locId, vendorQty, vendorName || null, vendorId,
           ckQty > 0 ? `${hub.name} shortfall (auto)` : 'Ordered from vendor', req.user.id).lastInsertRowid;
       }
-      // Nothing for the hub to ship ⇒ the order is settled by the vendor PO alone.
+      // Nothing for the hub to ship ⇒ the order is settled by the vendor PO alone (auto-approved,
+      // nothing to review); hub-fulfilled lines start 'pending' and wait for the review step.
       const status = ckQty > 0 ? 'requested' : 'received';
+      const approval = ckQty > 0 ? 'pending' : 'approved';
       insDist.run(locId, hub.id, inv.id, inv.item_name, inv.unit || it.unit || 'units', qty, ckQty, vendorQty,
-        status, vendorOrderId, req.user.id, it.notes || null, orderNo, priority);
+        status, approval, vendorOrderId, req.user.id, it.notes || null, orderNo, priority);
       if (ckQty > 0) hubLines++;
       summary.push(`• ${inv.item_name} — ${r3(qty)} ${inv.unit || ''}`.trim());
       created++;
     }
+    // The order header carries the fulfilment STAGE. Hub-fulfilled orders start at 'new' (awaiting
+    // review); a vendor-only order has nothing for the hub to do.
+    if (created) db.prepare(`INSERT INTO distribution_order_headers (order_no, to_location_id, source_location_id, priority, requested_by, stage)
+      VALUES (?,?,?,?,?,?)`).run(orderNo, locId, hub.id, priority, req.user.id, hubLines > 0 ? 'new' : 'delivered');
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not place the order.' }); }
   if (!created) return res.status(400).json({ error: 'No valid items to order.' });
@@ -312,6 +354,7 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
     if (d.status === 'received' || d.status === 'shipped') return res.status(400).json({ error: `Can't cancel an order that is ${d.status}.` });
     if (d.shipped_qty > 0) return res.status(400).json({ error: `Part of this item has already shipped — receive it, or ask ${hub ? hub.name : 'the hub'} before cancelling.` });
     cancelDistLine(d);
+    syncCancelled(d.order_no);
     auditLog(req, 'distribution_cancel', 'distribution_order', d.id, { item: d.item_name, by: isStoreOwner && !isSrcHubStaff ? 'requester' : 'hub' });
     return res.json({ success: true });
   }
@@ -345,6 +388,7 @@ router.post('/cancel-order', requireRole(ROLES.OPS), (req, res) => {
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not cancel the order.' }); }
   if (!cancelled) return res.status(400).json({ error: blocked ? 'Nothing to cancel — those items have already shipped or been received.' : 'Nothing to cancel.' });
+  syncCancelled(orderNo);
   auditLog(req, 'distribution_cancel_order', 'location', lines[0].to_location_id, { order_no: orderNo, cancelled, blocked });
   res.json({ success: true, cancelled, blocked });
 });
@@ -443,9 +487,184 @@ router.post('/orders/:id/resolve-cancel', requireRole(ROLES.OPS), (req, res) => 
     if (d.vendor_order_id) db.prepare(`UPDATE supply_orders SET status='cancelled' WHERE id=? AND status NOT IN ('received','cancelled')`).run(d.vendor_order_id);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not recall the order.' }); }
+  syncCancelled(d.order_no);
   auditLog(req, 'distribution_cancel_recalled', 'distribution_order', d.id, { item: d.item_name, order_no: d.order_no, qty: back });
   try { if (d.cancel_requested_by) notify(req.user.id, d.cancel_requested_by, `Cancellation approved · ${tag}`, `${hub.name} recalled ${d.item_name} (${back} ${d.unit || ''}) on ${tag} — the order is cancelled. Please don’t receive it; the stock returns to ${hub.name}.`); } catch { /* best-effort */ }
   res.json({ success: true, action: 'recalled', returned: back });
+});
+
+// ── The hub's order board: one row per order + the fulfilment stage machine ──
+// Incoming orders for a hub, ONE per order, ranked active-first then highest-priority then oldest.
+router.get('/hub-orders', requireRole(ROLES.OPS), (req, res) => {
+  const hub = resolveHub(req, true);
+  if (!hub) return res.status(404).json({ error: 'No fulfilment hub selected.' });
+  if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub.name} staff only.` });
+  const heads = db.prepare(`SELECT h.*, l.name AS store_name, u.name AS requested_by_name
+    FROM distribution_order_headers h JOIN locations l ON l.id=h.to_location_id
+    LEFT JOIN users u ON u.id=h.requested_by
+    WHERE h.source_location_id=? ORDER BY h.created_at DESC LIMIT 400`).all(hub.id);
+  const out = heads.map(h => {
+    const lines = db.prepare(`SELECT ck_qty, status, approval, received_qty, cancel_requested FROM distribution_orders WHERE order_no=?`).all(h.order_no);
+    const hubLines = lines.filter(l => l.ck_qty > 0.0005);
+    return {
+      order_no: h.order_no, store_name: h.store_name, priority: h.priority, created_at: h.created_at,
+      stage: h.stage, requested_by_name: h.requested_by_name, status_label: orderStatusLabel(h, lines),
+      items: hubLines.length,
+      approved: hubLines.filter(l => l.approval === 'approved').length,
+      held: hubLines.filter(l => l.approval === 'held').length,
+      rejected: lines.filter(l => l.approval === 'rejected').length,
+      cancel_requested: lines.some(l => l.cancel_requested),
+    };
+  });
+  const done = (s) => ['delivered', 'cancelled', 'rejected'].includes(s) ? 1 : 0;
+  out.sort((a, b) => (done(a.stage) - done(b.stage))
+    || ((PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2))
+    || String(a.created_at).localeCompare(String(b.created_at)));
+  res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, orders: out });
+});
+
+// One order's header + all its lines (the drill-in detail page).
+router.get('/hub-orders/:orderNo', requireRole(ROLES.OPS), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
+  const lines = db.prepare(`SELECT d.*, so.status AS vendor_status, so.vendor AS vendor_name
+    FROM distribution_orders d LEFT JOIN supply_orders so ON so.id=d.vendor_order_id
+    WHERE d.order_no=? ORDER BY d.id`).all(h.order_no);
+  const store = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(h.to_location_id);
+  const reviewer = h.reviewed_by ? db.prepare(`SELECT name FROM users WHERE id=?`).get(h.reviewed_by) : null;
+  const driver = h.driver_id ? db.prepare(`SELECT name FROM users WHERE id=?`).get(h.driver_id) : null;
+  res.json({
+    hub: { id: hub.id, name: hub.name, type: hub.type }, store, header: h,
+    status_label: orderStatusLabel(h, lines),
+    can_review: isHubManager(req, hub.id),
+    reviewer: reviewer && reviewer.name, driver: driver && driver.name, lines,
+  });
+});
+
+// Review an order — approve / hold / reject each item (hub managers + org admins). Partial approval
+// lets some items through while others are held or rejected; each decision messages the requester.
+router.post('/hub-orders/:orderNo/review', requireRole(ROLES.OPS), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !isHubManager(req, hub.id)) return res.status(403).json({ error: 'Only hub managers can review orders.' });
+  if (h.stage !== 'new') return res.status(400).json({ error: `This order is already ${h.stage} — it can't be reviewed now.` });
+  const decisions = Array.isArray(req.body.items) ? req.body.items : [];
+  if (!decisions.length) return res.status(400).json({ error: 'No decisions submitted.' });
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005 AND status<>'cancelled'`).all(h.order_no);
+  const byId = Object.fromEntries(lines.map(l => [String(l.id), l]));
+  for (const d of decisions) {
+    if (!['approved', 'held', 'rejected'].includes(d.decision)) return res.status(400).json({ error: 'Each item must be approved, held or rejected.' });
+    if ((d.decision === 'held' || d.decision === 'rejected') && !((d.note || '').toString().trim())) return res.status(400).json({ error: 'A reason is required to hold or reject an item.' });
+  }
+  const updOk = db.prepare(`UPDATE distribution_orders SET approval=?, approval_note=?, updated_at=datetime('now') WHERE id=?`);
+  const updReject = db.prepare(`UPDATE distribution_orders SET approval='rejected', approval_note=?, status='cancelled', updated_at=datetime('now') WHERE id=?`);
+  db.exec('BEGIN');
+  try {
+    for (const d of decisions) {
+      const line = byId[String(d.item_id || d.id)];
+      if (!line) continue;
+      const note = (d.note || '').toString().trim().slice(0, 500) || null;
+      if (d.decision === 'rejected') updReject.run(note, line.id);   // rejected: kept but marked + dropped from fulfilment
+      else updOk.run(d.decision, note, line.id);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not save the review.' }); }
+  const fresh = db.prepare(`SELECT item_name, approval, approval_note FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005`).all(h.order_no);
+  const approved = fresh.filter(l => l.approval === 'approved');
+  const held = fresh.filter(l => l.approval === 'held');
+  const rejected = fresh.filter(l => l.approval === 'rejected');
+  const stage = approved.length ? 'approved' : (held.length ? 'new' : 'rejected');
+  db.prepare(`UPDATE distribution_order_headers SET stage=?, reviewed_by=?, reviewed_at=datetime('now'), updated_at=datetime('now') WHERE order_no=?`).run(stage, req.user.id, h.order_no);
+  const outcome = stage === 'approved' ? ((held.length || rejected.length) ? 'partially approved' : 'approved') : (stage === 'rejected' ? 'rejected' : 'on hold');
+  auditLog(req, 'distribution_review', 'location', h.to_location_id, { order_no: h.order_no, approved: approved.length, held: held.length, rejected: rejected.length, outcome });
+  try {
+    if (h.requested_by) {
+      const detail = [...rejected.map(l => `✗ ${l.item_name} rejected${l.approval_note ? ' — ' + l.approval_note : ''}`),
+                      ...held.map(l => `⏸ ${l.item_name} held${l.approval_note ? ' — ' + l.approval_note : ''}`)].join('\n');
+      notify(req.user.id, h.requested_by, `Order ${h.order_no} ${outcome}`,
+        `${hub.name} reviewed your order ${h.order_no} — ${outcome} (${approved.length} approved, ${held.length} held, ${rejected.length} rejected).${detail ? '\n' + detail : ''}`);
+    }
+  } catch { /* best-effort */ }
+  res.json({ success: true, stage, approved: approved.length, held: held.length, rejected: rejected.length, outcome });
+});
+
+// Load the approved items onto the truck — deducts the hub's on-hand (stock leaves the shelf) and
+// moves the order to 'loaded'. (Manual now; the barcode load-scan plugs in here later.)
+router.post('/hub-orders/:orderNo/load', requireRole(ROLES.OPS), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} staff only.` });
+  if (h.stage !== 'approved') return res.status(400).json({ error: `Only an approved order can be loaded (this is ${h.stage}).` });
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND approval='approved' AND status='requested' AND ck_qty > 0.0005`).all(h.order_no);
+  if (!lines.length) return res.status(400).json({ error: 'No approved items to load.' });
+  db.exec('BEGIN');
+  try {
+    for (const d of lines) {
+      const outstanding = r3(Math.max(0, d.ck_qty - d.shipped_qty));
+      const src = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(hub.id, d.item_name);
+      if (!src || src.quantity < outstanding - 0.0005) { db.exec('ROLLBACK'); return res.status(400).json({ error: `${hub.name} is short on ${d.item_name} (needs ${outstanding}, has ${r3(src ? src.quantity : 0)}). Restock before loading.` }); }
+      if (outstanding > 0) {
+        db.prepare(`UPDATE inventory SET quantity=quantity-?, last_updated=datetime('now') WHERE id=?`).run(outstanding, src.id);
+        consumeFIFO(src.id, outstanding);
+        db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes)
+          VALUES (?,?,?,?,'transfer_sent',?,?)`).run(src.id, hub.id, d.to_location_id, outstanding, req.user.id, `${hub.name} distribution (loaded)`);
+      }
+      db.prepare(`UPDATE distribution_orders SET status='shipped', shipped_qty=ck_qty, approved_by=?, updated_at=datetime('now') WHERE id=?`).run(req.user.id, d.id);
+    }
+    db.prepare(`UPDATE distribution_order_headers SET stage='loaded', loaded_at=datetime('now'), updated_at=datetime('now') WHERE order_no=?`).run(h.order_no);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not load the order.' }); }
+  auditLog(req, 'distribution_load', 'location', h.to_location_id, { order_no: h.order_no, items: lines.length });
+  res.json({ success: true, loaded: lines.length });
+});
+
+// A driver takes a loaded order out for delivery.
+router.post('/hub-orders/:orderNo/dispatch', requireRole(ROLES.DELIVERY), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !(seesAllLocations(req.user.role) || String(req.user.location_id) === String(hub.id))) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} drivers only.` });
+  if (h.stage !== 'loaded') return res.status(400).json({ error: `Only a loaded order can go in transit (this is ${h.stage}).` });
+  db.prepare(`UPDATE distribution_order_headers SET stage='in_transit', driver_id=?, dispatched_at=datetime('now'), updated_at=datetime('now') WHERE order_no=?`).run(req.user.id, h.order_no);
+  auditLog(req, 'distribution_dispatch', 'location', h.to_location_id, { order_no: h.order_no });
+  try { if (h.requested_by) notify(req.user.id, h.requested_by, `Order ${h.order_no} is on its way`, `Your order ${h.order_no} from ${hub.name} is in transit.`); } catch { /* best-effort */ }
+  res.json({ success: true });
+});
+
+// Hand off at the store — land the approved items into the store's inventory and mark delivered.
+// (Manual now; the handoff scan at the location plugs in here later.)
+router.post('/hub-orders/:orderNo/deliver', requireRole(ROLES.OPS), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  const canDeliver = seesAllLocations(req.user.role) || String(req.user.location_id) === String(h.to_location_id)
+    || (hub && isHubStaff(req, hub.id)) || roleHasCap(req.user.role, 'delivery');
+  if (!canDeliver) return res.status(403).json({ error: 'Not your order.' });
+  if (h.stage !== 'in_transit' && h.stage !== 'loaded') return res.status(400).json({ error: `Only an in-transit order can be delivered (this is ${h.stage}).` });
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND status='shipped' AND approval='approved'`).all(h.order_no);
+  if (!lines.length) return res.status(400).json({ error: 'Nothing to deliver.' });
+  db.exec('BEGIN');
+  try {
+    for (const d of lines) {
+      const landQty = r3(d.shipped_qty > 0 ? d.shipped_qty : d.ck_qty);
+      const dest = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(d.to_location_id, d.item_name);
+      let destId;
+      if (dest) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(landQty, dest.id); destId = dest.id; }
+      else destId = db.prepare(`INSERT INTO inventory (location_id, item_name, unit, quantity, min_quantity) VALUES (?,?,?,?,0)`).run(d.to_location_id, d.item_name, d.unit || 'units', landQty).lastInsertRowid;
+      receiveLot({ item_id: destId, location_id: d.to_location_id, quantity: landQty, unit_cost: dest ? dest.unit_cost || 0 : 0, user_id: req.user.id });
+      db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
+        VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} delivery received`);
+      db.prepare(`UPDATE distribution_orders SET status='received', received_qty=?, received_by=?, cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(landQty, req.user.id, d.id);
+    }
+    db.prepare(`UPDATE distribution_order_headers SET stage='delivered', delivered_at=datetime('now'), updated_at=datetime('now') WHERE order_no=?`).run(h.order_no);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not deliver the order.' }); }
+  auditLog(req, 'distribution_deliver', 'location', h.to_location_id, { order_no: h.order_no, items: lines.length });
+  res.json({ success: true, received: lines.length });
 });
 
 // ── Shipping from a hub (CK / Warehouse): the scan-to-fulfil order flow ───────

@@ -826,10 +826,32 @@ function migrate() {
       vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
       requested_by    INTEGER REFERENCES users(id),
       approved_by     INTEGER REFERENCES users(id),
+      approval        TEXT NOT NULL DEFAULT 'pending',             -- review decision: pending/approved/held/rejected
+      approval_note   TEXT,                                        -- reason/comment on a hold or reject
       cancel_requested INTEGER NOT NULL DEFAULT 0,                  -- store asked the hub to cancel a SHIPPED line
       cancel_reason   TEXT,                                         -- why (optional, from the requester)
       cancel_requested_by INTEGER REFERENCES users(id),
       notes           TEXT,
+      created_at      TEXT DEFAULT (datetime('now')),
+      updated_at      TEXT DEFAULT (datetime('now'))
+    );
+    -- One header per multi-item order (keyed by order_no) carrying the order-level fulfilment
+    -- STAGE and who handled each step, over the per-item lines above. The CK/Warehouse board shows
+    -- one row per order from here; the per-item approval decision lives on the lines.
+    CREATE TABLE IF NOT EXISTS distribution_order_headers (
+      order_no        TEXT PRIMARY KEY,
+      to_location_id  INTEGER NOT NULL REFERENCES locations(id),   -- the ordering store
+      source_location_id INTEGER REFERENCES locations(id),         -- the hub that fills it
+      priority        TEXT NOT NULL DEFAULT 'standard',
+      requested_by    INTEGER REFERENCES users(id),
+      stage           TEXT NOT NULL DEFAULT 'new'
+                        CHECK(stage IN ('new','approved','loaded','in_transit','delivered','cancelled','rejected')),
+      reviewed_by     INTEGER REFERENCES users(id),
+      reviewed_at     TEXT,
+      driver_id       INTEGER REFERENCES users(id),
+      loaded_at       TEXT,
+      dispatched_at   TEXT,
+      delivered_at    TEXT,
       created_at      TEXT DEFAULT (datetime('now')),
       updated_at      TEXT DEFAULT (datetime('now'))
     );
@@ -1498,6 +1520,9 @@ function migrate() {
     `ALTER TABLE distribution_orders ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE distribution_orders ADD COLUMN cancel_reason TEXT`,
     `ALTER TABLE distribution_orders ADD COLUMN cancel_requested_by INTEGER REFERENCES users(id)`,
+    // Orders now go through a Review/Approve step: each line carries a per-item approval decision.
+    `ALTER TABLE distribution_orders ADD COLUMN approval TEXT NOT NULL DEFAULT 'pending'`,
+    `ALTER TABLE distribution_orders ADD COLUMN approval_note TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
@@ -1508,6 +1533,30 @@ function migrate() {
       db.prepare(`UPDATE ck_shifts SET location_id=? WHERE location_id IS NULL`).run(ck.id);
     }
   } catch { /* table not present yet */ }
+  // Backfill the order headers + approval for orders that predate the Review/Approve workflow, so
+  // existing/legacy orders aren't stuck behind a review they never had. Grandfather every
+  // non-cancelled line to 'approved', and derive each order's stage from its lines' statuses.
+  try {
+    const haveHdr = db.prepare(`SELECT COUNT(*) c FROM distribution_order_headers`).get().c;
+    const orders = db.prepare(`SELECT order_no FROM distribution_orders WHERE order_no IS NOT NULL GROUP BY order_no`).all();
+    if (orders.length && haveHdr < orders.length) {
+      db.prepare(`UPDATE distribution_orders SET approval='approved' WHERE approval='pending' AND status<>'cancelled'`).run();
+      db.prepare(`UPDATE distribution_orders SET approval='rejected' WHERE status='cancelled' AND approval='pending'`).run();
+      const insH = db.prepare(`INSERT OR IGNORE INTO distribution_order_headers
+        (order_no, to_location_id, source_location_id, priority, requested_by, stage, created_at)
+        VALUES (?,?,?,?,?,?,?)`);
+      for (const { order_no } of orders) {
+        const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=?`).all(order_no);
+        const h = lines[0];
+        const active = lines.filter(l => l.status !== 'cancelled');
+        let stage = 'approved';
+        if (!active.length) stage = 'cancelled';
+        else if (active.every(l => l.status === 'received')) stage = 'delivered';
+        else if (active.some(l => l.status === 'shipped' || l.status === 'received')) stage = 'in_transit';
+        insH.run(order_no, h.to_location_id, h.source_location_id, h.priority || 'standard', h.requested_by, stage, h.created_at);
+      }
+    }
+  } catch { /* tables not present yet */ }
 
   // Attachments used to be restricted to CHECK(kind IN ('image','video')); relax that so
   // documents/files can be attached. SQLite can't ALTER a CHECK, so rebuild the table when
