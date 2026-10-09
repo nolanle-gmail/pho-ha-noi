@@ -1164,6 +1164,9 @@ const check = (name, ok, detail = '') => {
     check('hold/reject require a reason', (await (await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: dlines[0].id, decision: 'held' }] }) })).status) === 400 || true);
     check('rejected item is kept-but-marked and dropped from fulfilment', (sdb.prepare("SELECT approval, status FROM distribution_orders WHERE id=?").get(dlines[2].id) || {}).approval === 'rejected' && sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(dlines[2].id).status === 'cancelled');
     check('requester notified of the review outcome', !!sdb.prepare("SELECT 1 FROM messages m JOIN message_recipients mr ON mr.message_id=m.id WHERE m.subject LIKE '%'||?||'%' AND m.subject LIKE '%approv%' LIMIT 1").get(wf.order_no));
+    const storeView = await j(await fetch(base + `/api/distribution/orders?scope=store&location_id=${loc1}`, { headers: H(token) }));
+    const storeLinesWf = (storeView.orders || []).filter(o => o.order_no === wf.order_no);
+    check('store view carries the order-level status label + per-item approval', storeLinesWf.length > 0 && storeLinesWf.every(o => o.order_status === 'Partially Approved') && storeLinesWf.some(o => o.approval === 'held') && storeLinesWf.some(o => o.approval === 'rejected'), JSON.stringify(storeLinesWf.map(o => ({ a: o.approval, s: o.order_status }))));
     // Load the approved item — hub stock drops, stage=loaded.
     const ckBeforeLoad = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(ckL, wf3[0]).quantity;
     r = await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });

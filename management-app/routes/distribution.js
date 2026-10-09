@@ -111,6 +111,14 @@ function syncCancelled(orderNo) {
   const hub = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005`).all(orderNo);
   if (hub.length && hub.every(l => l.status === 'cancelled')) db.prepare(`UPDATE distribution_order_headers SET stage='cancelled', updated_at=datetime('now') WHERE order_no=?`).run(orderNo);
 }
+// Once every APPROVED hub line is received (e.g. the store confirmed receipt line-by-line), mark the
+// order delivered — keeps the header in step with the line-level receive path.
+function syncDelivered(orderNo) {
+  if (!orderNo) return;
+  const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005 AND approval='approved'`).all(orderNo);
+  if (approved.length && approved.every(l => l.status === 'received'))
+    db.prepare(`UPDATE distribution_order_headers SET stage='delivered', delivered_at=COALESCE(delivered_at, datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(orderNo);
+}
 
 // ── CK raw-stock warehouse (CK staff) ────────────────────────────────────────
 // The Central Kitchen's own raw inventory, with how much is already promised to
@@ -280,12 +288,20 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
     where = 'WHERE d.to_location_id=?'; args = [locId];
   }
   const rows = db.prepare(`
-    SELECT d.*, l.name AS store_name, u.name AS requested_by_name, so.status AS vendor_status, so.vendor AS vendor_name
+    SELECT d.*, l.name AS store_name, u.name AS requested_by_name, so.status AS vendor_status, so.vendor AS vendor_name,
+      h.stage AS order_stage, h.reviewed_at AS order_reviewed_at
     FROM distribution_orders d
     JOIN locations l ON l.id = d.to_location_id
     LEFT JOIN users u ON u.id = d.requested_by
     LEFT JOIN supply_orders so ON so.id = d.vendor_order_id
+    LEFT JOIN distribution_order_headers h ON h.order_no = d.order_no
     ${where} ORDER BY d.created_at DESC LIMIT 200`).all(...args);
+  // Attach each order's overall status label (the same one the hub board shows) to its lines, so the
+  // store sees New Order / Approved / In Transit / Received rather than just the raw line status.
+  const byOrder = {};
+  rows.forEach(r => { if (r.order_no) (byOrder[r.order_no] = byOrder[r.order_no] || []).push(r); });
+  for (const r of rows) r.order_status = r.order_no && r.order_stage
+    ? orderStatusLabel({ stage: r.order_stage, reviewed_at: r.order_reviewed_at }, byOrder[r.order_no]) : null;
   res.json({ orders: rows });
 });
 
@@ -347,6 +363,7 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
     db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
       VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} distribution received`);
     db.prepare(`UPDATE distribution_orders SET status='received', cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(d.id);
+    syncDelivered(d.order_no);
     auditLog(req, 'distribution_receive', 'distribution_order', d.id, { item: d.item_name, qty: landQty });
     return res.json({ success: true });
   }
