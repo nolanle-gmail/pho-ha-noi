@@ -2092,6 +2092,12 @@ Endpoints: `GET /distribution/hub-orders` (board) + `/hub-orders/:orderNo` (deta
 ship/receive primitives (and the kiosk scan flow) are preserved, so the two models
 coexist; cancel/recall keep the header in sync.
 
+**The requester sees the same story.** On the store's own **Orders & Reorder** each order
+group shows the order-level status chip (New Order / Approved / Partially Approved /
+Holding / In Transit / Received / …) and each item's review decision — **approved / held /
+rejected**, with the hub's reason on hover — so the store knows exactly what was approved,
+held or turned down (on top of the message it gets on review).
+
 The CK portion moves through a **load → in-transit → deliver** lifecycle on the Central
 Kitchen's **Distribution** tab: loading deducts CK warehouse stock (an `out` movement),
 and the hand-off lands it in the store's inventory (an `in` movement). Each order
