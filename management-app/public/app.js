@@ -2169,6 +2169,7 @@ async function openOrderModal(prefill) {
 
   const hubItems = () => items.filter(i => ((hubCats[hubId] || {})[i.item_name]) > 0);
   const nameOf = (id) => (items.find(i => String(i.id) === String(id)) || {}).item_name || '';
+  const hubAvail = (name) => (hubCats[hubId] || {})[name] || 0;   // what the chosen hub has on hand now
   const itemOpts = (sel) => `<option value="">— pick an item —</option>` + hubItems().map(i => `<option value="${i.id}" ${String(sel) === String(i.id) ? 'selected' : ''}>${esc(i.item_name)} — ${numf((hubCats[hubId] || {})[i.item_name])} at hub</option>`).join('');
   const prOpt = (v, l) => `<option value="${v}" ${pri === v ? 'selected' : ''}>${l}</option>`;
   const readState = () => {
@@ -2190,14 +2191,36 @@ async function openOrderModal(prefill) {
     $('oHub').onchange = () => { readState(); hubId = $('oHub').value; rows.forEach(r => { if (!hubItems().some(i => String(i.id) === String(r.item_id))) r.item_id = ''; }); render(); };
     $('addRow').onclick = () => { readState(); rows.push({ item_id: '', qty: '' }); render(); };
     host.querySelectorAll('.ord-del').forEach((b, idx) => b.onclick = () => { readState(); rows.splice(idx, 1); render(); });
-    $('mOk').onclick = async () => {
+    const submitOrder = async () => {
       try {
-        readState();
         const lines = rows.filter(r => r.item_id && parseFloat(r.qty) > 0).map(r => ({ item_id: r.item_id, item_name: nameOf(r.item_id), quantity: parseFloat(r.qty) }));
         if (!lines.length) throw new Error('Add at least one item with a quantity.');
         const r = await api('/distribution/order', { method: 'POST', body: JSON.stringify({ location_id: invLoc(), source_location_id: hubId, priority: pri, reason: notes.trim() || '', items: lines }) });
         toast(`Order ${r.order_no} placed — ${r.created} item${r.created === 1 ? '' : 's'}`); close(); invRefresh();
-      } catch (e) { $('mErr').textContent = e.message; }
+      } catch (e) { const el = $('mErr'); if (el) el.textContent = e.message; else toast(e.message, true); }
+    };
+    // Confirm screen when one or more lines ask for more than the hub has on hand. The requester
+    // decides whether to still add them (the hub ships what it has; the shortfall becomes a vendor PO).
+    const confirmOver = (over, hubName) => {
+      const one = over.length === 1;
+      host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:520px"><h3>⚠ More than ${esc(hubName)} has on hand</h3>
+        <p class="sub" style="color:var(--muted);margin-top:0">${esc(hubName)} can't fully cover ${one ? 'this item' : 'these items'} right now. If you add ${one ? 'it' : 'them'}, the hub ships what it has and the shortfall is auto-ordered from a vendor. Still add ${one ? 'it' : 'them'} to the order?</p>
+        <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">At hub</th><th class="num">Short</th></tr></thead><tbody>
+          ${over.map(o => `<tr><td>${esc(o.name)}</td><td class="num">${numf(o.qty)}</td><td class="num">${numf(o.avail)}</td><td class="num"><strong>${numf(Math.round((o.qty - o.avail) * 1000) / 1000)}</strong></td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="actions"><button class="btn ghost" id="mBack">← Back to edit</button><button class="btn" id="mConfirmOver">Add anyway &amp; submit</button></div></div></div>`;
+      $('mBack').onclick = () => render();
+      host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+      $('mConfirmOver').onclick = submitOrder;
+    };
+    $('mOk').onclick = () => {
+      readState();
+      const lines = rows.filter(r => r.item_id && parseFloat(r.qty) > 0);
+      if (!lines.length) { $('mErr').textContent = 'Add at least one item with a quantity.'; return; }
+      const hubName = shortLoc((hubList.find(h => String(h.id) === String(hubId)) || {}).name || 'the hub');
+      const over = lines.map(r => { const nm = nameOf(r.item_id); return { name: nm, qty: parseFloat(r.qty), avail: hubAvail(nm) }; }).filter(x => x.qty > x.avail);
+      if (over.length) { confirmOver(over, hubName); return; }
+      submitOrder();
     };
   };
   render();
