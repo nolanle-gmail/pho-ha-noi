@@ -966,10 +966,12 @@ erDiagram
 
 `locations.type` is one of **`restaurant`** (a dining store), **`central_kitchen`**
 (the single production hub — fixed, never reassigned), or **`warehouse`**. A
-warehouse is a pure storage & distribution location: it **receives, stores and
+warehouse is a storage & distribution location: it **receives, stores and
 ships/transfers items to any location**, but has **no catalog fan-out** (items
-appear at a store only when shipped there — nothing is replicated automatically)
-and **no production or fulfillment** flows like the CK.
+appear at a store only when shipped there — nothing is replicated automatically).
+It is **not** a production location — the one thing the Central Kitchen has that a
+warehouse doesn't is **Fulfillment** (recipe pick-lists / batch manifests): a
+warehouse stores and ships, it doesn't cook.
 
 Because a warehouse is not a dining location it is **hidden from Service / Floor /
 Waitlist / guest check-in**: `GET /api/inventory/locations` returns only
@@ -979,12 +981,27 @@ Waitlist / guest check-in**: `GET /api/inventory/locations` returns only
 (restaurants + warehouses).
 
 A warehouse gets its own **🏬 Warehouse** nav section — the same dedicated-section
-pattern as the Central Kitchen. It reuses the Inventory views (Overview, Items,
-Glossary, Stock, Storage, Orders & Reorder, Transfers, Lots & Expiry, Vendors)
-scoped to the warehouse via `invLoc()` (which returns `S.whLocId` while the section
-is active). The section shows only when at least one warehouse exists; when several
-do, a picker appears in the tab bar. Overview surfaces item count / low-stock /
-value KPIs plus quick actions (incl. **scan to receive / ship**).
+pattern as the Central Kitchen, and (2026-10-08) with the **same tabs and functions**:
+Overview, Stock, Glossary, Storage, Orders & Reorder, Transfers, Lots & Expiry,
+Vendors, **Reports**, **Distribution** and **Warehouse Staff** — everything the CK
+has **except Fulfillment** (production). Conversely the Central Kitchen gained the
+warehouse's **Storage** and **Transfers** tabs, so the two hubs' layouts match. The
+inventory views are scoped via `invLoc()` (which returns `S.whLocId` while the
+section is active). The section shows only when at least one warehouse exists; when
+several do, a picker appears in the tab bar. Overview surfaces item count / low-stock
+/ value KPIs plus quick actions (incl. **scan to receive / ship**).
+
+**Distribution** and **Staff** are one shared implementation per hub, not CK-only
+code: the client `renderHubDistribution` / `renderHubStaff` read the current hub from
+`invLoc()`; `routes/distribution.js` `/orders` (`scope=hub`) and `/ck-stock` resolve
+the hub from `source_location_id` and gate on `isHubStaff`, so each hub sees only its
+own incoming store orders and on-hand/reserved/free stock; and `routes/central.js`
+HR endpoints (staff / tasks / schedule / PIN clock / timeclock) take an optional
+`location_id`, with `ck_tasks` / `ck_shifts` carrying a `location_id` so tasks and
+schedules are per-hub. The **Distribution** board lists a hub's incoming store orders
+(order #, priority, requested-by) with **Ship / Mark received / Cancel** (the two-step
+lifecycle) and the offer-to-stores toggle; a warehouse can also ship by scanning on
+**Transfers** / the scanner.
 
 Designate a warehouse in **Locations → Edit → Type = Warehouse** (the field is
 locked for the Central Kitchen). Location cards show a **🏬 Warehouse** / **🏭
