@@ -1243,7 +1243,8 @@ erDiagram
 | `ck_products` | Central K. | Items the central kitchen produces |
 | `ck_recipe_ingredients` | Central K. | Master recipe per product |
 | `store_requests` | Central K. | Daily item requests from each store |
-| `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split, `shipped_qty` (how much of the hub portion has shipped) and `received_qty`/`received_by`. A multi-item order's lines share one `order_no` (`LOC-YYMMDD-NN`) and carry a `priority` + `requested_by` |
+| `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split, `shipped_qty` / `received_qty` / `received_by`, and each line's review `approval` (pending/approved/held/rejected) + `approval_note`. Lines share one `order_no` (`LOC-YYMMDD-NN`) with a `priority` + `requested_by` |
+| `distribution_order_headers` | Central K. | One header per order (`order_no`) carrying the fulfilment **stage** (new → approved → loaded → in_transit → delivered, + cancelled/rejected), who reviewed it, the driver, and the loaded/dispatched/delivered timestamps. Drives the hub's one-row-per-order board |
 | `ck_production_runs` | Central K. | Batch runs with yield & shrinkage |
 | `ck_tasks` | Central K. | **Legacy** — CK day-tasks now use the unified `task_assignments` (Locations → CK → Day Tasks) |
 | `ck_shifts` | Central K. | **Legacy** — CK scheduling now uses the unified `shifts` (Locations → CK → Schedule) |
@@ -2063,9 +2064,37 @@ flowchart LR
   SHIP --> RECV[Store receives · stock + lot in]
 ```
 
-The CK portion moves through a **ship → receive** lifecycle on the Central Kitchen's
-**Distribution** tab: shipping deducts CK warehouse stock (an `out` movement), and the
-store confirms receipt to land it in its own inventory (an `in` movement). Each order
+**The hub's Distribution board: one row per order + a review/approve stage machine
+(2026-10-09).** The Central Kitchen / Warehouse **Distribution** tab shows **one row per
+order** (not per item) — ranked active-first, then highest priority, then oldest —
+so a busy hub isn't a wall of item rows. Clicking an order opens a **detail page** with
+all its items. Each order has a header (`distribution_order_headers`, keyed by `order_no`)
+carrying its **stage**, over per-item **approval** decisions on the lines. The lifecycle:
+
+1. **New Order** → *Review/Approve* (hub managers + org admins). On the detail page each
+   item is **Approved / Held / Rejected** — a hold or reject needs a reason. You can
+   **partially approve**: approved items proceed, held items wait (re-reviewable), and a
+   **rejected item is kept-but-marked** (reason recorded) and dropped from fulfilment. The
+   requester is messaged the outcome. Result: **Approved / Partially Approved / Holding /
+   Rejected**.
+2. **Approved / Partially Approved** → *Load* (CK staff). Loading **deducts the hub's
+   on-hand** for the approved items (stock leaves the shelf onto the truck) → **Loaded**.
+3. **Loaded** → a **driver** *Marks in transit* → **In Transit** (the store is notified
+   it's on the way).
+4. **In Transit** → *Mark delivered* (hand-off at the store) — lands the approved items in
+   the store's inventory → **Received** (or **Partially Received** when some items were
+   held). The barcode **load-scan** (at the hub) and **hand-off scan** (at the store) plug
+   into the Load and Deliver steps later; for now they're manual buttons.
+
+Vendor shortfall is independent of approval (approval governs only the hub portion).
+Endpoints: `GET /distribution/hub-orders` (board) + `/hub-orders/:orderNo` (detail),
+`POST /hub-orders/:orderNo/{review,load,dispatch,deliver}`. The underlying line-level
+ship/receive primitives (and the kiosk scan flow) are preserved, so the two models
+coexist; cancel/recall keep the header in sync.
+
+The CK portion moves through a **load → in-transit → deliver** lifecycle on the Central
+Kitchen's **Distribution** tab: loading deducts CK warehouse stock (an `out` movement),
+and the hand-off lands it in the store's inventory (an `in` movement). Each order
 is one `distribution_orders` row carrying its `ck_qty` / `vendor_qty` split; the
 shortfall is an ordinary vendor `supply_orders` PO linked back to it. The CK curates
 which items it offers (`inventory.distributable`) and **restocks itself from vendors,
