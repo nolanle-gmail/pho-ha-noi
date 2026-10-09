@@ -981,27 +981,37 @@ Waitlist / guest check-in**: `GET /api/inventory/locations` returns only
 (restaurants + warehouses).
 
 A warehouse gets its own **🏬 Warehouse** nav section — the same dedicated-section
-pattern as the Central Kitchen, and (2026-10-08) with the **same tabs and functions**:
+pattern as the Central Kitchen, and (2026-10-08) with the **same inventory tabs**:
 Overview, Stock, Glossary, Storage, Orders & Reorder, Transfers, Lots & Expiry,
-Vendors, **Reports**, **Distribution** and **Warehouse Staff** — everything the CK
-has **except Fulfillment** (production). Conversely the Central Kitchen gained the
-warehouse's **Storage** and **Transfers** tabs, so the two hubs' layouts match. The
-inventory views are scoped via `invLoc()` (which returns `S.whLocId` while the
-section is active). The section shows only when at least one warehouse exists; when
-several do, a picker appears in the tab bar. Overview surfaces item count / low-stock
-/ value KPIs plus quick actions (incl. **scan to receive / ship**).
+Vendors, **Reports** and **Distribution** — everything the CK has **except
+Fulfillment** (production). Conversely the Central Kitchen gained the warehouse's
+**Storage** and **Transfers** tabs, so the two hubs' layouts match. The inventory
+views are scoped via `invLoc()` (which returns `S.whLocId` while the section is
+active). The section shows only when at least one warehouse exists; when several do, a
+picker appears in the tab bar. Overview surfaces item count / low-stock / value KPIs
+plus quick actions (incl. **scan to receive / ship**).
 
-**Distribution** and **Staff** are one shared implementation per hub, not CK-only
-code: the client `renderHubDistribution` / `renderHubStaff` read the current hub from
-`invLoc()`; `routes/distribution.js` `/orders` (`scope=hub`) and `/ck-stock` resolve
-the hub from `source_location_id` and gate on `isHubStaff`, so each hub sees only its
-own incoming store orders and on-hand/reserved/free stock; and `routes/central.js`
-HR endpoints (staff / tasks / schedule / PIN clock / timeclock) take an optional
-`location_id`, with `ck_tasks` / `ck_shifts` carrying a `location_id` so tasks and
-schedules are per-hub. The **Distribution** board lists a hub's incoming store orders
-(order #, priority, requested-by) with **Ship / Mark received / Cancel** (the two-step
-lifecycle) and the offer-to-stores toggle; a warehouse can also ship by scanning on
-**Transfers** / the scanner.
+**Staff is unified, not per-hub (2026-10-08).** A hub has **no "Staff" tab** of its
+own. Its people are part of the one Pho Ha Noi staff system: the **Central Kitchen and
+every Warehouse appear as locations** in the staff **Home location** dropdown and the
+**"Also works at"** checkboxes (backed by `GET /inventory/locations?type=staffable` =
+restaurants + CK + warehouses), so anyone can be based at, or also cover, a hub. Their
+roster, **Scheduling**, **Day Tasks** and **clock in/out** live where every store's do
+— under **Locations → that hub**, which (being a normal location) carries the **Staff ·
+Schedule · Day Tasks · Time Clock** tabs (the dining-only tabs — Service Flow,
+Menu/Recipes, Floor Plan, Performance — are hidden for a hub). Clock in/out uses the
+ordinary per-location kiosk **`/clock/<slug>`** (e.g. `/clock/central-kitchen`), writing
+to `time_entries` → payroll like any store. (This replaced an earlier hub-only PIN
+clock that wrote to the dead `timesheets` table, so those hours never reached payroll.)
+
+**Distribution** is one shared implementation per hub, not CK-only code: the client
+`renderHubDistribution` reads the current hub from `invLoc()`; `routes/distribution.js`
+`/orders` (`scope=hub`) and `/ck-stock` resolve the hub from `source_location_id` and
+gate on `isHubStaff`, so each hub sees only its own incoming store orders and
+on-hand/reserved/free stock. The **Distribution** board lists a hub's incoming store
+orders (order #, priority, requested-by) with **Ship / Mark received / Cancel** (the
+two-step lifecycle) and the offer-to-stores toggle; a warehouse can also ship by
+scanning on **Transfers** / the scanner.
 
 Designate a warehouse in **Locations → Edit → Type = Warehouse** (the field is
 locked for the Central Kitchen). Location cards show a **🏬 Warehouse** / **🏭
@@ -1235,8 +1245,8 @@ erDiagram
 | `store_requests` | Central K. | Daily item requests from each store |
 | `distribution_orders` | Central K. | A store's order to a hub (`source_location_id` — CK or Warehouse), with its hub-fill (`ck_qty`) / vendor-shortfall split, `shipped_qty` (how much of the hub portion has shipped) and `received_qty`/`received_by`. A multi-item order's lines share one `order_no` (`LOC-YYMMDD-NN`) and carry a `priority` + `requested_by` |
 | `ck_production_runs` | Central K. | Batch runs with yield & shrinkage |
-| `ck_tasks` | Central K. | Photo-verified kitchen tasks |
-| `ck_shifts` | Central K. | Central-kitchen shift schedule |
+| `ck_tasks` | Central K. | **Legacy** — CK day-tasks now use the unified `task_assignments` (Locations → CK → Day Tasks) |
+| `ck_shifts` | Central K. | **Legacy** — CK scheduling now uses the unified `shifts` (Locations → CK → Schedule) |
 | `menu_categories` | Menu | Menu groupings |
 | `menu_items` | Menu | Dishes with price |
 | `recipe_ingredients` | Menu | Item → inventory ingredient links for costing |
@@ -1301,7 +1311,7 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Locations** | Directory + details, operating hours, staff, weekly schedule, equipment register. Each card has **✎ Edit** (name/address/seats/status + an editable **kiosk URL slug**) and **🙈 Hide / ↩ Unhide** — **org admins only (Owner / CEO / President / Admin / HR)**. **Hiding** sets the location inactive: it's dimmed + badged *closed*, drops out of location pickers and the staff kiosks, and **stops accepting check-ins**; stock, staff and history are kept and it can be unhidden anytime. Renaming (e.g. Oakland → San Francisco) auto-updates guest check-in URLs (name-derived); update the **slug** to also retire the old `/clock` & `/scanner` links. | Owner/Admin all · Manager own · **edit/hide: Owner/CEO/President/Admin/HR** |
 | **Staff** | Directory (A–Z, searchable by name / phone — **including a person's previous login numbers** — / code / email / role), full HR-profile edit, **Jobs** tab (job/task catalog), Roles matrix (Access Levels), activity log. Adding staff requires a **mandatory 10-digit login phone** (email optional). **Add staff** + role/location changes are owner/admin-only; **managers edit their own store's staff** (name, login phone, status, password, all HR fields). **📱 Send Login Info to new Staff** (next to *+ Add staff*) opens a searchable picker and **texts a staff member their portal login** — it resets their password to the default `12345678` (so the texted credentials work immediately) and sends a welcome SMS with the portal link, their phone (login), the password, a reminder to change it on first login, and iPhone/Android *Add to Home Screen* steps. The text can be sent in **English, Vietnamese (Tiếng Việt) or Spanish (Español)** — pick the language in the picker (`?lang=en|vi|es`). `GET /staff/:id/login-message` previews it; `POST /staff/:id/send-login` resets + sends via `lib/sms.js` | Owner/Admin/Manager |
 | **Inventory** | Stock, orders & reorder, transfers, lots & expiry, vendors, **reports** (on-hand valuation — counts **active items only**, so removed items drop out — plus 30-day COGS &amp; value-by-category), glossary | Ops+ (own location) |
-| **Central Kitchen** | The CK's own **inventory hub** — the same tools as Inventory (Glossary, Stock, Orders & Reorder, Lots & Expiry, Vendors, Reports) scoped to the CK location — plus **Distribution** (raw-food warehouse → stores), **Fulfillment**, and CK staff & PIN clock. The CK **Glossary & Vendors are the master catalog**: adding or editing an item/vendor there **copies it one-way to every restaurant** (stores can also keep their own local items/vendors, which never push up) | Owner/Admin/GM |
+| **Central Kitchen** | The CK's own **inventory hub** — the same tools as Inventory (Glossary, Stock, Orders & Reorder, Lots & Expiry, Vendors, Reports) scoped to the CK location — plus **Distribution** (raw-food warehouse → stores) and **Fulfillment**. CK staff, scheduling, day-tasks and clock in/out are handled in the unified staff system (Staff Directory + Locations → Central Kitchen), not a CK-only tab. The CK **Glossary & Vendors are the master catalog**: adding or editing an item/vendor there **copies it one-way to every restaurant** (stores can also keep their own local items/vendors, which never push up) | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments, **breaks**, and **Waitlist** (every guest ever on the Front Desk waitlist — phone, SMS opt-in, status, texts sent — with CSV export for promotions; manage cap) — location + date filters | Reports tier |
 | **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix), day/time patterns and **avg time to pay** from the stored Toast history — no live pull; **each report runs manually via its own ▶ Run button** | Manager+ (own store) · Owner/Admin all |
