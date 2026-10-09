@@ -1029,6 +1029,9 @@ const check = (name, ok, detail = '') => {
     const whStoreItem = sdb.prepare("INSERT INTO inventory (location_id,item_name,category,unit,quantity,is_active) VALUES (?,?,?,?,0,1)").run(loc2, 'WH Widget', 'Supplies', 'each').lastInsertRowid;
     const po = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, source_location_id: whId, items: [{ item_id: whStoreItem, item_name: 'WH Widget', quantity: 10 }] }) }));
     check('place a Warehouse order', po.created === 1 && po.hub && po.hub.id === whId, JSON.stringify(po));
+    // Only APPROVED items load — review the order first so it's ready to scan-load.
+    const poLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=?").get(po.order_no);
+    await fetch(base + `/api/distribution/hub-orders/${po.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: poLine.id, decision: 'approved' }] }) });
     const whQueue = await j(await fetch(base + `/api/distribution/ship-queue?source_location_id=${whId}`, { headers: H(token) }));
     check('warehouse ship-queue lists the ordering store', whQueue.orders.some(o => o.store_id === loc2 && o.lines === 1 && o.remaining === 10), JSON.stringify(whQueue.orders));
     const whLines = await j(await fetch(base + `/api/distribution/ship-queue/${loc2}?source_location_id=${whId}`, { headers: H(token) }));
@@ -1044,8 +1047,10 @@ const check = (name, ok, detail = '') => {
     check('warehouse stock decremented by total shipped (14)', Math.abs(whOnHand - (100 - 14)) < 1e-9, 'on_hand=' + whOnHand);
     const whOrd = sdb.prepare("SELECT id,status,shipped_qty FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND item_name='WH Widget'").get(whId, loc2);
     check('order marked shipped after full fulfilment', whOrd.status === 'shipped' && Math.abs(whOrd.shipped_qty - 14) < 1e-9, JSON.stringify(whOrd));
+    check('scan-loading all approved items moved the header to loaded', (sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(po.order_no) || {}).stage === 'loaded');
     r = await fetch(base + `/api/distribution/orders/${whOrd.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) });
     check('receive the warehouse order', r.status === 200, await r.text());
+    check('receiving all approved items moved the header to delivered', (sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(po.order_no) || {}).stage === 'delivered');
     const whStoreQty = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name='WH Widget'").get(loc2).quantity;
     check('store received the shipped qty (14)', Math.abs(whStoreQty - 14) < 1e-9, 'store=' + whStoreQty);
     const whOrdFinal = sdb.prepare("SELECT requested_qty, shipped_qty FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND item_name='WH Widget'").get(whId, loc2);

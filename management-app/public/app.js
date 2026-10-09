@@ -1289,7 +1289,7 @@ function statusBadge(qty, min) {
 // typing into the auto-focused field — no phone camera.
 function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'warehouse') renderWarehouse(); else if (S.section === 'inventory') render(); }
 
-async function openScanner() {
+async function openScanner(opts) {
   // Every location can Receive, Transfer, Check Inventory and Use (consume) stock. The Warehouse &
   // Central Kitchen (distribution hubs) additionally get Shipping (fulfill store orders) — they're
   // the only ones with orders to fulfil.
@@ -1313,7 +1313,7 @@ async function openScanner() {
   const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
   setTimeout(focusManual, 60);
   let busy = false, mode = 'receive', shipStore = null;   // shipStore = the order (store) being filled
-  const close = () => { host.remove(); };
+  const close = () => { host.remove(); if (opts && opts.onClose) { try { opts.onClose(); } catch { /* ignore */ } } };
   host.querySelector('[data-x]').onclick = close;
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
   const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
@@ -1375,6 +1375,13 @@ async function openScanner() {
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
   $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
+  // Pre-open in a specific mode — e.g. "📠 Scan to load" from a hub order detail opens Shipping with
+  // the order's store already picked, so the operator can start scanning items onto the truck.
+  if (opts && opts.mode) {
+    if (opts.mode === 'ship' && opts.shipStore) shipStore = { id: String(opts.shipStore.id), name: opts.shipStore.name };
+    await setMode(opts.mode);
+    focusManual();
+  }
 }
 
 // Resolve a scanned code → show the right action. Glossary-aware: a known item just adds
@@ -7477,7 +7484,7 @@ async function renderHubOrderDetail(orderNo) {
   $('view').innerHTML = `
     <div class="row-between"><div><button class="btn ghost sm" id="odBack">← All orders</button>
       <h2 class="page" style="display:inline-block;margin:0 0 0 .5rem">Order ${esc(h.order_no)}</h2></div>
-      <div>${stageBtn ? `<button class="btn" id="${stageBtn[0]}">${stageBtn[1]}</button>` : ''}</div></div>
+      <div>${h.stage === 'approved' ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button> ` : ''}${stageBtn ? `<button class="btn" id="${stageBtn[0]}">${stageBtn[1]}</button>` : ''}</div></div>
     <p class="sub" style="color:var(--muted)">${esc(storeName)} &nbsp;·&nbsp; ${priorityBadge(h.priority)} &nbsp;·&nbsp; ${orderStatusChip(d.status_label)} &nbsp;·&nbsp; ${esc((h.created_at || '').slice(0, 16))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${d.reviewer ? ' · reviewed by ' + esc(d.reviewer) : ''}${d.driver ? ' · driver ' + esc(d.driver) : ''}</p>
     ${canReview ? `<div class="callout">Approve, hold or reject each item below. A <strong>hold</strong> or <strong>reject</strong> needs a reason; rejected items drop off the order. The requester is messaged with the outcome. You can partially approve.</div>` : ''}
     ${!canReview && d.can_review && lines.some(l => l.approval === 'held') ? `<div class="callout">This order still has <strong>held</strong> item(s). <strong>Approve</strong> one to send it — the order reopens so you can Load and deliver it — or <strong>Reject</strong> it (removed, requester messaged).</div>` : ''}
@@ -7494,7 +7501,8 @@ async function renderHubOrderDetail(orderNo) {
     catch (e) { toast(e.message, true); }
   };
   const stageAct = (path, title, note, yes, okMsg) => confirmModal(title, note, yes, async () => { const r = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/' + path, { method: 'POST', body: '{}' }); toast(okMsg(r)); renderHubOrderDetail(orderNo); });
-  if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load onto the truck?', `This deducts the approved items from <strong>${esc(invName())}</strong> on-hand and marks the order Loaded.`, 'Load', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}`);
+  if ($('odScanLoad')) $('odScanLoad').onclick = () => openScanner({ mode: 'ship', shipStore: { id: d.store.id, name: d.store.name }, onClose: () => renderHubOrderDetail(orderNo) });
+  if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load onto the truck?', `This deducts the approved items from <strong>${esc(invName())}</strong> on-hand and marks the order Loaded — or use <strong>📠 Scan to load</strong> to scan them onto the truck.`, 'Load all', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}`);
   if ($('odDispatch')) $('odDispatch').onclick = () => stageAct('dispatch', 'Mark in transit?', `A driver is taking this order out for delivery. The store is notified it's on the way.`, 'Mark in transit', () => 'Order in transit');
   if ($('odDeliver')) $('odDeliver').onclick = () => stageAct('deliver', 'Mark delivered?', `This lands the approved items into <strong>${esc(storeName)}</strong>'s inventory and closes the order.`, 'Mark delivered', (r) => `Delivered — ${r.received} item${r.received === 1 ? '' : 's'} received`);
   $('view').querySelectorAll('[data-drecall]').forEach(b => b.onclick = () => confirmModal(`Recall ${b.dataset.item || 'this item'}?`,

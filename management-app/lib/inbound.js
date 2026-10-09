@@ -77,6 +77,12 @@ function receiveAgainstOrder({ orderId, qty, code, userId, locId }) {
     const exact = Math.abs(newRecv - o.shipped_qty) <= EPS;   // only an exact match to what shipped closes it
     db.prepare(`UPDATE distribution_orders SET received_qty=?, received_by=?, status=?, updated_at=datetime('now') WHERE id=?`)
       .run(newRecv, userId || null, exact ? 'received' : 'shipped', o.id);
+    // Hand-off scan at the store: once every approved item is received, the order's header is delivered.
+    if (exact && o.order_no) {
+      const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(o.order_no);
+      if (approved.length && approved.every(l => l.status === 'received'))
+        db.prepare(`UPDATE distribution_order_headers SET stage='delivered', delivered_at=COALESCE(delivered_at,datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(o.order_no);
+    }
     db.exec('COMMIT');
     return { ok: true, kind: 'order', line_id: o.id, item_name: o.item_name, unit: o.unit, received: amt,
       order: { id: o.id, requested_qty: r3(o.requested_qty), shipped_qty: r3(o.shipped_qty), received_qty: newRecv,

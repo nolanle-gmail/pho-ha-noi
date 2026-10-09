@@ -21,25 +21,34 @@ function hubAvailable(hubId, itemName) {
   const row = db.prepare(`SELECT quantity FROM inventory WHERE location_id=? AND item_name=? AND is_active=1 AND distributable=1`).get(hubId, itemName);
   return row ? Math.max(0, row.quantity) : 0;
 }
-// Open order lines for a store from a hub, with how much is still to ship.
+// Open order lines for a store from a hub, with how much is still to ship. Only APPROVED items are
+// loadable — items awaiting review (pending), held or rejected don't ship.
 function hubOrderLines(hubId, storeId) {
-  return db.prepare(`SELECT id, item_id, item_name, unit, requested_qty, ck_qty, shipped_qty, status
+  return db.prepare(`SELECT id, order_no, item_id, item_name, unit, requested_qty, ck_qty, shipped_qty, status
     FROM distribution_orders
-    WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')
+    WHERE source_location_id=? AND to_location_id=? AND approval='approved' AND status IN ('requested','approved')
     ORDER BY item_name`).all(hubId, storeId)
     .map(o => ({ ...o, remaining: r3(Math.max(0, o.ck_qty - o.shipped_qty)) }))
     .filter(o => o.remaining > 0.0005 || o.shipped_qty > 0);
 }
-// The queue: stores with open orders for this hub, grouped per store.
+// The queue: stores with approved orders ready to load for this hub, grouped per store.
 function hubQueue(hubId) {
   return db.prepare(`
     SELECT d.to_location_id AS store_id, l.name AS store_name,
            COUNT(*) AS lines, SUM(d.ck_qty - d.shipped_qty) AS remaining, MIN(d.created_at) AS oldest_at,
            SUM(CASE WHEN d.shipped_qty > 0 THEN 1 ELSE 0 END) AS started
     FROM distribution_orders d JOIN locations l ON l.id = d.to_location_id
-    WHERE d.source_location_id=? AND d.status IN ('requested','approved') AND (d.ck_qty - d.shipped_qty) > 0.0005
+    WHERE d.source_location_id=? AND d.approval='approved' AND d.status IN ('requested','approved') AND (d.ck_qty - d.shipped_qty) > 0.0005
     GROUP BY d.to_location_id ORDER BY oldest_at`).all(hubId)
     .map(r => ({ ...r, remaining: r3(r.remaining) }));
+}
+// Once every APPROVED line of an order has fully shipped (loaded onto the truck), advance its header
+// from 'approved' to 'loaded'. Keeps the scan-to-load path in step with the stage machine.
+function syncLoaded(orderNo) {
+  if (!orderNo) return;
+  const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(orderNo);
+  if (approved.length && approved.every(l => ['shipped', 'received'].includes(l.status)))
+    db.prepare(`UPDATE distribution_order_headers SET stage='loaded', loaded_at=COALESCE(loaded_at, datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage='approved'`).run(orderNo);
 }
 // One store's open lines plus the hub's on-hand + barcode for scan matching.
 function storeLines(hubId, storeId) {
@@ -75,9 +84,9 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
   const src = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND barcode=? AND is_active=1`).get(hub.id, key);
   if (!src) return { error: `That barcode isn't stocked at ${hub.name}, so there's nothing to ship.`, found: false, code: key, status: 404 };
   const line = db.prepare(`SELECT * FROM distribution_orders
-    WHERE source_location_id=? AND to_location_id=? AND item_name=? AND status IN ('requested','approved')
+    WHERE source_location_id=? AND to_location_id=? AND item_name=? AND approval='approved' AND status IN ('requested','approved')
     ORDER BY id LIMIT 1`).get(hub.id, storeId, src.item_name);
-  if (!line) return { not_on_order: true, item_name: src.item_name, error: `${src.item_name} isn't on this store's order from ${hub.name}.` };
+  if (!line) return { not_on_order: true, item_name: src.item_name, error: `${src.item_name} isn't an approved item to load for this store from ${hub.name}.` };
 
   const catchw = !!src.is_catch_weight;
   const qty = parseFloat(catchw && (weight != null && weight !== '') ? weight
@@ -107,6 +116,7 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
     const done = newShipped >= ckQty - 0.0005;
     db.prepare(`UPDATE distribution_orders SET shipped_qty=?, ck_qty=?, requested_qty=?, status=?, approved_by=?, updated_at=datetime('now') WHERE id=?`)
       .run(newShipped, ckQty, requested, done ? 'shipped' : line.status, userId || null, line.id);
+    if (done) syncLoaded(line.order_no);   // all approved items loaded ⇒ the order's header moves to 'loaded'
     db.exec('COMMIT');
     logScan({ itemId: src.id, locationId: hub.id, action: 'ship', parsed: p, quantity: qty, userId });
     const fresh = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(line.id);
@@ -117,4 +127,4 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* */ } return { error: 'Could not ship that item.', status: 500 }; }
 }
 
-module.exports = { r3, hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender, HUB_TYPES };
+module.exports = { r3, hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender, syncLoaded, HUB_TYPES };
