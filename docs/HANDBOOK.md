@@ -2111,6 +2111,20 @@ cancelled — receive it, or ask the hub. Backend: `PUT /distribution/orders/:id
 `POST /distribution/cancel-order` cancels a whole order by its number atomically (scoped
 to the caller's store).
 
+**Requesting cancellation of a *shipped* order (2026-10-09).** Once an order ships the
+stock is in transit, so the store can't cancel it outright — it **asks the hub**. On
+**Orders & Reorder** each shipped line shows **Request cancellation** (and the order
+header requests all shipped lines); a pending request shows a **⏳ cancel requested**
+badge with a **Withdraw request** button, and the fulfilment contact is notified. On the
+hub's **Distribution** board the flagged line shows the badge (reason on hover) with
+**Recall & cancel** / **Decline**: *recall* returns the in-transit stock to the hub's
+on-hand (a logged `in` movement + a fresh lot), cancels the line and its vendor PO, and
+tells the store not to receive it; *decline* clears the request and tells the store to
+receive it as normal. Columns: `cancel_requested` / `cancel_reason` / `cancel_requested_by`
+on `distribution_orders` (cleared on receive). Endpoints: `POST /orders/:id/request-cancel`,
+`/withdraw-cancel`, `/resolve-cancel` (hub: `{action: recall|decline}`), and
+`POST /request-cancel-order`.
+
 The CK warehouse is a real stock holding, so the **org-wide inventory report**
 (Reports → Items with no location selected) counts it alongside the ten stores — its
 value shows up in the total, the by-category and by-location breakdowns, and the top
