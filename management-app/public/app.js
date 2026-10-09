@@ -7138,12 +7138,12 @@ async function openAddChatMembers(gid, existingIds) {
 // CK's Glossary/Vendors tabs fan out one-way to every restaurant (handled server-side).
 // 'Items' (per-location catalog) was merged into 'Stock' — one tab now shows levels + the catalog
 // fields (description/notes). 'Glossary' (the group-wide product dictionary) stays separate.
-const CK_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'], ['orders', 'Orders & Reorder'],
-  ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'], ['reports', 'Reports'], ['distribution', 'Distribution'],
-  ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
-const CK_RENDER = { overview: renderDashboard, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock, orders: renderOrders,
-  lots: renderLots, vendors: renderVendors, reports: renderReports, distribution: renderCkDistribution,
-  fulfillment: renderCkFulfillment, staff: renderCkStaff };
+const CK_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'], ['storage', 'Storage'],
+  ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'], ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'],
+  ['reports', 'Reports'], ['distribution', 'Distribution'], ['fulfillment', 'Fulfillment'], ['staff', 'CK Staff']];
+const CK_RENDER = { overview: renderDashboard, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock, storage: renderStorage,
+  orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors, reports: renderReports,
+  distribution: renderHubDistribution, fulfillment: renderCkFulfillment, staff: renderHubStaff };
 function renderCkTabs() {
   $('tabs').innerHTML = CK_TABS.map(([k, l]) => `<button data-ck="${k}" class="${S.ckTab === k ? 'active' : ''}">${l}</button>`).join('');
   $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.ckTab = b.dataset.ck; renderCkTabs(); renderCentral(); });
@@ -7164,9 +7164,11 @@ async function renderCentral() {
 // ships/transfers items to any location (manual ship via the scanner/Transfers).
 const WH_TABS = [['overview', 'Overview'], ['stock', 'Stock'], ['catalog', 'Glossary'],
   ['storage', 'Storage'], ['orders', 'Orders & Reorder'], ['transfers', 'Transfers'],
-  ['lots', 'Lots & Expiry'], ['vendors', 'Vendors']];
+  ['lots', 'Lots & Expiry'], ['vendors', 'Vendors'], ['reports', 'Reports'],
+  ['distribution', 'Distribution'], ['staff', 'Warehouse Staff']];
 const WH_RENDER = { overview: renderWhOverview, glossary: renderGlossary, catalog: renderCatalog, stock: renderStock,
-  storage: renderStorage, orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors };
+  storage: renderStorage, orders: renderOrders, transfers: renderTransfers, lots: renderLots, vendors: renderVendors,
+  reports: renderReports, distribution: renderHubDistribution, staff: renderHubStaff };
 function renderWhTabs() {
   const pick = (S.warehouses && S.warehouses.length > 1)
     ? `<select id="whPick" class="wh-pick">${S.warehouses.map(w => `<option value="${w.id}" ${String(w.id) === String(S.whLocId) ? 'selected' : ''}>${esc((w.name || '').replace('Pho Ha Noi — ', ''))}</option>`).join('')}</select>`
@@ -7298,35 +7300,40 @@ async function renderCkProduction() {
   ], async (v) => { const r = await api('/central/production', { method: 'POST', body: JSON.stringify({ product_id: b.dataset.produce, ...v }) }); toast(`Produced ${numf(r.produced)} units`); renderCentral(); }, 'Record'));
 }
 
-async function renderCkDistribution() {
-  const [q, stock] = await Promise.all([api('/distribution/orders?scope=ck'), api('/distribution/ck-stock')]);
-  const open = q.orders.filter(o => ['requested', 'approved', 'shipped'].includes(o.status));
-  const recent = q.orders.filter(o => ['received', 'cancelled'].includes(o.status)).slice(0, 8);
+// Shared by the Central Kitchen AND every Warehouse (both are fulfilment hubs). Reads the current
+// hub from invLoc()/invName() and scopes the order queue + stock to it via source_location_id.
+async function renderHubDistribution() {
+  const hubId = invLoc();
+  const hubName = invName();
+  const q = 'source_location_id=' + hubId;
+  const [ord, stock] = await Promise.all([api('/distribution/orders?scope=hub&' + q), api('/distribution/ck-stock?' + q)]);
+  const open = ord.orders.filter(o => ['requested', 'approved', 'shipped'].includes(o.status));
+  const recent = ord.orders.filter(o => ['received', 'cancelled'].includes(o.status)).slice(0, 8);
   const lowCount = stock.items.filter(i => i.low).length;
   $('view').innerHTML = `
-    <h2 class="page">Distribution <span style="font-weight:400;color:var(--muted);font-size:.9rem">— raw food to the stores</span></h2>
-    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Stores order raw items from the Central Kitchen first. Shipping an order deducts CK stock; the store confirms receipt to land it in their inventory. Whatever the CK can't cover is auto-routed to a vendor by the store.</p>
+    <h2 class="page">Distribution <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(hubName)} → the stores</span></h2>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Stores order from this hub; shipping an order deducts its stock and the store confirms receipt to land it. You can ship an order here, or scan items to ship on the <strong>Transfers</strong> / scanner flow. Whatever a hub can't cover is auto-routed to a vendor by the store.</p>
     <div class="section"><h3>Incoming store orders ${open.length ? `<span class="badge gold">${open.length} open</span>` : ''}</h3>
-      ${open.length ? `<div class="table-wrap"><table><thead><tr><th>Store</th><th>Item</th><th class="num">CK qty</th><th>Requested by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-        ${open.map(o => `<tr><td><strong>${esc(o.store_name)}</strong></td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)} ${esc(o.unit)}</td><td>${esc(o.requested_by_name || '—')}</td><td>${distBadge(o.status)}</td>
+      ${open.length ? `<div class="table-wrap"><table><thead><tr><th>Order #</th><th>Store</th><th>Item</th><th class="num">Qty</th><th class="num">Shipped</th><th>Priority</th><th>Requested by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+        ${open.map(o => `<tr><td class="mono">${esc(o.order_no || '—')}</td><td><strong>${esc(o.store_name)}</strong></td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? numf(o.shipped_qty) : '—'}</td><td>${priorityBadge(o.priority)}</td><td>${esc(o.requested_by_name || '—')}</td><td>${distBadge(o.status)}</td>
           <td><div class="actions-cell">${ckOrderActions(o)}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No open store orders.</div>'}
     </div>
-    <div class="section"><div class="row-between"><h3>Warehouse raw stock ${lowCount ? `<span class="badge low">${lowCount} low</span>` : ''}</h3></div>
+    <div class="section"><div class="row-between"><h3>On-hand stock ${lowCount ? `<span class="badge low">${lowCount} low</span>` : ''}</h3></div>
       <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">On hand</th><th class="num">Reserved</th><th class="num">Free</th><th class="num">Min</th><th>Offered to stores</th></tr></thead><tbody>
         ${stock.items.map(i => `<tr><td>${esc(i.item_name)}${i.low ? ' <span class="badge low">low</span>' : ''}</td><td class="num">${numf(i.quantity)} ${esc(i.unit)}</td><td class="num">${i.reserved > 0 ? numf(i.reserved) : '—'}</td><td class="num"><strong>${numf(i.free)}</strong></td><td class="num">${numf(i.min_quantity)}</td>
           <td><button class="btn sm ${i.distributable ? '' : 'ghost'}" data-dist-toggle="${i.id}" data-on="${i.distributable}">${i.distributable ? '✓ Offered' : 'Withheld'}</button></td></tr>`).join('')}
       </tbody></table></div>
-      <p class="sub" style="color:var(--muted);margin:.4rem 0 0">The Central Kitchen restocks itself from vendors on the <strong>Inventory</strong> page (scoped to the Central Kitchen).</p>
+      <p class="sub" style="color:var(--muted);margin:.4rem 0 0">This hub restocks itself from vendors on its own <strong>Orders & Reorder</strong> tab. <strong>Reserved</strong> = already promised to open store orders; <strong>Free</strong> = free to promise.</p>
     </div>
-    ${recent.length ? `<div class="section"><h3>Recently settled</h3><div class="table-wrap"><table><thead><tr><th>Store</th><th>Item</th><th class="num">CK qty</th><th>Status</th></tr></thead><tbody>
-      ${recent.map(o => `<tr><td>${esc(o.store_name)}</td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)}</td><td>${distBadge(o.status)}</td></tr>`).join('')}
+    ${recent.length ? `<div class="section"><h3>Recently settled</h3><div class="table-wrap"><table><thead><tr><th>Order #</th><th>Store</th><th>Item</th><th class="num">Qty</th><th>Status</th></tr></thead><tbody>
+      ${recent.map(o => `<tr><td class="mono">${esc(o.order_no || '—')}</td><td>${esc(o.store_name)}</td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)}</td><td>${distBadge(o.status)}</td></tr>`).join('')}
     </tbody></table></div></div>` : ''}`;
   $('view').querySelectorAll('[data-dship]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dship, 'shipped'));
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.drecv, 'received'));
   $('view').querySelectorAll('[data-dcancel]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dcancel, 'cancelled'));
   $('view').querySelectorAll('[data-dist-toggle]').forEach(b => b.onclick = async () => {
-    try { await api('/distribution/ck-stock/' + b.dataset.distToggle, { method: 'PUT', body: JSON.stringify({ distributable: b.dataset.on === '1' ? 0 : 1 }) }); renderCentral(); }
+    try { await api('/distribution/ck-stock/' + b.dataset.distToggle, { method: 'PUT', body: JSON.stringify({ distributable: b.dataset.on === '1' ? 0 : 1 }) }); invRefresh(); }
     catch (e) { toast(e.message, true); }
   });
 }
@@ -7336,7 +7343,7 @@ function ckOrderActions(o) {
   return '';
 }
 async function ckOrderAct(id, status) {
-  try { await api('/distribution/orders/' + id, { method: 'PUT', body: JSON.stringify({ status }) }); toast('Order ' + status); renderCentral(); }
+  try { await api('/distribution/orders/' + id, { method: 'PUT', body: JSON.stringify({ status }) }); toast('Order ' + status); invRefresh(); }
   catch (e) { toast(e.message, true); }
 }
 
@@ -7447,10 +7454,16 @@ async function renderCkFulfillment() {
   });
 }
 
-async function renderCkStaff() {
-  const [staff, tasks, sched, clock] = await Promise.all([api('/central/staff'), api('/central/tasks'), api('/central/schedule'), api('/central/timeclock')]);
+// Hub HR (staff · PIN clock · schedule · tasks), shared by the Central Kitchen and every Warehouse.
+// Scoped to the current hub via ?location_id= (and location_id in the clock/task bodies).
+async function renderHubStaff() {
+  const hubId = invLoc();
+  const hubName = invName();
+  const lq = 'location_id=' + hubId;
+  const [staff, tasks, sched, clock] = await Promise.all([
+    api('/central/staff?' + lq), api('/central/tasks?' + lq), api('/central/schedule?' + lq), api('/central/timeclock?' + lq)]);
   $('view').innerHTML = `
-    <h2 class="page">Central Kitchen HR</h2>
+    <h2 class="page">${esc(hubName)} HR</h2>
     <div class="acct-grid">
       <div class="section"><h3>PIN time clock <span style="font-weight:400;color:var(--muted);font-size:.82rem">terminal</span></h3>
         <div class="err" id="ckClockErr"></div>
@@ -7463,15 +7476,15 @@ async function renderCkStaff() {
     </div>
     <div class="section"><div class="row-between"><h3>Task assignments</h3><button class="btn sm" id="ckAddTask">+ Add task</button></div>
       <div class="table-wrap"><table><thead><tr><th>Task</th><th>Assigned to</th><th>Verify</th><th>Status</th><th></th></tr></thead><tbody>
-        ${tasks.map(t => `<tr><td><strong>${esc(t.title)}</strong></td><td>${esc(t.assigned_name || '—')}</td><td>${t.requires_photo ? '<span class="badge gold">📷 photo</span>' : '—'}</td><td>${t.status === 'done' ? '<span class="badge ok">done</span>' : '<span class="badge low">assigned</span>'}</td><td>${t.status === 'done' ? '' : `<button class="btn sm ghost" data-ckdone="${t.id}" data-photo="${t.requires_photo}">Complete</button>`}</td></tr>`).join('')}
+        ${tasks.map(t => `<tr><td><strong>${esc(t.title)}</strong></td><td>${esc(t.assigned_name || '—')}</td><td>${t.requires_photo ? '<span class="badge gold">📷 photo</span>' : '—'}</td><td>${t.status === 'done' ? '<span class="badge ok">done</span>' : '<span class="badge low">assigned</span>'}</td><td>${t.status === 'done' ? '' : `<button class="btn sm ghost" data-ckdone="${t.id}" data-photo="${t.requires_photo}">Complete</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">No tasks yet.</td></tr>'}
       </tbody></table></div></div>
     <div class="section"><h3>Staff</h3>
       <div class="table-wrap"><table><thead><tr><th>Name</th><th>Role</th><th class="num">Rate</th><th>PIN</th></tr></thead><tbody>
-        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('')}
+        ${staff.map(u => `<tr><td><strong>${esc(u.name)}</strong></td><td><span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></td><td class="num">${money(u.hourly_rate)}/hr</td><td>${u.has_pin ? '<span class="badge ok">set</span>' : '—'}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No staff based at this hub yet.</td></tr>'}
       </tbody></table></div></div>`;
   $('ckClockBtn').onclick = async () => {
     $('ckClockErr').textContent = '';
-    try { const r = await api('/central/clock', { method: 'POST', body: JSON.stringify({ pin: $('ckPin').value }) }); toast(`${r.name}: ${r.action === 'clock_in' ? 'clocked in' : 'clocked out (' + numf(r.hours) + 'h)'}`); renderCentral(); }
+    try { const r = await api('/central/clock', { method: 'POST', body: JSON.stringify({ pin: $('ckPin').value, location_id: hubId }) }); toast(`${r.name}: ${r.action === 'clock_in' ? 'clocked in' : 'clocked out (' + numf(r.hours) + 'h)'}`); invRefresh(); }
     catch (e) { $('ckClockErr').textContent = e.message; }
   };
   $('ckAddTask').onclick = () => modal('Add task', [
@@ -7479,11 +7492,11 @@ async function renderCkStaff() {
     { key: 'assigned_to', label: 'Assign to', type: 'select', options: staff.map(u => ({ value: u.id, label: u.name })) },
     { key: 'requires_photo', label: 'Requires photo?', type: 'select', options: [{ value: '', label: 'No' }, { value: '1', label: 'Yes' }] },
     { key: 'reason', label: 'Reason / note (for audit)' },
-  ], async (v) => { await api('/central/tasks', { method: 'POST', body: JSON.stringify(v) }); toast('Task added'); renderCentral(); });
+  ], async (v) => { await api('/central/tasks', { method: 'POST', body: JSON.stringify(Object.assign({ location_id: hubId }, v)) }); toast('Task added'); invRefresh(); });
   $('view').querySelectorAll('[data-ckdone]').forEach(b => b.onclick = () => {
     if (b.dataset.photo === '1') modal('Complete task (photo required)', [{ key: 'photo_url', label: 'Photo URL / reference' }],
-      async (v) => { await api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: JSON.stringify(v) }); toast('Task completed'); renderCentral(); }, 'Complete');
-    else api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: '{}' }).then(() => { toast('Task completed'); renderCentral(); });
+      async (v) => { await api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: JSON.stringify(v) }); toast('Task completed'); invRefresh(); }, 'Complete');
+    else api(`/central/tasks/${b.dataset.ckdone}/complete`, { method: 'PUT', body: '{}' }).then(() => { toast('Task completed'); invRefresh(); });
   });
 }
 

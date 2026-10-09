@@ -13,6 +13,17 @@ const A = ROLES.CENTRAL; // owner / admin / general manager
 
 const today = () => new Date().toISOString().slice(0, 10);
 function ckLoc() { return db.prepare(`SELECT * FROM locations WHERE type='central_kitchen' LIMIT 1`).get(); }
+// The hub (Central Kitchen or a Warehouse) a HR request is for: an explicit location_id validated as
+// a hub, else the Central Kitchen (back-compat default). Keeps the CK Staff tab and a Warehouse Staff
+// tab on one set of endpoints.
+function hubLoc(req, fromQuery) {
+  const asked = fromQuery ? req.query.location_id : (req.body && req.body.location_id);
+  if (asked) {
+    const l = db.prepare(`SELECT * FROM locations WHERE id=? AND type IN ('central_kitchen','warehouse') AND is_active=1`).get(asked);
+    if (l) return l;
+  }
+  return ckLoc();
+}
 function ingredientCosts() {
   const map = {};
   db.prepare(`SELECT item_name, ROUND(AVG(unit_cost),4) c FROM inventory WHERE is_active=1 GROUP BY item_name`).all()
@@ -267,20 +278,22 @@ router.post('/fulfill/:locationId', requireRole(...A), (req, res) => {
 
 // ── 5. CK HR: staff, tasks, schedule, PIN time clock ─────────────────────────
 router.get('/staff', requireRole(...A), (req, res) => {
-  const ck = ckLoc(); if (!ck) return res.json([]);
+  const hub = hubLoc(req, true); if (!hub) return res.json([]);
   res.json(db.prepare(`SELECT id, name, email, role, hourly_rate, (pin IS NOT NULL) AS has_pin, is_active
-    FROM users WHERE location_id=? AND is_active=1 ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(ck.id));
+    FROM users WHERE location_id=? AND is_active=1 ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'support' THEN 1 ELSE 2 END, name`).all(hub.id));
 });
 router.get('/tasks', requireRole(...A), (req, res) => {
+  const hub = hubLoc(req, true); if (!hub) return res.json([]);
   res.json(db.prepare(`SELECT t.*, u.name assigned_name FROM ck_tasks t LEFT JOIN users u ON t.assigned_to=u.id
-    ORDER BY t.status, t.due, t.id DESC LIMIT 100`).all());
+    WHERE t.location_id=? ORDER BY t.status, t.due, t.id DESC LIMIT 100`).all(hub.id));
 });
 router.post('/tasks', requireRole(...A), (req, res) => {
+  const hub = hubLoc(req, false); if (!hub) return res.status(400).json({ error: 'No hub configured.' });
   const title = (req.body.title || '').toString().trim();
   if (!title) return res.status(400).json({ error: 'Task title required.' });
-  const r = db.prepare(`INSERT INTO ck_tasks (title, assigned_to, requires_photo, due) VALUES (?,?,?,?)`)
-    .run(title, req.body.assigned_to || null, req.body.requires_photo ? 1 : 0, req.body.due || null);
-  auditLog(req, 'ck_task_create', 'ck_task', r.lastInsertRowid, { title, assigned_to: req.body.assigned_to || null, requires_photo: req.body.requires_photo ? 1 : 0 });
+  const r = db.prepare(`INSERT INTO ck_tasks (title, assigned_to, requires_photo, due, location_id) VALUES (?,?,?,?,?)`)
+    .run(title, req.body.assigned_to || null, req.body.requires_photo ? 1 : 0, req.body.due || null, hub.id);
+  auditLog(req, 'ck_task_create', 'ck_task', r.lastInsertRowid, { title, assigned_to: req.body.assigned_to || null, requires_photo: req.body.requires_photo ? 1 : 0, location_id: hub.id });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 router.put('/tasks/:id/complete', requireRole(...A), (req, res) => {
@@ -292,23 +305,25 @@ router.put('/tasks/:id/complete', requireRole(...A), (req, res) => {
   res.json({ success: true });
 });
 router.get('/schedule', requireRole(...A), (req, res) => {
+  const hub = hubLoc(req, true); if (!hub) return res.json([]);
   const start = req.query.week_start || today();
   res.json(db.prepare(`SELECT s.*, u.name FROM ck_shifts s JOIN users u ON s.user_id=u.id
-    WHERE s.shift_date >= ? AND s.shift_date < date(?, '+7 days') ORDER BY s.shift_date, s.start_time`).all(start, start));
+    WHERE s.location_id=? AND s.shift_date >= ? AND s.shift_date < date(?, '+7 days') ORDER BY s.shift_date, s.start_time`).all(hub.id, start, start));
 });
 router.post('/schedule', requireRole(...A), (req, res) => {
+  const hub = hubLoc(req, false); if (!hub) return res.status(400).json({ error: 'No hub configured.' });
   const { user_id, shift_date, start_time, end_time } = req.body || {};
   if (!user_id || !shift_date) return res.status(400).json({ error: 'Staff and date required.' });
-  const r = db.prepare(`INSERT INTO ck_shifts (user_id, shift_date, start_time, end_time) VALUES (?,?,?,?)`).run(user_id, shift_date, start_time || null, end_time || null);
-  auditLog(req, 'ck_shift_create', 'ck_shift', r.lastInsertRowid, { user_id: Number(user_id), shift_date, start_time: start_time || null, end_time: end_time || null });
+  const r = db.prepare(`INSERT INTO ck_shifts (user_id, shift_date, start_time, end_time, location_id) VALUES (?,?,?,?,?)`).run(user_id, shift_date, start_time || null, end_time || null, hub.id);
+  auditLog(req, 'ck_shift_create', 'ck_shift', r.lastInsertRowid, { user_id: Number(user_id), shift_date, start_time: start_time || null, end_time: end_time || null, location_id: hub.id });
   res.json({ success: true, id: r.lastInsertRowid });
 });
 
 // PIN time clock (represents a terminal): clock in, or clock out an open shift.
 router.post('/clock', requireRole(...A), (req, res) => {
-  const ck = ckLoc(); if (!ck) return res.status(400).json({ error: 'No central kitchen configured.' });
+  const hub = hubLoc(req, false); if (!hub) return res.status(400).json({ error: 'No hub configured.' });
   const pin = (req.body.pin || '').toString().trim();
-  const u = db.prepare(`SELECT * FROM users WHERE pin=? AND location_id=? AND is_active=1`).get(pin, ck.id);
+  const u = db.prepare(`SELECT * FROM users WHERE pin=? AND location_id=? AND is_active=1`).get(pin, hub.id);
   if (!u) return res.status(404).json({ error: 'PIN not recognized.' });
   const open = db.prepare(`SELECT * FROM timesheets WHERE user_id=? AND clock_out IS NULL ORDER BY clock_in DESC LIMIT 1`).get(u.id);
   if (open) {
@@ -317,14 +332,14 @@ router.post('/clock', requireRole(...A), (req, res) => {
     auditLog(req, 'ck_clock_out', 'user', u.id, { name: u.name, hours: Math.max(0, hrs) });
     return res.json({ success: true, action: 'clock_out', name: u.name, hours: Math.max(0, hrs) });
   }
-  db.prepare(`INSERT INTO timesheets (user_id, location_id, clock_in) VALUES (?,?, datetime('now'))`).run(u.id, ck.id);
+  db.prepare(`INSERT INTO timesheets (user_id, location_id, clock_in) VALUES (?,?, datetime('now'))`).run(u.id, hub.id);
   auditLog(req, 'ck_clock_in', 'user', u.id, { name: u.name });
   res.json({ success: true, action: 'clock_in', name: u.name });
 });
 router.get('/timeclock', requireRole(...A), (req, res) => {
-  const ck = ckLoc(); if (!ck) return res.json([]);
+  const hub = hubLoc(req, true); if (!hub) return res.json([]);
   res.json(db.prepare(`SELECT t.id, u.name, t.clock_in, t.clock_out, t.hours FROM timesheets t JOIN users u ON t.user_id=u.id
-    WHERE t.location_id=? ORDER BY t.clock_in DESC LIMIT 30`).all(ck.id));
+    WHERE t.location_id=? ORDER BY t.clock_in DESC LIMIT 30`).all(hub.id));
 });
 
 module.exports = router;

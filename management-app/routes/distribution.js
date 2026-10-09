@@ -80,16 +80,16 @@ function resolveHub(req, fromQuery) {
 // The Central Kitchen's own raw inventory, with how much is already promised to
 // open store orders (reserved) so the kitchen can see true free-to-promise stock.
 router.get('/ck-stock', requireRole(ROLES.OPS), (req, res) => {
-  const ck = ckLoc();
-  if (!ck) return res.status(404).json({ error: 'No Central Kitchen is configured.' });
-  if (!isCKStaff(req)) return res.status(403).json({ error: 'Central Kitchen staff only.' });
+  const hub = resolveHub(req, true);
+  if (!hub) return res.status(404).json({ error: 'No fulfilment hub is configured.' });
+  if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub.name} staff only.` });
   const rows = db.prepare(`SELECT id, item_name, category, unit, quantity, min_quantity, par_level, unit_cost, distributable
-    FROM inventory WHERE location_id=? AND is_active=1 ORDER BY item_name`).all(ck.id);
+    FROM inventory WHERE location_id=? AND is_active=1 ORDER BY item_name`).all(hub.id);
   const reservedBy = db.prepare(`SELECT item_name, COALESCE(SUM(ck_qty),0) AS reserved
-    FROM distribution_orders WHERE status IN ('requested','approved') GROUP BY item_name`).all();
+    FROM distribution_orders WHERE source_location_id=? AND status IN ('requested','approved') GROUP BY item_name`).all(hub.id);
   const reserved = Object.fromEntries(reservedBy.map(r => [r.item_name, r.reserved]));
   res.json({
-    location: { id: ck.id, name: ck.name },
+    location: { id: hub.id, name: hub.name },
     items: rows.map(r => {
       const rsv = r3(reserved[r.item_name] || 0);
       return { ...r, reserved: rsv, free: r3(Math.max(0, r.quantity - rsv)), low: r.quantity < (r.min_quantity || 0) };
@@ -97,11 +97,12 @@ router.get('/ck-stock', requireRole(ROLES.OPS), (req, res) => {
   });
 });
 
-// Curate a CK item: offer/withhold it from stores, or set its reorder thresholds.
+// Curate a hub item: offer/withhold it from stores, or set its reorder thresholds.
 router.put('/ck-stock/:id', requireRole(ROLES.OPS), (req, res) => {
-  const ck = ckLoc();
-  if (!ck || !isCKStaff(req)) return res.status(403).json({ error: 'Central Kitchen staff only.' });
-  const item = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=?`).get(req.params.id, ck.id);
+  const item0 = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.params.id);
+  const hub = item0 ? hubById(item0.location_id) : null;
+  if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
+  const item = db.prepare(`SELECT * FROM inventory WHERE id=? AND location_id=?`).get(req.params.id, hub.id);
   if (!item) return res.status(404).json({ error: 'Item not found at the Central Kitchen.' });
   const sets = [], vals = [];
   if (req.body.distributable !== undefined) { sets.push('distributable=?'); vals.push(req.body.distributable ? 1 : 0); }
@@ -222,13 +223,15 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
 router.get('/hubs', requireRole(ROLES.OPS), (req, res) => { res.json({ hubs: hubs() }); });
 
 // ── Order lists ──────────────────────────────────────────────────────────────
-// scope=ck → the kitchen's incoming queue (all stores); scope=store → my orders.
+// scope=ck|hub → a hub's incoming queue (orders it fills, all stores); scope=store → my orders.
 router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
-  const scope = req.query.scope === 'ck' ? 'ck' : 'store';
+  const scope = (req.query.scope === 'ck' || req.query.scope === 'hub') ? 'hub' : 'store';
   let where, args;
-  if (scope === 'ck') {
-    if (!isCKStaff(req)) return res.status(403).json({ error: 'Central Kitchen staff only.' });
-    where = ''; args = [];
+  if (scope === 'hub') {
+    const hub = resolveHub(req, true);
+    if (!hub) return res.status(404).json({ error: 'No fulfilment hub selected.' });
+    if (!isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub.name} staff only.` });
+    where = 'WHERE d.source_location_id=?'; args = [hub.id];
   } else {
     const locId = storeScope(req, true);
     if (!locId) return res.json({ orders: [] });

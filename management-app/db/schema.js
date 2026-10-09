@@ -137,6 +137,7 @@ function migrate() {
       photo_url TEXT,
       status TEXT NOT NULL DEFAULT 'assigned' CHECK(status IN ('assigned','done')),
       due TEXT,
+      location_id INTEGER REFERENCES locations(id),
       created_at TEXT DEFAULT (datetime('now')),
       completed_at TEXT
     );
@@ -145,7 +146,8 @@ function migrate() {
       user_id INTEGER NOT NULL REFERENCES users(id),
       shift_date TEXT NOT NULL,
       start_time TEXT,
-      end_time TEXT
+      end_time TEXT,
+      location_id INTEGER REFERENCES locations(id)
     );
     CREATE INDEX IF NOT EXISTS idx_sr_date ON store_requests(request_date, product_id);
     CREATE INDEX IF NOT EXISTS idx_ckrec_prod ON ck_recipe_ingredients(product_id);
@@ -1486,11 +1488,18 @@ function migrate() {
     // order_no across its line rows (grouped for display).
     `ALTER TABLE distribution_orders ADD COLUMN order_no TEXT`,
     `ALTER TABLE distribution_orders ADD COLUMN priority TEXT NOT NULL DEFAULT 'standard'`,
+    // Hub HR (tasks & schedule) is now per-hub so a Warehouse has its own, like the Central Kitchen.
+    `ALTER TABLE ck_tasks ADD COLUMN location_id INTEGER`,
+    `ALTER TABLE ck_shifts ADD COLUMN location_id INTEGER`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
-  // Backfill: existing distribution orders were all Central-Kitchen orders.
+  // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
     const ck = db.prepare(`SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1`).get();
-    if (ck) db.prepare(`UPDATE distribution_orders SET source_location_id=? WHERE source_location_id IS NULL`).run(ck.id);
+    if (ck) {
+      db.prepare(`UPDATE distribution_orders SET source_location_id=? WHERE source_location_id IS NULL`).run(ck.id);
+      db.prepare(`UPDATE ck_tasks SET location_id=? WHERE location_id IS NULL`).run(ck.id);
+      db.prepare(`UPDATE ck_shifts SET location_id=? WHERE location_id IS NULL`).run(ck.id);
+    }
   } catch { /* table not present yet */ }
 
   // Attachments used to be restricted to CHECK(kind IN ('image','video')); relax that so
