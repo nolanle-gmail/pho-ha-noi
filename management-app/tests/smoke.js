@@ -1114,6 +1114,37 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/distribution/orders/${dord.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'cancelled' }) });
     check('cannot cancel an order that already shipped/received (400)', r.status === 400, 'status=' + r.status);
 
+    // Request-cancellation flow for a SHIPPED order (stock already in transit → ask the hub to recall).
+    const shipItem = sdb.prepare("SELECT id, quantity FROM inventory WHERE location_id=? AND item_name=? LIMIT 1").get(ckL, ckStocked[0]);
+    const storeShipItem = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, ckStocked[0]);
+    const so = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: storeShipItem.id, item_name: ckStocked[0], quantity: 3 }] }) }));
+    const soLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? LIMIT 1").get(so.order_no);
+    r = await fetch(base + `/api/distribution/orders/${soLine.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'shipped' }) });
+    check('ship a fresh order (now only request-cancellable)', r.status === 200, 'status=' + r.status);
+    const ckQtyAfterShip = sdb.prepare("SELECT quantity FROM inventory WHERE id=?").get(shipItem.id).quantity;
+    r = await fetch(base + '/api/distribution/cancel-order', { method: 'POST', headers: H(token), body: JSON.stringify({ order_no: so.order_no }) });
+    check('a shipped order can’t be hard-cancelled (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `/api/distribution/orders/${soLine.id}/request-cancel`, { method: 'POST', headers: H(token), body: JSON.stringify({ reason: 'ordered by mistake' }) });
+    check('request cancellation of a shipped line', r.status === 200, 'status=' + r.status);
+    check('line is flagged cancel_requested with the reason', (sdb.prepare("SELECT cancel_requested, cancel_reason FROM distribution_orders WHERE id=?").get(soLine.id) || {}).cancel_requested === 1);
+    const nhaId2 = sdb.prepare("SELECT id FROM users WHERE email='nhale.smoke@phn.test'").get().id;
+    check('hub (Nha Le) notified of the cancellation request', !!sdb.prepare("SELECT 1 FROM messages m JOIN message_recipients mr ON mr.message_id=m.id WHERE mr.user_id=? AND m.subject LIKE '%'||?||'%' AND m.subject LIKE '%ancel%' ORDER BY m.id DESC LIMIT 1").get(nhaId2, so.order_no));
+    const recall = await j(await fetch(base + `/api/distribution/orders/${soLine.id}/resolve-cancel`, { method: 'POST', headers: H(token), body: JSON.stringify({ action: 'recall' }) }));
+    check('hub recalls the shipment', recall.success === true && recall.action === 'recalled');
+    const ckQtyAfterRecall = sdb.prepare("SELECT quantity FROM inventory WHERE id=?").get(shipItem.id).quantity;
+    check('recall returns the stock to the hub and cancels the line',
+      Math.abs(ckQtyAfterRecall - (ckQtyAfterShip + 3)) < 0.001
+      && (sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(soLine.id) || {}).status === 'cancelled',
+      JSON.stringify({ afterShip: ckQtyAfterShip, afterRecall: ckQtyAfterRecall }));
+    // Decline path: ship another, request, hub declines → stays shipped, flag cleared.
+    const so2 = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: storeShipItem.id, item_name: ckStocked[0], quantity: 2 }] }) }));
+    const so2Line = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? LIMIT 1").get(so2.order_no);
+    await fetch(base + `/api/distribution/orders/${so2Line.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'shipped' }) });
+    await fetch(base + `/api/distribution/orders/${so2Line.id}/request-cancel`, { method: 'POST', headers: H(token), body: '{}' });
+    const decline = await j(await fetch(base + `/api/distribution/orders/${so2Line.id}/resolve-cancel`, { method: 'POST', headers: H(token), body: JSON.stringify({ action: 'decline' }) }));
+    const so2Row = sdb.prepare("SELECT status, cancel_requested FROM distribution_orders WHERE id=?").get(so2Line.id);
+    check('hub declines a request — order stays shipped, flag cleared', decline.action === 'declined' && so2Row.status === 'shipped' && so2Row.cancel_requested === 0, JSON.stringify(so2Row));
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);

@@ -2244,13 +2244,17 @@ function hubOrdersBlock(title, list) {
   if (!list || !list.length) return `<div class="section"><h3>${esc(title)}</h3><div class="empty">No orders yet.</div></div>`;
   const groups = {};
   list.forEach(o => { const k = o.order_no || ('#' + o.id); (groups[k] = groups[k] || []).push(o); });
-  // A line can still be cancelled by the requester until it ships (nothing shipped yet).
+  // A line can be cancelled outright by the requester until it ships; once shipped (stock in
+  // transit) they can only REQUEST the hub cancel it.
   const canCancelLine = (o) => (o.status === 'requested' || o.status === 'approved') && !(o.shipped_qty > 0.0005);
+  const canReqCancel = (o) => o.status === 'shipped' && !o.cancel_requested;
   const rows = Object.values(groups).map(items => {
     const h = items[0];
     const anyCancelable = h.order_no && items.some(canCancelLine);
-    const hdr = `<tr class="grp"><td colspan="6"><div class="row-between" style="align-items:center;gap:.6rem"><div><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}</span></div>${anyCancelable ? `<button class="btn sm ghost danger" data-ocancel="${esc(h.order_no)}">Cancel order</button>` : ''}</div></td></tr>`;
-    const body = items.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${distBadge(o.status)}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}${canCancelLine(o) ? `<button class="btn sm ghost danger" data-dcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Cancel</button>` : ''}</div></td></tr>`).join('');
+    const anyReqCancel = h.order_no && items.some(canReqCancel);
+    const hdrBtns = `${anyCancelable ? `<button class="btn sm ghost danger" data-ocancel="${esc(h.order_no)}">Cancel order</button>` : ''}${anyReqCancel ? `<button class="btn sm ghost danger" data-oreqcancel="${esc(h.order_no)}">Request cancellation</button>` : ''}`;
+    const hdr = `<tr class="grp"><td colspan="6"><div class="row-between" style="align-items:center;gap:.6rem"><div><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}</span></div>${hdrBtns ? `<div style="display:flex;gap:.4rem">${hdrBtns}</div>` : ''}</div></td></tr>`;
+    const body = items.map(o => `<tr><td>${esc(o.item_name)}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${distBadge(o.status)}${o.cancel_requested ? ` <span class="badge gold" title="${esc(o.cancel_reason || 'Cancellation requested')}">⏳ cancel requested</span>` : ''}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}${canCancelLine(o) ? `<button class="btn sm ghost danger" data-dcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Cancel</button>` : ''}${canReqCancel(o) ? `<button class="btn sm ghost danger" data-reqcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Request cancellation</button>` : ''}${o.cancel_requested ? `<button class="btn sm ghost" data-wdcancel="${o.id}" data-item="${esc(o.item_name)}">Withdraw request</button>` : ''}</div></td></tr>`).join('');
     return hdr + body;
   }).join('');
   return `<div class="section"><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">Received</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
@@ -2329,6 +2333,27 @@ async function renderOrders() {
       `This cancels every item on order <strong>${esc(b.dataset.ocancel)}</strong> that hasn't shipped yet, plus any vendor orders drafted for the shortfall. Anything already shipped or received is kept.`,
       'Cancel order',
       async () => { const r = await api('/distribution/cancel-order', { method: 'POST', body: JSON.stringify({ order_no: b.dataset.ocancel }) }); toast(`Order cancelled — ${r.cancelled} item${r.cancelled === 1 ? '' : 's'}${r.blocked ? ` (${r.blocked} kept — already shipped)` : ''}`); invRefresh(); });
+  });
+  // Already shipped — the requester asks the hub to cancel (recall). Per item…
+  $('view').querySelectorAll('[data-reqcancel]').forEach(b => b.onclick = () => {
+    modal(`Request cancellation of ${b.dataset.item || 'this item'}?`, [
+      { type: 'note', label: `This item has already shipped${b.dataset.ono ? ` on order ${b.dataset.ono}` : ''}, so the stock is on its way. The hub will be asked to recall it — don't receive it until they respond.` },
+      { key: 'reason', label: 'Reason (optional)' },
+    ], async (v) => { await api('/distribution/orders/' + b.dataset.reqcancel + '/request-cancel', { method: 'POST', body: JSON.stringify({ reason: v.reason || '' }) }); toast('Cancellation requested — the hub was notified'); invRefresh(); }, 'Send request');
+  });
+  // …or for every shipped item on the order.
+  $('view').querySelectorAll('[data-oreqcancel]').forEach(b => b.onclick = () => {
+    modal(`Request cancellation of order ${b.dataset.oreqcancel}?`, [
+      { type: 'note', label: `The shipped items on this order will be flagged for the hub to recall — don't receive them until the hub responds.` },
+      { key: 'reason', label: 'Reason (optional)' },
+    ], async (v) => { const r = await api('/distribution/request-cancel-order', { method: 'POST', body: JSON.stringify({ order_no: b.dataset.oreqcancel, reason: v.reason || '' }) }); toast(`Cancellation requested for ${r.requested} item${r.requested === 1 ? '' : 's'} — the hub was notified`); invRefresh(); }, 'Send request');
+  });
+  // Requester withdraws a pending cancellation request.
+  $('view').querySelectorAll('[data-wdcancel]').forEach(b => b.onclick = () => {
+    confirmModal('Withdraw cancellation request?',
+      `This withdraws your request to cancel <strong>${esc(b.dataset.item || 'this item')}</strong>. The hub will deliver it as normal.`,
+      'Withdraw request',
+      async () => { await api('/distribution/orders/' + b.dataset.wdcancel + '/withdraw-cancel', { method: 'POST', body: '{}' }); toast('Request withdrawn'); invRefresh(); });
   });
   $('view').querySelectorAll('[data-order]').forEach(b => b.onclick = async () => {
     try { await api('/inventory/order/' + b.dataset.order, { method: 'PUT', body: JSON.stringify({ status: b.dataset.status }) }); toast('Order ' + b.dataset.status); invRefresh(); }
@@ -7379,7 +7404,7 @@ async function renderHubDistribution() {
     <p class="sub" style="color:var(--muted);margin-top:-.3rem">Stores order from this hub; shipping an order deducts its stock and the store confirms receipt to land it. You can ship an order here, or scan items to ship on the <strong>Transfers</strong> / scanner flow. Whatever a hub can't cover is auto-routed to a vendor by the store.</p>
     <div class="section"><h3>Incoming store orders ${open.length ? `<span class="badge gold">${open.length} open</span>` : ''}</h3>
       ${open.length ? `<div class="table-wrap"><table><thead><tr><th>Order #</th><th>Store</th><th>Item</th><th class="num">Qty</th><th class="num">Shipped</th><th>Priority</th><th>Requested by</th><th>Status</th><th>Actions</th></tr></thead><tbody>
-        ${open.map(o => `<tr><td class="mono">${esc(o.order_no || '—')}</td><td><strong>${esc(o.store_name)}</strong></td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? numf(o.shipped_qty) : '—'}</td><td>${priorityBadge(o.priority)}</td><td>${esc(o.requested_by_name || '—')}</td><td>${distBadge(o.status)}</td>
+        ${open.map(o => `<tr><td class="mono">${esc(o.order_no || '—')}</td><td><strong>${esc(o.store_name)}</strong></td><td>${esc(o.item_name)}</td><td class="num">${numf(o.ck_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? numf(o.shipped_qty) : '—'}</td><td>${priorityBadge(o.priority)}</td><td>${esc(o.requested_by_name || '—')}</td><td>${distBadge(o.status)}${o.cancel_requested ? ` <span class="badge gold" title="${esc(o.cancel_reason || 'Cancellation requested')}">⏳ cancel requested</span>` : ''}</td>
           <td><div class="actions-cell">${ckOrderActions(o)}</div></td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No open store orders.</div>'}
     </div>
@@ -7396,6 +7421,19 @@ async function renderHubDistribution() {
   $('view').querySelectorAll('[data-dship]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dship, 'shipped'));
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.drecv, 'received'));
   $('view').querySelectorAll('[data-dcancel]').forEach(b => b.onclick = () => ckOrderAct(b.dataset.dcancel, 'cancelled'));
+  // Hub resolves a store's cancellation request on a SHIPPED line: recall the stock, or decline.
+  $('view').querySelectorAll('[data-drecall]').forEach(b => b.onclick = () => {
+    confirmModal(`Recall ${b.dataset.item || 'this item'}?`,
+      `This recalls the in-transit stock back to this hub and <strong>cancels</strong> the line${b.dataset.store ? ` for ${esc(b.dataset.store)}` : ''} (plus any linked vendor order). The stock returns to your on-hand.`,
+      'Recall & cancel',
+      async () => { const r = await api('/distribution/orders/' + b.dataset.drecall + '/resolve-cancel', { method: 'POST', body: JSON.stringify({ action: 'recall' }) }); toast(`Recalled — ${numf(r.returned)} back in stock, order cancelled`); invRefresh(); });
+  });
+  $('view').querySelectorAll('[data-ddecline]').forEach(b => b.onclick = () => {
+    confirmModal(`Decline cancellation of ${b.dataset.item || 'this item'}?`,
+      `The shipment stands — the store will be told to receive it as normal.`,
+      'Decline request',
+      async () => { await api('/distribution/orders/' + b.dataset.ddecline + '/resolve-cancel', { method: 'POST', body: JSON.stringify({ action: 'decline' }) }); toast('Request declined — the store was notified'); invRefresh(); });
+  });
   $('view').querySelectorAll('[data-dist-toggle]').forEach(b => b.onclick = async () => {
     try { await api('/distribution/ck-stock/' + b.dataset.distToggle, { method: 'PUT', body: JSON.stringify({ distributable: b.dataset.on === '1' ? 0 : 1 }) }); invRefresh(); }
     catch (e) { toast(e.message, true); }
@@ -7403,7 +7441,11 @@ async function renderHubDistribution() {
 }
 function ckOrderActions(o) {
   if (o.status === 'requested' || o.status === 'approved') return `<button class="btn sm" data-dship="${o.id}">Ship</button><button class="btn sm ghost" data-dcancel="${o.id}">Cancel</button>`;
-  if (o.status === 'shipped') return `<button class="btn sm" data-drecv="${o.id}">Mark received</button>`;
+  if (o.status === 'shipped') {
+    // The store asked to cancel a shipped line — the hub recalls the stock or declines.
+    if (o.cancel_requested) return `<button class="btn sm ghost danger" data-drecall="${o.id}" data-item="${esc(o.item_name)}" data-store="${esc(o.store_name || '')}">Recall &amp; cancel</button><button class="btn sm ghost" data-ddecline="${o.id}" data-item="${esc(o.item_name)}">Decline</button>`;
+    return `<button class="btn sm" data-drecv="${o.id}">Mark received</button>`;
+  }
   return '';
 }
 async function ckOrderAct(id, status) {

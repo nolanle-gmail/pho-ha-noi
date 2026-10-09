@@ -208,7 +208,7 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   // Nha Le for now (owner will change later). Best-effort — never blocks the order.
   if (hubLines > 0 && !vendorOnly) {
     try {
-      const nha = db.prepare(`SELECT id FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get();
+      const nha = fulfillmentContact();
       if (nha) {
         const pri = priority !== 'standard' ? ` · priority: ${priority.toUpperCase()}` : '';
         notify(req.user.id, nha.id, `New ${hub.name} order ${orderNo}${pri}`,
@@ -246,6 +246,10 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
     ${where} ORDER BY d.created_at DESC LIMIT 200`).all(...args);
   res.json({ orders: rows });
 });
+
+// The fulfilment contact notified about new orders and cancellation requests (Nha Le for now;
+// the owner will reconfigure later). Best-effort — callers wrap notify() in try/catch.
+function fulfillmentContact() { return db.prepare(`SELECT id FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get(); }
 
 // Cancel one order line: mark it cancelled and cancel any linked vendor PO (the store no longer
 // wants the shortfall). Caller must have already checked permission + that it's still cancellable.
@@ -300,7 +304,7 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
     receiveLot({ item_id: destId, location_id: d.to_location_id, quantity: landQty, unit_cost: dest ? dest.unit_cost || 0 : 0, user_id: req.user.id });
     db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
       VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} distribution received`);
-    db.prepare(`UPDATE distribution_orders SET status='received', updated_at=datetime('now') WHERE id=?`).run(d.id);
+    db.prepare(`UPDATE distribution_orders SET status='received', cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(d.id);
     auditLog(req, 'distribution_receive', 'distribution_order', d.id, { item: d.item_name, qty: landQty });
     return res.json({ success: true });
   }
@@ -343,6 +347,105 @@ router.post('/cancel-order', requireRole(ROLES.OPS), (req, res) => {
   if (!cancelled) return res.status(400).json({ error: blocked ? 'Nothing to cancel — those items have already shipped or been received.' : 'Nothing to cancel.' });
   auditLog(req, 'distribution_cancel_order', 'location', lines[0].to_location_id, { order_no: orderNo, cancelled, blocked });
   res.json({ success: true, cancelled, blocked });
+});
+
+// ── Cancellation requests for SHIPPED orders ─────────────────────────────────
+// Once an order ships, the stock is in transit, so the store can't cancel it outright — it asks the
+// hub, which either recalls the stock (cancelling the line) or declines (the store receives it).
+function notifyCancelRequest(req, d, hub) {
+  try {
+    const nha = fulfillmentContact();
+    const store = db.prepare(`SELECT name FROM locations WHERE id=?`).get(d.to_location_id);
+    const tag = d.order_no || ('order ' + d.id);
+    if (nha) notify(req.user.id, nha.id, `Cancellation requested · ${tag}`,
+      `${(store && store.name) || 'A store'} is asking to cancel a SHIPPED item: ${d.item_name} (${r3(d.shipped_qty || d.ck_qty)} ${d.unit || ''}) on ${tag}, from ${hub ? hub.name : 'the hub'}.${d.cancel_reason ? '\nReason: ' + d.cancel_reason : ''}\nReview it on the hub's Distribution board — Recall & cancel, or Decline.`);
+  } catch { /* best-effort */ }
+}
+// The store asks the hub to cancel one shipped line.
+router.post('/orders/:id/request-cancel', requireRole(ROLES.OPS), (req, res) => {
+  const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(d.source_location_id);
+  const canReq = String(req.user.location_id) === String(d.to_location_id) || seesAllLocations(req.user.role) || (!!hub && isHubStaff(req, hub.id));
+  if (!canReq) return res.status(403).json({ error: 'Not your order.' });
+  if (d.status !== 'shipped') return res.status(400).json({ error: d.status === 'requested' || d.status === 'approved' ? 'This hasn’t shipped yet — cancel it directly instead.' : `Can't request cancellation of an order that is ${d.status}.` });
+  if (d.cancel_requested) return res.status(400).json({ error: 'A cancellation is already requested for this item.' });
+  const reason = ((req.body && req.body.reason) || '').toString().trim().slice(0, 500) || null;
+  db.prepare(`UPDATE distribution_orders SET cancel_requested=1, cancel_reason=?, cancel_requested_by=?, updated_at=datetime('now') WHERE id=?`).run(reason, req.user.id, d.id);
+  auditLog(req, 'distribution_cancel_request', 'distribution_order', d.id, { item: d.item_name, order_no: d.order_no, reason });
+  notifyCancelRequest(req, Object.assign({}, d, { cancel_reason: reason }), hub);
+  res.json({ success: true });
+});
+// The store asks the hub to cancel every shipped line of a whole order.
+router.post('/request-cancel-order', requireRole(ROLES.OPS), (req, res) => {
+  const orderNo = String((req.body && req.body.order_no) || '').trim();
+  if (!orderNo) return res.status(400).json({ error: 'Order number required.' });
+  const reason = ((req.body && req.body.reason) || '').toString().trim().slice(0, 500) || null;
+  const seesAll = seesAllLocations(req.user.role);
+  const where = seesAll ? 'order_no=?' : 'order_no=? AND to_location_id=?';
+  const args = seesAll ? [orderNo] : [orderNo, req.user.location_id];
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE ${where}`).all(...args);
+  if (!lines.length) return res.status(404).json({ error: 'Order not found.' });
+  let requested = 0;
+  for (const d of lines) {
+    const canStore = seesAll || String(req.user.location_id) === String(d.to_location_id);
+    const hub = hubById(d.source_location_id);
+    if (!canStore && !(hub && isHubStaff(req, hub.id))) continue;
+    if (d.status !== 'shipped' || d.cancel_requested) continue;
+    db.prepare(`UPDATE distribution_orders SET cancel_requested=1, cancel_reason=?, cancel_requested_by=?, updated_at=datetime('now') WHERE id=?`).run(reason, req.user.id, d.id);
+    notifyCancelRequest(req, Object.assign({}, d, { cancel_reason: reason }), hub);
+    requested++;
+  }
+  if (!requested) return res.status(400).json({ error: 'Nothing to request — the order hasn’t shipped, or a request is already pending.' });
+  auditLog(req, 'distribution_cancel_request_order', 'location', lines[0].to_location_id, { order_no: orderNo, requested });
+  res.json({ success: true, requested });
+});
+// The store withdraws its own pending cancellation request (changed their mind again).
+router.post('/orders/:id/withdraw-cancel', requireRole(ROLES.OPS), (req, res) => {
+  const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Order not found.' });
+  const canReq = String(req.user.location_id) === String(d.to_location_id) || seesAllLocations(req.user.role);
+  if (!canReq) return res.status(403).json({ error: 'Not your order.' });
+  if (!d.cancel_requested) return res.status(400).json({ error: 'No cancellation request to withdraw.' });
+  db.prepare(`UPDATE distribution_orders SET cancel_requested=0, cancel_reason=NULL, updated_at=datetime('now') WHERE id=?`).run(d.id);
+  auditLog(req, 'distribution_cancel_withdraw', 'distribution_order', d.id, { item: d.item_name, order_no: d.order_no });
+  res.json({ success: true });
+});
+// The hub resolves a cancellation request: recall the in-transit stock (and cancel the line), or
+// decline (the store should receive it after all).
+router.post('/orders/:id/resolve-cancel', requireRole(ROLES.OPS), (req, res) => {
+  const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
+  if (!d) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(d.source_location_id);
+  if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} staff only.` });
+  if (!d.cancel_requested) return res.status(400).json({ error: 'No cancellation was requested for this item.' });
+  const action = (req.body && req.body.action) === 'recall' ? 'recall' : (req.body && req.body.action) === 'decline' ? 'decline' : null;
+  if (!action) return res.status(400).json({ error: 'Choose to recall or decline.' });
+  const store = db.prepare(`SELECT name FROM locations WHERE id=?`).get(d.to_location_id);
+  const tag = d.order_no || ('order ' + d.id);
+  if (action === 'decline') {
+    db.prepare(`UPDATE distribution_orders SET cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(d.id);
+    auditLog(req, 'distribution_cancel_declined', 'distribution_order', d.id, { item: d.item_name, order_no: d.order_no });
+    try { if (d.cancel_requested_by) notify(req.user.id, d.cancel_requested_by, `Cancellation declined · ${tag}`, `${hub.name} declined to cancel ${d.item_name} on ${tag} — it’s on its way, please receive it.`); } catch { /* best-effort */ }
+    return res.json({ success: true, action: 'declined' });
+  }
+  if (d.status !== 'shipped') return res.status(400).json({ error: `Can only recall a shipped order (this is ${d.status}).` });
+  const back = r3(d.shipped_qty > 0 ? d.shipped_qty : d.ck_qty);
+  db.exec('BEGIN');
+  try {
+    const hubItem = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(hub.id, d.item_name);
+    let hubItemId;
+    if (hubItem) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(back, hubItem.id); hubItemId = hubItem.id; }
+    else hubItemId = db.prepare(`INSERT INTO inventory (location_id, item_name, unit, quantity, min_quantity) VALUES (?,?,?,?,0)`).run(hub.id, d.item_name, d.unit || 'units', back).lastInsertRowid;
+    receiveLot({ item_id: hubItemId, location_id: hub.id, quantity: back, unit_cost: hubItem ? hubItem.unit_cost || 0 : 0, user_id: req.user.id });
+    db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes) VALUES (?,?,?,'in',?,?)`).run(hubItemId, hub.id, back, req.user.id, `Recalled from ${(store && store.name) || 'store'} (cancellation)`);
+    db.prepare(`UPDATE distribution_orders SET status='cancelled', cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(d.id);
+    if (d.vendor_order_id) db.prepare(`UPDATE supply_orders SET status='cancelled' WHERE id=? AND status NOT IN ('received','cancelled')`).run(d.vendor_order_id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not recall the order.' }); }
+  auditLog(req, 'distribution_cancel_recalled', 'distribution_order', d.id, { item: d.item_name, order_no: d.order_no, qty: back });
+  try { if (d.cancel_requested_by) notify(req.user.id, d.cancel_requested_by, `Cancellation approved · ${tag}`, `${hub.name} recalled ${d.item_name} (${back} ${d.unit || ''}) on ${tag} — the order is cancelled. Please don’t receive it; the stock returns to ${hub.name}.`); } catch { /* best-effort */ }
+  res.json({ success: true, action: 'recalled', returned: back });
 });
 
 // ── Shipping from a hub (CK / Warehouse): the scan-to-fulfil order flow ───────

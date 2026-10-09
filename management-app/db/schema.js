@@ -826,6 +826,9 @@ function migrate() {
       vendor_order_id INTEGER REFERENCES supply_orders(id),       -- auto-created PO for the shortfall
       requested_by    INTEGER REFERENCES users(id),
       approved_by     INTEGER REFERENCES users(id),
+      cancel_requested INTEGER NOT NULL DEFAULT 0,                  -- store asked the hub to cancel a SHIPPED line
+      cancel_reason   TEXT,                                         -- why (optional, from the requester)
+      cancel_requested_by INTEGER REFERENCES users(id),
       notes           TEXT,
       created_at      TEXT DEFAULT (datetime('now')),
       updated_at      TEXT DEFAULT (datetime('now'))
@@ -1491,6 +1494,10 @@ function migrate() {
     // Hub HR (tasks & schedule) is now per-hub so a Warehouse has its own, like the Central Kitchen.
     `ALTER TABLE ck_tasks ADD COLUMN location_id INTEGER`,
     `ALTER TABLE ck_shifts ADD COLUMN location_id INTEGER`,
+    // A store can ask the hub to cancel an order that already SHIPPED (stock is in transit).
+    `ALTER TABLE distribution_orders ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE distribution_orders ADD COLUMN cancel_reason TEXT`,
+    `ALTER TABLE distribution_orders ADD COLUMN cancel_requested_by INTEGER REFERENCES users(id)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
