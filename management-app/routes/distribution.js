@@ -533,8 +533,10 @@ router.get('/hub-orders', requireRole(ROLES.OPS), (req, res) => {
       cancel_requested: lines.some(l => l.cancel_requested),
     };
   });
-  const done = (s) => ['delivered', 'cancelled', 'rejected'].includes(s) ? 1 : 0;
-  out.sort((a, b) => (done(a.stage) - done(b.stage))
+  // An order is "done" only when it's in a terminal stage AND has no unresolved held items — a held
+  // item keeps the order active so it's never orphaned after a partial delivery.
+  const done = (o) => (['delivered', 'cancelled', 'rejected'].includes(o.stage) && !o.held) ? 1 : 0;
+  out.sort((a, b) => (done(a) - done(b))
     || ((PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2))
     || String(a.created_at).localeCompare(String(b.created_at)));
   res.json({ hub: { id: hub.id, name: hub.name, type: hub.type }, orders: out });
@@ -606,6 +608,55 @@ router.post('/hub-orders/:orderNo/review', requireRole(ROLES.OPS), (req, res) =>
     }
   } catch { /* best-effort */ }
   res.json({ success: true, stage, approved: approved.length, held: held.length, rejected: rejected.length, outcome });
+});
+
+// Resolve the held items on an order (hub managers). A held item is either APPROVED — it re-enters
+// fulfilment on this same order, which reopens to 'approved' so the hub can load it (even if the
+// order's approved items already shipped/delivered) — or REJECTED (kept-but-marked, dropped). The
+// requester is messaged. An order with unresolved held items stays active on the board.
+router.post('/hub-orders/:orderNo/resolve-held', requireRole(ROLES.OPS), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !isHubManager(req, hub.id)) return res.status(403).json({ error: 'Only hub managers can resolve held items.' });
+  const decisions = Array.isArray(req.body.items) ? req.body.items : [];
+  if (!decisions.length) return res.status(400).json({ error: 'No decisions submitted.' });
+  const held = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND approval='held'`).all(h.order_no);
+  const byId = Object.fromEntries(held.map(l => [String(l.id), l]));
+  for (const d of decisions) {
+    if (!['approved', 'rejected'].includes(d.decision)) return res.status(400).json({ error: 'A held item can only be approved or rejected.' });
+    if (d.decision === 'rejected' && !((d.note || '').toString().trim())) return res.status(400).json({ error: 'A reason is required to reject an item.' });
+  }
+  const updApprove = db.prepare(`UPDATE distribution_orders SET approval='approved', approval_note=NULL, updated_at=datetime('now') WHERE id=?`);
+  const updReject = db.prepare(`UPDATE distribution_orders SET approval='rejected', approval_note=?, status='cancelled', updated_at=datetime('now') WHERE id=?`);
+  let approvedN = 0, rejectedN = 0; const names = { approved: [], rejected: [] };
+  db.exec('BEGIN');
+  try {
+    for (const d of decisions) {
+      const line = byId[String(d.item_id || d.id)];
+      if (!line) continue;
+      if (d.decision === 'approved') { updApprove.run(line.id); approvedN++; names.approved.push(line.item_name); }
+      else { updReject.run((d.note || '').toString().trim().slice(0, 500) || null, line.id); rejectedN++; names.rejected.push(line.item_name); }
+    }
+    // Approving a held item onto an order whose approved portion already moved reopens it for loading.
+    if (approvedN && ['loaded', 'in_transit', 'delivered'].includes(h.stage))
+      db.prepare(`UPDATE distribution_order_headers SET stage='approved', updated_at=datetime('now') WHERE order_no=?`).run(h.order_no);
+    // If nothing is left to fulfil (no approved, no held, no pending), the order is fully rejected.
+    const rest = db.prepare(`SELECT approval FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND status<>'cancelled'`).all(h.order_no);
+    if (!rest.length) db.prepare(`UPDATE distribution_order_headers SET stage='rejected', updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered')`).run(h.order_no);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not resolve the held items.' }); }
+  auditLog(req, 'distribution_resolve_held', 'location', h.to_location_id, { order_no: h.order_no, approved: approvedN, rejected: rejectedN });
+  try {
+    if (h.requested_by) {
+      const parts = [];
+      if (names.approved.length) parts.push(`approved: ${names.approved.join(', ')}`);
+      if (names.rejected.length) parts.push(`rejected: ${names.rejected.join(', ')}`);
+      notify(req.user.id, h.requested_by, `Held items resolved · ${h.order_no}`,
+        `${hub.name} resolved held items on order ${h.order_no} — ${parts.join('; ')}.${approvedN ? ' The approved items will be loaded and delivered.' : ''}`);
+    }
+  } catch { /* best-effort */ }
+  res.json({ success: true, approved: approvedN, rejected: rejectedN });
 });
 
 // Load the approved items onto the truck — deducts the hub's on-hand (stock leaves the shelf) and

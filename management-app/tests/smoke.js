@@ -1187,6 +1187,33 @@ const check = (name, ok, detail = '') => {
     const wfDetail = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}`, { headers: H(token) }));
     check('delivered order reads as Received', wfDetail.status_label === 'Received');
 
+    // Held-item resolution after a partial delivery: the order stays active; the held item can be
+    // approved (reopens → load/deliver on the same order) or rejected.
+    const wfBoard2 = await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }));
+    check('a delivered order with a held item stays active on the board', ((wfBoard2.orders || []).find(o => o.order_no === wf.order_no) || {}).held === 1);
+    const wfResolved = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: dlines[1].id, decision: 'approved' }] }) }));
+    check('approving a held item reopens the order to approved', wfResolved.approved === 1
+      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'approved'
+      && sdb.prepare("SELECT approval, status FROM distribution_orders WHERE id=?").get(dlines[1].id).approval === 'approved');
+    const storeHeldBefore = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[1]) || { quantity: 0 }).quantity;
+    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });
+    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/dispatch`, { method: 'POST', headers: H(token), body: '{}' });
+    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/deliver`, { method: 'POST', headers: H(token), body: '{}' });
+    check('the reopened held item flows through load → deliver', Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[1]).quantity - (storeHeldBefore + 4)) < 0.001
+      && sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(dlines[1].id).status === 'received'
+      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'delivered');
+    check('with no held items left, the order settles (held=0)', ((await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }))).orders.find(o => o.order_no === wf.order_no) || {}).held === 0);
+    // Reject-held path: a single held item rejected → the whole order reads Rejected.
+    const rh = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: wfStore[0].id, item_name: wf3[0], quantity: 2 }] }) }));
+    const rhLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? LIMIT 1").get(rh.order_no);
+    await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'held', note: 'wait' }] }) });
+    r = await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'rejected' }] }) });
+    check('reject-held needs a reason (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'rejected', note: 'no longer needed' }] }) });
+    check('reject the last held item → order reads Rejected', r.status === 200
+      && sdb.prepare("SELECT approval FROM distribution_orders WHERE id=?").get(rhLine.id).approval === 'rejected'
+      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(rh.order_no).stage === 'rejected');
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
