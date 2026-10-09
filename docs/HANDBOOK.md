@@ -2086,6 +2086,15 @@ carrying its **stage**, over per-item **approval** decisions on the lines. The l
    held). The barcode **load-scan** (at the hub) and **hand-off scan** (at the store) plug
    into the Load and Deliver steps later; for now they're manual buttons.
 
+**Resolving held items.** A held item isn't orphaned after the approved part delivers — the
+order stays **active** on the board (flagged *⏸N held*, action *Resolve held*) until every
+hold is settled. On the detail page each held item has **Approve** / **Reject** (hub
+managers): approving it **re-enters fulfilment on the same order** — the order reopens to
+*Approved* so the hub Loads and delivers just that item (the already-delivered items are
+left alone); rejecting it drops it (reason required). Either way the requester is messaged,
+and the order settles once the last hold is resolved
+(`POST /distribution/hub-orders/:orderNo/resolve-held`).
+
 Vendor shortfall is independent of approval (approval governs only the hub portion).
 Endpoints: `GET /distribution/hub-orders` (board) + `/hub-orders/:orderNo` (detail),
 `POST /hub-orders/:orderNo/{review,load,dispatch,deliver}`. The underlying line-level
