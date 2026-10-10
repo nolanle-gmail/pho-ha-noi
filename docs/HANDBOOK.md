@@ -593,7 +593,10 @@ distinct things, on two tabs:
   line under the item name) in one place, plus — at the CK — the "master copies to every location"
   note. Row actions are compact icons (Receive 📥, Order 🛒, Count 🔢, Waste ♻️, Cost history 💲,
   Scan history 📜, Edit ✏️, Delete 🗑) and the **Actions column is pinned to the right**, so the
-  buttons stay on screen even when the table is wide enough to scroll horizontally.
+  buttons stay on screen even when the table is wide enough to scroll horizontally. **On phones
+  (≤640px)** the eight action icons are wider than the screen, so the pin is dropped there (2026-10-09):
+  Actions becomes the normal trailing column — the item name & details show first, and you scroll the
+  table right to reach the buttons (they no longer blanket the row). Tablets and desktops keep the pin.
 - **Glossary** — the **group-wide product dictionary** (`product_catalog`), **one row
   per GTIN, shared across the Central Kitchen and every location**. Managed by hand (search /
   **+ Add product** / edit / delete) and used to **pre-fill the scan-to-receive form**. Fields:

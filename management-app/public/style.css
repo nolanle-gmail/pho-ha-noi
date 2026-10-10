@@ -562,6 +562,12 @@ td.num, th.num { text-align: right; }
 .stock-tbl td.acts, .stock-tbl th.acts { position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 10px -8px rgba(0, 0, 0, .18); }
 .stock-tbl .actions-cell { flex-wrap: nowrap; }
 .stock-tbl .actions-cell .btn.sm { padding: .3rem .5rem; }
+/* On a phone the 8 action icons are wider than the screen, so a right-pinned Actions column
+   would blanket the item name and every detail. Un-pin it there: Actions becomes the normal
+   trailing column — the item name & details show first, and you scroll right to reach it. */
+@media (max-width: 640px) {
+  .stock-tbl td.acts, .stock-tbl th.acts { position: static; box-shadow: none; }
+}
 
 /* Day-task proof-photo gallery (manager view) */
 .photo-gallery { max-width: 720px; }
