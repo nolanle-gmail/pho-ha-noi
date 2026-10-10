@@ -258,10 +258,11 @@ router.post('/order', requireRole(ROLES.OPS), (req, res) => {
   // Nha Le for now (owner will change later). Best-effort — never blocks the order.
   if (hubLines > 0 && !vendorOnly) {
     try {
-      const nha = fulfillmentContact();
-      if (nha) {
+      // TESTING: route to Nolan Le; falls back to the fulfilment team when he isn't set up.
+      const recipient = testNotifyUser() || fulfillmentContact();
+      if (recipient) {
         const pri = priority !== 'standard' ? ` · priority: ${priority.toUpperCase()}` : '';
-        notify(req.user.id, nha.id, `New ${hub.name} order ${orderNo}${pri}`,
+        notify(req.user.id, recipient.id, `New ${hub.name} order ${orderNo}${pri}`,
           `${(store && store.name) || 'A store'} placed order ${orderNo} to ${hub.name} — ${created} item${created === 1 ? '' : 's'}${pri}.\n${summary.join('\n')}`);
       }
     } catch { /* notify is best-effort */ }
@@ -289,12 +290,13 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   }
   const rows = db.prepare(`
     SELECT d.*, l.name AS store_name, u.name AS requested_by_name, so.status AS vendor_status, so.vendor AS vendor_name,
-      h.stage AS order_stage, h.reviewed_at AS order_reviewed_at
+      h.stage AS order_stage, h.reviewed_at AS order_reviewed_at, ru.name AS order_reviewed_by_name
     FROM distribution_orders d
     JOIN locations l ON l.id = d.to_location_id
     LEFT JOIN users u ON u.id = d.requested_by
     LEFT JOIN supply_orders so ON so.id = d.vendor_order_id
     LEFT JOIN distribution_order_headers h ON h.order_no = d.order_no
+    LEFT JOIN users ru ON ru.id = h.reviewed_by
     ${where} ORDER BY d.created_at DESC LIMIT 200`).all(...args);
   // Attach each order's overall status label (the same one the hub board shows) to its lines, so the
   // store sees New Order / Approved / In Transit / Received rather than just the raw line status.
@@ -308,6 +310,14 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
 // The fulfilment contact notified about new orders and cancellation requests (Nha Le for now;
 // the owner will reconfigure later). Best-effort — callers wrap notify() in try/catch.
 function fulfillmentContact() { return db.prepare(`SELECT id FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get(); }
+// TESTING (2026-10-10): while the order → review → reject workflow is being validated, route its
+// notifications (new order to the hub; review outcome to the requester) to Nolan Le so he can
+// confirm they fire. Resolved by his email, then by name. When testing is done, remove this and the
+// two `testNotifyUser() || …` fallbacks revert to the real recipients.
+function testNotifyUser() {
+  return db.prepare(`SELECT id FROM users WHERE is_active=1 AND lower(email)='nolanle@gmail.com' ORDER BY id LIMIT 1`).get()
+    || db.prepare(`SELECT id FROM users WHERE is_active=1 AND lower(name) LIKE 'nolan%' ORDER BY id LIMIT 1`).get();
+}
 
 // Cancel one order line: mark it cancelled and cancel any linked vendor PO (the store no longer
 // wants the shortfall). Caller must have already checked permission + that it's still cancellable.
@@ -600,11 +610,14 @@ router.post('/hub-orders/:orderNo/review', requireRole(ROLES.OPS), (req, res) =>
   const outcome = stage === 'approved' ? ((held.length || rejected.length) ? 'partially approved' : 'approved') : (stage === 'rejected' ? 'rejected' : 'on hold');
   auditLog(req, 'distribution_review', 'location', h.to_location_id, { order_no: h.order_no, approved: approved.length, held: held.length, rejected: rejected.length, outcome });
   try {
-    if (h.requested_by) {
+    // TESTING: route the review outcome (which carries the rejection reason) to Nolan Le; falls back
+    // to the requester when he isn't set up. The message names the reviewer so "who rejected" is clear.
+    const recipient = testNotifyUser() || (h.requested_by ? { id: h.requested_by } : null);
+    if (recipient) {
       const detail = [...rejected.map(l => `✗ ${l.item_name} rejected${l.approval_note ? ' — ' + l.approval_note : ''}`),
                       ...held.map(l => `⏸ ${l.item_name} held${l.approval_note ? ' — ' + l.approval_note : ''}`)].join('\n');
-      notify(req.user.id, h.requested_by, `Order ${h.order_no} ${outcome}`,
-        `${hub.name} reviewed your order ${h.order_no} — ${outcome} (${approved.length} approved, ${held.length} held, ${rejected.length} rejected).${detail ? '\n' + detail : ''}`);
+      notify(req.user.id, recipient.id, `Order ${h.order_no} ${outcome}`,
+        `${hub.name} reviewed order ${h.order_no} — ${outcome} (${approved.length} approved, ${held.length} held, ${rejected.length} rejected) · reviewed by ${req.user.name}.${detail ? '\n' + detail : ''}`);
     }
   } catch { /* best-effort */ }
   res.json({ success: true, stage, approved: approved.length, held: held.length, rejected: rejected.length, outcome });
