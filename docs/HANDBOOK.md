@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 9, 2026_
+_Last updated: October 10, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2088,12 +2088,16 @@ so a busy hub isn't a wall of item rows. Clicking an order opens a **detail page
 all its items. Each order has a header (`distribution_order_headers`, keyed by `order_no`)
 carrying its **stage**, over per-item **approval** decisions on the lines. The lifecycle:
 
+   *Placing* a hub-fulfilled order **messages the hub's fulfilment contact** (order #, priority,
+   item list) so the team knows a new order came in.
+
 1. **New Order** → *Review/Approve* (hub managers + org admins). On the detail page each
    item is **Approved / Held / Rejected** — a hold or reject needs a reason. You can
    **partially approve**: approved items proceed, held items wait (re-reviewable), and a
    **rejected item is kept-but-marked** (reason recorded) and dropped from fulfilment. The
-   requester is messaged the outcome. Result: **Approved / Partially Approved / Holding /
-   Rejected**.
+   requester is **messaged the outcome** — the message lists each held/rejected item **with its
+   reason** and **names the reviewer** (who approved/held/rejected). Result: **Approved /
+   Partially Approved / Holding / Rejected**.
 2. **Approved / Partially Approved** → *Load* (CK staff). Loading **deducts the hub's
    on-hand** for the approved items (stock leaves the shelf onto the truck) → **Loaded**.
 3. **Loaded** → a **driver** *Marks in transit* → **In Transit** (the store is notified
@@ -2124,9 +2128,14 @@ coexist; cancel/recall keep the header in sync.
 
 **The requester sees the same story.** On the store's own **Orders & Reorder** each order
 group shows the order-level status chip (New Order / Approved / Partially Approved /
-Holding / In Transit / Received / …) and each item's review decision — **approved / held /
-rejected**, with the hub's reason on hover — so the store knows exactly what was approved,
-held or turned down (on top of the message it gets on review).
+Holding / In Transit / Received / …), **who reviewed it** (· reviewed by &lt;name&gt; in the
+group header), and each item's review decision — **approved / held / rejected**, with the
+hub's **reason shown inline** under the item (✗ Rejected: … / ⏸ Held: …), not just on hover.
+So the store sees exactly what was approved, held or turned down — and why, and by whom —
+right in the list (on top of the message it gets on review). The CK/Warehouse **order-detail
+page** shows the same: the Line-status column reads *rejected* (not the raw "cancelled"), with
+the reason inline and the reviewer in the sub-header; rejected/settled orders stay viewable
+under **Recently settled** on the board.
 
 The CK portion moves through a **load → in-transit → deliver** lifecycle on the Central
 Kitchen's **Distribution** tab: loading deducts CK warehouse stock (an `out` movement),
