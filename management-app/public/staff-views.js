@@ -323,3 +323,334 @@ function alertActions(a) {
   }
   return `<div class="al-act">${a.mine_ack ? '<span class="muted">✓ On it</span>' : `<button class="btn ghost" data-ack="${a.id}">✓ On it</button>`}<button class="btn" data-done="${a.id}">✓ Done</button></div>`;
 }
+
+// ── Scan (staff self-service) ─────────────────────────────────────────────────
+// The Staff-app scanner, ported into the console so store staff scan from the one app they now use.
+// Everything goes through /api/invscan/* (the dual-auth proxy) which scopes to the signed-in
+// staffer's OWN store via their JWT. Shared helpers (scanLangs/scanSection/boxDiffNote,
+// comboHTML/comboWire/comboVal, CATEGORY_OPTIONS/UOM_OPTIONS, numf, esc, api, toast) come from app.js.
+function renderStaffScan() {
+  $('view').innerHTML = `<div class="section-head"><h2>📠 Scan Inventory</h2></div>
+    <div class="empty" style="text-align:left;line-height:1.6">
+      <p>Scan a product barcode with your scanner to <strong>receive</strong> stock, <strong>transfer</strong> it to another location, <strong>check</strong> stock across every location, or mark stock <strong>used</strong> in the kitchen. Actions apply to <strong>your store</strong>.</p>
+      <button class="btn primary" id="scanStart" style="margin-top:.6rem">📠 Open scanner</button>
+    </div>`;
+  $('scanStart').onclick = svOpenScanner;
+}
+
+async function svOpenScanner() {
+  // Central Kitchen / Warehouse staff additionally get a Shipping (load) mode to fulfil store orders.
+  const hub = await api('/invscan/hub').catch(() => ({ is_hub: false }));
+  const isHub = !!(hub && hub.is_hub);
+  const hubName = ((hub && hub.hub && hub.hub.name) || '').replace('Pho Ha Noi — ', '');
+  const host = document.createElement('div'); host.className = 'scan-overlay';
+  host.innerHTML = `<div class="scan-card">
+    <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
+    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receiving</button>${isHub ? '<button class="btn sm ghost" data-mode="ship">📤 Shipping</button>' : ''}<button class="btn sm ghost" data-mode="transfer">🔁 Transferring</button><button class="btn sm ghost" data-mode="check">📋 Checking Inventory</button><button class="btn sm ghost" data-mode="use">🍳 Use</button></div>
+    <div id="shipBar" class="ship-bar" hidden></div>
+    <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
+    <div id="scanPanel"></div>
+    <div class="scan-manual"><input id="scanManual" placeholder="📠 Scan with your scanner — or type a code" inputmode="numeric" autocomplete="off"><button class="btn sm" id="scanManualGo">Go</button></div>
+  </div>`;
+  document.body.appendChild(host);
+  // A USB/Bluetooth barcode scanner is a keyboard-wedge: it types the code + Enter. Keep this field
+  // focused so scans land here hands-free (phone, tablet or PC — no camera needed).
+  const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
+  setTimeout(focusManual, 60);
+  let busy = false, mode = 'receive', shipStore = null;
+  const close = () => { host.remove(); };
+  host.querySelector('[data-x]').onclick = close;
+  const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
+  const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
+  // ── Load mode (hub): the queue of stores with approved orders → tap a store → scan items ──
+  async function renderShipQueue() {
+    const box = $('shipBar'); if (!box || mode !== 'ship') return;
+    if (shipStore) return renderShipStore();
+    box.innerHTML = '<div class="muted" style="font-size:.82rem">Loading orders…</div>';
+    let d; try { d = await api('/invscan/ship-queue'); } catch (e) { box.innerHTML = `<div class="muted" style="font-size:.82rem">${esc(e.message)}</div>`; return; }
+    if (mode !== 'ship') return;
+    const ords = d.orders || [];
+    box.innerHTML = `<div class="ship-ord-h">📦 Approved orders to load from <strong>${esc(hubName)}</strong></div>`
+      + (ords.length ? `<div class="ship-queue">${ords.map(o => `<button class="ship-ord pick" data-store="${o.store_id}" data-name="${esc(o.store_name)}"><span>${esc((o.store_name || '').replace('Pho Ha Noi — ', ''))}</span><span class="mono">${o.lines} item${o.lines === 1 ? '' : 's'}${o.started ? ' · started' : ''} ›</span></button>`).join('')}</div>`
+        : '<div class="muted" style="font-size:.82rem">No approved orders to load. ✅</div>');
+    box.querySelectorAll('[data-store]').forEach(b => b.onclick = () => { shipStore = { id: b.dataset.store, name: b.dataset.name }; renderShipStore(); });
+  }
+  async function renderShipStore() {
+    const box = $('shipBar'); if (!box || !shipStore) return;
+    box.innerHTML = '<div class="muted" style="font-size:.82rem">Loading order…</div>';
+    let d; try { d = await api('/invscan/ship-queue/' + shipStore.id); } catch (e) { box.innerHTML = `<div class="muted" style="font-size:.82rem">${esc(e.message)}</div>`; return; }
+    const lines = d.lines || [], sn = (shipStore.name || '').replace('Pho Ha Noi — ', '');
+    box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <strong>${esc(sn)}</strong> — scan items to load</div>`
+      + (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining <= 0.0005 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${numf(o.shipped_qty)} loaded / ${numf(o.requested_qty)} ordered ${esc(o.unit || '')}${o.on_hand <= 0.0005 ? ' · ⚠ none here' : ''}</span></div>`).join('')}</div>`
+        : '<div class="muted" style="font-size:.82rem">This order is fully loaded. ✅</div>');
+    const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
+  }
+  const refreshShip = () => { if (mode === 'ship') { shipStore ? renderShipStore() : renderShipQueue(); } };
+  async function setMode(m) {
+    mode = m;
+    host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
+    const wantsBar = (m === 'transfer' || m === 'ship');
+    $('shipBar').hidden = !wantsBar;
+    $('scanMsg').textContent = m === 'ship' ? 'Pick an order below, then scan the items to load.' : m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : (m === 'use' ? 'Scan an item to record kitchen use.' : '📠 Ready — scan a barcode with your scanner.'));
+    if (m === 'ship') { $('shipBar').dataset.loaded = ''; await renderShipQueue(); }
+    else if (m === 'transfer' && !$('shipBar').dataset.loaded) {
+      $('shipBar').dataset.loaded = '1';
+      let tgts = []; try { tgts = await api('/invscan/ship/targets'); } catch { /* ignore */ }
+      // Ad-hoc transfer: destination only, no open-order fill list (store staff don't fulfil orders).
+      $('shipBar').innerHTML = `<label class="ship-lbl">Transfer to</label>
+        <select id="shipTo"><option value="">— choose destination —</option>${tgts.map(t => `<option value="${t.id}">${esc(t.name)}${t.type === 'central_kitchen' ? ' (CK)' : t.type === 'warehouse' ? ' (WH)' : ''}</option>`).join('')}</select>
+        <div id="shipOrders"></div>`;
+    }
+  }
+  host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  const onCode = async (code) => {
+    if (busy) return; busy = true;
+    try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
+    $('scanMsg').textContent = 'Scanned: ' + code;
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? (shipStore ? 'Scan the next item to load.' : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : '📠 Ready — scan the next barcode.')); focusManual(); };
+    if (mode === 'ship') await svHandleShipOrder(code, $('scanPanel'), done, shipStore, refreshShip);
+    else if (mode === 'transfer') await svHandleShip(code, $('scanPanel'), done, shipTo(), shipToName(), () => {}, 'Transfer');
+    else if (mode === 'check') await svHandleCheck(code, $('scanPanel'), done);
+    else if (mode === 'use') await svHandleUse(code, $('scanPanel'), done);
+    else await svHandleScan(code, $('scanPanel'), done);
+  };
+  $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
+  $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
+}
+
+// Scan an item to LOAD a line of the picked store's approved order (hub staff). Decrements the hub;
+// the order advances to 'loaded' once every approved item is scanned on.
+async function svHandleShipOrder(code, panel, next, shipStore, refreshShip) {
+  if (!shipStore) { panel.innerHTML = `<div class="scan-err">Pick an order above first, then scan its items.</div>`; setTimeout(() => next && next(), 1400); return; }
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let d; try { d = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div><button class="btn sm ghost" id="shAgain">OK</button>`; $('shAgain').onclick = next; return; }
+  const key = d.code || code;
+  if (!d.item) { panel.innerHTML = `<div class="scan-found">🚫 <strong>Not stocked here</strong> <span class="mono">${esc(key)}</span><div class="sub">Nothing to load.</div></div><button class="btn sm ghost" id="shAgain">Scan another</button>`; $('shAgain').onclick = next; return; }
+  const it = d.item, sn = (shipStore.name || '').replace('Pho Ha Noi — ', '');
+  let line = null;
+  try { const q = await api('/invscan/ship-queue/' + shipStore.id); line = ((q && q.lines) || []).find(l => l.item_name === it.item_name && l.remaining > 0.0005); } catch { /* ignore */ }
+  if (!line) { panel.innerHTML = `<div class="scan-found">⚠ <strong>${esc(it.item_name)}</strong><div class="sub">isn't on ${esc(sn)}'s approved order (or already fully loaded).</div></div><button class="btn sm ghost" id="shAgain">Scan another</button>`; $('shAgain').onclick = next; return; }
+  const dflt = (d.parsed && d.parsed.weightLb) || line.remaining || 1;
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong><div class="sub">${numf(it.quantity)} ${esc(it.unit)} on hand · order needs ${numf(line.remaining)} ${esc(line.unit || it.unit)} → <strong>${esc(sn)}</strong></div>${scanLangs(d.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="shq" type="number" value="${dflt}" min="0" step="any"></div>
+    <div class="scan-act"><button class="btn" id="shGo">📤 Load</button><button class="btn ghost" id="shAgain">Cancel</button></div></div>`;
+  $('shAgain').onclick = next;
+  $('shGo').onclick = async () => {
+    $('shGo').disabled = true;
+    const body = { to_location_id: shipStore.id, code: key, quantity: $('shq').value };
+    let r; try { r = await api('/invscan/ship-scan', { method: 'POST', body: JSON.stringify(body) }); } catch (e) { $('shGo').disabled = false; toast(e.message); return; }
+    if (r && r.over) { if (!window.confirm(r.message)) { $('shGo').disabled = false; return; } try { r = await api('/invscan/ship-scan', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); } catch (e) { $('shGo').disabled = false; toast(e.message); return; } }
+    if (r && r.not_on_order) { $('shGo').disabled = false; toast(r.error || 'That item is not on this order.'); return; }
+    if (!r || !r.ok) { $('shGo').disabled = false; toast((r && r.error) || 'Could not load that item.'); return; }
+    const o = r.order;
+    panel.innerHTML = `<div class="scan-found">✓ Loaded ${numf(r.shipped)} ${esc(r.unit || it.unit)} → ${esc(sn)}${o ? (o.done ? ' · line complete ✅' : ` · ${numf(o.shipped_qty)}/${numf(o.requested_qty)}`) : ''}${o && o.raised ? ' · over, original kept' : ''}</div><button class="btn sm" id="shAgain">Scan another</button>`;
+    $('shAgain').onclick = next;
+    refreshShip && refreshShip();
+  };
+}
+
+async function svHandleScan(code, panel, next, skipInbound) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const p = r.parsed || {};
+  const key = r.code || code;
+  const packed = p.packDate || p.prodDate || '';
+  const labelExpiry = p.expiry || packed || '';
+  const labelLot = p.lot || '';
+  const wt = p.weightLb || '';
+  const gs1 = (p.isGs1 || wt || labelExpiry || labelLot || p.serial) ? `<div class="scan-gs1">🏷️ Label${wt ? ` · <strong>${numf(wt)} lb</strong>` : ''}${packed ? ` · packed ${esc(packed)}` : ''}${p.expiry ? ` · exp ${esc(p.expiry)}` : ''}${labelLot ? ` · lot ${esc(labelLot)}` : ''}${p.serial ? ` · #${esc(p.serial)}` : ''}</div>` : '';
+  // Order/transfer-aware receiving: receive against an open shipped order / in-transit transfer first.
+  const inboundLines = (r.inbound ? [...(r.inbound.orders || []), ...(r.inbound.transfers || [])] : []);
+  if (!skipInbound && inboundLines.length) {
+    const name = (r.item && r.item.item_name) || (r.glossary && r.glossary.name) || key;
+    const unit = (r.item && r.item.unit) || (inboundLines[0] && inboundLines[0].unit) || '';
+    const cw = !!(r.item && r.item.is_catch_weight);
+    const sl = (s) => (s || '').replace('Pho Ha Noi — ', '');
+    const showOne = (L) => {
+      const shipped = L.kind === 'order' ? L.shipped_qty : L.quantity;
+      const dflt = wt || L.remaining;
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — incoming ${L.kind === 'order' ? 'order' : 'transfer'} from <strong>${esc(sl(L.source_name || ''))}</strong>${gs1}
+        <div class="muted" style="font-size:.85rem;margin:.3rem 0">${L.kind === 'order' ? `Ordered ${numf(L.requested_qty)} ${esc(unit)} · ` : ''}Shipped <strong>${numf(shipped)} ${esc(unit)}</strong> · received ${numf(L.received_qty)} · <strong>remaining ${numf(L.remaining)}</strong> — closes on an exact match</div>
+        <div class="scan-act"><input id="riQty" type="number" value="${dflt}" min="0" step="any" placeholder="${cw ? 'weight received' : 'qty received'}"><button class="btn" id="riGo">📦 Receive</button></div>
+        <div class="scan-act">${inboundLines.length > 1 ? '<button class="btn ghost" id="riBack">← Other lines</button>' : ''}<button class="btn ghost" id="riNew">Not on an order — add as new</button></div></div>`;
+      $('riGo').onclick = async () => {
+        const btn = $('riGo'); btn.disabled = true;
+        const body = { code };
+        body[L.kind === 'order' ? 'order_id' : 'transfer_id'] = L.id;
+        if (cw) body.weight = $('riQty').value; else body.quantity = $('riQty').value;
+        try {
+          const rr = await api('/invscan/receive-inbound', { method: 'POST', body: JSON.stringify(body) });
+          const o = rr.order || rr.transfer;
+          toast(o.closed ? `✅ ${L.kind === 'order' ? 'Order' : 'Transfer'} received & closed` : (o.over ? `Received ${numf(rr.received)} — over; left open` : `Received ${numf(rr.received)} — ${numf(o.remaining)} still due`));
+          next();
+        } catch (e) { toast(e.message, true); btn.disabled = false; }
+      };
+      if ($('riBack')) $('riBack').onclick = showChooser;
+      $('riNew').onclick = () => svHandleScan(code, panel, next, true);
+    };
+    const showChooser = () => {
+      panel.innerHTML = `<div class="scan-found">📦 <strong>${esc(name)}</strong> — ${inboundLines.length} incoming lines:
+        <div class="ship-orders" style="margin:.5rem 0">${inboundLines.map((L, i) => `<button class="ship-ord" data-ri="${i}" style="width:100%;text-align:left;cursor:pointer"><span>${L.kind === 'order' ? '📦 Order' : '🔁 Transfer'} from ${esc(sl(L.source_name || ''))}</span><span class="mono">${numf(L.remaining)} ${esc(unit)} left</span></button>`).join('')}</div>
+        <button class="btn ghost" id="riNew">Not on these — add as new</button></div>`;
+      panel.querySelectorAll('[data-ri]').forEach(b => b.onclick = () => showOne(inboundLines[+b.dataset.ri]));
+      $('riNew').onclick = () => svHandleScan(code, panel, next, true);
+    };
+    return inboundLines.length === 1 ? showOne(inboundLines[0]) : showChooser();
+  }
+  if (r.in_stock) {
+    const it = r.item;
+    const cw = !!it.is_catch_weight;
+    panel.innerHTML = `<div class="scan-found">✅ <strong>${esc(it.item_name)}</strong> <span class="muted">· on hand ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''}${it.vendor_name ? ' · ' + esc(it.vendor_name) : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}${gs1}${boxDiffNote(r)}
+      <div class="scan-act"><input id="scQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'net weight' : 'qty'}"><select id="scMode"><option value="in">${cw ? '➕ Add weight' : '➕ Add stock'}</option><option value="count">🔢 Set count</option></select><span class="scan-total" id="scTotal"></span></div>
+      <div class="scan-act"><input id="scExp" type="date" title="Expiry / use-by (optional)" value="${esc(labelExpiry)}"><input id="scLot" placeholder="Lot / batch (optional)" value="${esc(labelLot)}"></div>
+      <div class="scan-act"><button class="btn" id="scGo">Apply</button><button class="btn ghost" id="scNext">Skip</button></div></div>`;
+    const updTotal = () => { const q = parseFloat($('scQty').value) || 0; const m = $('scMode').value; $('scTotal').textContent = m === 'count' ? `= ${numf(q)} ${it.unit}` : `→ ${numf((+it.quantity || 0) + q)} ${it.unit}`; };
+    $('scQty').oninput = updTotal; $('scMode').onchange = updTotal; updTotal();
+    $('scGo').onclick = async () => {
+      const btn = $('scGo'); if (btn.disabled) return; btn.disabled = true;
+      const qv = $('scQty').value, m = $('scMode').value;
+      try {
+        if (m === 'count') {
+          const rr = await api('/invscan/scan', { method: 'POST', body: JSON.stringify({ code: key, quantity: qv, mode: 'count', expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined }) });
+          toast(`${it.item_name} count → ${numf(rr.item.quantity)} ${it.unit}`);
+        } else {
+          const body = { code: code, expiry_date: $('scExp').value || undefined, lot_code: $('scLot').value.trim() || undefined };
+          if (cw) body.weight = qv; else body.quantity = qv;
+          let rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(body) });
+          if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/invscan/receive', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+          toast(`${it.item_name} → ${numf(rr.item.quantity)} ${it.unit}`);
+        }
+        next();
+      } catch (e) { toast(e.message, true); btn.disabled = false; }
+    };
+    $('scNext').onclick = next;
+  } else {
+    // Show the add panel immediately; look the name up online in the BACKGROUND (non-blocking).
+    let g = r.glossary || null;
+    let lookupPending = !g && !!code && !(p.isGs1 && p.weightLb) && !r.scale_code;
+    const renderNote = () => {
+      const el = $('niNote'); if (!el) return;
+      el.innerHTML = (g && g.name) ? ` — in Glossary as <strong>${esc(g.name)}</strong>${g.size ? ` · <span class="muted">${esc(g.size)}</span>` : ''}`
+        : (g && g._weighed) ? ` — <strong>weighed in-store item</strong>; name it below`
+        : lookupPending ? ` <span class="muted">· 🔎 looking up name…</span>` : '';
+    };
+    panel.innerHTML = `<div class="scan-unknown">🆕 New to stock <span class="muted mono">${esc(key)}</span><span id="niNote"></span>${gs1}
+      <div class="scan-tabs"><button class="btn sm" data-new>Add to stock + glossary</button><button class="btn sm ghost" data-link>Link to existing</button><button class="btn sm ghost" data-skip>Skip</button></div>
+      <div id="scSub"></div></div>`;
+    renderNote();
+    panel.querySelector('[data-skip]').onclick = next;
+    panel.querySelector('[data-new]').onclick = () => {
+      const cwDefault = g && g.is_catch_weight ? '1' : '0';
+      $('scSub').innerHTML = `<div class="scan-form">
+        <input id="niName" placeholder="Item name / description" value="${esc(g && g.name ? g.name : '')}">
+        ${comboHTML('niCat', CATEGORY_OPTIONS, (g && g.category) || 'Produce', 'Category')}
+        ${comboHTML('niUnit', UOM_OPTIONS, (g && g.unit) || (wt ? 'lb' : 'each'), 'Unit of measure')}
+        <input id="niDesc" placeholder="Description (optional)" value="${esc(g && g.description ? g.description : '')}">
+        <div class="scan-row"><label class="scan-lbl" style="flex:1">Catch-weight? <select id="niCW"><option value="0" ${cwDefault === '0' ? 'selected' : ''}>No — count</option><option value="1" ${cwDefault === '1' ? 'selected' : ''}>Yes — by weight</option></select></label></div>
+        <div class="scan-row"><input id="niSku" placeholder="SKU (optional)"><input id="niCost" type="number" placeholder="Unit cost $" step="0.01" value="${g && g.default_unit_cost ? g.default_unit_cost : ''}"></div>
+        <div class="scan-row"><input id="niQty" type="number" placeholder="Opening qty / weight" value="${wt || 0}" step="any"><input id="niMin" type="number" placeholder="Reorder at" step="any"><input id="niPar" type="number" placeholder="Par" step="any"></div>
+        <div class="scan-row"><input id="niExp" type="date" title="Expiry" value="${esc(labelExpiry)}"><input id="niLot" placeholder="Lot / batch" value="${esc(labelLot)}"></div>
+        <div class="scan-row"><input id="niShelf" list="niShelfList" placeholder="Shelf / Section (optional)"></div><datalist id="niShelfList"></datalist>
+        <div class="scan-row"><input id="niVendor" list="niVendorList" placeholder="Supplier / vendor"><input id="niVCode" placeholder="Supplier item code"></div><datalist id="niVendorList"></datalist>
+        <label class="scan-lbl" style="display:flex;align-items:center;gap:.4rem;margin:.3rem 0"><input type="checkbox" id="niGloss" checked> Also save to the Glossary (all locations)</label>
+        <button class="btn" id="niSave">✓ Confirm &amp; add to stock</button></div>`;
+      comboWire($('scSub'));
+      api('/invscan/vendors/list').then(vs => { const dl = $('niVendorList'); if (dl) dl.innerHTML = (vs || []).map(v => `<option value="${esc(v.name)}">`).join(''); }).catch(() => {});
+      api('/invscan/sections').then(ss => { const dl = $('niShelfList'); if (dl) dl.innerHTML = (ss || []).map(s => `<option value="${esc(s.name)}">`).join(''); }).catch(() => {});
+      $('niSave').onclick = async () => {
+        const name = ($('niName').value || '').trim(); if (!name) return toast('Enter an item name', true);
+        const cw = $('niCW').value === '1';
+        const body = { barcode: code, item_name: name, category: comboVal('niCat') || 'Other', unit: comboVal('niUnit') || (cw ? 'lb' : 'each'),
+          description: $('niDesc').value.trim() || undefined, is_catch_weight: cw ? 1 : 0, sku: $('niSku').value.trim() || undefined,
+          unit_cost: $('niCost').value || 0, min_quantity: $('niMin').value || 0, par_level: $('niPar').value || undefined,
+          expiry_date: $('niExp').value || undefined, lot_code: $('niLot').value.trim() || undefined,
+          section_name: $('niShelf').value.trim() || undefined,
+          vendor_name: $('niVendor').value.trim() || undefined, vendor_code: $('niVCode').value.trim() || undefined,
+          scale_code: r.scale_code || undefined, save_to_glossary: $('niGloss').checked };
+        if (cw) body.weight = $('niQty').value; else body.quantity = $('niQty').value;
+        try { await api('/invscan/receive-create', { method: 'POST', body: JSON.stringify(body) }); toast(`Added ${name}${$('niGloss').checked ? ' · glossary updated' : ''}`); next(); } catch (e) { toast(e.message, true); }
+      };
+    };
+    if (lookupPending) {
+      api('/invscan/lookup/' + encodeURIComponent(code)).then(look => {
+        if (look && look.found) {
+          g = { name: look.name, category: look.category, unit: look.unit, description: look.description, default_unit_cost: look.default_unit_cost || look.price, is_catch_weight: look.is_catch_weight, size: look.size };
+          const nn = $('niName'); if (nn && !nn.value.trim()) nn.value = look.name;
+          const nd = $('niDesc'); if (nd && !nd.value.trim() && look.description) nd.value = look.description;
+          const nc = $('niCost'); if (nc && !nc.value && (look.default_unit_cost || look.price)) nc.value = look.default_unit_cost || look.price;
+        } else if (look && look.weighed) { g = { _weighed: true, default_unit_cost: look.price }; }
+        lookupPending = false; renderNote();
+      }).catch(() => { lookupPending = false; renderNote(); });
+    }
+    panel.querySelector('[data-link]').onclick = async () => {
+      $('scSub').innerHTML = '<div class="scan-msg">Loading items…</div>';
+      let items = []; try { items = await api('/invscan/items/list'); } catch { /* ignore */ }
+      $('scSub').innerHTML = `<div class="scan-form"><select id="niItem">${items.map(i => `<option value="${i.id}">${esc(i.item_name)}</option>`).join('')}</select><button class="btn" id="niLink">Link barcode</button></div>`;
+      $('niLink').onclick = async () => { try { await api('/invscan/link', { method: 'POST', body: JSON.stringify({ code: key, item_id: $('niItem').value }) }); toast('Barcode linked'); next(); } catch (e) { toast(e.message, true); } };
+    };
+  }
+}
+
+// Scan-to-check: how much of the scanned product each location holds (read-only, all sites).
+async function svHandleCheck(code, panel, next) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/check/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  if (!r.found) { panel.innerHTML = `<div class="scan-unknown">🔍 <span class="mono">${esc(r.code)}</span> — not stocked anywhere yet. <button class="btn sm ghost" id="ckNext">OK</button></div>`; $('ckNext').onclick = next; return; }
+  panel.innerHTML = `<div class="scan-found">📋 <strong>${esc(r.item_name)}</strong> <span class="muted">· ${numf(r.total)} ${esc(r.unit)} across all locations</span>
+    <div class="scan-stock">${r.by_location.map(l => `<div class="scan-stock-row${l.location_id === r.mine ? ' mine' : ''}"><span>${esc(l.location)}${l.type === 'central_kitchen' ? ' (CK)' : ''}${l.location_id === r.mine ? ' · you' : ''}${l.section ? ` <span class="stock-shelf">📍 ${esc(l.section)}</span>` : ''}</span><span class="mono${l.quantity < l.min_quantity ? ' low' : ''}">${numf(l.quantity)} ${esc(l.unit)}</span></div>`).join('')}</div>
+    <button class="btn ghost" id="ckNext">Scan another</button></div>`;
+  $('ckNext').onclick = next;
+}
+
+// Scan-to-transfer: move from THIS store to a chosen destination (the server still fills an open
+// order at the destination if one matches). `verb` labels the action ('Transfer', or 'Ship').
+async function svHandleShip(code, panel, next, to, toName, refreshOrders, verb) {
+  verb = verb || 'Transfer';
+  const vIcon = verb === 'Ship' ? '📤' : '🔁';
+  const vPast = verb === 'Ship' ? 'Shipped' : 'Transferred';
+  if (!to) { panel.innerHTML = `<div class="scan-unknown">Pick a destination above, then scan an item to ${verb.toLowerCase()}.</div>`; setTimeout(next, 1400); return; }
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store, so there's nothing to ${verb.toLowerCase()}. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const dest = (toName || '').replace(/\s*\((CK|WH)\)\s*$/, '').trim();
+  let dflt = (r.parsed && r.parsed.weightLb) || 1;
+  if (verb === 'Ship') { try { const ords = await api('/invscan/ship/orders?to_location_id=' + to); const m = ords.find(o => o.item_name === it.item_name && o.remaining > 0); if (m) dflt = m.remaining; } catch { /* ignore */ } }
+  panel.innerHTML = `<div class="scan-found">${vIcon} <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="shQty" type="number" value="${dflt}" min="0" step="any"><span class="muted">→ ${esc(dest)}</span></div>
+    <div class="scan-act"><button class="btn" id="shGo">${vIcon} ${verb}</button><button class="btn ghost" id="shNext">Skip</button></div></div>`;
+  $('shNext').onclick = next;
+  $('shGo').onclick = async () => {
+    const btn = $('shGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('shQty').value;
+    const body = { to_location_id: to, code: key, quantity: qv };
+    try {
+      let rr = await api('/invscan/ship', { method: 'POST', body: JSON.stringify(body) });
+      if (rr.duplicate) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/invscan/ship', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
+      toast(`${vPast} ${numf(qv)} ${it.unit} → ${dest}${rr.order ? (rr.order.shipped ? ' · order complete ✅' : ` · order ${numf(rr.order.ck_qty)}/${numf(rr.order.requested_qty)}`) : ''}`);
+      if (refreshOrders) refreshOrders(); next();
+    } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+}
+
+// Scan-to-use: consume stock at THIS store (kitchen prep / to serve).
+async function svHandleUse(code, panel, next) {
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let r; try { r = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
+  const key = r.code || code;
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at your store. <button class="btn sm ghost" id="uSkip">Skip</button></div>`; $('uSkip').onclick = next; return; }
+  const it = r.item; const cw = !!it.is_catch_weight;
+  const wt = (r.parsed && r.parsed.weightLb) || '';
+  panel.innerHTML = `<div class="scan-found">🍳 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)} on hand${cw ? ' ⚖' : ''}</span>${scanLangs(r.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="uQty" type="number" value="${cw ? (wt || '') : (wt || 1)}" min="0" step="any" placeholder="${cw ? 'weight used' : 'qty used'}"><input id="uReason" placeholder="Reason (e.g. prep, serve)"></div>
+    <div class="scan-act"><button class="btn" id="uGo">🍳 Record use</button><button class="btn ghost" id="uNext">Skip</button></div></div>`;
+  $('uNext').onclick = next;
+  $('uGo').onclick = async () => {
+    const btn = $('uGo'); if (btn.disabled) return; btn.disabled = true;
+    const qv = $('uQty').value;
+    const body = { code: key, reason: $('uReason').value.trim() || undefined };
+    if (cw) body.weight = qv; else body.quantity = qv;
+    try { const rr = await api('/invscan/use', { method: 'POST', body: JSON.stringify(body) }); toast(`Used ${numf(qv)} ${it.unit} · ${it.item_name} → ${numf(rr.item.quantity)} left`); next(); } catch (e) { toast(e.message, true); btn.disabled = false; }
+  };
+}

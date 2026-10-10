@@ -244,6 +244,7 @@ const SECTIONS = [
   ['mytables', '🍽️', 'My Tables', 'scheduled'],
   ['alerts', '🔔', 'Alerts', 'scheduled'],
   ['myhours', '⏱️', 'My Hours', 'scheduled'],
+  ['scan', '📠', 'Scan', 'scheduled'],
   ['inventory', '📦', 'Inventory', 'ops'],
   ['central', '🏭', 'Central Kitchen', 'central'],
   ['warehouse', '🏬', 'Warehouse', 'ops'],
@@ -400,7 +401,7 @@ function showSection(section) {
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (isWarehouse) { renderWhTabs(); renderWarehouse(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 

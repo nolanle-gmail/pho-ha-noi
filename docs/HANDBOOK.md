@@ -805,8 +805,12 @@ Use** draws the oldest layer first and reports the true **COGS** valued at each 
   order screen — the "Order from" dropdown lists each hub (CK + Warehouse) that stocks the item.
   The same flow runs on the **standalone kiosk** — `POST /api/scannerkiosk/kiosk/:slug/ship-queue`
   (no body → the hub's order queue; `to_location_id` → that store's lines) and `POST .../ship-scan` —
-  so a hub staffer can fulfil orders from the tablet at the dock. Console and kiosk share one core
-  (`lib/shipOrder.js`: `hubQueue` / `storeLines` / `shipScanOrder`) so the two can never drift.
+  so a hub staffer can fulfil orders from the tablet at the dock. It **also runs in the staff app**
+  (2026-10-09): hub staff (CK/Warehouse) get a **📤 Shipping** mode in the phone scanner, surfaced
+  only when `GET /invscan/hub` reports the staffer's own location is a hub. The staff app proxies
+  `GET /invscan/{hub,ship-queue,ship-queue/:storeId}` and `POST /invscan/ship-scan` to Management
+  (service-key + `?as=<staff email>`). Console, kiosk and staff app share one core
+  (`lib/shipOrder.js`: `hubQueue` / `storeLines` / `shipScanOrder`) so the three can never drift.
 
 Every location (and every scan surface) can **📥 Receiving**, **🔁 Transferring**, **📋 Checking
 Inventory** and **🍳 Use**. The **Warehouse** and **Central Kitchen** (the distribution hubs) add
@@ -815,7 +819,9 @@ full set **Receiving · Shipping · Transferring · Checking Inventory · Use**.
 order-queue fulfilment flow above (pick an order, scan its items — `/distribution/ship-scan`), while
 **Transferring** is an ad-hoc destination move (`/inventory/barcode/transfer`). **Use** consumes stock on site
 (production / prep / to serve) — FIFO with an `out` transaction. The **staff app** (always
-store-scoped to the staffer's own store) shows Receiving / Transferring / Checking Inventory / Use.
+store-scoped to the staffer's own store) shows Receiving / Transferring / Checking Inventory / Use —
+**plus Shipping when the staffer's own store is a hub** (Central Kitchen / Warehouse), so hub staff
+can load store orders straight from their phone.
 The **standalone kiosk** (`/scanner/<slug>`) is section-aware: it reads its location's `type` (from
 `GET /kiosk/:slug`) and shows the store four, adding **Shipping** at the Warehouse or Central Kitchen.
 - **🍳 Use** (every console section, the staff app, and the kiosk) — mark stock **used** (prep /

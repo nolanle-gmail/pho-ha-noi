@@ -120,9 +120,9 @@ function capturePhoto(){
 function showPanel(kind, html){ const p=$('panel'); p.className='panel show '+kind; p.innerHTML=html; }
 function hidePanel(){ $('panel').className='panel'; }
 
-let staffName = '';
+let staffName = '', staffCode = '';
 function resetSoon(ms){ clearTimeout(resetSoon._t); resetSoon._t=setTimeout(resetForm, ms||7000); }
-function resetForm(){ $('code').value=''; $('actions').hidden=true; hidePanel(); staffName=''; $('code').focus(); }
+function resetForm(){ $('code').value=''; $('actions').hidden=true; hidePanel(); staffName=''; staffCode=''; $('code').focus(); }
 
 async function lookup(){
   const code = $('code').value.trim();
@@ -130,6 +130,10 @@ async function lookup(){
   const { d } = await api(`/kiosk/${encodeURIComponent(slug)}/state`, { method:'POST', body: JSON.stringify({ employee_code: code }) });
   if (!d.ok){ $('actions').hidden = true; showPanel('err', d.message || 'Please check your employee code.'); return; }
   staffName = d.name;
+  // Stash the code for the clock-in/out punch, then clear the visible field right away so the next
+  // staffer can't see the previous person's employee ID when they step up to the kiosk.
+  staffCode = code;
+  $('code').value = '';
   showPanel('info', `<span class="big">${escapeHtml(d.greeting)}</span>${d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.'}`);
   $('actions').hidden = false;
   $('clockIn').disabled = !d.can_in;
@@ -138,7 +142,7 @@ async function lookup(){
 }
 
 async function punch(action){
-  const code = $('code').value.trim(); if (!code) return;
+  const code = staffCode; if (!code) return;
   const photo = capturePhoto();   // best-effort snapshot; null if no camera
   let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, photo }) });
   if (res.d && res.d.confirm){
