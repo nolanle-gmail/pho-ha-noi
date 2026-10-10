@@ -425,6 +425,11 @@ sweep **auto-purges photos older than 90 days** (override via `PUNCH_PHOTO_RETEN
 runs at startup then daily) so image bytes don't accumulate — the time entries themselves
 (hours) are kept for payroll history.
 
+**Shared-kiosk privacy (2026-10-09).** The clock kiosk is a shared tablet, so the moment a staffer
+taps **Continue** (their code is looked up and the Clock In / Out buttons appear) the **employee-code
+field is cleared** — the next person in line never sees the previous staffer's ID. The looked-up code
+is held in memory just long enough for the actual Clock In / Out punch, then wiped on reset.
+
 A `time_entries` row is one work day: clock-in snapshots the scheduled span,
 clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager's
 `ot_approvals` sign-off (which can be escalated to Owner / GM / Admin); managers can
@@ -1333,10 +1338,13 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **My Hours** | The staffer's own clocked hours, overtime & late starts (Daily / Weekly / Bi-weekly / Monthly) | Store staff |
 
 > **One app for staff.** Store staff (any non-all-location role) can now do everything they need
-> from the **Management console** — **My Schedule, My Tasks, My Tables, Alerts, My Hours** sit in the
-> sidebar alongside Messages, so they no longer need the separate Staff app. These sections are
-> hidden for all-location leadership (owner / admin / CEO / president / HR / GM / regional), who
-> aren't shift-scheduled. The views are ported from the Staff app and call the same Management API.
+> from the **Management console** — **My Schedule, My Tasks, My Tables, Alerts, My Hours** and (2026-10-09)
+> **📠 Scan** sit in the sidebar alongside Messages, so they no longer need the separate Staff app. These
+> sections are hidden for all-location leadership (owner / admin / CEO / president / HR / GM / regional),
+> who aren't shift-scheduled. The views are ported from the Staff app and call the same Management API.
+> **Scan** is the full store-scoped scanner (Receiving / Transferring / Checking Inventory / Use; hubs also
+> get 📤 Shipping) — it goes through `/api/invscan/*`, which scopes to the signed-in staffer's own store via
+> their JWT, exactly as the Staff PWA's Scan did.
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
 > their **full HR profile** — Account (name), Personal, Contact, Mailing address,
