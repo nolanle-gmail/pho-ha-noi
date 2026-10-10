@@ -2069,10 +2069,14 @@ function renderScan() {
 }
 
 async function openScanner() {
+  // Central Kitchen / Warehouse staff additionally get a Shipping (load) mode to fulfil store orders.
+  const hub = await api('/invscan/hub').catch(() => ({ is_hub: false }));
+  const isHub = !!(hub && hub.is_hub);
+  const hubName = ((hub && hub.hub && hub.hub.name) || '').replace('Pho Ha Noi — ', '');
   const host = document.createElement('div'); host.className = 'scan-overlay';
   host.innerHTML = `<div class="scan-card">
     <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
-    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receiving</button><button class="btn sm ghost" data-mode="transfer">🔁 Transferring</button><button class="btn sm ghost" data-mode="check">📋 Checking Inventory</button><button class="btn sm ghost" data-mode="use">🍳 Use</button></div>
+    <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receiving</button>${isHub ? '<button class="btn sm ghost" data-mode="ship">📤 Shipping</button>' : ''}<button class="btn sm ghost" data-mode="transfer">🔁 Transferring</button><button class="btn sm ghost" data-mode="check">📋 Checking Inventory</button><button class="btn sm ghost" data-mode="use">🍳 Use</button></div>
     <div id="shipBar" class="ship-bar" hidden></div>
     <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
     <div id="scanPanel"></div>
@@ -2083,7 +2087,7 @@ async function openScanner() {
   // focused so scans land here hands-free (phone, tablet or PC — no camera needed).
   const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
   setTimeout(focusManual, 60);
-  let busy = false, mode = 'receive';
+  let busy = false, mode = 'receive', shipStore = null;
   const close = () => { host.remove(); };
   host.querySelector('[data-x]').onclick = close;
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
@@ -2094,12 +2098,38 @@ async function openScanner() {
     let ords = []; try { ords = await api('/invscan/ship/orders?to_location_id=' + to); } catch { /* ignore */ }
     box.innerHTML = ords.length ? `<div class="ship-ord-h">Open order to fill:</div>` + ords.map(o => `<div class="ship-ord${o.remaining <= 0 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.ck_qty)}/${nf(o.requested_qty)} ${esc(o.unit || '')}</span></div>`).join('') : '<div class="muted" style="font-size:.82rem">No open orders for this location — scanning ships ad-hoc.</div>';
   }
+  // ── Load mode (hub): the queue of stores with approved orders → tap a store → scan items ──
+  async function renderShipQueue() {
+    const box = $('shipBar'); if (!box || mode !== 'ship') return;
+    if (shipStore) return renderShipStore();
+    box.innerHTML = '<div class="muted" style="font-size:.82rem">Loading orders…</div>';
+    let d; try { d = await api('/invscan/ship-queue'); } catch (e) { box.innerHTML = `<div class="muted" style="font-size:.82rem">${esc(e.message)}</div>`; return; }
+    if (mode !== 'ship') return;
+    const ords = d.orders || [];
+    box.innerHTML = `<div class="ship-ord-h">📦 Approved orders to load from <strong>${esc(hubName)}</strong></div>`
+      + (ords.length ? `<div class="ship-queue">${ords.map(o => `<button class="ship-ord pick" data-store="${o.store_id}" data-name="${esc(o.store_name)}"><span>${esc((o.store_name || '').replace('Pho Ha Noi — ', ''))}</span><span class="mono">${o.lines} item${o.lines === 1 ? '' : 's'}${o.started ? ' · started' : ''} ›</span></button>`).join('')}</div>`
+        : '<div class="muted" style="font-size:.82rem">No approved orders to load. ✅</div>');
+    box.querySelectorAll('[data-store]').forEach(b => b.onclick = () => { shipStore = { id: b.dataset.store, name: b.dataset.name }; renderShipStore(); });
+  }
+  async function renderShipStore() {
+    const box = $('shipBar'); if (!box || !shipStore) return;
+    box.innerHTML = '<div class="muted" style="font-size:.82rem">Loading order…</div>';
+    let d; try { d = await api('/invscan/ship-queue/' + shipStore.id); } catch (e) { box.innerHTML = `<div class="muted" style="font-size:.82rem">${esc(e.message)}</div>`; return; }
+    const lines = d.lines || [], sn = (shipStore.name || '').replace('Pho Ha Noi — ', '');
+    box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <strong>${esc(sn)}</strong> — scan items to load</div>`
+      + (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining <= 0.0005 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${nf(o.shipped_qty)} loaded / ${nf(o.requested_qty)} ordered ${esc(o.unit || '')}${o.on_hand <= 0.0005 ? ' · ⚠ none here' : ''}</span></div>`).join('')}</div>`
+        : '<div class="muted" style="font-size:.82rem">This order is fully loaded. ✅</div>');
+    const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
+  }
+  const refreshShip = () => { if (mode === 'ship') { shipStore ? renderShipStore() : renderShipQueue(); } };
   async function setMode(m) {
     mode = m;
     host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
-    $('shipBar').hidden = m !== 'transfer';
-    $('scanMsg').textContent = m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : (m === 'use' ? 'Scan an item to record kitchen use.' : '📠 Ready — scan a barcode with your scanner.'));
-    if (m === 'transfer' && !$('shipBar').dataset.loaded) {
+    const wantsBar = (m === 'transfer' || m === 'ship');
+    $('shipBar').hidden = !wantsBar;
+    $('scanMsg').textContent = m === 'ship' ? 'Pick an order below, then scan the items to load.' : m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.' : (m === 'check' ? 'Scan an item to see stock across all locations.' : (m === 'use' ? 'Scan an item to record kitchen use.' : '📠 Ready — scan a barcode with your scanner.'));
+    if (m === 'ship') { $('shipBar').dataset.loaded = ''; await renderShipQueue(); }
+    else if (m === 'transfer' && !$('shipBar').dataset.loaded) {
       $('shipBar').dataset.loaded = '1';
       let tgts = []; try { tgts = await api('/invscan/ship/targets'); } catch { /* ignore */ }
       // Ad-hoc transfer: destination only, no open-order fill list (store staff don't fulfil orders).
@@ -2113,14 +2143,45 @@ async function openScanner() {
     if (busy) return; busy = true;
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : '📠 Ready — scan the next barcode.')); focusManual(); };
-    if (mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), () => {}, 'Transfer');
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? (shipStore ? 'Scan the next item to load.' : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : '📠 Ready — scan the next barcode.')); focusManual(); };
+    if (mode === 'ship') await handleShipOrder(code, $('scanPanel'), done, shipStore, refreshShip);
+    else if (mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), () => {}, 'Transfer');
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
     else if (mode === 'use') await handleUse(code, $('scanPanel'), done);
     else await handleScan(code, $('scanPanel'), done);
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
   $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
+}
+// Scan an item to LOAD a line of the picked store's approved order (hub staff). Decrements the hub;
+// the order advances to 'loaded' once every approved item is scanned on.
+async function handleShipOrder(code, panel, next, shipStore, refreshShip) {
+  if (!shipStore) { panel.innerHTML = `<div class="scan-err">Pick an order above first, then scan its items.</div>`; setTimeout(() => next && next(), 1400); return; }
+  panel.innerHTML = '<div class="scan-msg">Looking up…</div>';
+  let d; try { d = await api('/invscan/resolve/' + encodeURIComponent(code)); } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div><button class="btn sm ghost" id="shAgain">OK</button>`; $('shAgain').onclick = next; return; }
+  const key = d.code || code;
+  if (!d.item) { panel.innerHTML = `<div class="scan-found">🚫 <strong>Not stocked here</strong> <span class="mono">${esc(key)}</span><div class="sub">Nothing to load.</div></div><button class="btn sm ghost" id="shAgain">Scan another</button>`; $('shAgain').onclick = next; return; }
+  const it = d.item, sn = (shipStore.name || '').replace('Pho Ha Noi — ', '');
+  let line = null;
+  try { const q = await api('/invscan/ship-queue/' + shipStore.id); line = ((q && q.lines) || []).find(l => l.item_name === it.item_name && l.remaining > 0.0005); } catch { /* ignore */ }
+  if (!line) { panel.innerHTML = `<div class="scan-found">⚠ <strong>${esc(it.item_name)}</strong><div class="sub">isn't on ${esc(sn)}'s approved order (or already fully loaded).</div></div><button class="btn sm ghost" id="shAgain">Scan another</button>`; $('shAgain').onclick = next; return; }
+  const dflt = (d.parsed && d.parsed.weightLb) || line.remaining || 1;
+  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong><div class="sub">${nf(it.quantity)} ${esc(it.unit)} on hand · order needs ${nf(line.remaining)} ${esc(line.unit || it.unit)} → <strong>${esc(sn)}</strong></div>${scanLangs(d.glossary)}${scanSection(it)}
+    <div class="scan-act"><input id="shq" type="number" value="${dflt}" min="0" step="any"></div>
+    <div class="scan-act"><button class="btn" id="shGo">📤 Load</button><button class="btn ghost" id="shAgain">Cancel</button></div></div>`;
+  $('shAgain').onclick = next;
+  $('shGo').onclick = async () => {
+    $('shGo').disabled = true;
+    const body = { to_location_id: shipStore.id, code: key, quantity: $('shq').value };
+    let r; try { r = await api('/invscan/ship-scan', { method: 'POST', body: JSON.stringify(body) }); } catch (e) { $('shGo').disabled = false; toast(e.message); return; }
+    if (r && r.over) { if (!window.confirm(r.message)) { $('shGo').disabled = false; return; } try { r = await api('/invscan/ship-scan', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); } catch (e) { $('shGo').disabled = false; toast(e.message); return; } }
+    if (r && r.not_on_order) { $('shGo').disabled = false; toast(r.error || 'That item is not on this order.'); return; }
+    if (!r || !r.ok) { $('shGo').disabled = false; toast((r && r.error) || 'Could not load that item.'); return; }
+    const o = r.order;
+    panel.innerHTML = `<div class="scan-found">✓ Loaded ${nf(r.shipped)} ${esc(r.unit || it.unit)} → ${esc(sn)}${o ? (o.done ? ' · line complete ✅' : ` · ${nf(o.shipped_qty)}/${nf(o.requested_qty)}`) : ''}${o && o.raised ? ' · over, original kept' : ''}</div><button class="btn sm" id="shAgain">Scan another</button>`;
+    $('shAgain').onclick = next;
+    refreshShip && refreshShip();
+  };
 }
 
 // Smart receive — glossary-aware. Known item adds count (or WEIGHT for catch-weight, with a

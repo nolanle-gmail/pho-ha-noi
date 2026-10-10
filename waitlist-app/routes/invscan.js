@@ -31,6 +31,8 @@ async function fwd(req, res, method, path, body) {
 router.get('/items/list', (req, res) => fwd(req, res, 'GET', '/items/list'));
 router.get('/vendors/list', (req, res) => fwd(req, res, 'GET', '/vendors/list'));
 router.get('/lookup/:code', (req, res) => fwd(req, res, 'GET', `/lookup/${encodeURIComponent(req.params.code)}`));
+router.get('/resolve/:code', (req, res) => fwd(req, res, 'GET', `/resolve/${encodeURIComponent(req.params.code)}`));
+router.get('/check/:code', (req, res) => fwd(req, res, 'GET', `/check/${encodeURIComponent(req.params.code)}`));
 router.post('/scan', (req, res) => fwd(req, res, 'POST', '/scan', req.body || {}));
 router.post('/link', (req, res) => fwd(req, res, 'POST', '/link', req.body || {}));
 router.post('/create', (req, res) => fwd(req, res, 'POST', '/create', req.body || {}));
@@ -41,6 +43,11 @@ router.post('/sections', (req, res) => fwd(req, res, 'POST', '/sections', req.bo
 router.post('/sections/assign', (req, res) => fwd(req, res, 'POST', '/sections/assign', req.body || {}));
 router.put('/sections/:id', (req, res) => fwd(req, res, 'PUT', `/sections/${encodeURIComponent(req.params.id)}`, req.body || {}));
 router.delete('/sections/:id', (req, res) => fwd(req, res, 'DELETE', `/sections/${encodeURIComponent(req.params.id)}`));
+// Scan-to-load (hub staff fulfilling store orders) — these must precede the catch-all /:code.
+router.get('/hub', (req, res) => fwd(req, res, 'GET', '/hub'));
+router.get('/ship-queue', (req, res) => fwd(req, res, 'GET', '/ship-queue'));
+router.get('/ship-queue/:storeId', (req, res) => fwd(req, res, 'GET', `/ship-queue/${encodeURIComponent(req.params.storeId)}`));
+router.post('/ship-scan', (req, res) => fwd(req, res, 'POST', '/ship-scan', req.body || {}));
 router.get('/:code', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.code)}`));
 
 module.exports = router;

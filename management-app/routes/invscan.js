@@ -13,6 +13,7 @@ const { resolveVendor } = require('../lib/vendors');
 const { resolveScan, receiveExisting, createAndReceive } = require('../lib/receive');
 const { receiveAgainstOrder, receiveAgainstTransfer } = require('../lib/inbound');
 const { shipByBarcode, openOrders } = require('../lib/transfer');
+const { hubById, hubQueue, storeLines, shipScanOrder } = require('../lib/shipOrder');
 
 const router = express.Router();
 const scanKey = (raw) => { const p = parseScan(raw); return (p.gtin || p.code || '').toString().trim(); };
@@ -170,6 +171,35 @@ router.post('/receive-create', (req, res) => {
   if (r.error) return res.status(400).json({ error: r.error });
   auditLog(req, 'item_create', 'inventory', r.id, { name: r.item.item_name, location_id: loc, received: r.received, via: 'scan' });
   res.json({ success: true, id: r.id, item: r.item, received: r.received });
+});
+
+// ── Scan-to-LOAD (hub staff): fulfil store orders from a Central Kitchen / Warehouse ───────────
+// Only hub-based staff get this. It mirrors the console/kiosk Ship flow (queue → store → scan) and
+// loads only APPROVED items, advancing the order to 'loaded' once all are on the truck.
+router.get('/hub', (req, res) => {
+  const hub = hubById(storeLoc(req));
+  res.json({ is_hub: !!hub, hub: hub ? { id: hub.id, name: hub.name, type: hub.type } : null });
+});
+router.get('/ship-queue', (req, res) => {
+  const hub = hubById(storeLoc(req));
+  if (!hub) return res.status(403).json({ error: 'Only Central Kitchen / Warehouse staff can load orders.' });
+  res.json({ ok: true, hub: { id: hub.id, name: hub.name, type: hub.type }, orders: hubQueue(hub.id) });
+});
+router.get('/ship-queue/:storeId', (req, res) => {
+  const hub = hubById(storeLoc(req));
+  if (!hub) return res.status(403).json({ error: 'Not your hub.' });
+  const store = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(req.params.storeId);
+  if (!store) return res.status(404).json({ error: 'Store not found.' });
+  res.json({ ok: true, hub: { id: hub.id, name: hub.name, type: hub.type }, store, lines: storeLines(hub.id, store.id) });
+});
+router.post('/ship-scan', (req, res) => {
+  const hub = hubById(storeLoc(req));
+  if (!hub) return res.status(403).json({ error: 'Only Central Kitchen / Warehouse staff can load orders.' });
+  const r = shipScanOrder({ hubId: hub.id, storeId: req.body.to_location_id, code: req.body.code, quantity: req.body.quantity, weight: req.body.weight, confirm: req.body.confirm, userId: req.user.id });
+  if (r.over || r.not_on_order) return res.json(r);   // non-fatal — the UI handles the confirm / message
+  if (r.error) return res.status(r.status || 400).json(r);
+  if (r.ok) auditLog(req, 'distribution_ship_scan', 'distribution_order', r.line_id, { item: r.item_name, qty: r.shipped, via: 'staff-scan' });
+  res.json(r);
 });
 
 // ── Scan-to-check (read-only, every location + CK) ─────────────────────────────

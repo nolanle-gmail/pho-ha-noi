@@ -1219,6 +1219,31 @@ const check = (name, ok, detail = '') => {
       && sdb.prepare("SELECT approval FROM distribution_orders WHERE id=?").get(rhLine.id).approval === 'rejected'
       && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(rh.order_no).stage === 'rejected');
 
+    // Staff-app scan-to-LOAD (hub staff only), via the /invscan service-key proxy path.
+    const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+    const ckEmail = (sdb.prepare("SELECT email FROM users WHERE location_id=? AND email IS NOT NULL AND is_active=1 LIMIT 1").get(ckL) || {}).email;
+    const storeEmail = (sdb.prepare("SELECT email FROM users WHERE location_id=? AND email IS NOT NULL AND is_active=1 LIMIT 1").get(loc1) || {}).email;
+    const asCK = `key=${KEY}&as=${encodeURIComponent(ckEmail)}`;
+    const hubChk = await j(await fetch(base + '/api/invscan/hub?' + asCK));
+    check('invscan/hub: a CK staffer is a hub (gets the Load mode)', hubChk.is_hub === true && hubChk.hub && hubChk.hub.type === 'central_kitchen', JSON.stringify(hubChk));
+    const hubChk2 = await j(await fetch(base + `/api/invscan/hub?key=${KEY}&as=${encodeURIComponent(storeEmail)}`));
+    check('invscan/hub: a store staffer is NOT a hub', hubChk2.is_hub === false);
+    r = await fetch(base + `/api/invscan/ship-scan?key=${KEY}&as=${encodeURIComponent(storeEmail)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_location_id: ckL, code: 'X', quantity: 1 }) });
+    check('invscan/ship-scan blocked for a store staffer (403)', r.status === 403, 'status=' + r.status);
+    const ldItem = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>20 AND distributable=1 ORDER BY id LIMIT 1").get(ckL);
+    sdb.prepare("UPDATE inventory SET barcode='ZZLOADSCAN1' WHERE id=?").run(ldItem.id);
+    const ldStore = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, ldItem.item_name);
+    const ldOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: ldStore.id, item_name: ldItem.item_name, quantity: 4 }] }) }));
+    const ldLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=?").get(ldOrder.order_no);
+    await fetch(base + `/api/distribution/hub-orders/${ldOrder.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: ldLine.id, decision: 'approved' }] }) });
+    const sq = await j(await fetch(base + '/api/invscan/ship-queue?' + asCK));
+    check('invscan/ship-queue lists the approved order for a hub staffer', (sq.orders || []).some(o => String(o.store_id) === String(loc1)));
+    const ckLoadBefore = sdb.prepare("SELECT quantity FROM inventory WHERE id=?").get(ldItem.id).quantity;
+    const ls = await j(await fetch(base + '/api/invscan/ship-scan?' + asCK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_location_id: loc1, code: 'ZZLOADSCAN1', quantity: 4 }) }));
+    check('invscan/ship-scan loads the item, decrements the hub, order → loaded', ls.ok === true
+      && Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE id=?").get(ldItem.id).quantity - (ckLoadBefore - 4)) < 0.001
+      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(ldOrder.order_no).stage === 'loaded', JSON.stringify(ls));
+
     // RBAC: store staff can't touch the CK warehouse or its incoming queue.
     r = await fetch(base + '/api/distribution/ck-stock', { headers: H(mgr.token) });
     check('store manager blocked from CK warehouse (403)', r.status === 403, 'status=' + r.status);
