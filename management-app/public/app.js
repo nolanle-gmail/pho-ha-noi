@@ -165,6 +165,12 @@ async function boot() {
   $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}</div>`;
   S.locations = await api('/inventory/locations').catch(() => []);
   S.warehouses = await api('/inventory/locations?type=warehouse').catch(() => []);   // storage hubs → the 🏬 Warehouse section
+  // The signed-in user's own location type — lets a hub-based manager (located at the Central
+  // Kitchen) get the 🏭 Central Kitchen section even without the org-wide 'central' capability,
+  // so they can review orders and run scans for every store.
+  const staffable = await api('/inventory/locations?type=staffable').catch(() => []);
+  S.ckLocId = (staffable.find(l => l.type === 'central_kitchen') || {}).id || S.ckLocId || null;
+  S.myLocType = S.user.location_id ? ((staffable.find(l => String(l.id) === String(S.user.location_id)) || {}).type || null) : null;
   const picker = $('locPicker');
   const seesAll = roleScopeOf(S.user.role) === 'all';
   if (seesAll && S.locations.length) {
@@ -220,9 +226,13 @@ const ORG_ADMIN = ['owner', 'ceo', 'president', 'admin', 'hr'];
 const roleDef = (r) => ROLE_DEFS[r] || { label: r, scope: 'self', caps: [] };
 const roleLabel = (r) => roleDef(r).label;
 const roleScopeOf = (r) => roleDef(r).scope;
-// Does role `r` have capability `cap`? 'any' = everyone; 'scheduled' = gets a shift roster.
+// Does role `r` have capability `cap`? 'any' = everyone; 'scheduled' = gets a shift roster
+// (any non-all-location role); 'floor' = scheduled AND not management (no 'manage' cap) — the
+// actual floor-service staff who wait tables & answer table alerts, so My Tables / Alerts are
+// hidden from managers and leadership.
 const roleHasCap = (r, cap) => cap === 'any' ? true
   : cap === 'scheduled' ? roleScopeOf(r) !== 'all'
+  : cap === 'floor' ? (roleScopeOf(r) !== 'all' && !roleDef(r).caps.includes('manage'))
   : roleDef(r).caps.includes(cap);
 const myCap = (cap) => roleHasCap(S.user.role, cap);
 const SCOPE_LABEL = { all: 'All locations', location: 'Their location', self: 'Self only' };
@@ -241,8 +251,8 @@ const SECTIONS = [
   ['staff', '👥', 'Staff', 'manage'],
   ['myschedule', '🗓️', 'My Schedule', 'scheduled'],
   ['mytasks', '✅', 'My Tasks', 'scheduled'],
-  ['mytables', '🍽️', 'My Tables', 'scheduled'],
-  ['alerts', '🔔', 'Alerts', 'scheduled'],
+  ['mytables', '🍽️', 'My Tables', 'floor'],
+  ['alerts', '🔔', 'Alerts', 'floor'],
   ['myhours', '⏱️', 'My Hours', 'scheduled'],
   ['scan', '📠', 'Scan', 'scheduled'],
   ['inventory', '📦', 'Inventory', 'ops'],
@@ -257,7 +267,13 @@ const SECTIONS = [
   ['messages', '💬', 'Messages', 'any'],
 ];
 // Warehouse section shows only when at least one storage warehouse exists (loaded at boot).
-const allowedSections = () => SECTIONS.filter(s => myCap(s[3]) && (s[0] !== 'warehouse' || (S.warehouses && S.warehouses.length)));
+// The Central Kitchen section shows for anyone with the org-wide 'central' cap (leadership) OR a
+// manager/ops user based AT the Central Kitchen — so the CK's own manager can review & fulfil
+// orders and run scans for every store, while a store manager (no 'central', not CK-based) doesn't.
+const canSeeSection = (key, cap) => key === 'central'
+  ? (myCap('central') || (S.myLocType === 'central_kitchen' && myCap('ops')))
+  : myCap(cap);
+const allowedSections = () => SECTIONS.filter(s => canSeeSection(s[0], s[3]) && (s[0] !== 'warehouse' || (S.warehouses && S.warehouses.length)));
 
 function renderSidebar() {
   $('sidebarNav').innerHTML = allowedSections().map(([k, icon, label]) =>
