@@ -266,13 +266,16 @@ const SECTIONS = [
   ['integrations', '🔌', 'Integrations', 'org'],
   ['messages', '💬', 'Messages', 'any'],
 ];
-// Warehouse section shows only when at least one storage warehouse exists (loaded at boot).
-// The Central Kitchen section shows for anyone with the org-wide 'central' cap (leadership) OR a
-// manager/ops user based AT the Central Kitchen — so the CK's own manager can review & fulfil
-// orders and run scans for every store, while a store manager (no 'central', not CK-based) doesn't.
+// The hub sections (🏭 Central Kitchen, 🏬 Warehouse) show for hub leadership — anyone with the
+// org-wide 'central' (hub-oversight) cap, e.g. Owner / Admin / HR / CEO / President / GM — OR a
+// manager/ops user based AT that hub, so each hub's own manager can review & fulfil orders and run
+// scans for every store while a store manager (not hub-based) sees neither. Warehouse additionally
+// needs at least one storage warehouse to exist (loaded at boot).
 const canSeeSection = (key, cap) => key === 'central'
   ? (myCap('central') || (S.myLocType === 'central_kitchen' && myCap('ops')))
-  : myCap(cap);
+  : key === 'warehouse'
+    ? (myCap('central') || (S.myLocType === 'warehouse' && myCap('ops')))
+    : myCap(cap);
 const allowedSections = () => SECTIONS.filter(s => canSeeSection(s[0], s[3]) && (s[0] !== 'warehouse' || (S.warehouses && S.warehouses.length)));
 
 function renderSidebar() {
