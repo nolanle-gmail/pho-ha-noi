@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 10, 2026_
+_Last updated: October 11, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1341,13 +1341,22 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **My Hours** | The staffer's own clocked hours, overtime & late starts (Daily / Weekly / Bi-weekly / Monthly) | Store staff |
 
 > **One app for staff.** Store staff (any non-all-location role) can now do everything they need
-> from the **Management console** — **My Schedule, My Tasks, My Tables, Alerts, My Hours** and (2026-10-09)
-> **📠 Scan** sit in the sidebar alongside Messages, so they no longer need the separate Staff app. These
-> sections are hidden for all-location leadership (owner / admin / CEO / president / HR / GM / regional),
-> who aren't shift-scheduled. The views are ported from the Staff app and call the same Management API.
-> **Scan** is the full store-scoped scanner (Receiving / Transferring / Checking Inventory / Use; hubs also
-> get 📤 Shipping) — it goes through `/api/invscan/*`, which scopes to the signed-in staffer's own store via
-> their JWT, exactly as the Staff PWA's Scan did.
+> from the **Management console** — **My Schedule, My Tasks, My Hours** and (2026-10-09) **📠 Scan** sit in
+> the sidebar alongside Messages, so they no longer need the separate Staff app. These are hidden for
+> all-location leadership (owner / admin / CEO / president / HR / GM / regional), who aren't shift-scheduled.
+> **My Tables and Alerts are narrower (2026-10-11):** they're the floor-service tabs (wait tables / answer
+> table alerts), so they show only for actual **floor staff** (servers, hosts, bussers — any scheduled role
+> *without* the `manage` capability) and are **hidden from managers and all leadership** (Manager, Assistant /
+> Kitchen Manager, HR, Admin, Owner, President, etc.), who don't work the floor. The views are ported from the
+> Staff app and call the same Management API. **Scan** is the full store-scoped scanner (Receiving /
+> Transferring / Checking Inventory / Use; hubs also get 📤 Shipping) — it goes through `/api/invscan/*`, which
+> scopes to the signed-in staffer's own store via their JWT, exactly as the Staff PWA's Scan did.
+>
+> **Hub managers see their hub (2026-10-11).** The **🏭 Central Kitchen** section shows for anyone with the
+> org-wide `central` capability (leadership) **or** a manager / inventory-ops user based **at the Central
+> Kitchen** — so the CK's own manager can review & fulfil orders and run scans for every store, while a store
+> manager (no `central` cap, not CK-based) doesn't see it. Determined at sign-in from the user's own location
+> type.
 
 > **Editing staff.** Open a person from Staff → Directory and click **Edit** to change
 > their **full HR profile** — Account (name), Personal, Contact, Mailing address,
