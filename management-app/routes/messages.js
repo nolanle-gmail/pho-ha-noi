@@ -145,8 +145,11 @@ router.get('/thread/:id', (req, res) => {
   const tid = parseInt(req.params.id, 10);
   if (!tid) return res.status(400).json({ error: 'Bad thread id.' });
   const msgs = db.prepare(`
-    SELECT m.id, m.subject, m.body, m.audience, m.created_at, m.sender_id,
+    SELECT m.id, m.subject, m.body, m.audience, m.created_at, m.sender_id, m.reply_to,
            u.name AS sender_name, u.role AS sender_role,
+           (SELECT u2.name FROM messages pm JOIN users u2 ON u2.id=pm.sender_id WHERE pm.id=m.reply_to) AS reply_sender,
+           (SELECT substr(pm.body,1,140) FROM messages pm WHERE pm.id=m.reply_to) AS reply_body,
+           (SELECT COUNT(*) FROM message_attachments pa WHERE pa.message_id=m.reply_to) AS reply_att,
            (SELECT COUNT(*) FROM message_attachments a WHERE a.message_id=m.id) AS attachment_count,
            (SELECT COUNT(*) FROM message_recipients r WHERE r.message_id=m.id) AS recipient_count,
            (SELECT COUNT(*) FROM message_recipients r WHERE r.message_id=m.id AND r.is_read=1) AS read_count
@@ -241,11 +244,11 @@ router.get('/:id/receipts', (req, res) => {
 // Deliver a message to a set of recipients. Returns the message id.
 // `audience` is what's stored for display ('direct' covers person + group).
 // threadId/parentId link replies; a root message threads to its own id.
-function deliver(senderId, audience, locId, subject, body, recipientIds, threadId = null, parentId = null) {
+function deliver(senderId, audience, locId, subject, body, recipientIds, threadId = null, parentId = null, replyTo = null) {
   const recips = [...new Set(recipientIds)].filter(Boolean);
   if (!recips.length) return null;
-  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body, thread_id, parent_id) VALUES (?,?,?,?,?,?,?)`)
-    .run(senderId, audience, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000), threadId, parentId).lastInsertRowid;
+  const mid = db.prepare(`INSERT INTO messages (sender_id, audience, location_id, subject, body, thread_id, parent_id, reply_to) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(senderId, audience, locId, (subject || '').toString().slice(0, 140) || null, String(body).slice(0, 4000), threadId, parentId, replyTo || null).lastInsertRowid;
   if (!threadId) db.prepare(`UPDATE messages SET thread_id=? WHERE id=?`).run(mid, mid);
   const ins = db.prepare(`INSERT INTO message_recipients (message_id, user_id) VALUES (?,?)`);
   recips.forEach(uid => ins.run(mid, uid));
@@ -332,7 +335,12 @@ router.post('/:id/reply', (req, res) => {
   if (!recipients.length) return res.status(400).json({ error: 'No one to reply to.' });
 
   const subject = parent.subject ? (/^re:/i.test(parent.subject) ? parent.subject : `Re: ${parent.subject}`) : null;
-  const mid = deliver(req.user.id, 'direct', null, subject, body, recipients, parent.thread_id || parent.id, parent.id);
+  // Optional quote-reply: the body may name a specific message in this thread to quote, so the
+  // recipients see exactly which message is being answered (no scrolling back).
+  const tid = parent.thread_id || parent.id;
+  let replyTo = parseInt(req.body && req.body.reply_to, 10) || null;
+  if (replyTo && !db.prepare(`SELECT 1 FROM messages WHERE id=? AND COALESCE(thread_id,id)=?`).get(replyTo, tid)) replyTo = null;
+  const mid = deliver(req.user.id, 'direct', null, subject, body, recipients, tid, parent.id, replyTo);
   res.json({ success: true, id: mid, recipients: recipients.length });
 });
 

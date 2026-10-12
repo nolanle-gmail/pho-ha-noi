@@ -1234,6 +1234,8 @@ function migrate() {
     // Message threading: a reply carries its thread's root id + the message it answers.
     `ALTER TABLE messages ADD COLUMN thread_id INTEGER`,
     `ALTER TABLE messages ADD COLUMN parent_id INTEGER`,
+    `ALTER TABLE messages ADD COLUMN reply_to INTEGER`,        // quote-reply: the specific message this one answers (vs parent_id = thread chaining)
+    `ALTER TABLE chat_messages ADD COLUMN reply_to INTEGER`,   // quote-reply: the chat message this one answers
     `CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id)`,
     // Per-recipient archive: a reader can file a conversation away from their inbox.
     `ALTER TABLE message_recipients ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`,

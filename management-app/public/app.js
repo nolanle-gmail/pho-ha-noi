@@ -6147,8 +6147,47 @@ function _rxnOutside(e) { if (_rxnMenu && !_rxnMenu.contains(e.target) && !(e.ta
 function rxnBar(kind, m) {
   const badges = (m.reactions || []).map(r => `<button type="button" class="rxn${r.mine ? ' mine' : ''}${rxnIsText(r.emoji) ? ' rxn-text' : ''}" data-rxn="${m.id}" data-k="${kind}" data-e="${r.emoji}" title="${esc(r.users.join(', '))}">${rxnGlyph(r.emoji)} ${r.count}</button>`).join('');
   // Reactions float at the top-left corner of the bubble (iMessage tapback style); the
-  // 🙂 add button stays inline below.
-  return `${badges ? `<div class="rxn-badges">${badges}</div>` : ''}<div class="rxn-bar"><button type="button" class="rxn-add" data-rxnadd="${m.id}" data-k="${kind}" title="Add reaction">🙂﹢</button></div>`;
+  // ↩ Reply and 🙂 add buttons stay inline below.
+  return `${badges ? `<div class="rxn-badges">${badges}</div>` : ''}<div class="rxn-bar"><button type="button" class="rxn-reply" data-reply="${m.id}" data-k="${kind}" title="Reply to this message">↩ Reply</button><button type="button" class="rxn-add" data-rxnadd="${m.id}" data-k="${kind}" title="Add reaction">🙂﹢</button></div>`;
+}
+// A quoted preview of the message this one is replying to, shown inside the reply bubble so the
+// receiver sees exactly which message (and whose) is being answered — tap it to jump to the original.
+function replyQuote(m) {
+  const gone = !m.reply_sender && !m.reply_body;
+  let snip = (m.reply_body || '').replace(/\s+/g, ' ').trim();
+  if (!snip && m.reply_att) snip = '📎 attachment';
+  const inner = gone ? '<em>message removed</em>' : `<strong>↩ ${esc(m.reply_sender || 'someone')}</strong> <span class="reply-quote-snip">${esc(snip.slice(0, 110))}</span>`;
+  return `<button type="button" class="reply-quote" data-goto="${m.reply_to}" title="Go to the message this replies to">${inner}</button>`;
+}
+// Jump to and briefly highlight a message in the open conversation (from a quote tap).
+function gotoMsg(id) {
+  const el = document.getElementById('msg-' + id);
+  if (!el) { toast('That message isn’t in view.'); return; }
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.classList.add('msg-flash'); setTimeout(() => el.classList.remove('msg-flash'), 1600);
+}
+// Start a quote-reply to a specific message: remember it + show the preview bar above the composer.
+function startReply(kind, m) {
+  if (!m) return;
+  let snip = (m.body || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+  if (!snip && m.attachment_count) snip = '📎 attachment';
+  const conv = kind === 'chat' ? 'chat:' + S.chatGroup : 'msg:' + S.msgThread;
+  S.replyTo = { kind, id: m.id, name: m.sender_name || 'message', snippet: snip, conv };
+  renderReplyPreview(conv);
+  const box = kind === 'chat' ? $('chatBody') : $('thBody');
+  if (box) { try { box.focus(); } catch { /* ignore */ } }
+}
+function cancelReply() { S.replyTo = null; renderReplyPreview(); }
+// Render (or clear) the "Replying to X" bar above the composer. Clears a reply started in a
+// different conversation so it never leaks between threads/groups.
+function renderReplyPreview(curConv) {
+  const host = $('replyPreview'); if (!host) return;
+  if (S.replyTo && curConv && S.replyTo.conv !== curConv) S.replyTo = null;
+  const r = S.replyTo;
+  if (!r) { host.innerHTML = ''; host.classList.add('hidden'); return; }
+  host.classList.remove('hidden');
+  host.innerHTML = `<span class="reply-quote-bar"></span><div class="reply-pv-txt"><strong>↩ Replying to ${esc(r.name)}</strong><span class="reply-pv-snip">${esc(r.snippet)}</span></div><button type="button" class="reply-pv-x" id="replyCancel" title="Cancel reply">✕</button>`;
+  $('replyCancel').onclick = cancelReply;
 }
 function openRxnMenu(anchor, kind, m) {
   closeRxnMenu();
@@ -6174,6 +6213,8 @@ async function doReact(kind, id, emoji) {
 function wireReactions(root, byId) {
   root.querySelectorAll('[data-rxnadd]').forEach(b => b.onclick = () => openRxnMenu(b, b.dataset.k, byId[b.dataset.rxnadd] || { id: b.dataset.rxnadd, reactions: [] }));
   root.querySelectorAll('[data-rxn]').forEach(b => b.onclick = () => doReact(b.dataset.k, b.dataset.rxn, b.dataset.e));
+  root.querySelectorAll('[data-reply]').forEach(b => b.onclick = () => startReply(b.dataset.k, byId[b.dataset.reply] || { id: b.dataset.reply }));
+  root.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => gotoMsg(b.dataset.goto));
 }
 
 // ── Messages module (horizontal tabs) ──────────────────────────────────────
@@ -6726,12 +6767,14 @@ async function renderThread() {
           : '<button class="btn sm ghost" id="thUnread">◍ Mark unread</button><button class="btn sm ghost" id="thArch">🗄️ Archive</button>'}
         <button class="btn sm ghost" id="thBack">← Back to inbox</button>
       </div></div>
+    <div id="replyPreview" class="reply-preview hidden"></div>
     <div class="reply-box"><textarea id="thBody" rows="2" placeholder="Write a reply…"></textarea>
       <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="thFiles"></label>
       <button class="btn" id="thSend">Reply</button></div>
     <div id="thFileNames" class="msg-attach-names"></div>
     <div class="thread">${t.messages.slice().reverse().map(m => `
-      <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
+      <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}" id="msg-${m.id}">
+        ${m.reply_to ? replyQuote(m) : ''}
         <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}${canDeleteMsg(m.sender_id, me) ? ` <button type="button" class="msg-del" data-delmsg="${m.id}" title="Delete message">🗑</button>` : ''}</div>
         <div class="thread-body">${esc(m.body)}</div>${transRow(m.body)}
         ${m.attachment_count ? `<div class="msg-atts" data-atts="${m.id}" data-candel="${canDeleteMsg(m.sender_id, me) ? 1 : 0}"></div>` : ''}
@@ -6743,7 +6786,8 @@ async function renderThread() {
   $('view').querySelectorAll('[data-receipts]').forEach(el => el.onclick = () => showReceipts(el.dataset.receipts));
   wireReactions($('view'), Object.fromEntries(t.messages.map(x => [x.id, x])));
   wireAttachInput('thFiles', 'thFileNames');
-  const backToList = () => { S.msgThread = null; renderMsgTabs(); renderMessages(); };
+  renderReplyPreview('msg:' + tid);
+  const backToList = () => { S.replyTo = null; S.msgThread = null; renderMsgTabs(); renderMessages(); };
   $('thBack').onclick = backToList;
   const threadAction = async (path, msg) => { try { await api(`/messages/thread/${tid}/${path}`, { method: 'POST' }); toast(msg); refreshUnread(); backToList(); } catch (e) { toast(e.message, true); } };
   if ($('thUnread')) $('thUnread').onclick = () => threadAction('unread', 'Marked unread');
@@ -6757,8 +6801,10 @@ async function renderThread() {
     if (!body) return;
     $('thSend').disabled = true;
     try {
-      const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body }) });
+      const replyTo = (S.replyTo && S.replyTo.kind === 'message') ? S.replyTo.id : undefined;
+      const r = await api(`/messages/${last.id}/reply`, { method: 'POST', body: JSON.stringify({ body, reply_to: replyTo }) });
       if (files && files.length) { const u = await uploadMsgAttachments('/messages/' + r.id, files); if (u.err) toast(u.err, true); }
+      S.replyTo = null;
       renderThread();
     } catch (e) { toast(e.message, true); $('thSend').disabled = false; }
   };
@@ -7042,7 +7088,8 @@ async function renderChatGroup(silent) {
     return `<div class="msg-receipt${seen.length >= others.length ? ' all' : ''}" data-cmid="${mid}" title="See who's read it">${label}</div>`;
   };
   const stream = d.messages.slice().reverse().map(m => `
-    <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}">
+    <div class="thread-msg ${m.sender_id === me ? 'mine' : ''}" id="msg-${m.id}">
+      ${m.reply_to ? replyQuote(m) : ''}
       <div class="thread-meta">${esc(m.sender_name)} <span class="badge ${ROLE_CHIP[m.sender_role] || 'gray'}">${esc(roleLabel(m.sender_role))}</span> · ${msgTime(m.created_at)}</div>
       ${m.body ? `<div class="thread-body">${mentionHtml(esc(m.body), d.reads, me)}</div>${transRow(m.body)}` : ''}
       ${m.attachment_count ? `<div class="msg-atts" data-catts="${m.id}"></div>` : ''}
@@ -7058,7 +7105,8 @@ async function renderChatGroup(silent) {
       </div></div>
     <div id="chatMemberList" class="hidden"></div>
     ${d.member && d.is_active
-      ? `<div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea>
+      ? `<div id="replyPreview" class="reply-preview hidden"></div>
+         <div class="reply-box"><textarea id="chatBody" rows="2" placeholder="Message ${esc(d.name)}…"></textarea>
           <label class="msg-attach-btn" title="Attach photos, videos or files">📎<input type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.xlsm,.csv,.tsv,.ppt,.pptx,.txt,.rtf,.md,.zip,.7z,.rar,.gz,.json,.xml,.odt,.ods,.odp,.pages,.numbers,.key,.ics,.log" multiple hidden id="chatFiles"></label>
           <button class="btn" id="chatSend">Send</button></div>
          <div id="chatFileNames" class="msg-attach-names"></div>`
@@ -7067,8 +7115,9 @@ async function renderChatGroup(silent) {
   $('view').querySelectorAll('[data-catts]').forEach(el => loadMsgAttachments(`/chat/groups/${gid}/messages/${el.dataset.catts}`, el, { canDelete: false }));
   $('view').querySelectorAll('.msg-receipt[data-cmid]').forEach(el => el.onclick = () => showChatSeen(+el.dataset.cmid));
   wireReactions($('view'), Object.fromEntries(d.messages.map(x => [x.id, x])));
+  renderReplyPreview('chat:' + gid);
   const stEl = $('chatStream'); if (stEl) stEl.scrollTop = 0;   // newest is at the top
-  $('chatBack').onclick = () => { S.chatGroup = null; renderMessages(); };
+  $('chatBack').onclick = () => { S.replyTo = null; S.chatGroup = null; renderMessages(); };
   $('chatMembers').onclick = async () => {
     const el = $('chatMemberList');
     if (!el.classList.contains('hidden')) { el.classList.add('hidden'); return; }
@@ -7099,9 +7148,10 @@ async function renderChatGroup(silent) {
       const body = typed || msgFilesCaption(files);
       $('chatSend').disabled = true;
       try {
-        const r = await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body }) });
+        const replyTo = (S.replyTo && S.replyTo.kind === 'chat') ? S.replyTo.id : undefined;
+        const r = await api(`/chat/groups/${gid}/messages`, { method: 'POST', body: JSON.stringify({ body, reply_to: replyTo }) });
         if (files && files.length) { const u = await uploadMsgAttachments(`/chat/groups/${gid}/messages/${r.id}`, files); if (u.err) toast(u.err, true); }
-        $('chatBody').value = ''; renderChatGroup();
+        S.replyTo = null; $('chatBody').value = ''; renderChatGroup();
       } catch (e) { toast(e.message, true); $('chatSend').disabled = false; }
     };
     $('chatSend').onclick = send;

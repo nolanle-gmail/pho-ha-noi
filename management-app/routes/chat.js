@@ -114,7 +114,10 @@ router.get('/groups/:id/messages', (req, res) => {
   const member = isMember(g.id, req.user.id);
   if (!member && !isAudit(req.user.role)) return res.status(403).json({ error: 'Not a member of this group.' });
   const messages = db.prepare(`
-    SELECT c.id, c.body, c.created_at, c.sender_id, u.name AS sender_name, u.role AS sender_role,
+    SELECT c.id, c.body, c.created_at, c.sender_id, c.reply_to, u.name AS sender_name, u.role AS sender_role,
+           (SELECT u2.name FROM chat_messages pc JOIN users u2 ON u2.id=pc.sender_id WHERE pc.id=c.reply_to) AS reply_sender,
+           (SELECT substr(pc.body,1,140) FROM chat_messages pc WHERE pc.id=c.reply_to) AS reply_body,
+           (SELECT COUNT(*) FROM chat_message_attachments pa WHERE pa.chat_message_id=c.reply_to) AS reply_att,
            (SELECT COUNT(*) FROM chat_message_attachments a WHERE a.chat_message_id=c.id) AS attachment_count
     FROM chat_messages c JOIN users u ON u.id=c.sender_id
     WHERE c.group_id=? ORDER BY c.id ASC LIMIT 500`).all(g.id);
@@ -159,7 +162,11 @@ router.post('/groups/:id/messages', (req, res) => {
   if (!isMember(g.id, req.user.id)) return res.status(403).json({ error: 'Only members can post to this group.' });
   const body = String(req.body && req.body.body || '').trim().slice(0, MAX_BODY);
   if (!body) return res.status(400).json({ error: 'Message cannot be empty.' });
-  const mid = Number(db.prepare(`INSERT INTO chat_messages (group_id, sender_id, body) VALUES (?,?,?)`).run(g.id, req.user.id, body).lastInsertRowid);
+  // Optional quote-reply: the message being answered (must be in this group) so members see
+  // exactly which message — and whose — this one is responding to.
+  let replyTo = parseInt(req.body && req.body.reply_to, 10) || null;
+  if (replyTo && !db.prepare(`SELECT 1 FROM chat_messages WHERE id=? AND group_id=?`).get(replyTo, g.id)) replyTo = null;
+  const mid = Number(db.prepare(`INSERT INTO chat_messages (group_id, sender_id, body, reply_to) VALUES (?,?,?,?)`).run(g.id, req.user.id, body, replyTo).lastInsertRowid);
   markRead(g.id, req.user.id, mid);
   const memberIds = db.prepare(`SELECT user_id FROM chat_group_members WHERE group_id=?`).all(g.id).map(r => r.user_id);
   try { emitChat({ group_id: g.id, member_ids: memberIds, sender_id: req.user.id }); } catch { /* live push best-effort */ }

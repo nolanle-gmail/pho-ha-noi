@@ -1365,6 +1365,12 @@ const check = (name, ok, detail = '') => {
     check('reply to a message (threaded)', r.status === 200 && (await j(r)).success === true, 'status=' + r.status);
     const thread = await j(await fetch(base + '/api/messages/thread/' + gsend.id, { headers: H(token) }));
     check('thread returns the full conversation', Array.isArray(thread.messages) && thread.messages.length === 2, 'n=' + (thread.messages || []).length);
+    // Quote-reply: reply to a SPECIFIC message in the thread → the reply carries the quoted original.
+    r = await fetch(base + '/api/messages/' + gsend.id + '/reply', { method: 'POST', headers: H(token), body: JSON.stringify({ body: 'quoting you', reply_to: gsend.id }) });
+    check('quote-reply to a specific message', r.status === 200 && (await j(r)).success === true, 'status=' + r.status);
+    const qthread = await j(await fetch(base + '/api/messages/thread/' + gsend.id, { headers: H(token) }));
+    const qmsg = (qthread.messages || []).find(m => m.reply_to === gsend.id);
+    check('thread surfaces the quoted message (sender + body)', !!qmsg && !!qmsg.reply_sender && (qmsg.reply_body || '').includes('hi team'), JSON.stringify(qmsg && { rt: qmsg.reply_to, rs: qmsg.reply_sender, rb: qmsg.reply_body }));
 
     // ── Message attachments (pictures & videos) ────────────────────────────
     const attMsg = await j(await fetch(base + '/api/messages', { method: 'POST', headers: H(token), body: JSON.stringify({ audience: 'direct', recipient_id: empMe.id, subject: 'With media', body: 'see attached' }) }));
@@ -1419,6 +1425,13 @@ const check = (name, ok, detail = '') => {
     check('member reads the chat thread', cgThread.member === true && cgThread.messages.length === 1 && cgThread.messages[0].body === 'hello team', JSON.stringify(cgThread.messages.length));
     r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ body: 'on it' }) });
     check('second member posts', r.status === 200, await r.text());
+    // Quote-reply in chat: answer a specific message → it carries the quoted original.
+    const firstChatId = cgThread.messages[0].id;
+    r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ body: 'replying to the first', reply_to: firstChatId }) });
+    check('chat quote-reply posts', r.status === 200, await r.text());
+    const cgThread2 = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(emp.token) }));
+    const cq = (cgThread2.messages || []).find(m => m.reply_to === firstChatId);
+    check('chat thread surfaces the quoted message', !!cq && !!cq.reply_sender && (cq.reply_body || '').includes('hello team'), JSON.stringify(cq && { rt: cq.reply_to, rs: cq.reply_sender }));
     // A non-member, non-leadership user is fully blocked.
     r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(svTok) });
     check('non-member cannot read chat (403)', r.status === 403, 'status=' + r.status);
@@ -1426,7 +1439,7 @@ const check = (name, ok, detail = '') => {
     check('non-member cannot post chat (403)', r.status === 403, 'status=' + r.status);
     // Leadership (GM) can audit a group they are not a member of, but cannot post.
     const cgAudit = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(gmTok) }));
-    check('leadership can audit any group (read)', cgAudit.messages.length === 2 && cgAudit.is_audit === true && cgAudit.member === false, JSON.stringify({ n: cgAudit.messages.length, audit: cgAudit.is_audit }));
+    check('leadership can audit any group (read)', cgAudit.messages.length === 3 && cgAudit.is_audit === true && cgAudit.member === false, JSON.stringify({ n: cgAudit.messages.length, audit: cgAudit.is_audit }));
     r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(gmTok), body: JSON.stringify({ body: 'audit post' }) });
     check('audit viewer cannot post (403)', r.status === 403, 'status=' + r.status);
     // Group listing + unread for a member.
@@ -1462,7 +1475,7 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + `/api/chat/groups/${cg.id}/messages`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ body: 'after delete' }) });
     check('cannot post to a deleted group (404)', r.status === 404, 'status=' + r.status);
     const cgAfter = await j(await fetch(base + `/api/chat/groups/${cg.id}/messages`, { headers: H(gmTok) }));
-    check('audit can still read a deleted group', cgAfter.messages.length === 2 && cgAfter.is_active === false, JSON.stringify({ n: cgAfter.messages.length, active: cgAfter.is_active }));
+    check('audit can still read a deleted group', cgAfter.messages.length === 3 && cgAfter.is_active === false, JSON.stringify({ n: cgAfter.messages.length, active: cgAfter.is_active }));
     // Archive + mark-unread (recipient state — test as the actual recipient host1).
     const SK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
     const host1 = mrecips.find(u => u.name === 'Front Desk 1');
