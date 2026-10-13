@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 12, 2026_
+_Last updated: October 13, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -438,10 +438,14 @@ clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager'
 **Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
 `time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
 filterable by **location or all locations** + a date range. A **Run report** button
-refreshes it, and **CSV** / **Excel** (`.xls`) export buttons hand the finance team a
-per-staff sheet — name, employee code, role, location, days, total/regular/OT/double-time
-hours, hourly rate and gross pay — plus a **gross-pay-by-location** summary with a grand
-total, for running payroll.
+refreshes it, and **CSV** / **Excel** (`.xls`) / **Google Sheets** export buttons hand the
+finance team a per-staff sheet — name, employee code, role, location, days,
+total/regular/OT/double-time hours, hourly rate and gross pay — plus a
+**gross-pay-by-location** summary with a grand total, for running payroll. The **Google
+Sheets** export downloads a clean UTF-8, **no-BOM** CSV (a BOM leaves a stray char in the
+first cell on Sheets import) with raw numeric values; the billing team opens Google Sheets →
+**File → Import → Upload** and it lands in cells correctly (a hint under the buttons spells
+out the steps). It's a client-side download — no Google account or credentials needed.
 
 **Overtime** follows the platform's California daily rule (identical to the Time Clock
 payroll export's `daySplit`): regular ≤ 8h/day, **OT 1.5×** for 8–12h, **double-time 2×**
