@@ -853,6 +853,10 @@ const check = (name, ok, detail = '') => {
     check('payments report totals add up', repPay.totals.total > 0 && Math.abs((repPay.totals.cash + repPay.totals.card + repPay.totals.online) - repPay.totals.total) < 5, JSON.stringify(repPay.totals));
     const repTs = await j(await fetch(base + '/api/reports/timesheets', { headers: H(token) }));
     check('timesheets report', repTs.total_hours > 0 && repTs.total_labor_cost > 0 && repTs.by_staff.length >= 3, JSON.stringify({ h: repTs.total_hours, cost: repTs.total_labor_cost, staff: repTs.by_staff.length }));
+    check('timesheets report carries the gsheet flag', typeof repTs.gsheet === 'boolean', 'gsheet=' + JSON.stringify(repTs.gsheet));
+    // Google-Sheet export is gracefully gated off when no service account is configured (smoke env).
+    r = await fetch(base + '/api/reports/timesheets/gsheet', { method: 'POST', headers: H(token), body: '{}' });
+    check('gsheet export is gated off without credentials (501)', r.status === 501, 'status=' + r.status);
     const repAn = await j(await fetch(base + '/api/reports/analytics', { headers: H(token) }));
     check('analytics report', repAn.revenue > 0 && repAn.food_cost_pct > 0 && repAn.labor_cost_pct != null && repAn.revenue_trend.length >= 25, JSON.stringify({ f: repAn.food_cost_pct, l: repAn.labor_cost_pct }));
 

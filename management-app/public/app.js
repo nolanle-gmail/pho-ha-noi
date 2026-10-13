@@ -5918,9 +5918,12 @@ async function renderRepTimesheets() {
       <button class="btn ghost" id="tsCsv" ${d.by_staff.length ? '' : 'disabled'}>⬇ CSV</button>
       <button class="btn ghost" id="tsXls" ${d.by_staff.length ? '' : 'disabled'}>⬇ Excel</button>
       <button class="btn ghost" id="tsGsheet" ${d.by_staff.length ? '' : 'disabled'} title="Download a CSV that imports cleanly into Google Sheets — in Sheets: File → Import → Upload">⬇ Google Sheets</button>
+      ${d.gsheet ? `<button class="btn" id="tsGlive" ${d.by_staff.length ? '' : 'disabled'} title="Create a live Google Sheet and open its shareable link">🔗 Create Sheet</button>` : ''}
       <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
     </div>
-    ${d.by_staff.length ? '<p class="sub" style="color:var(--muted);margin:.1rem 0 .4rem;font-size:.78rem">📊 <strong>Google Sheets:</strong> click <strong>⬇ Google Sheets</strong>, then in Google Sheets open <strong>File → Import → Upload</strong> and drop the downloaded file (choose “Replace spreadsheet” or “Insert new sheet”).</p>' : ''}
+    ${d.by_staff.length ? (d.gsheet
+      ? '<p class="sub" style="color:var(--muted);margin:.1rem 0 .4rem;font-size:.78rem">📊 <strong>Google Sheets:</strong> click <strong>🔗 Create Sheet</strong> for a live Google Sheet with a shareable link (opens in a new tab). Or <strong>⬇ Google Sheets</strong> to download a CSV to import (File → Import → Upload).</p>'
+      : '<p class="sub" style="color:var(--muted);margin:.1rem 0 .4rem;font-size:.78rem">📊 <strong>Google Sheets:</strong> click <strong>⬇ Google Sheets</strong>, then in Google Sheets open <strong>File → Import → Upload</strong> and drop the downloaded file (choose “Replace spreadsheet” or “Insert new sheet”).</p>') : ''}
     <div class="kpis">
       <div class="card"><div class="label">Total hours</div><div class="value">${numf(d.total_hours)}</div></div>
       <div class="card"><div class="label">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
@@ -5941,6 +5944,15 @@ async function renderRepTimesheets() {
   $('tsCsv').onclick = () => exportTimesheets(d, locName, 'csv');
   $('tsXls').onclick = () => exportTimesheets(d, locName, 'xls');
   if ($('tsGsheet')) $('tsGsheet').onclick = () => exportTimesheets(d, locName, 'gsheet');
+  if ($('tsGlive')) $('tsGlive').onclick = async () => {
+    const b = $('tsGlive'); if (b.disabled) return; const old = b.textContent; b.disabled = true; b.textContent = '⏳ Creating…';
+    try {
+      const r = await api('/reports/timesheets/gsheet' + reportQuery(true), { method: 'POST', body: '{}' });
+      if (r && r.url) { try { window.open(r.url, '_blank', 'noopener'); } catch { /* popup blocked */ } toast(`Google Sheet created (${r.staff} staff) — opened in a new tab.`); }
+      else toast('Sheet created but no link was returned.', true);
+    } catch (e) { toast(e.message || 'Could not create the Google Sheet.', true); }
+    b.disabled = false; b.textContent = old;
+  };
   $('view').querySelectorAll('[data-tsphoto]').forEach(b => b.onclick = () => openStaffPunchPhotos(b.dataset.tsphoto, b.dataset.name, d.start, d.end));
 }
 

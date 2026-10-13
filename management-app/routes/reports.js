@@ -4,6 +4,8 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { localTime, DEFAULT_TZ } = require('../lib/tz');
+const { auditLog } = require('../lib/audit');
+const gsheets = require('../lib/gsheets');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -87,7 +89,9 @@ const tsDaySplit = (m) => ({
 });
 const tsHrs = (m) => Math.round(m / 60 * 100) / 100;
 
-router.get('/timesheets', requireRole(ROLES.REPORTS), (req, res) => {
+// Compute the payroll timesheet (per-staff + per-location roll-ups) for the request's scope &
+// date range. Shared by the GET report and the Google-Sheet export.
+function timesheetReport(req) {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const conds = ['t.work_date>=?', 't.work_date<=?', 't.worked_minutes IS NOT NULL'], args = [start, end];
   if (locId) { conds.push('t.location_id=?'); args.push(locId); }
@@ -133,13 +137,50 @@ router.get('/timesheets', requireRole(ROLES.REPORTS), (req, res) => {
   })).sort((a, b) => b.labor_cost - a.labor_cost);
 
   const tot = by_staff.reduce((a, r) => ({ hours: a.hours + r.hours, ot: a.ot + r.ot_hours, labor: a.labor + r.labor_cost }), { hours: 0, ot: 0, labor: 0 });
-  res.json({
+  return {
     start, end, location_id: locId ? Number(locId) : null,
     ot_rule: { ot_after_h: 8, dt_after_h: 12, ot_mult: TS_OT_MULT, dt_mult: TS_DT_MULT },
     total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100,
     total_labor_cost: Math.round(tot.labor * 100) / 100, headcount: by_staff.length,
     by_staff, by_location,
-  });
+  };
+}
+
+router.get('/timesheets', requireRole(ROLES.REPORTS), (req, res) => {
+  // `gsheet` tells the client whether the "Create live Google Sheet" button is available.
+  res.json({ ...timesheetReport(req), gsheet: gsheets.isConfigured() });
+});
+
+// Create a live Google Sheet of the timesheet and return its shareable link. Needs a Google
+// service account configured on the server (GOOGLE_SA_KEY_B64); shares per GSHEET_* env vars.
+router.post('/timesheets/gsheet', requireRole(ROLES.REPORTS), async (req, res) => {
+  if (!gsheets.isConfigured()) return res.status(501).json({ error: 'Google Sheets export isn’t set up yet — a Google service account needs to be configured on the server.' });
+  const d = timesheetReport(req);
+  if (!d.by_staff.length) return res.status(400).json({ error: 'Nothing to export — run a range with clocked hours first.' });
+  const roleLabels = Object.fromEntries(db.prepare('SELECT key, label FROM roles').all().map(r => [r.key, r.label]));
+  const rl = (k) => roleLabels[k] || k;
+  const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
+  const locName = d.location_id ? shortLoc((db.prepare('SELECT name FROM locations WHERE id=?').get(d.location_id) || {}).name || 'Selected location') : 'All locations';
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', rl(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', '', d.total_labor_cost];
+  const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
+  const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
+  const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
+  const title = `Phở Hà Nội — Timesheet · ${locName} · ${d.start} to ${d.end}`;
+  const note = 'OT: California daily — over 8h/day at 1.5×, over 12h/day at 2× (double-time included in OT hrs & gross).';
+  const values = [], boldRows = [];
+  const push = (row, bold) => { if (bold) boldRows.push(values.length); values.push(row); };
+  push([title], true); push([note]); push([]); push(cols, true);
+  staffRows.forEach(r => push(r)); push([]); push(staffTotal, true); push([]);
+  push(['Gross pay by location'], true); push(locCols, true); locRows.forEach(r => push(r)); push(locTotal, true);
+  try {
+    const { url } = await gsheets.createSheet({ title, sheetTitle: 'Timesheet', values, boldRows });
+    try { auditLog(req, 'timesheet_gsheet_export', 'location', d.location_id || null, { start: d.start, end: d.end, staff: d.by_staff.length }); } catch { /* best-effort */ }
+    res.json({ success: true, url, staff: d.by_staff.length });
+  } catch (e) {
+    res.status(502).json({ error: e.message || 'Could not create the Google Sheet.' });
+  }
 });
 
 // ── Analytics report (executive summary) ────────────────────────────────────
