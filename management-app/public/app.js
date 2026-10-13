@@ -5917,8 +5917,10 @@ async function renderRepTimesheets() {
       <button class="btn" id="tsRun">▶ Run report</button>
       <button class="btn ghost" id="tsCsv" ${d.by_staff.length ? '' : 'disabled'}>⬇ CSV</button>
       <button class="btn ghost" id="tsXls" ${d.by_staff.length ? '' : 'disabled'}>⬇ Excel</button>
+      <button class="btn ghost" id="tsGsheet" ${d.by_staff.length ? '' : 'disabled'} title="Download a CSV that imports cleanly into Google Sheets — in Sheets: File → Import → Upload">⬇ Google Sheets</button>
       <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
     </div>
+    ${d.by_staff.length ? '<p class="sub" style="color:var(--muted);margin:.1rem 0 .4rem;font-size:.78rem">📊 <strong>Google Sheets:</strong> click <strong>⬇ Google Sheets</strong>, then in Google Sheets open <strong>File → Import → Upload</strong> and drop the downloaded file (choose “Replace spreadsheet” or “Insert new sheet”).</p>' : ''}
     <div class="kpis">
       <div class="card"><div class="label">Total hours</div><div class="value">${numf(d.total_hours)}</div></div>
       <div class="card"><div class="label">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
@@ -5938,6 +5940,7 @@ async function renderRepTimesheets() {
   $('tsRun').onclick = renderRepTimesheets;
   $('tsCsv').onclick = () => exportTimesheets(d, locName, 'csv');
   $('tsXls').onclick = () => exportTimesheets(d, locName, 'xls');
+  if ($('tsGsheet')) $('tsGsheet').onclick = () => exportTimesheets(d, locName, 'gsheet');
   $('view').querySelectorAll('[data-tsphoto]').forEach(b => b.onclick = () => openStaffPunchPhotos(b.dataset.tsphoto, b.dataset.name, d.start, d.end));
 }
 
@@ -5977,10 +5980,13 @@ function exportTimesheets(d, locName, kind) {
   const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
   const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
   const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
-  const fname = `timesheet_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}.${kind === 'xls' ? 'xls' : 'csv'}`;
+  const base = `timesheet_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
+  const fname = kind === 'xls' ? `${base}.xls` : kind === 'gsheet' ? `${base}_google-sheets.csv` : `${base}.csv`;
   const title = `Phở Hà Nội — Timesheet · ${locName} · ${d.start} to ${d.end}`;
   const note = 'OT: California daily — over 8h/day at 1.5×, over 12h/day at 2× (double-time included in OT hrs & gross).';
-  if (kind === 'csv') {
+  // CSV and Google Sheets share the same clean, UTF-8, no-BOM CSV — a BOM can leave a stray
+  // character in the first cell on Google Sheets import, so we deliberately omit it.
+  if (kind === 'csv' || kind === 'gsheet') {
     const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     const block = [[title], [note], [], cols, ...staffRows, [], staffTotal, [], ['Gross pay by location'], locCols, ...locRows, locTotal];
     downloadBlob(block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
@@ -5994,7 +6000,8 @@ function exportTimesheets(d, locName, kind) {
       <h3>${escHtml(title)}</h3><p>${escHtml(note)}</p>${staffTbl}<h4>Gross pay by location</h4>${locTbl}</body></html>`;
     downloadBlob(html, fname, 'application/vnd.ms-excel');
   }
-  toast(`Exported ${d.by_staff.length} staff · ${kind.toUpperCase()}`);
+  if (kind === 'gsheet') toast(`Google Sheets CSV downloaded (${d.by_staff.length} staff) — in Google Sheets: File → Import → Upload it.`);
+  else toast(`Exported ${d.by_staff.length} staff · ${kind.toUpperCase()}`);
 }
 function escHtml(s) { return String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function downloadBlob(content, filename, type) {
