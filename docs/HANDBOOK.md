@@ -447,6 +447,18 @@ first cell on Sheets import) with raw numeric values; the billing team opens Goo
 **File → Import → Upload** and it lands in cells correctly (a hint under the buttons spells
 out the steps). It's a client-side download — no Google account or credentials needed.
 
+When a **Google service account** is configured on the server, a **🔗 Create Sheet** button
+also appears: it creates a **live Google Sheet** of the timesheet (bold headers, auto-sized
+columns, per-staff rows + totals + by-location summary) and opens its **shareable link** in a
+new tab — so the billing team gets a ready-made Sheet, not a file to import. Built with
+`lib/gsheets.js` (signs the service-account JWT with `jsonwebtoken`, no `googleapis` dep →
+Sheets API to create/fill, Drive API to share) via `POST /api/reports/timesheets/gsheet`;
+`GET /reports/timesheets` returns a `gsheet` flag so the button only shows when it's set up.
+Configure with Fly secrets: **`GOOGLE_SA_KEY_B64`** (base64 of the service-account JSON key),
+and optional **`GSHEET_LINK_ACCESS`** (`view` default / `edit` / `none`), **`GSHEET_SHARE_EMAILS`**
+(comma-separated editors, e.g. the billing team) and **`GSHEET_NOTIFY`**. Without the secret the
+button is hidden and the endpoint returns 501.
+
 **Overtime** follows the platform's California daily rule (identical to the Time Clock
 payroll export's `daySplit`): regular ≤ 8h/day, **OT 1.5×** for 8–12h, **double-time 2×**
 beyond 12h — computed per day, then rolled up. The **OT hrs** column combines OT+DT hours;
