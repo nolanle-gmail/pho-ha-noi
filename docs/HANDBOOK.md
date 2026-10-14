@@ -113,6 +113,10 @@ carrying a service key.*
   if the stream drops — and, in the Management console, it's the real refresh path for
   brand-new waitlist joins, since that app's visit stream doesn't carry guest joins. So
   wherever staff watch the waitlist, a new guest surfaces within a few seconds at most.
+  **Verified on prod (2026-10-14):** a throwaway guest appeared — and cleared — on its own,
+  without a manual refresh, on both the **Management console Active Waitlist** (via the 5 s
+  backstop) and the **staff Front Desk board** (instant via the live stream, plus the 5 s
+  backstop as the safety net).
 
 **Deployment.** Both services deploy to Fly.io on every push to `main` via GitHub
 Actions — Management at `pho-ha-noi-management.fly.dev`, Waitlist at
