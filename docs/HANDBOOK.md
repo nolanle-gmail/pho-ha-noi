@@ -109,6 +109,10 @@ carrying a service key.*
   applies that person's permissions.
 - **Server-sent events** — one SSE stream pushes waitlist, visit and message
   changes to the boards sub-second; a seated guest appears on the floor instantly.
+  A **5-second backstop poll** (was 15 s) re-renders every live board as a safety net
+  if the stream drops — and, in the Management console, it's the real refresh path for
+  brand-new waitlist joins, since that app's visit stream doesn't carry guest joins. So
+  wherever staff watch the waitlist, a new guest surfaces within a few seconds at most.
 
 **Deployment.** Both services deploy to Fly.io on every push to `main` via GitHub
 Actions — Management at `pho-ha-noi-management.fly.dev`, Waitlist at
