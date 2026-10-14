@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 13, 2026_
+_Last updated: October 14, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1665,9 +1665,21 @@ store switcher). Runs the live queue with waited time and quoted wait, add-party
 notify/page, seat (onto a table) and mark-left, plus live stats, "handled today"
 history, guest history & daily reports (owner/admin), and an access/activity log
 (owner). Every guest notification (the join confirmation when they opt in, and each
-"table ready" page) is logged in `notify_log`. The **join-confirmation text** ends with a
+"table ready" page) is logged in `notify_log`. The **self check-in join text** ends with a
 link to that store's live waitlist — `…/checkin/<slug>/current` — so the guest can see
 their spot and who's ahead (only sent to guests who gave a phone **and** ticked SMS consent).
+
+**SMS cost — kept short & GSM-7 (2026-10-14).** Twilio bills per **segment** (160 chars in
+plain GSM-7, but only **70** if a message contains *any* non-GSM character — an em-dash, smart
+quote or emoji — which flips the whole text to Unicode). The guest texts are written tight and
+plain: **self check-in ≈ 2 segments** (it carries the tracking link), **front-desk-added and
+"table ready" ≈ 1 segment each**. `waitlist-app/lib/sms.js` `gsm7()` transliterates every guest
+text to GSM-7 (em/en-dash → space, emoji dropped, and accented/Vietnamese names like *Nguyễn →
+Nguyen* so a guest's name can't force the pricey Unicode encoding); the location shows GSM-safe
+("Pho Ha Noi San Jose"). The two **join** texts keep "Reply STOP to opt out"; the **"table
+ready"** follow-up omits it (the guest already opted in on the join text — the STOP keyword still
+works at the carrier level). `sendSms` still auto-appends the opt-out to any message that lacks it
+unless the caller passes `noStop`.
 
 > **Management view of the queue.** The Front Desk queue lives in this app's own database.
 > A read-only **service-key feed** (`/api/wl-feed`: active queue, full history, per-guest
