@@ -6404,6 +6404,26 @@ const SMS_PRESETS = [
   'Covering needed tonight — reply if you can pick up a shift.', 'Please complete your assigned tasks before end of shift.',
   'Great work today, team — thank you!',
 ];
+// Client mirror of the server's gsm7() + SMS segment math, so the compose box can show the real
+// cost. Texts are sent as GSM-7 (160 chars/segment, concatenated at 153); special characters are
+// simplified server-side, so we estimate on the transliterated text.
+function smsGsm7(s) {
+  return String(s == null ? '' : s)
+    .replace(/\s*[—–]\s*/g, ' ')
+    .replace(/[‘’‚‛]/g, "'").replace(/[“”„]/g, '"')
+    .replace(/…/g, '...').replace(/[•·]/g, '-')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^\x20-\x7e\r\n]/g, '').replace(/ {2,}/g, ' ');
+}
+function smsSegInfo(typed) {
+  let g = smsGsm7(typed);
+  if (g && !/reply stop/i.test(g)) g += ' Reply STOP to opt out.'; // server auto-appends the opt-out
+  const len = g.length;
+  const seg = len === 0 ? 0 : len <= 160 ? 1 : Math.ceil(len / 153);
+  const simplified = [...String(typed == null ? '' : typed)].some(c => c.charCodeAt(0) > 127); // any non-ASCII → converted
+  return { len, seg, simplified };
+}
 async function renderSmsBlast() {
   const v = $('view');
   if (!myCap('manage')) { v.innerHTML = '<div class="empty">Text messages are sent by managers and owners.</div>'; return; }
@@ -6455,7 +6475,7 @@ async function renderSmsBlast() {
       </div>
       <div class="al-field"><label>Quick messages</label><div class="al-chips">${chips}</div></div>
       <div class="al-field"><label>Message</label><textarea id="smBody" rows="3" maxlength="600" placeholder="Type your text message"></textarea>
-        <div style="font-size:.8rem;color:var(--muted);margin-top:.2rem"><span id="smCount">0</span>/600 characters</div></div>
+        <div id="smMeta" style="font-size:.8rem;color:var(--muted);margin-top:.2rem">0/600 characters</div></div>
       <button class="btn" id="smSend">📱 Send text</button>
     </div>
     <div class="section">
@@ -6466,7 +6486,13 @@ async function renderSmsBlast() {
           <td>${esc(m.body)}</td><td class="num">${m.recipient_count}</td><td class="num">${m.sent_count}${m.provider === 'none' ? ' <span class="badge gray">log</span>' : ''}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No texts sent yet.</div>'}
     </div>`;
-  const cnt = () => $('smCount').textContent = ($('smBody').value || '').length;
+  const cnt = () => {
+    const typed = $('smBody').value || '';
+    const info = smsSegInfo(typed);
+    const segTxt = info.seg === 0 ? '' : ` · ~${info.seg} SMS segment${info.seg === 1 ? '' : 's'} <span style="color:var(--muted);font-size:.72rem">(incl. opt-out)</span>`;
+    const note = info.simplified ? ' · <span style="color:var(--gold-strong,#b45309)">emoji/accents will be simplified to save cost</span>' : '';
+    $('smMeta').innerHTML = `${typed.length}/600 characters${segTxt}${note}`;
+  };
   $('smBody').oninput = cnt;
   v.querySelectorAll('.al-chip').forEach(c => c.onclick = () => { $('smBody').value = c.dataset.preset; cnt(); });
 

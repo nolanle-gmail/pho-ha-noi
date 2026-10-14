@@ -7,7 +7,7 @@ const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
-const { sendSms, smsEnabled, SMS_PROVIDER } = require('../lib/sms');
+const { sendSms, smsEnabled, SMS_PROVIDER, gsm7 } = require('../lib/sms');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -79,7 +79,9 @@ function resolveRecipients(req, body) {
 // Send a blast.
 router.post('/send', async (req, res) => {
   if (!canSend(req.user.role)) return res.status(403).json({ error: 'Not allowed to send texts.' });
-  const body = (req.body.body || '').toString().trim().slice(0, 600);
+  // Convert to GSM-7 up front so the stored history matches what recipients receive, and so a
+  // stray emoji / em-dash / accent doesn't flip the whole blast to the pricey Unicode encoding.
+  const body = gsm7((req.body.body || '').toString().trim().slice(0, 600));
   if (!body) return res.status(400).json({ error: 'A text message is required.' });
   const type = ['user', 'people', 'role', 'all'].includes(req.body.target_type) ? req.body.target_type : null;
   if (!type) return res.status(400).json({ error: 'Choose who to text.' });
