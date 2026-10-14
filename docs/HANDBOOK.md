@@ -1874,7 +1874,11 @@ What gets texted:
   have a phone"). Store managers are scoped to their own store; owner/admin/HR/GM reach every
   store. Every blast is archived in `sms_messages` + `sms_recipients` for audit (the recent list
   shows "N people" for a multi-recipient send), and the composer shows a log-only banner until a
-  provider is live.
+  provider is live. **Cost (2026-10-14):** every management text (blasts + login/clock/ship
+  notices) is sent in the cheap **GSM-7** encoding — `lib/sms.js` `gsm7()` runs inside `sendSms`,
+  so an em-dash, emoji or accented name can't flip the whole text to Unicode (70 chars/segment).
+  The compose box shows a live **"N/600 characters · ~S SMS segment(s) (incl. opt-out)"** estimate
+  and warns when emoji/accents will be simplified, so senders can keep a blast to one segment.
 
 ---
 
