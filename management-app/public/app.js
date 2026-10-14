@@ -1190,7 +1190,8 @@ async function renderService() {
     if (S.section !== 'service') { clearInterval(SVC.timer); SVC.timer = null; return; }
     if ($('modalHost').innerHTML) return;   // don't refresh out from under an open modal
     const y = window.scrollY; await renderService(); window.scrollTo(0, y);   // keep the view steady
-  }, 15000);   // slow backstop; the SSE stream carries live updates
+  }, 5000);   // fast refresh: a new waitlist guest (joined in the Front Desk app) isn't pushed to this
+             // app's visit stream, so this poll is what surfaces them here — keep it to a few seconds
 }
 
 function svcCard(v, stage) {

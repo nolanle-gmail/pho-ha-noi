@@ -186,12 +186,14 @@ async function boot() {
   showInstallBanner();   // offer "add to home screen" once signed in (if not already installed)
   // Keep this device's push subscription fresh when notifications are already on.
   if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
-  // Slow backstop only — the SSE stream (setupStaffStream) carries live changes
-  // from the other app (e.g. a guest seated at the Front Desk) within a moment.
+  // Backstop refresh for the live boards. The SSE stream (setupStaffStream) already pushes a
+  // guest join / seat within ~150ms; this guarantees the waitlist still refreshes every few
+  // seconds even if that connection drops, so staff always see new guests fast (seconds, not
+  // minutes). Skipped while a modal is open so it never interrupts an action.
   setInterval(() => {
     if (!LIVE_VIEWS.includes(S.view) || $('modalHost').innerHTML) return;
     const y = window.scrollY; Promise.resolve(render()).then(() => window.scrollTo(0, y));
-  }, 15000);
+  }, 5000);
 }
 
 // Live views that refresh on push. Board (Front Desk), Server view, Table Map.
