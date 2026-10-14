@@ -113,10 +113,10 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   // Text the guest a join confirmation with their spot + a link to the live waitlist — only if they opted in.
   if (phone && smsConsent) {
     const pos = s.parties_ahead + 1;
-    const wait = s.quoted_minutes > 0 ? ` about ${s.quoted_minutes} min` : ' a short wait';
+    const wait = s.quoted_minutes > 0 ? `about ${s.quoted_minutes} min` : 'a short wait';
     const base = (process.env.WAITLIST_PUBLIC_URL || ('https://' + (req.get('host') || 'pho-ha-noi-waitlist.fly.dev'))).replace(/\/+$/, '');
     const listUrl = `${base}/checkin/${slugify(loc.name)}/current`;
-    notifyGuest(r.lastInsertRowid, phone, `Dear ${name}, you're #${pos} on the waitlist at ${loc.name} (party of ${size}) —${wait}. We'll text you when your table is ready.\nSee the current waitlist & your spot: ${listUrl}\nReply STOP to opt out.`, 'joined');
+    notifyGuest(r.lastInsertRowid, phone, `Hi ${name}, you're #${pos} on the ${loc.name} waitlist (party of ${size}), ${wait}. We'll text when your table is ready. Your spot: ${listUrl} Reply STOP to opt out.`, 'joined');
   }
   res.json({
     success: true, ref, position: s.parties_ahead + 1, quoted_minutes: s.quoted_minutes,

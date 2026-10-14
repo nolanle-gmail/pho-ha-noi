@@ -75,8 +75,8 @@ router.post('/', requireRole(...HOST), (req, res) => {
   // Text the guest a join confirmation — only if they opted in to SMS.
   if (phone && smsConsent) {
     const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(l) || {}).name || 'Pho Ha Noi';
-    const wait = quote > 0 ? ` about ${quote} min` : ' a short wait';
-    notifyGuest(r.lastInsertRowid, phone, `Dear ${String(guest_name).trim()}, you're on the waitlist at ${locName}, party of ${size} —${wait}. We'll text you when your table is ready. Reply STOP to opt out.`, 'joined');
+    const wait = quote > 0 ? `about ${quote} min` : 'a short wait';
+    notifyGuest(r.lastInsertRowid, phone, `Hi ${String(guest_name).trim()}, you're on the ${locName} waitlist (party of ${size}), ${wait}. We'll text when your table is ready. Reply STOP to opt out.`, 'joined');
   }
   res.json({ success: true, id: r.lastInsertRowid, quoted_minutes: quote });
 });
@@ -88,7 +88,7 @@ router.post('/:id/notify', requireRole(...HOST), (req, res) => {
   if (req.user.role !== 'owner' && w.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   if (w.status !== 'waiting') return res.status(409).json({ error: 'This party is no longer waiting.' });
   const locName = (db.prepare(`SELECT name FROM locations WHERE id=?`).get(w.location_id) || {}).name || 'Pho Ha Noi';
-  const body = `Dear ${w.guest_name}, your table at ${locName} is ready! Please see the host. 🍜`;
+  const body = `Hi ${w.guest_name}, your table at ${locName} is ready. Please see the host.`;
   db.prepare(`UPDATE waitlist SET notified_at=datetime('now') WHERE id=?`).run(w.id);
   // Only text the guest if they opted in; otherwise record the page with no SMS.
   const canText = !!(w.phone && w.sms_consent);

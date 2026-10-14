@@ -49,14 +49,34 @@ async function viaTextbelt(to, body) {
 }
 
 // Appended to every message (for SMS/A2P compliance) unless it already carries an
-// opt-out notice — so the delivered texts match the registered sample messages.
+// opt-out notice — so the delivered texts match the registered sample messages. A caller can
+// skip it per-message (opts.noStop) for a transactional follow-up to someone who already opted
+// in and got the opt-out on the initial message; the STOP keyword still works at the carrier level.
 const STOP_SUFFIX = ' Reply STOP to opt out.';
 
+// Transliterate to the GSM-7 alphabet (the cheap 160-char-per-segment SMS encoding). Any character
+// outside GSM-7 — an em/en dash, smart quote, emoji, or a Vietnamese/accented name (Nguyễn, à, đ) —
+// flips the WHOLE message to Unicode, where a segment is only 70 chars, roughly doubling the cost.
+// Mapping/stripping those keeps waitlist texts in the cheap encoding. Letters keep their base form
+// (Nguyễn → Nguyen, "Pho Ha Noi — San Jose" → "Pho Ha Noi San Jose").
+function gsm7(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/\s*[—–]\s*/g, ' ')              // em/en dash (with its spaces) → single space
+    .replace(/[‘’‚‛]/g, "'")        // smart single quotes → '
+    .replace(/[“”„]/g, '"')              // smart double quotes → "
+    .replace(/…/g, '...').replace(/[•·]/g, '-')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')    // Vietnamese đ/Đ (not decomposed by NFKD)
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')  // strip combining diacritics (à→a, ễ→e, ñ→n)
+    .replace(/[^\x20-\x7e\r\n]/g, '')                   // drop anything still outside printable ASCII
+    .replace(/ {2,}/g, ' ');                            // collapse doubled spaces left by dash removal
+}
+
 // Send one SMS. Never throws — returns { sent, provider, to, id?, error?, logged? }.
-async function sendSms(rawTo, body) {
+async function sendSms(rawTo, body, opts = {}) {
   const to = toE164(rawTo);
   let text = String(body || '').slice(0, 1200);
-  if (text && !/reply stop/i.test(text)) text = (text + STOP_SUFFIX).slice(0, 1600);
+  if (text && !opts.noStop && !/reply stop/i.test(text)) text = (text + STOP_SUFFIX).slice(0, 1600);
   if (!to) return { sent: false, provider: PROVIDER, to: null, error: 'invalid_phone' };
   if (PROVIDER === 'none') { console.log(`[sms:log-only] -> ${to}: ${text}`); return { sent: false, provider: 'none', to, logged: true }; }
   try {
@@ -70,4 +90,4 @@ async function sendSms(rawTo, body) {
 
 const smsEnabled = () => PROVIDER !== 'none';
 
-module.exports = { sendSms, toE164, smsEnabled, SMS_PROVIDER: PROVIDER };
+module.exports = { sendSms, toE164, smsEnabled, gsm7, SMS_PROVIDER: PROVIDER };
