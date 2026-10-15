@@ -2734,7 +2734,8 @@ function ftableEl(t, ci, mode) {
 // Seat a party by tapping a table on the floor map (occupied tables are greyed).
 // Seat a waiting party: pick a free table on the live map → mark it occupied
 // (in the Management floor plan) and mark the party seated at that table.
-async function seatModal(id, name) {
+async function seatModal(id, name, party) {
+  const size = Math.max(1, parseInt(party, 10) || 2);   // seat the party at its real size, not a fixed 2
   let fp;
   try { fp = await api(q('/floormap')); } catch { fp = { areas: [] }; }
   const tablesHtml = fp.areas.flatMap(a => a.tables).map(t => {
@@ -2753,7 +2754,7 @@ async function seatModal(id, name) {
     // STILL take the guest off the waitlist below — the host asked to seat them, so they can't linger.
     let floorErr = null;
     if (tid) {
-      try { await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: S.loc || undefined }) }); }
+      try { await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: size, source: 'waitlist', waitlist_ref: String(id), location_id: S.loc || undefined }) }); }
       catch (e) { floorErr = e; }
     }
     // Always clear the board. A successful floor seat already back-synced this row to 'seated', so this
@@ -2815,7 +2816,7 @@ async function renderBoard() {
 
   $('addBtn').onclick = openAdd;
   $('walkinBtn').onclick = walkInModal;
-  $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id, b.dataset.name));
+  $('view').querySelectorAll('[data-act]').forEach(b => b.onclick = () => act(b.dataset.act, b.dataset.id, b.dataset.name, b.dataset.party));
 }
 
 // Walk-in: a guest the host walks in and seats right away (no waiting list) —
@@ -2866,7 +2867,7 @@ function partyCard(p, i) {
     <div class="waited"><b>${waited(p.created_at)}m</b>waited${p.quoted_minutes != null ? ` · quoted ${p.quoted_minutes}m` : ''}</div>
     <div class="acts">
       ${notified ? '' : `<button class="btn ghost" data-act="notify" data-id="${p.id}" data-name="${esc(p.guest_name)}">🔔 Notify</button>`}
-      <button class="btn green" data-act="seat" data-id="${p.id}" data-name="${esc(p.guest_name)}">Seat</button>
+      <button class="btn green" data-act="seat" data-id="${p.id}" data-name="${esc(p.guest_name)}" data-party="${p.party_size}">Seat</button>
       <button class="btn ghost" data-act="leave" data-id="${p.id}">Left</button>
     </div>
   </div>`;
@@ -2896,7 +2897,7 @@ async function openAdd() {
   $('minus').onclick = () => { size = Math.max(1, size - 1); setN(); };
 }
 
-async function act(action, id, name) {
+async function act(action, id, name, party) {
   try {
     if (action === 'notify') {
       const r = await api(`/waitlist/${id}/notify`, { method: 'POST' });
@@ -2904,7 +2905,7 @@ async function act(action, id, name) {
         : (r.has_phone && !r.sms_consent) ? `Marked ready — ${name} didn't opt in to texts, please call them`
           : `Marked notified (no phone on file)`);
     } else if (action === 'seat') {
-      return seatModal(id, name);
+      return seatModal(id, name, party);
     } else if (action === 'leave') {
       await api(`/waitlist/${id}/leave`, { method: 'PUT' }); toast(`${name || 'Party'} removed`);
     }
