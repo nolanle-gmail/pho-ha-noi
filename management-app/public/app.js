@@ -7525,7 +7525,6 @@ function orderStatusChip(label) {
   const m = { 'New Order': 'gold', 'Approved': 'ok', 'Partially Approved': 'gold', 'Holding': 'gray', 'Rejected': 'out', 'Loaded': 'blue', 'In Transit': 'blue', 'Received': 'ok', 'Partially Received': 'gold', 'Cancelled': 'out' };
   return `<span class="badge ${m[label] || 'gray'}">${esc(label)}</span>`;
 }
-function approvalBadge(a) { const m = { pending: ['gray', 'pending'], approved: ['ok', 'approved'], held: ['gold', 'held'], rejected: ['out', 'rejected'] }; const [c, l] = m[a] || m.pending; return `<span class="badge ${c}">${l}</span>`; }
 // The next-step action label for an order at a given stage (board hint + detail button).
 function hubNextAction(stage) {
   return { new: 'Ship', approved: 'Ship', loaded: 'Mark in transit', in_transit: 'Mark delivered' }[stage] || 'View';
@@ -7576,78 +7575,44 @@ async function renderHubDistribution() {
   });
 }
 
-// One order's detail page — all its items, with the review/approve controls (at 'new') or per-item
-// status + the order's next stage action (Load → Mark in transit → Mark delivered).
+// One order's detail page — its items + the order's next stage action (Scan to load / Load → Mark in
+// transit → Mark delivered). Orders are Ready to ship, so there's no review/approve step here.
 async function renderHubOrderDetail(orderNo) {
   let d;
   try { d = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo)); }
   catch (e) { toast(e.message, true); S.hubOrderNo = null; return renderHubDistribution(); }
   const h = d.header, lines = d.lines;
   const storeName = d.store ? shortLoc(d.store.name) : '';
-  const canReview = d.can_review && h.stage === 'new';
   const back = () => { S.hubOrderNo = null; renderHubDistribution(); };
-  const reviewRow = (l) => {
-    if (!(l.ck_qty > 0.0005)) return `<tr><td>${esc(l.item_name)}</td><td class="num">${numf(l.requested_qty)} ${esc(l.unit)}</td><td class="num">—</td><td class="num">${numf(l.vendor_qty)}</td><td colspan="2"><span class="badge gray">vendor only — no hub review</span></td></tr>`;
-    return `<tr data-line="${l.id}"><td>${esc(l.item_name)}</td><td class="num">${numf(l.requested_qty)} ${esc(l.unit)}</td><td class="num">${numf(l.ck_qty)}</td><td class="num">${l.vendor_qty > 0 ? numf(l.vendor_qty) : '—'}</td>
-      <td><select class="rv-dec"><option value="approved">✓ Approve</option><option value="held">⏸ Hold</option><option value="rejected">✗ Reject</option></select></td>
-      <td><input class="rv-note" placeholder="reason (required to hold/reject)" style="width:100%"></td></tr>`;
-  };
   const statusRow = (l) => {
-    const appr = l.ck_qty > 0.0005 ? approvalBadge(l.approval) : '<span class="badge gray">vendor</span>';
-    // A rejected line's raw status is 'cancelled' internally (that's how it drops off fulfilment),
-    // but showing "cancelled" next to a "rejected" approval badge is confusing — so the Line-status
-    // column reflects the review decision: "rejected" (or "held"), not the raw status.
-    const lineStat = l.approval === 'rejected' ? '<span class="badge out">rejected</span>'
-      : l.approval === 'held' ? '<span class="badge gold">held</span>'
-      : distBadge(l.status);
-    // Show the hub's reason inline (not just a hover tooltip) so it's readable at a glance.
-    const reason = (l.approval === 'rejected' || l.approval === 'held') && l.approval_note
-      ? `<div class="muted" style="font-size:.8rem;margin-top:.15rem">${l.approval === 'rejected' ? '✗ Rejected' : '⏸ Held'}: ${esc(l.approval_note)}</div>` : '';
-    const acts = (l.approval === 'held' && d.can_review)
-      ? `<button class="btn sm" data-happrove="${l.id}" data-item="${esc(l.item_name)}">Approve</button><button class="btn sm ghost danger" data-hreject="${l.id}" data-item="${esc(l.item_name)}">Reject</button>`
-      : (l.status === 'shipped' && l.cancel_requested)
-        ? `<button class="btn sm ghost danger" data-drecall="${l.id}" data-item="${esc(l.item_name)}">Recall</button><button class="btn sm ghost" data-ddecline="${l.id}" data-item="${esc(l.item_name)}">Decline</button>` : '';
-    return `<tr><td>${esc(l.item_name)}${reason}</td><td class="num">${numf(l.requested_qty)} ${esc(l.unit)}</td><td class="num">${l.ck_qty > 0 ? numf(l.ck_qty) : '—'}</td><td class="num">${l.vendor_qty > 0 ? numf(l.vendor_qty) : '—'}</td><td>${appr}</td><td>${lineStat}${l.cancel_requested ? ' <span class="badge gold">⏳ cancel req</span>' : ''}</td><td><div class="actions-cell">${acts}</div></td></tr>`;
+    const vendorOnly = !(l.ck_qty > 0.0005);
+    const lineStat = vendorOnly ? '<span class="badge gray">vendor only</span>' : distBadge(l.status);
+    // The store can still request cancellation of a shipped line; the hub recalls or declines.
+    const acts = (l.status === 'shipped' && l.cancel_requested)
+      ? `<button class="btn sm ghost danger" data-drecall="${l.id}" data-item="${esc(l.item_name)}">Recall</button><button class="btn sm ghost" data-ddecline="${l.id}" data-item="${esc(l.item_name)}">Decline</button>` : '';
+    return `<tr><td>${esc(l.item_name)}</td><td class="num">${numf(l.requested_qty)} ${esc(l.unit)}</td><td class="num">${l.ck_qty > 0 ? numf(l.ck_qty) : '—'}</td><td class="num">${l.vendor_qty > 0 ? numf(l.vendor_qty) : '—'}</td><td>${lineStat}${l.cancel_requested ? ' <span class="badge gold">⏳ cancel req</span>' : ''}</td><td><div class="actions-cell">${acts}</div></td></tr>`;
   };
   const stageBtn = { approved: ['odLoad', 'Load onto truck'], loaded: ['odDispatch', 'Mark in transit'], in_transit: ['odDeliver', 'Mark delivered'] }[h.stage];
   $('view').innerHTML = `
     <div class="row-between"><div><button class="btn ghost sm" id="odBack">← All orders</button>
       <h2 class="page" style="display:inline-block;margin:0 0 0 .5rem">Order ${esc(h.order_no)}</h2></div>
       <div>${h.stage === 'approved' ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button> ` : ''}${stageBtn ? `<button class="btn" id="${stageBtn[0]}">${stageBtn[1]}</button>` : ''}</div></div>
-    <p class="sub" style="color:var(--muted)">${esc(storeName)} &nbsp;·&nbsp; ${priorityBadge(h.priority)} &nbsp;·&nbsp; ${orderStatusChip(d.status_label)} &nbsp;·&nbsp; ${esc((h.created_at || '').slice(0, 16))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${d.reviewer ? ' · reviewed by ' + esc(d.reviewer) : ''}${d.driver ? ' · driver ' + esc(d.driver) : ''}</p>
-    ${canReview ? `<div class="callout">Approve, hold or reject each item below. A <strong>hold</strong> or <strong>reject</strong> needs a reason; rejected items drop off the order. The requester is messaged with the outcome. You can partially approve.</div>` : ''}
-    ${!canReview && d.can_review && lines.some(l => l.approval === 'held') ? `<div class="callout">This order still has <strong>held</strong> item(s). <strong>Approve</strong> one to send it — the order reopens so you can Load and deliver it — or <strong>Reject</strong> it (removed, requester messaged).</div>` : ''}
-    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">From hub</th><th class="num">Vendor</th>${canReview ? '<th>Decision</th><th>Reason</th>' : '<th>Approval</th><th>Line status</th><th>Actions</th>'}</tr></thead><tbody>
-      ${lines.map(l => canReview ? reviewRow(l) : statusRow(l)).join('')}
-    </tbody></table></div>
-    ${canReview ? `<div class="actions" style="justify-content:flex-end;margin-top:.6rem"><button class="btn" id="odSubmit">Submit review</button></div>` : ''}`;
+    <p class="sub" style="color:var(--muted)">${esc(storeName)} &nbsp;·&nbsp; ${priorityBadge(h.priority)} &nbsp;·&nbsp; ${orderStatusChip(d.status_label)} &nbsp;·&nbsp; ${esc((h.created_at || '').slice(0, 16))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${d.driver ? ' · driver ' + esc(d.driver) : ''}</p>
+    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">From hub</th><th class="num">Vendor</th><th>Line status</th><th>Actions</th></tr></thead><tbody>
+      ${lines.map(statusRow).join('')}
+    </tbody></table></div>`;
   $('odBack').onclick = back;
-  if ($('odSubmit')) $('odSubmit').onclick = async () => {
-    const items = [...$('view').querySelectorAll('tr[data-line]')].map(tr => ({ id: tr.dataset.line, decision: tr.querySelector('.rv-dec').value, note: tr.querySelector('.rv-note').value.trim() }));
-    if (!items.length) { toast('Nothing to review.', true); return; }
-    if (items.find(i => (i.decision === 'held' || i.decision === 'rejected') && !i.note)) { toast('A reason is required to hold or reject an item.', true); return; }
-    try { const r = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/review', { method: 'POST', body: JSON.stringify({ items }) }); toast(`Review saved — ${r.outcome} (${r.approved}✓ ${r.held}⏸ ${r.rejected}✗)`); back(); }
-    catch (e) { toast(e.message, true); }
-  };
   const stageAct = (path, title, note, yes, okMsg) => confirmModal(title, note, yes, async () => { const r = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/' + path, { method: 'POST', body: '{}' }); toast(okMsg(r)); renderHubOrderDetail(orderNo); });
   if ($('odScanLoad')) $('odScanLoad').onclick = () => openScanner({ mode: 'ship', shipStore: { id: d.store.id, name: d.store.name }, onClose: () => renderHubOrderDetail(orderNo) });
-  if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load onto the truck?', `This deducts the approved items from <strong>${esc(invName())}</strong> on-hand and marks the order Loaded — or use <strong>📠 Scan to load</strong> to scan them onto the truck.`, 'Load all', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}`);
+  if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load onto the truck?', `This deducts the ready-to-ship items from <strong>${esc(invName())}</strong> on-hand and marks the order Loaded — or use <strong>📠 Scan to load</strong> to scan them onto the truck.`, 'Load all', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}`);
   if ($('odDispatch')) $('odDispatch').onclick = () => stageAct('dispatch', 'Mark in transit?', `A driver is taking this order out for delivery. The store is notified it's on the way.`, 'Mark in transit', () => 'Order in transit');
-  if ($('odDeliver')) $('odDeliver').onclick = () => stageAct('deliver', 'Mark delivered?', `This lands the approved items into <strong>${esc(storeName)}</strong>'s inventory and closes the order.`, 'Mark delivered', (r) => `Delivered — ${r.received} item${r.received === 1 ? '' : 's'} received`);
+  if ($('odDeliver')) $('odDeliver').onclick = () => stageAct('deliver', 'Mark delivered?', `This lands the items into <strong>${esc(storeName)}</strong>'s inventory and closes the order.`, 'Mark delivered', (r) => `Delivered — ${r.received} item${r.received === 1 ? '' : 's'} received`);
   $('view').querySelectorAll('[data-drecall]').forEach(b => b.onclick = () => confirmModal(`Recall ${b.dataset.item || 'this item'}?`,
     `This recalls the in-transit stock back to this hub and <strong>cancels</strong> the line (plus any linked vendor order). The stock returns to your on-hand.`, 'Recall & cancel',
     async () => { const r = await api('/distribution/orders/' + b.dataset.drecall + '/resolve-cancel', { method: 'POST', body: JSON.stringify({ action: 'recall' }) }); toast(`Recalled — ${numf(r.returned)} back in stock`); renderHubOrderDetail(orderNo); }));
   $('view').querySelectorAll('[data-ddecline]').forEach(b => b.onclick = () => confirmModal(`Decline cancellation of ${b.dataset.item || 'this item'}?`,
     `The shipment stands — the store will be told to receive it as normal.`, 'Decline request',
     async () => { await api('/distribution/orders/' + b.dataset.ddecline + '/resolve-cancel', { method: 'POST', body: JSON.stringify({ action: 'decline' }) }); toast('Request declined'); renderHubOrderDetail(orderNo); }));
-  // Resolve a held item: approve (re-enters fulfilment, reopening the order) or reject (removed).
-  $('view').querySelectorAll('[data-happrove]').forEach(b => b.onclick = () => confirmModal(`Approve ${b.dataset.item || 'this held item'}?`,
-    `This approves the held item — the order reopens so you can <strong>Load</strong> and deliver it.`, 'Approve',
-    async () => { await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/resolve-held', { method: 'POST', body: JSON.stringify({ items: [{ id: b.dataset.happrove, decision: 'approved' }] }) }); toast('Held item approved — ready to load'); renderHubOrderDetail(orderNo); }));
-  $('view').querySelectorAll('[data-hreject]').forEach(b => b.onclick = () => modal(`Reject ${b.dataset.item || 'this held item'}?`, [
-    { type: 'note', label: 'The item is removed from the order and the requester is messaged.' },
-    { key: 'reason', label: 'Reason' },
-  ], async (v) => { if (!(v.reason || '').trim()) throw new Error('A reason is required.'); await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/resolve-held', { method: 'POST', body: JSON.stringify({ items: [{ id: b.dataset.hreject, decision: 'rejected', note: v.reason }] }) }); toast('Held item rejected'); renderHubOrderDetail(orderNo); }, 'Reject item'));
 }
 
 // 🚛 Distribution (left-menu section) — for Central Kitchen / Warehouse staff. Lists the orders this
