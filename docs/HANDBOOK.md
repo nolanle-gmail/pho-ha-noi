@@ -292,7 +292,7 @@ over the shared service key, from both `routes/floorplan.js` and `routes/visits.
 The waitlist side (`routes/wl-feed.js` `PUT /seat/:id`, service-key auth) flips a still-`waiting` row
 to `seated` (idempotent) and emits a waitlist event so the Front Desk board updates at once. Every
 waitlist board filters `status='waiting'`, so the guest drops off all of them; the public live list
-(`/checkin/<slug>/current`) also refreshes every **8 s** (was 15 s) so it clears promptly.
+(`/checkin/<slug>/current`) also refreshes every **5 s** (was 15 s, then 8 s) so it clears promptly.
 
 ```mermaid
 erDiagram
@@ -1716,7 +1716,8 @@ list). `?loc=<id>` and the saved-store fallback apply only when the path has no 
 same URL with `/current` appended — e.g. `/checkin/milpitas/current`,
 `/checkin/san-jose/current`) that shows **who is waiting, in order**: position #, name
 (first name + last initial), party size and minutes waited. It **auto-refreshes** every
-15 s and **never shows phone numbers**. It's backed by the public
+**5 s** (a guest tracking their own spot after joining also refreshes every 5 s) and **never
+shows phone numbers**. It's backed by the public
 `GET /api/public/waitlist/:slug` endpoint (slug resolved from the location name, so San
 Jose is `san-jose`). This is the link a guest gets in their **join-confirmation text**
 (below), so they can open it on their phone and see who's ahead of them.
