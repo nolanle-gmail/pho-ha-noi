@@ -2756,7 +2756,10 @@ async function seatModal(id, name) {
       try { await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: S.loc || undefined }) }); }
       catch (e) { floorErr = e; }
     }
-    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });   // always clears the board
+    // Always clear the board. A successful floor seat already back-synced this row to 'seated', so this
+    // can return 409 ("no longer waiting") — that's success (the guest is already off), not an error.
+    try { await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) }); }
+    catch (e) { if (!/no longer waiting/i.test(e.message || '')) throw e; }
     toast(floorErr ? `${name} taken off the waitlist — but ${label || 'the table'} wasn't marked on the floor (${floorErr.message})` : `${name} seated${label ? ' at ' + label : ''}`, !!floorErr);
     render();
   }, 'Seat party');

@@ -431,7 +431,8 @@ function fdSeat(id, name) {
     // a seated guest must never linger on the board.
     let floorErr = null;
     if (tid) { try { await wl(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: LOC }) }); } catch (e) { floorErr = e; } }
-    await wl(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });
+    // A successful floor seat already back-synced the row, so this can 409 ("no longer waiting") — treat as success.
+    try { await wl(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) }); } catch (e) { if (!/no longer waiting/i.test(e.message || '')) throw e; }
     toast(floorErr ? `${name} taken off the waitlist — ${label || 'table'} not marked (${floorErr.message})` : `${name} seated${label ? ' at ' + label : ''}`); loadFront();
   });
 }
