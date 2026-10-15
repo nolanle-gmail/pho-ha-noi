@@ -1560,6 +1560,14 @@ function migrate() {
     }
   } catch { /* tables not present yet */ }
 
+  // Review step removed (orders are Ready to ship on arrival): grandfather any order still sitting in
+  // the old review states so nothing is stranded. Pending (non-cancelled) lines become ready to ship,
+  // and any header still at 'new' advances to 'approved' (= Ready to ship). Idempotent.
+  try {
+    db.prepare(`UPDATE distribution_orders SET approval='approved' WHERE approval IN ('pending','held') AND status<>'cancelled'`).run();
+    db.prepare(`UPDATE distribution_order_headers SET stage='approved', updated_at=datetime('now') WHERE stage='new'`).run();
+  } catch { /* tables not present yet */ }
+
   // Attachments used to be restricted to CHECK(kind IN ('image','video')); relax that so
   // documents/files can be attached. SQLite can't ALTER a CHECK, so rebuild the table when
   // it still has the old constraint (data, FK cascade and index are preserved).

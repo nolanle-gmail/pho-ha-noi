@@ -55,7 +55,7 @@ function showSessionBanner() {
 // Central Kitchen section, otherwise the picked Inventory location. This lets the CK
 // section reuse the Inventory views (Glossary/Stock/Orders/Lots/Vendors/Reports),
 // scoped to the CK, while the Inventory section stays scoped to S.loc.
-const invLoc = () => (S.section === 'warehouse' && S.whLocId ? S.whLocId : (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc));
+const invLoc = () => (S.section === 'distribution' && S.distHubId ? S.distHubId : (S.section === 'warehouse' && S.whLocId ? S.whLocId : (S.section === 'central' && S.ckLocId ? S.ckLocId : S.loc)));
 // The active inventory-family tab regardless of section (stores use S.tab, CK S.ckTab, WH S.whTab).
 const invTab = () => (S.section === 'central' ? S.ckTab : S.section === 'warehouse' ? S.whTab : S.tab);
 const invQ = (p) => `/inventory${p}${p.includes('?') ? '&' : '?'}${invLoc() ? 'location_id=' + invLoc() : ''}`;
@@ -258,6 +258,7 @@ const SECTIONS = [
   ['inventory', '📦', 'Inventory', 'ops'],
   ['central', '🏭', 'Central Kitchen', 'central'],
   ['warehouse', '🏬', 'Warehouse', 'ops'],
+  ['distribution', '🚛', 'Distribution', 'central'],
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
   ['reports', '📈', 'Reports', 'reports'],
   ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
@@ -275,7 +276,11 @@ const canSeeSection = (key, cap) => key === 'central'
   ? (myCap('central') || (S.myLocType === 'central_kitchen' && myCap('ops')))
   : key === 'warehouse'
     ? (myCap('central') || (S.myLocType === 'warehouse' && myCap('ops')))
-    : myCap(cap);
+    // Distribution (ship store orders) is for EVERY hub-based staffer — not just ops/managers — so a
+    // Central Kitchen or Warehouse worker sees it after login and can pick an order to ship. Plus hub leadership.
+    : key === 'distribution'
+      ? (myCap('central') || S.myLocType === 'central_kitchen' || S.myLocType === 'warehouse')
+      : myCap(cap);
 const allowedSections = () => SECTIONS.filter(s => canSeeSection(s[0], s[3]) && (s[0] !== 'warehouse' || (S.warehouses && S.warehouses.length)));
 
 function renderSidebar() {
@@ -420,7 +425,7 @@ function showSection(section) {
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (isWarehouse) { renderWhTabs(); renderWarehouse(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, distribution: renderDistribution, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -1308,13 +1313,13 @@ function statusBadge(qty, min) {
 // active location (or the Central Kitchen). Unknown codes → look up a name (Open Food
 // Facts) and create or link. Input is a USB/Bluetooth barcode scanner (keyboard-wedge)
 // typing into the auto-focused field — no phone camera.
-function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'warehouse') renderWarehouse(); else if (S.section === 'inventory') render(); }
+function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'warehouse') renderWarehouse(); else if (S.section === 'distribution') renderDistribution(); else if (S.section === 'inventory') render(); }
 
 async function openScanner(opts) {
   // Every location can Receive, Transfer, Check Inventory and Use (consume) stock. The Warehouse &
   // Central Kitchen (distribution hubs) additionally get Shipping (fulfill store orders) — they're
   // the only ones with orders to fulfil.
-  const isDist = (S.section === 'central' || S.section === 'warehouse');
+  const isDist = (S.section === 'central' || S.section === 'warehouse' || S.section === 'distribution');
   const MODES = isDist
     ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']]
     : [['receive', '📥 Receiving'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']];
@@ -7523,7 +7528,7 @@ function orderStatusChip(label) {
 function approvalBadge(a) { const m = { pending: ['gray', 'pending'], approved: ['ok', 'approved'], held: ['gold', 'held'], rejected: ['out', 'rejected'] }; const [c, l] = m[a] || m.pending; return `<span class="badge ${c}">${l}</span>`; }
 // The next-step action label for an order at a given stage (board hint + detail button).
 function hubNextAction(stage) {
-  return { new: 'Review', approved: 'Load', loaded: 'Mark in transit', in_transit: 'Mark delivered' }[stage] || 'View';
+  return { new: 'Ship', approved: 'Ship', loaded: 'Mark in transit', in_transit: 'Mark delivered' }[stage] || 'View';
 }
 
 async function renderHubDistribution() {
@@ -7538,8 +7543,7 @@ async function renderHubDistribution() {
   const active = orders.filter(o => !done(o));
   const recent = orders.filter(o => done(o)).slice(0, 12);
   const lowCount = stock.items.filter(i => i.low).length;
-  const needsReview = active.filter(o => o.stage === 'new').length;
-  const rowAction = (o) => (['delivered', 'cancelled', 'rejected'].includes(o.stage) && o.held) ? 'Resolve held' : hubNextAction(o.stage);
+  const rowAction = (o) => hubNextAction(o.stage);
   const orderRow = (o, isActive) => `<tr class="hub-ord" data-open="${esc(o.order_no)}" style="cursor:pointer">
     <td class="mono">${esc(o.order_no)}</td><td><strong>${esc(shortLoc(o.store_name))}</strong></td><td>${priorityBadge(o.priority)}</td>
     <td class="mono">${esc((o.created_at || '').slice(0, 10))}</td>
@@ -7548,8 +7552,8 @@ async function renderHubDistribution() {
     <td><div class="actions-cell">${isActive ? `<button class="btn sm${o.stage === 'new' || o.held ? '' : ' ghost'}" data-open="${esc(o.order_no)}">${rowAction(o)} →</button>` : `<button class="btn sm ghost" data-open="${esc(o.order_no)}">View</button>`}</div></td></tr>`;
   $('view').innerHTML = `
     <h2 class="page">Distribution <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ${esc(hubName)} → the stores</span></h2>
-    <p class="sub" style="color:var(--muted);margin-top:-.3rem">One row per order, ranked by priority then oldest. Click an order to review &amp; approve its items, then load, dispatch and deliver it.</p>
-    <div class="section"><h3>Incoming store orders ${active.length ? `<span class="badge gold">${active.length} open</span>` : ''}${needsReview ? ` <span class="badge out">${needsReview} to review</span>` : ''}</h3>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">One row per order, ranked by priority then oldest. Every order is <strong>ready to ship</strong> — click one to ship it (scan items onto the truck), then dispatch and deliver.</p>
+    <div class="section"><h3>Incoming store orders ${active.length ? `<span class="badge gold">${active.length} open</span>` : ''}</h3>
       ${active.length ? `<div class="table-wrap"><table><thead><tr><th>Order #</th><th>Store</th><th>Priority</th><th>Date</th><th class="num">Items</th><th>Status</th><th>Action</th></tr></thead><tbody>
         ${active.map(o => orderRow(o, true)).join('')}
       </tbody></table></div>` : '<div class="empty">No open store orders.</div>'}
@@ -7644,6 +7648,48 @@ async function renderHubOrderDetail(orderNo) {
     { type: 'note', label: 'The item is removed from the order and the requester is messaged.' },
     { key: 'reason', label: 'Reason' },
   ], async (v) => { if (!(v.reason || '').trim()) throw new Error('A reason is required.'); await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/resolve-held', { method: 'POST', body: JSON.stringify({ items: [{ id: b.dataset.hreject, decision: 'rejected', note: v.reason }] }) }); toast('Held item rejected'); renderHubOrderDetail(orderNo); }, 'Reject item'));
+}
+
+// 🚛 Distribution (left-menu section) — for Central Kitchen / Warehouse staff. Lists the orders this
+// hub needs to ship (all "ready to ship" — no review step), priority-first. Tap an order (or its
+// 📤 Ship button) to open the scanner in Shipping mode with that store already picked, OR open the
+// scanner and use its own 📤 Shipping button to pick an order. Two ways in, same scan-to-ship flow.
+async function renderDistribution() {
+  const hubBased = S.myLocType === 'central_kitchen' || S.myLocType === 'warehouse';
+  let hubList = [];
+  try { hubList = (await api('/distribution/hubs')).hubs || []; } catch { hubList = []; }
+  // A hub-based staffer ships from their OWN hub; leadership defaults to the CK and can switch hubs.
+  if (hubBased && !myCap('central')) S.distHubId = S.user.location_id;
+  if (!S.distHubId) S.distHubId = hubBased ? S.user.location_id : (S.ckLocId || (hubList[0] && hubList[0].id) || null);
+  if (!S.distHubId) { $('view').innerHTML = '<div class="empty">No Central Kitchen or Warehouse is set up to ship from.</div>'; return; }
+  const hub = hubList.find(h => String(h.id) === String(S.distHubId)) || { id: S.distHubId, name: invName() };
+
+  let orders = [];
+  try { orders = (await api('/distribution/hub-orders?source_location_id=' + S.distHubId)).orders || []; }
+  catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const open = orders.filter(o => !['delivered', 'cancelled', 'rejected'].includes(o.stage));
+
+  const hubPicker = (myCap('central') && hubList.length > 1)
+    ? `<select id="distHub" class="loc-select">${hubList.map(h => `<option value="${h.id}"${String(h.id) === String(S.distHubId) ? ' selected' : ''}>${esc(shortLoc(h.name))}</option>`).join('')}</select>` : '';
+  const row = (o) => `<tr class="hub-ord" data-ship="${o.store_id}" data-store="${esc(o.store_name)}" style="cursor:pointer">
+    <td class="mono">${esc(o.order_no)}</td><td><strong>${esc(shortLoc(o.store_name))}</strong></td>
+    <td>${priorityBadge(o.priority)}</td><td class="num">${o.items}</td><td>${orderStatusChip(o.status_label)}</td>
+    <td><div class="actions-cell"><button class="btn sm" data-ship="${o.store_id}" data-store="${esc(o.store_name)}">📤 Ship →</button></div></td></tr>`;
+
+  $('view').innerHTML = `
+    <div class="row-between"><h2 class="page">🚛 Distribution <span style="font-weight:400;color:var(--muted);font-size:.9rem">— ship store orders from ${esc(shortLoc(hub.name))}</span></h2>
+      <div style="display:flex;gap:.5rem;align-items:center">${hubPicker}<button class="btn" id="distScan">📠 Open scanner</button></div></div>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem">Every order here is <strong>ready to ship</strong>. Tap an order to open the scanner and scan items onto the truck — or open the scanner and use its <strong>📤 Shipping</strong> button.</p>
+    <div class="section"><h3>Orders to ship ${open.length ? `<span class="badge gold">${open.length}</span>` : ''}</h3>
+      ${open.length
+        ? `<div class="table-wrap"><table><thead><tr><th>Order #</th><th>Store</th><th>Priority</th><th class="num">Items</th><th>Status</th><th>Action</th></tr></thead><tbody>${open.map(row).join('')}</tbody></table></div>`
+        : '<div class="empty">No orders waiting to ship. 🎉</div>'}
+    </div>`;
+
+  const openShip = (storeId, storeName) => openScanner({ mode: 'ship', shipStore: { id: storeId, name: storeName }, onClose: renderDistribution });
+  $('view').querySelectorAll('[data-ship]').forEach(b => b.onclick = (e) => { e.stopPropagation(); openShip(b.dataset.ship, b.dataset.store); });
+  if ($('distScan')) $('distScan').onclick = () => openScanner({ onClose: renderDistribution });
+  if ($('distHub')) $('distHub').onchange = (e) => { S.distHubId = e.target.value; renderDistribution(); };
 }
 
 async function renderCkRecipes() {

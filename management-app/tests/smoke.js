@@ -1033,9 +1033,7 @@ const check = (name, ok, detail = '') => {
     const whStoreItem = sdb.prepare("INSERT INTO inventory (location_id,item_name,category,unit,quantity,is_active) VALUES (?,?,?,?,0,1)").run(loc2, 'WH Widget', 'Supplies', 'each').lastInsertRowid;
     const po = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc2, source_location_id: whId, items: [{ item_id: whStoreItem, item_name: 'WH Widget', quantity: 10 }] }) }));
     check('place a Warehouse order', po.created === 1 && po.hub && po.hub.id === whId, JSON.stringify(po));
-    // Only APPROVED items load — review the order first so it's ready to scan-load.
-    const poLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=?").get(po.order_no);
-    await fetch(base + `/api/distribution/hub-orders/${po.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: poLine.id, decision: 'approved' }] }) });
+    // Orders are Ready to ship on arrival (no review) — the order is loadable immediately.
     const whQueue = await j(await fetch(base + `/api/distribution/ship-queue?source_location_id=${whId}`, { headers: H(token) }));
     check('warehouse ship-queue lists the ordering store', whQueue.orders.some(o => o.store_id === loc2 && o.lines === 1 && o.remaining === 10), JSON.stringify(whQueue.orders));
     const whLines = await j(await fetch(base + `/api/distribution/ship-queue/${loc2}?source_location_id=${whId}`, { headers: H(token) }));
@@ -1154,74 +1152,35 @@ const check = (name, ok, detail = '') => {
     const so2Row = sdb.prepare("SELECT status, cancel_requested FROM distribution_orders WHERE id=?").get(so2Line.id);
     check('hub declines a request — order stays shipped, flag cleared', decline.action === 'declined' && so2Row.status === 'shipped' && so2Row.cancel_requested === 0, JSON.stringify(so2Row));
 
-    // ── Review/Approve → Load → Dispatch → Deliver workflow ──
+    // ── Ready-to-ship → Load → Dispatch → Deliver workflow (no review step) ──
     const wf3 = sdb.prepare("SELECT item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 ORDER BY id LIMIT 3").all(ckL).map(r => r.item_name);
     const wfStore = wf3.map(nm => sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, nm)).filter(Boolean);
     const wf = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, priority: 'high', items: wfStore.map((it, i) => ({ item_id: it.id, item_name: wf3[i], quantity: 4 })) }) }));
-    check('new order creates a header at stage=new, lines pending', (sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no) || {}).stage === 'new' && sdb.prepare("SELECT COUNT(*) c FROM distribution_orders WHERE order_no=? AND approval='pending'").get(wf.order_no).c === wf3.length);
+    check('new order is Ready to ship — header stage=approved, every line approval=approved (no review)', (sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no) || {}).stage === 'approved' && sdb.prepare("SELECT COUNT(*) c FROM distribution_orders WHERE order_no=? AND approval='approved'").get(wf.order_no).c === wf3.length);
     const wfBoard = await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }));
     const wfRow = (wfBoard.orders || []).find(o => o.order_no === wf.order_no);
-    check('hub board shows the order as one row, status New Order', !!wfRow && wfRow.status_label === 'New Order' && wfRow.items === wf3.length);
+    check('hub board shows the order as one row, status Ready to ship, with store_id', !!wfRow && wfRow.status_label === 'Ready to ship' && wfRow.items === wf3.length && String(wfRow.store_id) === String(loc1));
     const detail = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}`, { headers: H(token) }));
-    check('order detail returns all its lines', (detail.lines || []).length === wf3.length && detail.can_review === true);
-    const dlines = detail.lines;
-    // Review: approve #1, hold #2 (reason), reject #3 (reason).
-    r = await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [
-      { id: dlines[0].id, decision: 'approved' }, { id: dlines[1].id, decision: 'held', note: 'check with chef' }, { id: dlines[2].id, decision: 'rejected', note: 'out of season' }] }) });
-    const rev = await j(r);
-    check('review: partial approval (1 approved, 1 held, 1 rejected)', r.status === 200 && rev.stage === 'approved' && rev.approved === 1 && rev.held === 1 && rev.rejected === 1 && rev.outcome === 'partially approved', JSON.stringify(rev));
-    check('hold/reject require a reason', (await (await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: dlines[0].id, decision: 'held' }] }) })).status) === 400 || true);
-    check('rejected item is kept-but-marked and dropped from fulfilment', (sdb.prepare("SELECT approval, status FROM distribution_orders WHERE id=?").get(dlines[2].id) || {}).approval === 'rejected' && sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(dlines[2].id).status === 'cancelled');
-    check('requester notified of the review outcome', !!sdb.prepare("SELECT 1 FROM messages m JOIN message_recipients mr ON mr.message_id=m.id WHERE m.subject LIKE '%'||?||'%' AND m.subject LIKE '%approv%' LIMIT 1").get(wf.order_no));
-    const storeView = await j(await fetch(base + `/api/distribution/orders?scope=store&location_id=${loc1}`, { headers: H(token) }));
-    const storeLinesWf = (storeView.orders || []).filter(o => o.order_no === wf.order_no);
-    check('store view carries the order-level status label + per-item approval', storeLinesWf.length > 0 && storeLinesWf.every(o => o.order_status === 'Partially Approved') && storeLinesWf.some(o => o.approval === 'held') && storeLinesWf.some(o => o.approval === 'rejected'), JSON.stringify(storeLinesWf.map(o => ({ a: o.approval, s: o.order_status }))));
-    // Load the approved item — hub stock drops, stage=loaded.
+    check('order detail returns all its lines', (detail.lines || []).length === wf3.length);
+    // Load all ready-to-ship items — hub stock drops, stage=loaded.
     const ckBeforeLoad = sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(ckL, wf3[0]).quantity;
     r = await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });
     const loaded = await j(r);
-    check('load: approved item loaded, hub stock deducted, stage=loaded', r.status === 200 && loaded.loaded === 1
+    check('load: items loaded, hub stock deducted, stage=loaded', r.status === 200 && loaded.loaded === wf3.length
       && Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(ckL, wf3[0]).quantity - (ckBeforeLoad - 4)) < 0.001
       && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'loaded', JSON.stringify(loaded));
     // Dispatch (driver / leadership) → in_transit.
     r = await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/dispatch`, { method: 'POST', headers: H(token), body: '{}' });
     check('dispatch: stage=in_transit', r.status === 200 && sdb.prepare("SELECT stage, driver_id FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'in_transit');
-    // Deliver → store stock up, stage=delivered, label Received (1 of 1 approved).
+    // Deliver → store stock up, stage=delivered, label Received.
     const storeBeforeDeliver = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[0]) || { quantity: 0 }).quantity;
     r = await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/deliver`, { method: 'POST', headers: H(token), body: '{}' });
     const wfDeliv = await j(r);
-    check('deliver: approved item lands at the store, stage=delivered', r.status === 200 && wfDeliv.received === 1
+    check('deliver: items land at the store, stage=delivered', r.status === 200 && wfDeliv.received === wf3.length
       && Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[0]).quantity - (storeBeforeDeliver + 4)) < 0.001
       && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'delivered', JSON.stringify(wfDeliv));
     const wfDetail = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}`, { headers: H(token) }));
     check('delivered order reads as Received', wfDetail.status_label === 'Received');
-
-    // Held-item resolution after a partial delivery: the order stays active; the held item can be
-    // approved (reopens → load/deliver on the same order) or rejected.
-    const wfBoard2 = await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }));
-    check('a delivered order with a held item stays active on the board', ((wfBoard2.orders || []).find(o => o.order_no === wf.order_no) || {}).held === 1);
-    const wfResolved = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: dlines[1].id, decision: 'approved' }] }) }));
-    check('approving a held item reopens the order to approved', wfResolved.approved === 1
-      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'approved'
-      && sdb.prepare("SELECT approval, status FROM distribution_orders WHERE id=?").get(dlines[1].id).approval === 'approved');
-    const storeHeldBefore = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[1]) || { quantity: 0 }).quantity;
-    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });
-    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/dispatch`, { method: 'POST', headers: H(token), body: '{}' });
-    await fetch(base + `/api/distribution/hub-orders/${wf.order_no}/deliver`, { method: 'POST', headers: H(token), body: '{}' });
-    check('the reopened held item flows through load → deliver', Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[1]).quantity - (storeHeldBefore + 4)) < 0.001
-      && sdb.prepare("SELECT status FROM distribution_orders WHERE id=?").get(dlines[1].id).status === 'received'
-      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'delivered');
-    check('with no held items left, the order settles (held=0)', ((await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }))).orders.find(o => o.order_no === wf.order_no) || {}).held === 0);
-    // Reject-held path: a single held item rejected → the whole order reads Rejected.
-    const rh = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: wfStore[0].id, item_name: wf3[0], quantity: 2 }] }) }));
-    const rhLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? LIMIT 1").get(rh.order_no);
-    await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'held', note: 'wait' }] }) });
-    r = await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'rejected' }] }) });
-    check('reject-held needs a reason (400)', r.status === 400, 'status=' + r.status);
-    r = await fetch(base + `/api/distribution/hub-orders/${rh.order_no}/resolve-held`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: rhLine.id, decision: 'rejected', note: 'no longer needed' }] }) });
-    check('reject the last held item → order reads Rejected', r.status === 200
-      && sdb.prepare("SELECT approval FROM distribution_orders WHERE id=?").get(rhLine.id).approval === 'rejected'
-      && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(rh.order_no).stage === 'rejected');
 
     // Staff-app scan-to-LOAD (hub staff only), via the /invscan service-key proxy path.
     const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -1238,10 +1197,9 @@ const check = (name, ok, detail = '') => {
     sdb.prepare("UPDATE inventory SET barcode='ZZLOADSCAN1' WHERE id=?").run(ldItem.id);
     const ldStore = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, ldItem.item_name);
     const ldOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: ldStore.id, item_name: ldItem.item_name, quantity: 4 }] }) }));
-    const ldLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=?").get(ldOrder.order_no);
-    await fetch(base + `/api/distribution/hub-orders/${ldOrder.order_no}/review`, { method: 'POST', headers: H(token), body: JSON.stringify({ items: [{ id: ldLine.id, decision: 'approved' }] }) });
+    // No review — the order is Ready to ship on arrival, so it's in the hub staffer's ship queue immediately.
     const sq = await j(await fetch(base + '/api/invscan/ship-queue?' + asCK));
-    check('invscan/ship-queue lists the approved order for a hub staffer', (sq.orders || []).some(o => String(o.store_id) === String(loc1)));
+    check('invscan/ship-queue lists the ready-to-ship order for a hub staffer', (sq.orders || []).some(o => String(o.store_id) === String(loc1)));
     const ckLoadBefore = sdb.prepare("SELECT quantity FROM inventory WHERE id=?").get(ldItem.id).quantity;
     const ls = await j(await fetch(base + '/api/invscan/ship-scan?' + asCK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_location_id: loc1, code: 'ZZLOADSCAN1', quantity: 4 }) }));
     check('invscan/ship-scan loads the item, decrements the hub, order → loaded', ls.ok === true
