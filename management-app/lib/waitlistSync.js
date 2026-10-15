@@ -19,4 +19,19 @@ function markWaitlistSeated(ref, tableLabel) {
   } catch { /* never let a sync attempt break seating */ }
 }
 
-module.exports = { markWaitlistSeated };
+// For a seat that carries NO waitlist_ref (a host tapping an open table, or the console Floor Plan
+// seat): match a still-'waiting' party by exact name + location on the Waitlist app and drop them off
+// the board. Same best-effort contract. A blank name is a no-op (so a nameless walk-in never matches).
+function markWaitlistSeatedByName(locationId, guestName, tableLabel) {
+  const name = (guestName || '').toString().trim();
+  if (!locationId || !name) return;
+  try {
+    fetch(`${WL_URL}/api/wl-feed/seat-match`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Service-Key': KEY },
+      body: JSON.stringify({ location_id: locationId, guest_name: name, table_number: tableLabel ? String(tableLabel) : undefined }),
+    }).catch(() => { /* waitlist app unreachable — board self-heals on refresh */ });
+  } catch { /* never let a sync attempt break seating */ }
+}
+
+module.exports = { markWaitlistSeated, markWaitlistSeatedByName };

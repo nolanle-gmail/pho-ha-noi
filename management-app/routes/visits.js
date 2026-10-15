@@ -9,7 +9,7 @@ const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
 const { emitVisits, onVisits } = require('../lib/events');
-const { markWaitlistSeated } = require('../lib/waitlistSync');
+const { markWaitlistSeated, markWaitlistSeatedByName } = require('../lib/waitlistSync');
 
 const router = express.Router();
 
@@ -233,8 +233,10 @@ router.put('/:id/seat', requireView, (req, res) => {
   const nv = getVisit(v.id);
   syncTable(tableId, 'seated', nv);
   logEvent(nv, 'seated', v.stage, 'seated', actorOf(req), { table_id: tableId, table: t.label });
-  // A waitlist party seated here → drop them off the waitlist board (best-effort).
+  // Drop them off the waitlist board (best-effort): by ref when the visit carries one, else match a
+  // still-waiting party by exact name + location (covers a walk-in visit seated for a waiting guest).
   if (v.waitlist_ref) markWaitlistSeated(v.waitlist_ref, t.label);
+  else if (v.guest_name) markWaitlistSeatedByName(v.location_id, v.guest_name, t.label);
   res.json({ success: true, visit: mapVisit(nv) });
 });
 

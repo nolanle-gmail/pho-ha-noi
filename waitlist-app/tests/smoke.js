@@ -192,6 +192,18 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('wl-feed seat unknown id → 404', r.status === 404, 'status=' + r.status);
     r = await fetch(base + '/api/wl-feed/seat/' + bs.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     check('wl-feed seat without service key → 401', r.status === 401, 'status=' + r.status);
+    // seat-match: a seat with NO waitlist_ref (tap-to-seat / console Floor Plan) is matched by EXACT
+    // name + location, so that guest also drops off the board.
+    const nm = await j(await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'NameMatch Party', party_size: 3 }) }));
+    r = await fetch(base + '/api/wl-feed/seat-match', { method: 'PUT', headers: svcK, body: JSON.stringify({ location_id: loc, guest_name: 'namematch party', table_number: 'C4' }) });
+    const nmr = await j(r);
+    check('seat-match flips a waiting party by exact name (case-insensitive)', r.status === 200 && nmr.matched === true && nmr.id === nm.id, JSON.stringify(nmr));
+    const w2 = await j(await fetch(base + `/api/waitlist/?location_id=${loc}`, { headers: H(token) }));
+    check('name-matched party drops off the waitlist board', !w2.some(p => p.id === nm.id));
+    r = await fetch(base + '/api/wl-feed/seat-match', { method: 'PUT', headers: svcK, body: JSON.stringify({ location_id: loc, guest_name: 'Nobody Here At All Xyz' }) });
+    check('seat-match with no matching name → matched:false (no-op)', r.status === 200 && (await j(r)).matched === false);
+    r = await fetch(base + '/api/wl-feed/seat-match', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'x' }) });
+    check('seat-match without service key → 401', r.status === 401, 'status=' + r.status);
 
     // ── PWA: installable Staff app (manifest + service worker + icons) ─────
     const mani = await fetch(base + '/manifest.webmanifest');

@@ -64,4 +64,23 @@ router.put('/seat/:id', (req, res) => {
   res.json({ ok: true, status: 'seated' });
 });
 
+// Mark a waiting party seated by NAME + location — for a seat that carries NO waitlist_ref (a host
+// tapping an open table on the Table Map, or the console Floor Plan "seat at table"). Flips the OLDEST
+// still-'waiting' row at the location whose guest_name matches exactly (case-insensitive, trimmed), so
+// a seated guest doesn't linger. Idempotent; a blank name or no match is a harmless no-op. To avoid
+// clearing the wrong party, it matches the WHOLE name exactly — not a prefix or partial.
+router.put('/seat-match', (req, res) => {
+  const locId = parseInt(req.body && req.body.location_id, 10);
+  const name = ((req.body && req.body.guest_name) || '').toString().trim();
+  if (!locId || !name) return res.json({ ok: true, matched: false });
+  const w = db.prepare(`SELECT id, location_id FROM waitlist
+    WHERE location_id=? AND status='waiting' AND lower(trim(guest_name))=lower(?)
+    ORDER BY created_at LIMIT 1`).get(locId, name);
+  if (!w) return res.json({ ok: true, matched: false });
+  const table = req.body && req.body.table_number ? String(req.body.table_number).slice(0, 20) : null;
+  db.prepare(`UPDATE waitlist SET status='seated', seated_at=datetime('now'), table_number=COALESCE(?, table_number) WHERE id=? AND status='waiting'`).run(table, w.id);
+  try { require('../lib/events').emitWaitlist(w.location_id); } catch { /* bus optional */ }
+  res.json({ ok: true, matched: true, id: w.id });
+});
+
 module.exports = router;
