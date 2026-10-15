@@ -263,7 +263,7 @@ the dining room so staff can read the room without pulling out a phone. One stor
 `/Floorplan/Milpitas` (the slug is matched case/hyphen-insensitively, so `/floorplan/san-jose` works
 too); bare `/Floorplan` shows a location picker. The page (`public/floorboard.html`) colours each
 table by its live **display** bucket with a legend + live counts, a wall clock and an "updated"
-stamp, auto-refreshes every 8 s, and offers a fullscreen button + screen-wake-lock. It's
+stamp, auto-refreshes every 5 s, and offers a fullscreen button + screen-wake-lock. It's
 **read-only** — a wall screen can't seat, move or free a table. **It picks the layout automatically**:
 a wide floor (e.g. Milpitas) shows the exact scaled room map — outline + area bands + every table at
 its `pos_x`/`pos_y`, fitted to the screen with no scrolling; a floor too tall to fill a landscape TV
