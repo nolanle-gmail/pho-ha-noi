@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 14, 2026_
+_Last updated: October 15, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1043,13 +1043,20 @@ to `time_entries` → payroll like any store. (This replaced an earlier hub-only
 clock that wrote to the dead `timesheets` table, so those hours never reached payroll.)
 
 **Distribution** is one shared implementation per hub, not CK-only code: the client
-`renderHubDistribution` reads the current hub from `invLoc()`; `routes/distribution.js`
-`/orders` (`scope=hub`) and `/ck-stock` resolve the hub from `source_location_id` and
-gate on `isHubStaff`, so each hub sees only its own incoming store orders and
-on-hand/reserved/free stock. The **Distribution** board lists a hub's incoming store
-orders (order #, priority, requested-by) with **Ship / Mark received / Cancel** (the
-two-step lifecycle) and the offer-to-stores toggle; a warehouse can also ship by
-scanning on **Transfers** / the scanner.
+reads the current hub from `invLoc()`; `routes/distribution.js` resolves the hub from
+`source_location_id` and gates on `isHubStaff`, so each hub sees only its own incoming
+store orders and on-hand/reserved/free stock. **Orders arrive "Ready to ship" — there is
+no approval/review step** (removed 2026-10-15); a hub simply ships what a store ordered.
+The order then moves **Ready to ship → loaded → in transit → delivered** (scan items onto
+the truck, a driver dispatches, the store receives). A hub short on an item just ships
+what it has (the line stays open) or the store cancels it.
+
+Every **Central Kitchen / Warehouse staffer** (not only managers) gets a **🚛 Distribution**
+item in the left menu after login. It lists the hub's ready-to-ship orders; **tap an order
+(or its 📤 Ship button) and the scanner pops up in Shipping mode with that store already
+picked**, ready to scan items onto the truck — or open the scanner with **📠 Open scanner**
+and use its own **📤 Shipping** button to pick an order. (The richer per-order board still
+lives inside the 🏭 Central Kitchen / 🏬 Warehouse sections for hub leadership.)
 
 Designate a warehouse in **Locations → Edit → Type = Warehouse** (the field is
 locked for the Central Kitchen). Location cards show a **🏬 Warehouse** / **🏭
