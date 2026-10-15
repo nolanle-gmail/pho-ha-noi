@@ -2748,9 +2748,17 @@ async function seatModal(id, name) {
     <input type="hidden" id="fSel" /><input type="hidden" id="fSelLabel" />`;
   modal(`Seat ${name}`, body, async () => {
     const tid = $('fSel').value, label = $('fSelLabel').value;
-    if (tid) await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id) }) });
-    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });
-    toast(`${name} seated${label ? ' at ' + label : ''}`); render();
+    // Mark the floor table occupied (carries location_id — required for owner/all-location users — and
+    // the waitlist_ref so Management back-syncs). If this fails (e.g. the table was just taken), we must
+    // STILL take the guest off the waitlist below — the host asked to seat them, so they can't linger.
+    let floorErr = null;
+    if (tid) {
+      try { await api(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: S.loc || undefined }) }); }
+      catch (e) { floorErr = e; }
+    }
+    await api(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });   // always clears the board
+    toast(floorErr ? `${name} taken off the waitlist — but ${label || 'the table'} wasn't marked on the floor (${floorErr.message})` : `${name} seated${label ? ' at ' + label : ''}`, !!floorErr);
+    render();
   }, 'Seat party');
   const host = $('modalHost');
   host.querySelectorAll('[data-pick]').forEach(el => el.onclick = () => {

@@ -427,9 +427,12 @@ async function fdPickAndSeat(title, subHtml, onPick, afterRender) {
 }
 function fdSeat(id, name) {
   fdPickAndSeat(`Seat ${name}`, `<p class="sub">Tap a free (green) table for <strong>${esc(name)}</strong>.</p>`, async (tid, label) => {
-    if (tid) await wl(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: LOC }) });
+    // Still take the guest off the waitlist even if the floor seat fails (table just taken, etc.) —
+    // a seated guest must never linger on the board.
+    let floorErr = null;
+    if (tid) { try { await wl(`/floormap/tables/${tid}/seat`, { method: 'PUT', body: JSON.stringify({ guest_name: name, party_size: 2, source: 'waitlist', waitlist_ref: String(id), location_id: LOC }) }); } catch (e) { floorErr = e; } }
     await wl(`/waitlist/${id}/seat`, { method: 'PUT', body: JSON.stringify({ table_number: label || null }) });
-    toast(`${name} seated${label ? ' at ' + label : ''}`); loadFront();
+    toast(floorErr ? `${name} taken off the waitlist — ${label || 'table'} not marked (${floorErr.message})` : `${name} seated${label ? ' at ' + label : ''}`); loadFront();
   });
 }
 function fdWalkIn() {
