@@ -152,7 +152,7 @@ function renderConfirm(ref, initial) {
   paint({ status: 'waiting', position: initial.position, quoted_minutes: initial.quoted_minutes, party_size: initial.party_size, guest_name: initial.guest_name, notified: false });
   const poll = async () => { try { paint(await api('/position/' + ref)); } catch { /* keep last */ } };
   poll();
-  K.pollTimer = setInterval(poll, 12000);
+  K.pollTimer = setInterval(poll, 5000);   // fast refresh so a guest sees their spot/status move within seconds
 }
 
 // Public live waitlist view (/checkin/<slug>/current) — read-only, auto-refreshing.
@@ -179,7 +179,7 @@ async function startCurrent() {
   KV().innerHTML = '<div class="k-loading">Loading…</div>';
   await renderCurrent();
   stopPolling();
-  K.pollTimer = setInterval(renderCurrent, 8000);   // refresh often so a seated party drops off promptly
+  K.pollTimer = setInterval(renderCurrent, 5000);   // refresh fast so a new guest / a seated party drops on/off within seconds
 }
 
 // Boot: the public live-list route, a restored check-in, or the join form.
