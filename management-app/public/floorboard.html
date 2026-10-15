@@ -281,7 +281,7 @@ async function load() {
   catch (e) { if (!lastData) $('main').innerHTML = `<div class="note">${esc(e.message)}</div>`; timer = setTimeout(load, 15000); return; }
   if (!d.ok) { $('main').innerHTML = `<div class="note"><h2>Floor board unavailable</h2>${esc(d.error || '')}</div>`; return; }
   render(d);
-  timer = setTimeout(load, 8000);   // refresh every 8s
+  timer = setTimeout(load, 5000);   // refresh every 5s (matches the waitlist surfaces; error-retry stays 15s above)
 }
 
 let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(draw, 150); });
