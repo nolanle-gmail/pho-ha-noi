@@ -289,6 +289,11 @@ it, so a guest seated anywhere other than the Front Desk "Seat" button (whose JS
 party's `waitlist_ref` **back-syncs**: management-app `lib/waitlistSync.js` `markWaitlistSeated(ref)`
 fires a best-effort (fire-and-forget, never blocks the seat) `PUT ${WAITLIST_URL}/api/wl-feed/seat/:id`
 over the shared service key, from both `routes/floorplan.js` and `routes/visits.js` seat endpoints.
+A seat that carries **no** `waitlist_ref` — a host tapping an open table on the Table Map, or the
+console Floor Plan "seat at table" — instead falls back to matching a still-`waiting` party by **exact
+name + location** (`markWaitlistSeatedByName` → `PUT /api/wl-feed/seat-match`, which flips the oldest
+exact-name match; a blank name or no match is a no-op), so a seated guest never lingers even without
+the ref.
 The waitlist side (`routes/wl-feed.js` `PUT /seat/:id`, service-key auth) flips a still-`waiting` row
 to `seated` (idempotent) and emits a waitlist event so the Front Desk board updates at once. Every
 waitlist board filters `status='waiting'`, so the guest drops off all of them; the public live list
