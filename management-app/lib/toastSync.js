@@ -436,6 +436,9 @@ async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
       if (openWindow(m.location_id, weekdayMon0(today), nowMin, graceMin) && (Date.now() - st.lastLive) >= liveThrottleMin * 60000) {
         await syncOrders(m.location_id, today); st.lastLive = Date.now();
       }
+      // Close out seated visits so the Service Flow board never carries them over: resolve the ones a
+      // Toast order picked up (→ done), then expire anything still seated past the stale cutoff.
+      try { resolveSeatedByOrders(m.location_id); expireStaleSeated(m.location_id); } catch (e) { console.error(`[toast-sweep] seated cleanup loc ${m.location_id}:`, e.message); }
     } catch (e) { console.error(`[toast-sweep] loc ${m.location_id}:`, e.message); }
   }
 }
@@ -610,6 +613,63 @@ function computeServiceFlow(locationId) {
   return { served_min: servedMin, pay_min: payMin, food_renudge_min: foodRenudge, pay_renudge_min: payRenudge, unclaimed_min: FLOW_UNCLAIMED_MIN, tables, seated, counts, updated_at: new Date().toISOString() };
 }
 
+// ── Persistent seated-visit resolution (stops stale "Seated" tables piling up) ──────
+// computeServiceFlow only *hides* a seated row for the same business day; the service_visit itself
+// stays stage='seated' forever and reappears on the board once the business date rolls over. These two
+// run every sweep to actually CLOSE those visits out.
+const nrmTbl = (s) => String(s || '').trim().toLowerCase();
+const SEATED_ORDER_GRACE_MS = 120000;   // 2-min skew grace, same as computeServiceFlow
+const SEATED_STALE_HOURS = Math.max(1, parseInt(process.env.TOAST_SEATED_STALE_HOURS, 10) || 6);
+
+// FIX #1 — a seated visit whose floor table got a Toast order opened at/after it was seated has been
+// picked up → close it PERSISTENTLY (stage='done'). Matches across ALL business dates (not just today).
+function resolveSeatedByOrders(locationId) {
+  let n = 0;
+  try {
+    const svs = db.prepare(`SELECT v.id, v.seated_at, t.label FROM service_visits v
+      JOIN restaurant_tables t ON t.id=v.table_id
+      WHERE v.location_id=? AND v.stage='seated' AND v.table_id IS NOT NULL AND v.seated_at IS NOT NULL`).all(locationId);
+    if (!svs.length) return 0;
+    const ord = db.prepare(`SELECT tbl.name, o.opened_at FROM toast_orders o
+      JOIN toast_config tbl ON tbl.location_id=o.location_id AND tbl.type='table' AND tbl.guid=o.table_guid
+      WHERE o.location_id=? AND o.voided=0 AND o.table_guid IS NOT NULL`).all(locationId);
+    const opens = {};
+    for (const r of ord) { const k = nrmTbl(r.name); const ms = Date.parse(r.opened_at); if (Number.isFinite(ms)) (opens[k] = opens[k] || []).push(ms); }
+    const upd = db.prepare(`UPDATE service_visits SET stage='done', done_at=datetime('now') WHERE id=? AND stage='seated'`);
+    const ev = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role) VALUES (?,?,?,?,?,?,?)`);
+    for (const v of svs) {
+      const seatedMs = Date.parse(v.seated_at);
+      const os = opens[nrmTbl(v.label)] || [];
+      if (Number.isFinite(seatedMs) && os.some(ms => ms >= seatedMs - SEATED_ORDER_GRACE_MS)) {
+        if (upd.run(v.id).changes) { try { ev.run(v.id, locationId, 'toast_order_opened', 'seated', 'done', 'Toast sync', 'system'); } catch { /* events optional */ } n++; }
+      }
+    }
+  } catch (e) { console.error('[serviceflow] resolveSeatedByOrders:', e.message); }
+  return n;
+}
+
+// FIX #2 — stale cleanup. A still-'seated' visit older than TOAST_SEATED_STALE_HOURS (default 6) is
+// stale: it either ordered-and-left (caught by FIX #1 → done) or was a no-show / mis-seat. Close it so
+// the board never carries it over — marked 'canceled' (kept in history) since no Toast order linked. 6h
+// is well past any real dine-in that still hasn't ordered, so an active guest is never swept.
+function expireStaleSeated(locationId, { maxHours = SEATED_STALE_HOURS } = {}) {
+  let n = 0;
+  try {
+    const cutoff = maxHours * 3600000;
+    const svs = db.prepare(`SELECT id, seated_at FROM service_visits
+      WHERE location_id=? AND stage='seated' AND seated_at IS NOT NULL`).all(locationId);
+    const upd = db.prepare(`UPDATE service_visits SET stage='canceled', canceled_at=datetime('now') WHERE id=? AND stage='seated'`);
+    const ev = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role) VALUES (?,?,?,?,?,?,?)`);
+    for (const v of svs) {
+      const ms = Date.parse(v.seated_at);
+      if (Number.isFinite(ms) && (Date.now() - ms) >= cutoff) {
+        if (upd.run(v.id).changes) { try { ev.run(v.id, locationId, 'seated_expired', 'seated', 'canceled', 'System', 'system'); } catch { /* events optional */ } n++; }
+      }
+    }
+  } catch (e) { console.error('[serviceflow] expireStaleSeated:', e.message); }
+  return n;
+}
+
 // Two re-fire cadences, both driven by the marker's next_at:
 //   • an UNCLAIMED alert re-pops every ~3 min so it's never missed (any kind);
 //   • a claimed alert set to "Waiting"/"Not yet" snoozes for its kind's window
@@ -769,4 +829,4 @@ function startPayMinutesBackfill() {
   console.log('[toast-paymin] pay_minutes backfill scheduled.');
 }
 
-module.exports = { syncOrders, salesSummary, salesByDiningOption, salesByPaymentType, salesPaymentByDining, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume, computeServiceFlow, runServiceFlowSweep, startToastLiveSweep, startPayMinutesBackfill, markFlowWaiting, clearFlowRenudge, raiseFlowAlert };
+module.exports = { syncOrders, salesSummary, salesByDiningOption, salesByPaymentType, salesPaymentByDining, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume, computeServiceFlow, runServiceFlowSweep, startToastLiveSweep, startPayMinutesBackfill, markFlowWaiting, clearFlowRenudge, raiseFlowAlert, resolveSeatedByOrders, expireStaleSeated };

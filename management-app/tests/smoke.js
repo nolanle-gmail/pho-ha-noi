@@ -695,6 +695,29 @@ const check = (name, ok, detail = '') => {
     const tally = await j(await fetch(base + `${V}/me/tally?location_id=${loc1}&server_id=${srv.id}`, { headers: H(token) }));
     check('server tally: covers + tips + open tables', typeof tally.covers === 'number' && typeof tally.tips === 'number' && typeof tally.open_tables === 'number', JSON.stringify(tally));
 
+    // ── Seated-visit cleanup: close out 'seated' visits so they don't pile up on the board ──
+    try {
+      const tsync = require('../lib/toastSync');
+      const vdb = require("./../db/database"); const tbls = vdb.prepare("SELECT id,label FROM restaurant_tables WHERE location_id=? LIMIT 2").all(loc1);
+      const nowIso = new Date().toISOString();
+      const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
+      const insV = vdb.prepare("INSERT INTO service_visits (location_id, source, guest_name, party_size, stage, table_id, seated_at, created_at) VALUES (?,?,?,?,?,?,?,?)");
+      // A) seated + a Toast order opened after seating → resolved to 'done'
+      const vA = Number(insV.run(loc1, 'walkin', 'ZZ Seated Ordered', 2, 'seated', tbls[0].id, ago(30), ago(30)).lastInsertRowid);
+      vdb.prepare("INSERT INTO toast_config (location_id,type,guid,name) VALUES (?,?,?,?)").run(loc1, 'table', 'ZZSEATTBL', tbls[0].label);
+      vdb.prepare("INSERT INTO toast_orders (guid,location_id,business_date,opened_at,voided,deleted,table_guid) VALUES (?,?,?,?,?,?,?)").run('ZZSEATORD', loc1, nowIso.slice(0, 10), nowIso, 0, 0, 'ZZSEATTBL');
+      const nResolved = tsync.resolveSeatedByOrders(loc1);
+      check('resolveSeatedByOrders closes a seated table that got a Toast order (→ done)', nResolved >= 1 && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vA).stage === 'done');
+      // B) seated 10h ago, no order → expired to 'canceled'
+      const vB = Number(insV.run(loc1, 'walkin', 'ZZ Seated Stale', 2, 'seated', tbls[1].id, ago(600), ago(600)).lastInsertRowid);
+      const nExpired = tsync.expireStaleSeated(loc1, { maxHours: 6 });
+      check('expireStaleSeated cancels a seated visit past the stale cutoff (→ canceled)', nExpired >= 1 && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vB).stage === 'canceled');
+      // C) a fresh seated visit is left alone
+      const vC = Number(insV.run(loc1, 'walkin', 'ZZ Seated Fresh', 2, 'seated', tbls[0].id, nowIso, nowIso).lastInsertRowid);
+      tsync.expireStaleSeated(loc1, { maxHours: 6 });
+      check('expireStaleSeated leaves a fresh seated visit alone', vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vC).stage === 'seated');
+    } catch (e) { check('seated-cleanup functions run', false, e.message); }
+
     // ── My Tasks (staff day-task assignments) ──────────────────────────────
     const sara = vl.servers.find(s => s.name === 'Sara Tran') || vl.servers[0];
     const st = await j(await fetch(base + `/api/stafftasks?user_id=${sara.id}`, { headers: svc() }));
