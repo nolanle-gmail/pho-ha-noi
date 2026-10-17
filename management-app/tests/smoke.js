@@ -731,6 +731,15 @@ const check = (name, ok, detail = '') => {
       check('freePaidTables reopens a paid table (→ available) and closes its visit (→ done)', nFreed >= 1
         && vdb.prepare("SELECT status FROM restaurant_tables WHERE id=?").get(tbls[2].id).status === 'available'
         && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vD).stage === 'done');
+      // E) the "Done" group only shows just-finished tables: a done visit >3 min old drops off the board
+      const vOld = Number(insV.run(loc1, 'walkin', 'ZZ Done Old', 2, 'done', null, ago(60), ago(60)).lastInsertRowid);
+      vdb.prepare("UPDATE service_visits SET done_at=? WHERE id=?").run(ago(30), vOld);
+      const vNew = Number(insV.run(loc1, 'walkin', 'ZZ Done New', 2, 'done', null, ago(2), ago(2)).lastInsertRowid);
+      vdb.prepare("UPDATE service_visits SET done_at=? WHERE id=?").run(nowIso, vNew);
+      const dl = await j(await fetch(base + `/api/visits?location_id=${loc1}&include=done`, { headers: H(token) }));
+      const doneIds = (dl.lists.done || []).map(v => v.id);
+      check('Done board shows a just-finished table but drops one done >3 min ago', doneIds.includes(vNew) && !doneIds.includes(vOld), JSON.stringify({ shown_new: doneIds.includes(vNew), shown_old: doneIds.includes(vOld) }));
+      vdb.prepare("DELETE FROM service_visits WHERE guest_name IN ('ZZ Done Old','ZZ Done New')").run();
       // Clean up so these fixtures don't pollute later (table-dependent) tests.
       vdb.prepare("UPDATE service_visits SET stage='canceled' WHERE guest_name LIKE 'ZZ %' AND stage NOT IN ('done','canceled')").run();
       tbls.forEach(t => setTbl(t.id, 'available'));

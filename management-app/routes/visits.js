@@ -146,7 +146,14 @@ router.get('/', requireFloor, (req, res) => {
   const params = [];
   let where = `stage IN (${stages.map(() => '?').join(',')})`; params.push(...stages);
   if (s.locId) { where += ` AND location_id=?`; params.push(s.locId); }
-  if (includeDone) where = `(${where}) AND (stage<>'done' OR done_at >= datetime('now','-1 day'))`;
+  // A finished table lingers in the "Done" group only briefly, then drops off the board (it stays in
+  // history / reports). Default ~3 min; tune with VISITS_DONE_WINDOW_MIN.
+  if (includeDone) {
+    const doneWinMin = Math.max(1, parseInt(process.env.VISITS_DONE_WINDOW_MIN, 10) || 3);
+    // julianday() parses both the ISO 'YYYY-MM-DDTHH:MM:SS.SSSZ' done_at and 'now', so the window
+    // actually filters (a plain string compare didn't — the 'T' vs ' ' made it always true).
+    where = `(${where}) AND (stage<>'done' OR julianday(done_at) >= julianday('now','-${doneWinMin} minutes'))`;
+  }
   const rows = db.prepare(`SELECT * FROM service_visits WHERE ${where} ORDER BY
     CASE stage WHEN 'waiting' THEN 0 WHEN 'seated' THEN 1 WHEN 'in_service' THEN 2 WHEN 'paying' THEN 3 ELSE 4 END,
     COALESCE(seated_at, created_at)`).all(...params);
