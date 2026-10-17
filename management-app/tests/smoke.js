@@ -695,27 +695,47 @@ const check = (name, ok, detail = '') => {
     const tally = await j(await fetch(base + `${V}/me/tally?location_id=${loc1}&server_id=${srv.id}`, { headers: H(token) }));
     check('server tally: covers + tips + open tables', typeof tally.covers === 'number' && typeof tally.tips === 'number' && typeof tally.open_tables === 'number', JSON.stringify(tally));
 
-    // ── Seated-visit cleanup: close out 'seated' visits so they don't pile up on the board ──
+    // ── Seated-visit cleanup + paid-table free-up (keeps the Service Flow board honest) ──
     try {
       const tsync = require('../lib/toastSync');
-      const vdb = require("./../db/database"); const tbls = vdb.prepare("SELECT id,label FROM restaurant_tables WHERE location_id=? LIMIT 2").all(loc1);
+      const vdb = require("./../db/database");
+      const tbls = vdb.prepare(`SELECT id,label FROM restaurant_tables rt WHERE location_id=? AND (rt.status IS NULL OR rt.status='available')
+        AND NOT EXISTS (SELECT 1 FROM service_visits sv WHERE sv.table_id=rt.id AND sv.stage IN ('seated','in_service','paying')) ORDER BY rt.id DESC LIMIT 3`).all(loc1);
       const nowIso = new Date().toISOString();
+      const bizToday = tsync.pacificToday();
       const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
       const insV = vdb.prepare("INSERT INTO service_visits (location_id, source, guest_name, party_size, stage, table_id, seated_at, created_at) VALUES (?,?,?,?,?,?,?,?)");
-      // A) seated + a Toast order opened after seating → resolved to 'done'
+      const setTbl = (id, st) => vdb.prepare("UPDATE restaurant_tables SET status=? WHERE id=?").run(st, id);
+      // A) seated + a Toast order opened after seating → visit resolved to 'done' (guest still eating, table stays)
       const vA = Number(insV.run(loc1, 'walkin', 'ZZ Seated Ordered', 2, 'seated', tbls[0].id, ago(30), ago(30)).lastInsertRowid);
       vdb.prepare("INSERT INTO toast_config (location_id,type,guid,name) VALUES (?,?,?,?)").run(loc1, 'table', 'ZZSEATTBL', tbls[0].label);
-      vdb.prepare("INSERT INTO toast_orders (guid,location_id,business_date,opened_at,voided,deleted,table_guid) VALUES (?,?,?,?,?,?,?)").run('ZZSEATORD', loc1, nowIso.slice(0, 10), nowIso, 0, 0, 'ZZSEATTBL');
-      const nResolved = tsync.resolveSeatedByOrders(loc1);
-      check('resolveSeatedByOrders closes a seated table that got a Toast order (→ done)', nResolved >= 1 && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vA).stage === 'done');
-      // B) seated 10h ago, no order → expired to 'canceled'
+      vdb.prepare("INSERT INTO toast_orders (guid,location_id,business_date,opened_at,voided,deleted,table_guid,num_guests) VALUES (?,?,?,?,?,?,?,?)").run('ZZSEATORD', loc1, bizToday, ago(25), 0, 0, 'ZZSEATTBL', 2);
+      check('resolveSeatedByOrders closes a seated table that got a Toast order (→ done)', tsync.resolveSeatedByOrders(loc1) >= 1 && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vA).stage === 'done');
+      // B) seated 10h ago, no order → visit canceled AND the table reopened to available
       const vB = Number(insV.run(loc1, 'walkin', 'ZZ Seated Stale', 2, 'seated', tbls[1].id, ago(600), ago(600)).lastInsertRowid);
+      setTbl(tbls[1].id, 'waiting_to_order');
       const nExpired = tsync.expireStaleSeated(loc1, { maxHours: 6 });
-      check('expireStaleSeated cancels a seated visit past the stale cutoff (→ canceled)', nExpired >= 1 && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vB).stage === 'canceled');
+      check('expireStaleSeated cancels a stale seated visit (→ canceled) and frees the table', nExpired >= 1
+        && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vB).stage === 'canceled'
+        && vdb.prepare("SELECT status FROM restaurant_tables WHERE id=?").get(tbls[1].id).status === 'available');
       // C) a fresh seated visit is left alone
       const vC = Number(insV.run(loc1, 'walkin', 'ZZ Seated Fresh', 2, 'seated', tbls[0].id, nowIso, nowIso).lastInsertRowid);
       tsync.expireStaleSeated(loc1, { maxHours: 6 });
       check('expireStaleSeated leaves a fresh seated visit alone', vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vC).stage === 'seated');
+      // D) a PAID table (Toast order paid within the bus grace) → freed to available + visit done
+      const vD = Number(insV.run(loc1, 'walkin', 'ZZ Paid Party', 2, 'seated', tbls[2].id, ago(60), ago(60)).lastInsertRowid);
+      setTbl(tbls[2].id, 'waiting_to_order');
+      vdb.prepare("INSERT INTO toast_config (location_id,type,guid,name) VALUES (?,?,?,?)").run(loc1, 'table', 'ZZPAIDTBL', tbls[2].label);
+      vdb.prepare("INSERT INTO toast_orders (guid,location_id,business_date,opened_at,paid_at,voided,deleted,table_guid,num_guests) VALUES (?,?,?,?,?,?,?,?,?)").run('ZZPAIDORD', loc1, bizToday, ago(30), ago(1), 0, 0, 'ZZPAIDTBL', 2);
+      const nFreed = tsync.freePaidTables(loc1);
+      check('freePaidTables reopens a paid table (→ available) and closes its visit (→ done)', nFreed >= 1
+        && vdb.prepare("SELECT status FROM restaurant_tables WHERE id=?").get(tbls[2].id).status === 'available'
+        && vdb.prepare("SELECT stage FROM service_visits WHERE id=?").get(vD).stage === 'done');
+      // Clean up so these fixtures don't pollute later (table-dependent) tests.
+      vdb.prepare("UPDATE service_visits SET stage='canceled' WHERE guest_name LIKE 'ZZ %' AND stage NOT IN ('done','canceled')").run();
+      tbls.forEach(t => setTbl(t.id, 'available'));
+      vdb.prepare("DELETE FROM toast_orders WHERE guid IN ('ZZSEATORD','ZZPAIDORD')").run();
+      vdb.prepare("DELETE FROM toast_config WHERE guid IN ('ZZSEATTBL','ZZPAIDTBL')").run();
     } catch (e) { check('seated-cleanup functions run', false, e.message); }
 
     // ── My Tasks (staff day-task assignments) ──────────────────────────────

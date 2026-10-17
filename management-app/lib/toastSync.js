@@ -438,7 +438,7 @@ async function sweepOnce({ graceMin = 90, liveThrottleMin = 20 } = {}) {
       }
       // Close out seated visits so the Service Flow board never carries them over: resolve the ones a
       // Toast order picked up (→ done), then expire anything still seated past the stale cutoff.
-      try { resolveSeatedByOrders(m.location_id); expireStaleSeated(m.location_id); } catch (e) { console.error(`[toast-sweep] seated cleanup loc ${m.location_id}:`, e.message); }
+      try { resolveSeatedByOrders(m.location_id); expireStaleSeated(m.location_id); freePaidTables(m.location_id); } catch (e) { console.error(`[toast-sweep] seated cleanup loc ${m.location_id}:`, e.message); }
     } catch (e) { console.error(`[toast-sweep] loc ${m.location_id}:`, e.message); }
   }
 }
@@ -656,17 +656,54 @@ function expireStaleSeated(locationId, { maxHours = SEATED_STALE_HOURS } = {}) {
   let n = 0;
   try {
     const cutoff = maxHours * 3600000;
-    const svs = db.prepare(`SELECT id, seated_at FROM service_visits
+    const svs = db.prepare(`SELECT id, seated_at, table_id FROM service_visits
       WHERE location_id=? AND stage='seated' AND seated_at IS NOT NULL`).all(locationId);
     const upd = db.prepare(`UPDATE service_visits SET stage='canceled', canceled_at=datetime('now') WHERE id=? AND stage='seated'`);
     const ev = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role) VALUES (?,?,?,?,?,?,?)`);
+    const otherOpen = db.prepare(`SELECT COUNT(*) c FROM service_visits WHERE table_id=? AND stage IN ('seated','in_service','paying')`);
+    const freeT = db.prepare(`UPDATE restaurant_tables SET status='available', guest_name=NULL, party_size=NULL, seated_at=NULL, est_free_at=NULL WHERE id=? AND status<>'available'`);
     for (const v of svs) {
       const ms = Date.parse(v.seated_at);
       if (Number.isFinite(ms) && (Date.now() - ms) >= cutoff) {
-        if (upd.run(v.id).changes) { try { ev.run(v.id, locationId, 'seated_expired', 'seated', 'canceled', 'System', 'system'); } catch { /* events optional */ } n++; }
+        if (upd.run(v.id).changes) {
+          try { ev.run(v.id, locationId, 'seated_expired', 'seated', 'canceled', 'System', 'system'); } catch { /* events optional */ }
+          // The party is gone, so reopen the floor spot — unless another party is now holding it.
+          if (v.table_id && otherOpen.get(v.table_id).c === 0) freeT.run(v.table_id);
+          n++;
+        }
       }
     }
   } catch (e) { console.error('[serviceflow] expireStaleSeated:', e.message); }
+  return n;
+}
+
+// FIX #3 — free a PAID table in the background so it turns green within a sweep cycle, instead of only
+// when someone loads the floor plan (buildFloorplan reconciles lazily on view). For every table
+// computeServiceFlow reports as ready_to_bus (paid), close its open visit (done) and set the table
+// available. Runs on the fast service-flow sweep (~3 min) so a paid table reopens a couple minutes
+// after payment even on a quiet floor nobody is watching.
+function freePaidTables(locationId, flow) {
+  let n = 0;
+  try {
+    const f = flow || computeServiceFlow(locationId);
+    const paid = new Set();
+    (f.tables || []).forEach(t => { if (t.state === 'ready_to_bus') paid.add(nrmTbl(t.table_name)); });
+    if (!paid.size) return 0;
+    const tbls = db.prepare(`SELECT id, label, status FROM restaurant_tables WHERE location_id=?`).all(locationId);
+    const findV = db.prepare(`SELECT id, stage FROM service_visits WHERE table_id=? AND stage IN ('seated','in_service','paying') ORDER BY id DESC LIMIT 1`);
+    const closeV = db.prepare(`UPDATE service_visits SET stage='done', done_at=datetime('now') WHERE id=? AND stage IN ('seated','in_service','paying')`);
+    const freeT = db.prepare(`UPDATE restaurant_tables SET status='available', guest_name=NULL, party_size=NULL, seated_at=NULL, est_free_at=NULL WHERE id=? AND status<>'available'`);
+    const ev = db.prepare(`INSERT INTO visit_events (visit_id, location_id, event, from_stage, to_stage, actor_name, actor_role) VALUES (?,?,?,?,?,?,?)`);
+    for (const t of tbls) {
+      const k = nrmTbl(t.label);
+      if (!k || !paid.has(k)) continue;
+      const v = findV.get(t.id);
+      const occupied = t.status && t.status !== 'available';
+      if (!v && !occupied) continue;   // already free
+      if (v && closeV.run(v.id).changes) { try { ev.run(v.id, locationId, 'paid_freed', v.stage, 'done', 'Toast sync', 'system'); } catch { /* events optional */ } }
+      if (freeT.run(t.id).changes) n++;
+    }
+  } catch (e) { console.error('[serviceflow] freePaidTables:', e.message); }
   return n;
 }
 
@@ -781,6 +818,9 @@ async function runServiceFlowSweep({ graceMin = 30 } = {}) {
     if (!openWindow(m.location_id, weekday, nowMin, graceMin)) continue;   // only while open
     try { await syncOrders(m.location_id, today); } catch (e) { console.error(`[toast-serviceflow] sync loc ${m.location_id}:`, e.message); continue; }
     const flow = computeServiceFlow(m.location_id);
+    // Free any paid table in the DB so it turns green within ~3 min of payment, even if nobody opens
+    // the floor plan (which otherwise reconciles lazily on view).
+    try { freePaidTables(m.location_id, flow); } catch (e) { console.error(`[toast-serviceflow] freePaid loc ${m.location_id}:`, e.message); }
     const live = !!(m.service_alerts_live && m.flow_alert_user_id);
     let sent = 0;
     for (const t of flow.tables) {
@@ -829,4 +869,4 @@ function startPayMinutesBackfill() {
   console.log('[toast-paymin] pay_minutes backfill scheduled.');
 }
 
-module.exports = { syncOrders, salesSummary, salesByDiningOption, salesByPaymentType, salesPaymentByDining, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume, computeServiceFlow, runServiceFlowSweep, startToastLiveSweep, startPayMinutesBackfill, markFlowWaiting, clearFlowRenudge, raiseFlowAlert, resolveSeatedByOrders, expireStaleSeated };
+module.exports = { syncOrders, salesSummary, salesByDiningOption, salesByPaymentType, salesPaymentByDining, syncLabor, syncMenus, syncConfig, sweepOnce, startToastSweep, pacificToday, runBackfill, backfillStatus, cancelBackfill, startToastBackfillResume, computeServiceFlow, runServiceFlowSweep, startToastLiveSweep, startPayMinutesBackfill, markFlowWaiting, clearFlowRenudge, raiseFlowAlert, resolveSeatedByOrders, expireStaleSeated, freePaidTables };
