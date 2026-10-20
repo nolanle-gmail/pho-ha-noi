@@ -2288,7 +2288,7 @@ function hubOrdersBlock(title, list) {
     const anyReqCancel = h.order_no && items.some(canReqCancel);
     const hdrBtns = `${anyCancelable ? `<button class="btn sm ghost danger" data-ocancel="${esc(h.order_no)}">Cancel order</button>` : ''}${anyReqCancel ? `<button class="btn sm ghost danger" data-oreqcancel="${esc(h.order_no)}">Request cancellation</button>` : ''}`;
     const hdr = `<tr class="grp"><td colspan="6"><div class="row-between" style="align-items:center;gap:.6rem"><div><strong>${esc(h.order_no || '(no order #)')}</strong> &nbsp; ${priorityBadge(h.priority)}${h.order_status ? ' &nbsp; ' + orderStatusChip(h.order_status) : ''} &nbsp; <span style="font-weight:400">${esc((h.created_at || '').slice(0, 10))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${h.order_reviewed_by_name ? ' · reviewed by ' + esc(h.order_reviewed_by_name) : ''}</span></div>${hdrBtns ? `<div style="display:flex;gap:.4rem">${hdrBtns}</div>` : ''}</div></td></tr>`;
-    const body = items.map(o => `<tr><td>${esc(o.item_name)}${(o.approval === 'rejected' || o.approval === 'held') && o.approval_note ? `<div class="muted" style="font-size:.8rem;margin-top:.15rem">${o.approval === 'rejected' ? '✗ Rejected' : '⏸ Held'}: ${esc(o.approval_note)}</div>` : ''}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${o.approval === 'rejected' ? `<span class="badge out" title="${esc(o.approval_note || 'Rejected by the hub')}">rejected</span>` : o.approval === 'held' ? `<span class="badge gold" title="${esc(o.approval_note || 'On hold at the hub')}">held</span>` : (o.approval === 'approved' && o.status === 'requested') ? '<span class="badge ok">approved</span>' : distBadge(o.status)}${o.cancel_requested ? ` <span class="badge gold" title="${esc(o.cancel_reason || 'Cancellation requested')}">⏳ cancel requested</span>` : ''}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button>` : ''}${canCancelLine(o) ? `<button class="btn sm ghost danger" data-dcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Cancel</button>` : ''}${canReqCancel(o) ? `<button class="btn sm ghost danger" data-reqcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Request cancellation</button>` : ''}${o.cancel_requested ? `<button class="btn sm ghost" data-wdcancel="${o.id}" data-item="${esc(o.item_name)}">Withdraw request</button>` : ''}</div></td></tr>`).join('');
+    const body = items.map(o => `<tr><td>${esc(o.item_name)}${(o.approval === 'rejected' || o.approval === 'held') && o.approval_note ? `<div class="muted" style="font-size:.8rem;margin-top:.15rem">${o.approval === 'rejected' ? '✗ Rejected' : '⏸ Held'}: ${esc(o.approval_note)}</div>` : ''}</td><td class="num">${numf(o.requested_qty)} ${esc(o.unit)}</td><td class="num">${o.shipped_qty > 0 ? `${numf(o.shipped_qty)}${o.shipped_qty > o.requested_qty + 0.0005 ? ' <span class="badge gold">over</span>' : ''}` : '<span style="color:var(--muted)">—</span>'}</td><td class="num">${o.received_qty > 0 ? numf(o.received_qty) : '<span style="color:var(--muted)">—</span>'}</td><td>${o.approval === 'rejected' ? `<span class="badge out" title="${esc(o.approval_note || 'Rejected by the hub')}">rejected</span>` : o.approval === 'held' ? `<span class="badge gold" title="${esc(o.approval_note || 'On hold at the hub')}">held</span>` : (o.approval === 'approved' && o.status === 'requested') ? '<span class="badge ok">approved</span>' : distBadge(o.status)}${o.cancel_requested ? ` <span class="badge gold" title="${esc(o.cancel_reason || 'Cancellation requested')}">⏳ cancel requested</span>` : ''}</td><td><div class="actions-cell">${o.status === 'shipped' ? `<button class="btn sm" data-drecv="${o.id}">Mark received</button> <button class="btn sm ghost" data-dprecv="${o.id}" data-item="${esc(o.item_name)}" data-ship="${o.shipped_qty}" data-unit="${esc(o.unit)}">Partial</button>` : ''}${canCancelLine(o) ? `<button class="btn sm ghost danger" data-dcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Cancel</button>` : ''}${canReqCancel(o) ? `<button class="btn sm ghost danger" data-reqcancel="${o.id}" data-item="${esc(o.item_name)}" data-ono="${esc(o.order_no || '')}">Request cancellation</button>` : ''}${o.cancel_requested ? `<button class="btn sm ghost" data-wdcancel="${o.id}" data-item="${esc(o.item_name)}">Withdraw request</button>` : ''}</div></td></tr>`).join('');
     return hdr + body;
   }).join('');
   return `<div class="section"><h3>${esc(title)}</h3><div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">Shipped</th><th class="num">Received</th><th>Status</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
@@ -2353,6 +2353,20 @@ async function renderOrders() {
   $('view').querySelectorAll('[data-drecv]').forEach(b => b.onclick = async () => {
     try { await api('/distribution/orders/' + b.dataset.drecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast('Received into inventory'); invRefresh(); }
     catch (e) { toast(e.message, true); }
+  });
+  // Partially received — the store got fewer than were shipped. Record the actual amount; the shortfall
+  // is dropped and the order is flagged Partially Received.
+  $('view').querySelectorAll('[data-dprecv]').forEach(b => b.onclick = () => {
+    const ship = parseFloat(b.dataset.ship) || 0;
+    modal(`Partially received — ${b.dataset.item}`, [
+      { type: 'note', label: `How much did you actually receive? Shipped: ${numf(ship)} ${b.dataset.unit}. The rest is logged short (not re-sent).` },
+      { key: 'qty', label: `Amount received (${b.dataset.unit})`, type: 'number', step: 'any', value: ship },
+    ], async (v) => {
+      const qty = Math.max(0, parseFloat(v.qty) || 0);
+      if (qty > ship + 0.0005) throw new Error(`Can't receive more than the ${numf(ship)} ${b.dataset.unit} shipped — use Mark received.`);
+      const r = await api('/distribution/orders/' + b.dataset.dprecv, { method: 'PUT', body: JSON.stringify({ status: 'received', received_qty: qty }) });
+      toast(r.short ? `Received ${numf(qty)} ${b.dataset.unit} — logged short` : 'Received into inventory'); invRefresh();
+    }, 'Confirm received');
   });
   // Requester cancels a single item from an order (before it ships).
   $('view').querySelectorAll('[data-dcancel]').forEach(b => b.onclick = () => {
@@ -7522,12 +7536,12 @@ async function renderCkProduction() {
 // hub from invLoc()/invName() and scopes the order queue + stock to it via source_location_id.
 // Badge for an order's overall status label, and for a line's approval decision.
 function orderStatusChip(label) {
-  const m = { 'New Order': 'gold', 'Approved': 'ok', 'Partially Approved': 'gold', 'Holding': 'gray', 'Rejected': 'out', 'Loaded': 'blue', 'In Transit': 'blue', 'Received': 'ok', 'Partially Received': 'gold', 'Cancelled': 'out' };
+  const m = { 'New Order': 'gold', 'Approved': 'ok', 'Partially Approved': 'gold', 'Holding': 'gray', 'Rejected': 'out', 'Ready to ship': 'gold', 'Loaded': 'blue', 'Partially Loaded': 'gold', 'In Transit': 'blue', 'Received': 'ok', 'Partially Received': 'gold', 'Cancelled': 'out' };
   return `<span class="badge ${m[label] || 'gray'}">${esc(label)}</span>`;
 }
 // The next-step action label for an order at a given stage (board hint + detail button).
 function hubNextAction(stage) {
-  return { new: 'Ship', approved: 'Ship', loaded: 'Mark in transit', in_transit: 'Mark delivered' }[stage] || 'View';
+  return { new: 'Ship', approved: 'Ship', loaded: 'Ready to deliver', in_transit: 'Delivering' }[stage] || 'View';
 }
 
 async function renderHubDistribution() {
@@ -7592,11 +7606,12 @@ async function renderHubOrderDetail(orderNo) {
       ? `<button class="btn sm ghost danger" data-drecall="${l.id}" data-item="${esc(l.item_name)}">Recall</button><button class="btn sm ghost" data-ddecline="${l.id}" data-item="${esc(l.item_name)}">Decline</button>` : '';
     return `<tr><td>${esc(l.item_name)}</td><td class="num">${numf(l.requested_qty)} ${esc(l.unit)}</td><td class="num">${l.ck_qty > 0 ? numf(l.ck_qty) : '—'}</td><td class="num">${l.vendor_qty > 0 ? numf(l.vendor_qty) : '—'}</td><td>${lineStat}${l.cancel_requested ? ' <span class="badge gold">⏳ cancel req</span>' : ''}</td><td><div class="actions-cell">${acts}</div></td></tr>`;
   };
-  const stageBtn = { approved: ['odLoad', 'Load onto truck'], loaded: ['odDispatch', 'Mark in transit'], in_transit: ['odDeliver', 'Mark delivered'] }[h.stage];
+  const stageBtn = { approved: ['odLoad', 'Load onto truck'], loaded: ['odDispatch', '🚚 Start delivery'], in_transit: ['odDeliver', 'Mark delivered'] }[h.stage];
+  const someScanned = lines.some(l => l.shipped_qty > 0.0005);   // a partial load is only offered once something's on the truck
   $('view').innerHTML = `
     <div class="row-between"><div><button class="btn ghost sm" id="odBack">← All orders</button>
       <h2 class="page" style="display:inline-block;margin:0 0 0 .5rem">Order ${esc(h.order_no)}</h2></div>
-      <div>${h.stage === 'approved' ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button> ` : ''}${stageBtn ? `<button class="btn" id="${stageBtn[0]}">${stageBtn[1]}</button>` : ''}</div></div>
+      <div>${h.stage === 'approved' ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button> ` : ''}${h.stage === 'approved' && someScanned ? `<button class="btn ghost" id="odPartial">Ship partial</button> ` : ''}${stageBtn ? `<button class="btn" id="${stageBtn[0]}">${stageBtn[1]}</button>` : ''}</div></div>
     <p class="sub" style="color:var(--muted)">${esc(storeName)} &nbsp;·&nbsp; ${priorityBadge(h.priority)} &nbsp;·&nbsp; ${orderStatusChip(d.status_label)} &nbsp;·&nbsp; ${esc((h.created_at || '').slice(0, 16))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${d.driver ? ' · driver ' + esc(d.driver) : ''}</p>
     <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">From hub</th><th class="num">Vendor</th><th>Line status</th><th>Actions</th></tr></thead><tbody>
       ${lines.map(statusRow).join('')}
@@ -7605,7 +7620,10 @@ async function renderHubOrderDetail(orderNo) {
   const stageAct = (path, title, note, yes, okMsg) => confirmModal(title, note, yes, async () => { const r = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/' + path, { method: 'POST', body: '{}' }); toast(okMsg(r)); renderHubOrderDetail(orderNo); });
   if ($('odScanLoad')) $('odScanLoad').onclick = () => openScanner({ mode: 'ship', shipStore: { id: d.store.id, name: d.store.name }, onClose: () => renderHubOrderDetail(orderNo) });
   if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load onto the truck?', `This deducts the ready-to-ship items from <strong>${esc(invName())}</strong> on-hand and marks the order Loaded — or use <strong>📠 Scan to load</strong> to scan them onto the truck.`, 'Load all', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}`);
-  if ($('odDispatch')) $('odDispatch').onclick = () => stageAct('dispatch', 'Mark in transit?', `A driver is taking this order out for delivery. The store is notified it's on the way.`, 'Mark in transit', () => 'Order in transit');
+  if ($('odPartial')) $('odPartial').onclick = () => stageAct('ship-partial', 'Ship a partial load?',
+    `Send only the items you've scanned onto the truck. Any ordered item you didn't scan is <strong>dropped</strong> from this order — ${esc(storeName)} reorders it if still needed. The order becomes <strong>Partially Loaded</strong> and is ready to deliver.`,
+    'Ship partial', (r) => `Partially loaded — ${r.shipped} shipped${r.dropped ? `, ${r.dropped} dropped` : ''}`);
+  if ($('odDispatch')) $('odDispatch').onclick = () => stageAct('dispatch', 'Start delivery?', `A driver is taking this order out for delivery (status → <strong>In transit</strong>). The store is notified it's on the way.`, 'Start delivery', () => 'Order in transit — delivering');
   if ($('odDeliver')) $('odDeliver').onclick = () => stageAct('deliver', 'Mark delivered?', `This lands the items into <strong>${esc(storeName)}</strong>'s inventory and closes the order.`, 'Mark delivered', (r) => `Delivered — ${r.received} item${r.received === 1 ? '' : 's'} received`);
   $('view').querySelectorAll('[data-drecall]').forEach(b => b.onclick = () => confirmModal(`Recall ${b.dataset.item || 'this item'}?`,
     `This recalls the in-transit stock back to this hub and <strong>cancels</strong> the line (plus any linked vendor order). The stock returns to your on-hand.`, 'Recall & cancel',

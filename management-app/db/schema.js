@@ -1525,6 +1525,11 @@ function migrate() {
     // Orders now go through a Review/Approve step: each line carries a per-item approval decision.
     `ALTER TABLE distribution_orders ADD COLUMN approval TEXT NOT NULL DEFAULT 'pending'`,
     `ALTER TABLE distribution_orders ADD COLUMN approval_note TEXT`,
+    // Shipping lifecycle: a hub can ship a PARTIAL load (send some, drop the rest), and a store can
+    // confirm a PARTIAL receipt (got less than shipped). These header flags drive the board labels
+    // "Partially Loaded" / "Partially Received" without adding new stage values.
+    `ALTER TABLE distribution_order_headers ADD COLUMN partial_load INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE distribution_order_headers ADD COLUMN partial_receipt INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

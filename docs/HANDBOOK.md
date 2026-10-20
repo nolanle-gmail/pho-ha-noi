@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 15, 2026_
+_Last updated: October 20, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1055,6 +1055,28 @@ no approval/review step** (removed 2026-10-15); a hub simply ships what a store 
 The order then moves **Ready to ship → loaded → in transit → delivered** (scan items onto
 the truck, a driver dispatches, the store receives). A hub short on an item just ships
 what it has (the line stays open) or the store cancels it.
+
+**Partial shipping & receiving (2026-10-20).** The full lifecycle reads, on the board, as
+**Ready to ship → Loaded (action "Ready to deliver") → In Transit (action "Delivering") →
+Received**. Two partial outcomes are supported (both **drop-and-close** — the shortfall is
+not re-sent; the store reorders if still needed):
+
+- **Partially Loaded** — a hub scans only *some* of an order onto the truck (short on an
+  item, or holding stock back for another store's order) and clicks **Ship partial** on the
+  order detail. Every scanned line ships as-is; every un-scanned line is **dropped**
+  (cancelled on this order). The header moves to `loaded` with `partial_load=1` and reads
+  **"Partially Loaded"**. `POST /distribution/hub-orders/:orderNo/ship-partial` (hub staff;
+  needs at least one scanned line). It then dispatches and delivers normally.
+- **Partially Received** — the store got **fewer than were shipped**. On the order line the
+  store clicks **Partial** (next to **Mark received**) and enters the amount actually
+  received: only that much lands in inventory, the line closes `received`, and the header is
+  flagged `partial_receipt=1`, reading **"Partially Received"**. `PUT /distribution/orders/:id`
+  with `{status:'received', received_qty:<amount>}` (omit `received_qty` for a full receipt).
+
+Both flags live on `distribution_order_headers` (`partial_load`, `partial_receipt`) and
+drive the board label; a delivered order that was short on either side reads **"Partially
+Received"**. An order that only reached a partial state because some items were never
+shipped still delivers on the items that did ship — un-shipped lines never block delivery.
 
 Every **Central Kitchen / Warehouse staffer** (not only managers) gets a **🚛 Distribution**
 item in the left menu after login. It lists the hub's ready-to-ship orders; **tap an order

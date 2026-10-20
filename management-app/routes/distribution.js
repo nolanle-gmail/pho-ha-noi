@@ -94,11 +94,11 @@ function orderStatusLabel(h, lines) {
   const hubLines = lines.filter(l => l.ck_qty > 0.0005 && l.status !== 'cancelled');
   const approved = hubLines.filter(l => l.approval === 'approved').length;
   if (h.stage === 'new' || h.stage === 'approved') return 'Ready to ship';
-  if (h.stage === 'loaded') return 'Loaded';
+  if (h.stage === 'loaded') return h.partial_load ? 'Partially Loaded' : 'Loaded';
   if (h.stage === 'in_transit') return 'In Transit';
   if (h.stage === 'delivered') {
     const recv = hubLines.filter(l => l.approval === 'approved' && (l.received_qty > 0.0005 || l.status === 'received')).length;
-    return (approved && recv < approved) ? 'Partially Received' : 'Received';
+    return (h.partial_load || h.partial_receipt || (approved && recv < approved)) ? 'Partially Received' : 'Received';
   }
   return h.stage;
 }
@@ -112,9 +112,17 @@ function syncCancelled(orderNo) {
 // order delivered — keeps the header in step with the line-level receive path.
 function syncDelivered(orderNo) {
   if (!orderNo) return;
-  const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005 AND approval='approved'`).all(orderNo);
-  if (approved.length && approved.every(l => l.status === 'received'))
-    db.prepare(`UPDATE distribution_order_headers SET stage='delivered', delivered_at=COALESCE(delivered_at, datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(orderNo);
+  const lines = db.prepare(`SELECT status, shipped_qty, received_qty FROM distribution_orders WHERE order_no=? AND ck_qty > 0.0005 AND approval='approved'`).all(orderNo);
+  const shipped = lines.filter(l => l.shipped_qty > 0.0005);   // only what actually went on the truck must be received
+  if (!shipped.length || !shipped.every(l => l.status === 'received')) return;
+  // Partial receipt = a received line that got less than was shipped; partial load = some ordered item
+  // was never shipped (dropped). Either way the store didn't get everything, so the header shows short.
+  const short = shipped.some(l => l.received_qty > 0.0005 && l.received_qty < l.shipped_qty - 0.005)
+    || lines.some(l => l.status === 'cancelled' || l.shipped_qty <= 0.0005) ? 1 : 0;
+  db.prepare(`UPDATE distribution_order_headers SET stage='delivered',
+       partial_receipt=CASE WHEN ? THEN 1 ELSE partial_receipt END,
+       delivered_at=COALESCE(delivered_at, datetime('now')), updated_at=datetime('now')
+     WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(short, orderNo);
 }
 
 // ── CK raw-stock warehouse (CK staff) ────────────────────────────────────────
@@ -287,7 +295,8 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   }
   const rows = db.prepare(`
     SELECT d.*, l.name AS store_name, u.name AS requested_by_name, so.status AS vendor_status, so.vendor AS vendor_name,
-      h.stage AS order_stage, h.reviewed_at AS order_reviewed_at, ru.name AS order_reviewed_by_name
+      h.stage AS order_stage, h.reviewed_at AS order_reviewed_at, ru.name AS order_reviewed_by_name,
+      h.partial_load AS order_partial_load, h.partial_receipt AS order_partial_receipt
     FROM distribution_orders d
     JOIN locations l ON l.id = d.to_location_id
     LEFT JOIN users u ON u.id = d.requested_by
@@ -300,7 +309,7 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   const byOrder = {};
   rows.forEach(r => { if (r.order_no) (byOrder[r.order_no] = byOrder[r.order_no] || []).push(r); });
   for (const r of rows) r.order_status = r.order_no && r.order_stage
-    ? orderStatusLabel({ stage: r.order_stage, reviewed_at: r.order_reviewed_at }, byOrder[r.order_no]) : null;
+    ? orderStatusLabel({ stage: r.order_stage, reviewed_at: r.order_reviewed_at, partial_load: r.order_partial_load, partial_receipt: r.order_partial_receipt }, byOrder[r.order_no]) : null;
   res.json({ orders: rows });
 });
 
@@ -360,19 +369,30 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
   }
   if (status === 'received') {
     if (d.status !== 'shipped') return res.status(400).json({ error: `Only a shipped order can be received (this is ${d.status}).` });
-    const landQty = r3(d.shipped_qty > 0 ? d.shipped_qty : d.ck_qty);   // actually-shipped (legacy rows fall back to ck_qty)
-    const dest = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(d.to_location_id, d.item_name);
-    let destId;
-    if (dest) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(landQty, dest.id); destId = dest.id; }
-    else destId = db.prepare(`INSERT INTO inventory (location_id, item_name, unit, quantity, min_quantity) VALUES (?,?,?,?,0)`)
-      .run(d.to_location_id, d.item_name, d.unit || 'units', landQty).lastInsertRowid;
-    receiveLot({ item_id: destId, location_id: d.to_location_id, quantity: landQty, unit_cost: dest ? dest.unit_cost || 0 : 0, user_id: req.user.id });
-    db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
-      VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} distribution received`);
-    db.prepare(`UPDATE distribution_orders SET status='received', cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(d.id);
+    const shippedQty = r3(d.shipped_qty > 0 ? d.shipped_qty : d.ck_qty);   // actually-shipped (legacy rows fall back to ck_qty)
+    // A full "Mark received" confirms the whole shipment; "Partially received" passes the actual amount
+    // the store got (never more than shipped). Scans may already have landed some (received_qty), so we
+    // land only the not-yet-landed difference and close the line at `got`. Any shortfall is dropped.
+    const hasQty = req.body.received_qty !== undefined && req.body.received_qty !== null && req.body.received_qty !== '';
+    let got = hasQty ? r3(Math.max(0, parseFloat(req.body.received_qty) || 0)) : shippedQty;
+    if (got > shippedQty) got = shippedQty;
+    const already = r3(Math.max(0, d.received_qty || 0));
+    const landQty = r3(Math.max(0, got - already));
+    if (landQty > 0) {
+      const dest = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(d.to_location_id, d.item_name);
+      let destId;
+      if (dest) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(landQty, dest.id); destId = dest.id; }
+      else destId = db.prepare(`INSERT INTO inventory (location_id, item_name, unit, quantity, min_quantity) VALUES (?,?,?,?,0)`)
+        .run(d.to_location_id, d.item_name, d.unit || 'units', landQty).lastInsertRowid;
+      receiveLot({ item_id: destId, location_id: d.to_location_id, quantity: landQty, unit_cost: dest ? dest.unit_cost || 0 : 0, user_id: req.user.id });
+      db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
+        VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} distribution received`);
+    }
+    const short = got < shippedQty - 0.005;
+    db.prepare(`UPDATE distribution_orders SET status='received', received_qty=?, received_by=?, cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(got, req.user.id, d.id);
     syncDelivered(d.order_no);
-    auditLog(req, 'distribution_receive', 'distribution_order', d.id, { item: d.item_name, qty: landQty });
-    return res.json({ success: true });
+    auditLog(req, 'distribution_receive', 'distribution_order', d.id, { item: d.item_name, qty: got, short });
+    return res.json({ success: true, received: got, short });
   }
   if (status === 'cancelled') {
     if (d.status === 'received' || d.status === 'shipped') return res.status(400).json({ error: `Can't cancel an order that is ${d.status}.` });
@@ -602,6 +622,35 @@ router.post('/hub-orders/:orderNo/load', requireRole(ROLES.ALL), (req, res) => {
   } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not load the order.' }); }
   auditLog(req, 'distribution_load', 'location', h.to_location_id, { order_no: h.order_no, items: lines.length });
   res.json({ success: true, loaded: lines.length });
+});
+
+// Ship a PARTIAL load: the hub sends only what it has scanned onto the truck (or chooses to send less,
+// keeping the rest for other stores). Scanned lines are shipped as-is; any approved line that was NOT
+// scanned is DROPPED (cancelled on this order — the store reorders if it still needs it). The header
+// moves to 'loaded' with partial_load set, so the board reads "Partially Loaded". Scanning already
+// deducted the hub's stock (ship-scan), so this only finalizes line statuses — it deducts nothing.
+router.post('/hub-orders/:orderNo/ship-partial', requireRole(ROLES.ALL), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} staff only.` });
+  if (h.stage !== 'approved') return res.status(400).json({ error: `Only a ready-to-ship order can be partially loaded (this is ${h.stage}).` });
+  // A fully-scanned line is already 'shipped'; a partially-scanned one is still 'requested' with
+  // shipped_qty>0. Both count as "on the truck". Anything approved with nothing scanned is dropped.
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND approval='approved' AND status IN ('requested','approved','shipped') AND ck_qty > 0.0005`).all(h.order_no);
+  const scanned = lines.filter(l => l.shipped_qty > 0.0005);
+  if (!scanned.length) return res.status(400).json({ error: 'Scan at least one item onto the truck before shipping a partial load.' });
+  const dropped = lines.filter(l => l.shipped_qty <= 0.0005);
+  db.exec('BEGIN');
+  try {
+    for (const d of scanned) if (d.status !== 'shipped') db.prepare(`UPDATE distribution_orders SET status='shipped', updated_at=datetime('now') WHERE id=?`).run(d.id);
+    // Drop the un-scanned lines — mark cancelled so they leave the ship queue and release their reserve.
+    for (const d of dropped) db.prepare(`UPDATE distribution_orders SET status='cancelled', updated_at=datetime('now') WHERE id=?`).run(d.id);
+    db.prepare(`UPDATE distribution_order_headers SET stage='loaded', partial_load=1, loaded_at=COALESCE(loaded_at, datetime('now')), updated_at=datetime('now') WHERE order_no=?`).run(h.order_no);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not ship the partial load.' }); }
+  auditLog(req, 'distribution_ship_partial', 'location', h.to_location_id, { order_no: h.order_no, shipped: scanned.length, dropped: dropped.length });
+  res.json({ success: true, shipped: scanned.length, dropped: dropped.length });
 });
 
 // A driver takes a loaded order out for delivery.

@@ -77,11 +77,17 @@ function receiveAgainstOrder({ orderId, qty, code, userId, locId }) {
     const exact = Math.abs(newRecv - o.shipped_qty) <= EPS;   // only an exact match to what shipped closes it
     db.prepare(`UPDATE distribution_orders SET received_qty=?, received_by=?, status=?, updated_at=datetime('now') WHERE id=?`)
       .run(newRecv, userId || null, exact ? 'received' : 'shipped', o.id);
-    // Hand-off scan at the store: once every approved item is received, the order's header is delivered.
+    // Hand-off scan at the store: once every item that actually shipped has been received, the order's
+    // header is delivered. Lines never shipped (dropped on a partial load) don't block it, and any
+    // short/dropped line flags the header partial_receipt so the board reads "Partially Received".
     if (exact && o.order_no) {
-      const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(o.order_no);
-      if (approved.length && approved.every(l => l.status === 'received'))
-        db.prepare(`UPDATE distribution_order_headers SET stage='delivered', delivered_at=COALESCE(delivered_at,datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(o.order_no);
+      const lines = db.prepare(`SELECT status, shipped_qty, received_qty FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(o.order_no);
+      const shipped = lines.filter(l => l.shipped_qty > 0.0005);
+      if (shipped.length && shipped.every(l => l.status === 'received')) {
+        const short = shipped.some(l => l.received_qty > 0.0005 && l.received_qty < l.shipped_qty - 0.005)
+          || lines.some(l => l.status === 'cancelled' || l.shipped_qty <= 0.0005) ? 1 : 0;
+        db.prepare(`UPDATE distribution_order_headers SET stage='delivered', partial_receipt=CASE WHEN ? THEN 1 ELSE partial_receipt END, delivered_at=COALESCE(delivered_at,datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(short, o.order_no);
+      }
     }
     db.exec('COMMIT');
     return { ok: true, kind: 'order', line_id: o.id, item_name: o.item_name, unit: o.unit, received: amt,
