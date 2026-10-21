@@ -350,6 +350,15 @@ day task they tap **Start** (`started_at`) then **Done** (`done_at`), and may at
 **one or more proof photos** (up to 8, stored as bytes in `task_photos`, one row per
 image) and **comments / feedback** (`task_comments`). Managers view every photo and
 comment on a task from the **Day Tasks** board, and can reply with feedback.
+**Manager verification (2026-10-21).** Done isn't the end: after staff mark a task Done,
+a **manager / shift-lead reviews and confirms** it (`task_assignments.verified` /
+`verified_by` / `verified_at`). The Day Tasks board shows a **Verify** column (a **✓ Verify**
+button once the task is Done, then **✓ Verified · <name>** with an undo; a "X/Y verified"
+header chip), and staff see **"✓ Done · awaiting manager review"** until it's confirmed, then
+**"✓ Verified by <name>"**. Verification requires the task be Done first and **clears
+automatically** if the task is reopened or reassigned. `POST /schedule/day-tasks/verify`
+(manage cap + owns-location); staff cannot verify. Who may verify = the manage-cap roles
+(Manager, Assistant Manager, Kitchen Manager, GM and above) — there is no separate shift-lead role.
 
 ```mermaid
 erDiagram
