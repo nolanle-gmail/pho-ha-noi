@@ -744,11 +744,15 @@ function systemSenderId() {
 // CURRENT need (the count may have changed since the order was placed). Processing only prior-day orders
 // keeps it idempotent across the evening: a carried order is dated today and isn't eligible until the
 // next night. The requester is messaged about the roll-over.
-function carryOpenOrders({ force = false } = {}) {
+// `orderNo` scopes the run to a single order (regardless of its date) — used to verify one order in
+// isolation without touching every other prior-day order.
+function carryOpenOrders({ force = false, orderNo = null } = {}) {
   const ptHour = parseInt(db.prepare(`SELECT strftime('%H', 'now', '-7 hours') AS h`).get().h, 10);
   if (!force && ptHour < 21) return { skipped: 'before 21:00 PT' };
-  const heads = db.prepare(`SELECT * FROM distribution_order_headers
-    WHERE stage NOT IN ('delivered','cancelled','rejected') AND date(created_at,'-7 hours') < date('now','-7 hours')`).all();
+  const heads = orderNo
+    ? db.prepare(`SELECT * FROM distribution_order_headers WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).all(orderNo)
+    : db.prepare(`SELECT * FROM distribution_order_headers
+        WHERE stage NOT IN ('delivered','cancelled','rejected') AND date(created_at,'-7 hours') < date('now','-7 hours')`).all();
   let closed = 0, carried = 0;
   for (const h of heads) {
     const leftovers = db.prepare(`SELECT * FROM distribution_orders

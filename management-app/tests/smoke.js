@@ -1292,7 +1292,7 @@ const check = (name, ok, detail = '') => {
     const cyOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: cyStore.id, item_name: cyItem.item_name, quantity: 2 }] }) }));
     sdb.prepare("UPDATE distribution_order_headers SET created_at=datetime('now','-2 days') WHERE order_no=?").run(cyOrder.order_no);   // a prior-day order
     sdb.prepare("UPDATE inventory SET quantity=0, min_quantity=4, par_level=4 WHERE id=?").run(cyStore.id);                            // store now needs 4, not 2
-    const cyRes = require('../routes/distribution').carryOpenOrders({ force: true });
+    const cyRes = require('../routes/distribution').carryOpenOrders({ force: true, orderNo: cyOrder.order_no });
     const cyOld = sdb.prepare("SELECT status, carried_to FROM distribution_orders WHERE order_no=? AND item_name=?").get(cyOrder.order_no, cyItem.item_name);
     check('9PM close cancels the un-shipped line and records carried_to a new order', cyOld.status === 'cancelled' && cyOld.carried_to && cyOld.carried_to !== cyOrder.order_no, JSON.stringify({ cyRes, cyOld }));
     const cyNew = sdb.prepare("SELECT requested_qty, ck_qty FROM distribution_orders WHERE order_no=? AND item_name=?").get(cyOld.carried_to, cyItem.item_name);
