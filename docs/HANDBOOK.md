@@ -812,7 +812,7 @@ Use** draws the oldest layer first and reports the true **COGS** valued at each 
   (by scanning — see below — or **Mark received** on the Transfers tab). Shared core `lib/transfer.js`.
   Console `POST /inventory/barcode/transfer`; staff `POST /invscan/ship`; kiosk `POST /kiosk/:slug/transfer`.
   The Transfers tab shows in-transit transfers with received progress and **Mark received / Cancel**
-  (cancel returns the undelivered remainder to the source). **Audit trail (2026-10-21):** every
+  (cancel returns the undelivered remainder to the source). **Audit trail (2026-10-20):** every
   transfer records **when it was created and by whom** (`created_at` / `requested_by`) and **when it was
   received and by whom** (`received_at` — stamped the moment it closes — / `received_by`); the Transfers
   tab shows **Created** and **Received** columns with the date-time and the person for each.
