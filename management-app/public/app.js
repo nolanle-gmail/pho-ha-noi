@@ -4135,6 +4135,16 @@ async function renderLocDayTasks() {
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
   }
+  // Auto-refresh every 10s so staff Done / other managers' verifications appear without leaving the tab.
+  if (S.dtTimer) clearInterval(S.dtTimer);
+  S.dtTimer = setInterval(() => {
+    // Stop once we've navigated off the Day Tasks tab (another tab/section reuses #locBody).
+    if (S.locTab !== 'daytasks' || !S.locDetailId || !$('locBody')) { clearInterval(S.dtTimer); S.dtTimer = null; return; }
+    if ($('modalHost').innerHTML) return;                       // not while a modal (photo gallery) is open
+    const ae = document.activeElement;                          // not while a manager is using a dropdown/field
+    if (ae && $('locBody').contains(ae) && /^(SELECT|INPUT|TEXTAREA)$/.test(ae.tagName)) return;
+    const y = window.scrollY; renderLocDayTasks().then(() => window.scrollTo(0, y)).catch(() => {});
+  }, 10000);
 }
 
 // Manager view of a day task: its proof photos (loaded with the session token, as
