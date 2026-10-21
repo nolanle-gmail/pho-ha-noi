@@ -408,6 +408,8 @@ const check = (name, ok, detail = '') => {
     const dt = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('day-tasks lists specific tasks + working staff', dt.tasks.length > 0 && dt.working.some(w => w.id === schedStaff.id), JSON.stringify(dt.summary));
     check('day-tasks carry est_minutes (for the Est. column)', dt.tasks.every(t => 'est_minutes' in t), JSON.stringify(dt.tasks[0]));
+    const codedTasks = dt.tasks.filter(t => t.code);
+    check('day-tasks board is sorted by code (opening→closing order)', codedTasks.every((t, i) => i === 0 || codedTasks[i - 1].code <= t.code), JSON.stringify(codedTasks.slice(0, 6).map(t => t.code)));
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
     check('assign a specific day task', r.status === 200, await r.text());
     const dt2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));

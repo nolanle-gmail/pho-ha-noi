@@ -396,7 +396,7 @@ router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=lt.location_id AND ta.task_date=?
     LEFT JOIN users u ON u.id=ta.user_id
     WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
-    ORDER BY j.department, j.name`).all(date, locId).map(t => ({ ...t, photo_count: t.photo_count || 0, comment_count: t.comment_count || 0, has_photo: (t.photo_count || 0) > 0 }));
+    ORDER BY (j.code IS NULL OR j.code='') , j.code, j.department, j.name`).all(date, locId).map(t => ({ ...t, photo_count: t.photo_count || 0, comment_count: t.comment_count || 0, has_photo: (t.photo_count || 0) > 0 }));
   const assigned = tasks.filter(t => t.user_id).length;
   // Assignee candidates for the "Assigned to" dropdown. All-staff mode (temp) merges every active
   // location staffer with the scheduled ones (who keep their hours for the time picker); otherwise
@@ -516,7 +516,7 @@ router.get('/location-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     FROM jobs j
     LEFT JOIN location_tasks lt ON lt.job_id=j.id AND lt.location_id=?
     WHERE j.kind='specific' AND j.is_active=1
-    ORDER BY enabled DESC, j.department, j.name`).all(locId);
+    ORDER BY enabled DESC, (j.code IS NULL OR j.code=''), j.code, j.name`).all(locId);
   res.json({ location: loc, catalog, enabled: catalog.filter(t => t.enabled).length });
 });
 
