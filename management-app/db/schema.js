@@ -1509,6 +1509,7 @@ function migrate() {
     `ALTER TABLE distribution_orders ADD COLUMN received_by INTEGER REFERENCES users(id)`,
     `ALTER TABLE transfer_requests ADD COLUMN received_qty REAL NOT NULL DEFAULT 0`,
     `ALTER TABLE transfer_requests ADD COLUMN received_by INTEGER REFERENCES users(id)`,
+    `ALTER TABLE transfer_requests ADD COLUMN received_at TEXT`,   // when the destination closed it (audit)
     `ALTER TABLE transfer_requests ADD COLUMN unit TEXT DEFAULT 'units'`,
     `ALTER TABLE transfer_requests ADD COLUMN is_catch_weight INTEGER NOT NULL DEFAULT 0`,
     // Store orders to a hub get a trackable order number + priority; a multi-item order shares one

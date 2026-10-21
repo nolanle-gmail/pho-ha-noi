@@ -1140,6 +1140,14 @@ const check = (name, ok, detail = '') => {
     const tx2 = await j(await fetch(base + '/api/inventory/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ item_id: wwItem2.id, from_location_id: loc2, to_location_id: loc1, quantity: 2 }) }));
     const mr = await j(await fetch(base + '/api/inventory/transfer-request/' + tx2.transfer_id, { method: 'PUT', headers: H(token), body: JSON.stringify({ status: 'received' }) }));
     check('Mark received closes an in-transit transfer', mr.success === true && mr.transfer && mr.transfer.closed === true, JSON.stringify(mr.transfer || mr));
+    // Audit fields: created when/by + received when/by are stamped on the transfer.
+    const txAudit = sdb.prepare("SELECT created_at, requested_by, received_at, received_by FROM transfer_requests WHERE id=?").get(tx.transfer_id);
+    check('scanned transfer stamps created_at/by + received_at/by', !!txAudit.created_at && !!txAudit.requested_by && !!txAudit.received_at && !!txAudit.received_by, JSON.stringify(txAudit));
+    const tx2Audit = sdb.prepare("SELECT created_at, requested_by, received_at, received_by FROM transfer_requests WHERE id=?").get(tx2.transfer_id);
+    check('Mark-received transfer stamps received_at + received_by', !!tx2Audit.received_at && !!tx2Audit.received_by, JSON.stringify(tx2Audit));
+    const tlist = await j(await fetch(base + '/api/inventory/transfer-requests', { headers: H(token) }));
+    const tlrow = (tlist || []).find(t => t.id === tx2.transfer_id);
+    check('transfer list returns received_by_name for the receiver', !!tlrow && !!tlrow.received_by_name, JSON.stringify(tlrow && { id: tlrow.id, received_by_name: tlrow.received_by_name, received_at: tlrow.received_at }));
 
     // ── Store orders: order number, priority, multi-item, CK-team notification ─────────────────
     const ckL = sdb.prepare("SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1").get().id;

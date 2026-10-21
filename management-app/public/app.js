@@ -2423,17 +2423,26 @@ function nextOrderActions(o) {
 }
 
 // ── Transfers ──────────────────────────────────────────────────────────────
+// Render a stored UTC timestamp ("YYYY-MM-DD HH:MM:SS") as a compact local date + time for audit.
+function dtLocal(s) {
+  if (!s) return '—';
+  const d = new Date(String(s).replace(' ', 'T') + (String(s).endsWith('Z') ? '' : 'Z'));
+  return isNaN(d) ? esc(String(s).slice(0, 16)) : esc(d.toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }));
+}
 async function renderTransfers() {
   const [items, reqs] = await Promise.all([api(invQ('/')), api(invQ('/transfer-requests'))]);
   const others = S.locations.filter(l => String(l.id) !== String(invLoc()));
+  const by = (name) => `<div class="muted" style="font-size:.78rem">by ${esc(name || '—')}</div>`;
   $('view').innerHTML = `
     <div class="row-between"><h2 class="page">Transfers</h2>
       <button class="btn" id="newTransfer" ${others.length ? '' : 'disabled'}>+ Direct transfer</button></div>
-    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">Transfers are two-step: the stock leaves the source right away and sits <strong>in transit</strong> until the destination <strong>receives</strong> it (by scanning, or Mark received here).</p>
-    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Received</th><th>From → To</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+    <p class="sub" style="margin:-.5rem 0 1rem;color:var(--muted)">Transfers are two-step: the stock leaves the source right away and sits <strong>in transit</strong> until the destination <strong>receives</strong> it (by scanning, or Mark received here). Each transfer records <strong>when</strong> it was created and received, and <strong>by whom</strong>, for audit.</p>
+    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Recv'd</th><th>From → To</th><th>Status</th><th>Created</th><th>Received</th><th>Actions</th></tr></thead><tbody>
       ${reqs.length ? reqs.map(r => { const toMe = String(r.to_location_id) === String(invLoc()), fromMe = String(r.from_location_id) === String(invLoc());
         return `<tr><td>${esc(r.item_name)}</td><td class="num">${numf(r.quantity)} ${esc(r.unit || '')}</td><td class="num">${r.received_qty > 0 ? `${numf(r.received_qty)}/${numf(r.quantity)}` : '<span style="color:var(--muted)">—</span>'}</td><td>${esc(r.from_location_name)} → ${esc(r.to_location_name)}</td><td>${orderBadge(r.status)}</td>
-          <td><div class="actions-cell">${r.status === 'in_transit' && toMe ? `<button class="btn sm" data-trecv="${r.id}">Mark received</button>` : ''}${r.status === 'in_transit' && fromMe ? `<button class="btn sm ghost danger" data-tcancel="${r.id}">Cancel</button>` : ''}</div></td></tr>`; }).join('') : '<tr><td colspan="6" class="empty">No transfers.</td></tr>'}
+          <td style="white-space:nowrap">${dtLocal(r.created_at)}${by(r.requested_by_name)}</td>
+          <td style="white-space:nowrap">${r.received_at ? dtLocal(r.received_at) + by(r.received_by_name) : '<span style="color:var(--muted)">—</span>'}</td>
+          <td><div class="actions-cell">${r.status === 'in_transit' && toMe ? `<button class="btn sm" data-trecv="${r.id}">Mark received</button>` : ''}${r.status === 'in_transit' && fromMe ? `<button class="btn sm ghost danger" data-tcancel="${r.id}">Cancel</button>` : ''}</div></td></tr>`; }).join('') : '<tr><td colspan="8" class="empty">No transfers.</td></tr>'}
     </tbody></table></div>`;
   $('view').querySelectorAll('[data-trecv]').forEach(b => b.onclick = async () => {
     try { const r = await api('/inventory/transfer-request/' + b.dataset.trecv, { method: 'PUT', body: JSON.stringify({ status: 'received' }) }); toast(r.transfer && r.transfer.closed ? 'Transfer received & closed' : 'Received (still open)'); invRefresh(); }

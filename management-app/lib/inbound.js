@@ -104,8 +104,8 @@ function receiveAgainstTransfer({ transferId, qty, code, userId, locId }) {
     landAtStore({ locId: t.to_location_id, itemName: t.item_name, unit: t.unit, qty: amt, srcCost: srcCostOf(t.from_location_id, t.item_name), userId, p, note: `Received · transfer #${t.id}` });
     const newRecv = r3(t.received_qty + amt);
     const exact = Math.abs(newRecv - t.quantity) <= EPS;
-    db.prepare(`UPDATE transfer_requests SET received_qty=?, received_by=?, status=?, updated_at=datetime('now') WHERE id=?`)
-      .run(newRecv, userId || null, exact ? 'received' : 'in_transit', t.id);
+    db.prepare(`UPDATE transfer_requests SET received_qty=?, received_by=?, status=?, received_at=CASE WHEN ? THEN datetime('now') ELSE received_at END, updated_at=datetime('now') WHERE id=?`)
+      .run(newRecv, userId || null, exact ? 'received' : 'in_transit', exact ? 1 : 0, t.id);
     db.exec('COMMIT');
     return { ok: true, kind: 'transfer', line_id: t.id, item_name: t.item_name, unit: t.unit, received: amt,
       transfer: { id: t.id, quantity: r3(t.quantity), received_qty: newRecv, remaining: r3(Math.max(0, t.quantity - newRecv)),

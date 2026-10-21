@@ -458,10 +458,11 @@ router.get('/transfer-requests', requireRole(ROLES.OPS), (req, res) => {
   const args = locId ? [locId, locId] : [];
   res.json(db.prepare(`
     SELECT tr.*, lf.name as from_location_name, lt.name as to_location_name,
-           u.name as requested_by_name, ua.name as approved_by_name
+           u.name as requested_by_name, ua.name as approved_by_name, ur.name as received_by_name
     FROM transfer_requests tr
     JOIN locations lf ON tr.from_location_id=lf.id JOIN locations lt ON tr.to_location_id=lt.id
     JOIN users u ON tr.requested_by=u.id LEFT JOIN users ua ON tr.approved_by=ua.id
+    LEFT JOIN users ur ON tr.received_by=ur.id
     ${cond} ORDER BY tr.created_at DESC
   `).all(...args));
 });
