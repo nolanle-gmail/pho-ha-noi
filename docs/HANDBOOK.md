@@ -1088,7 +1088,10 @@ carries its own true status** while the **order** shows an aggregate:
   **never-shipped items roll into a fresh order** — each item's quantity **recomputed from the
   store's current need** (the count may have changed since the order was placed), not the
   stale amount. The requester is messaged; the carried items point back via `carried_to`.
-  Processing only prior-day orders keeps the job idempotent across the evening.
+  Processing only prior-day orders keeps the job idempotent across the evening. **Live in
+  production from the evening of 2026-10-20** — the first nightly run is that night (9 PM PT),
+  and it runs every night thereafter. Verified on prod the same day with a scoped throwaway
+  order (an `orderNo` option scopes a run to a single order for isolated testing).
 
 Every **Central Kitchen / Warehouse staffer** (not only managers) gets a **🚛 Distribution**
 item in the left menu after login. It lists the hub's ready-to-ship orders; **tap an order
