@@ -87,29 +87,37 @@ function isHubManager(req, hubId) {
 const PRIORITY_RANK = { urgent: 0, high: 1, standard: 2, low: 3 };
 function headerOf(orderNo) { return orderNo ? db.prepare(`SELECT * FROM distribution_order_headers WHERE order_no=?`).get(orderNo) : null; }
 // The display label for an order: maps (stage + per-item approvals + receipt) onto the board labels.
-// The item's TRUE lifecycle label: Ready to ship → Loaded (scanned onto the truck at the hub) →
-// Shipped (dispatched / in transit) → Received. Rejected / cancelled lines read as themselves.
-function lineStageLabel(l) {
+// The item's TRUE lifecycle label, from a viewpoint. Pickup orders stage at "Ready to pick up" instead
+// of Loaded. A received item reads "Shipped" to the hub (it left the CK) and "Received" to the store.
+//   viewpoint: 'hub' (CK / source board) | 'store' (destination board)
+function lineStageLabel(l, viewpoint, pickup) {
   if (l.approval === 'rejected') return 'Rejected';
   if (l.status === 'cancelled') return 'Cancelled';
-  if (l.status === 'received') return 'Received';
-  if (l.status === 'shipped') return l.dispatched ? 'Shipped' : 'Loaded';
+  if (l.status === 'received') return viewpoint === 'hub' ? 'Shipped' : 'Received';
+  if (l.status === 'shipped') return pickup ? 'Ready to pick up' : (l.dispatched ? 'Shipped' : 'Loaded');
   return 'Ready to ship';
 }
-// The ORDER's board label — an aggregate of its item states, so a multi-item order that is part-way
-// reads "Partially Loaded / Shipped / Received" while each item still shows its own true status.
-function orderStatusLabel(h, lines) {
+// The ORDER's board label — an aggregate of its item states — from a viewpoint. The CK/source side ends
+// at "Shipped / Partially Shipped" (the goods left); the store/destination side at "Received / Partially
+// Received". Pre-handoff states (Ready to ship / Loaded / Ready to pick up / In Transit) read the same
+// both ways. Pickup orders stage at "Ready to pick up" rather than Loaded → In Transit.
+function orderStatusLabel(h, lines, viewpoint) {
   if (!h) return 'Unknown';
   if (h.stage === 'cancelled') return 'Cancelled';
   if (h.stage === 'rejected') return 'Rejected';
+  const hub = viewpoint === 'hub';
   const live = lines.filter(l => l.ck_qty > 0.0005 && l.approval === 'approved' && l.status !== 'cancelled');
   const n = live.length;
   if (!n) return 'Ready to ship';
   const received = live.filter(l => l.status === 'received').length;
   const dispatched = live.filter(l => l.status === 'shipped' && l.dispatched).length;
   const loaded = live.filter(l => l.status === 'shipped' && !l.dispatched).length;
-  if (received === n) return h.partial_receipt ? 'Partially Received' : 'Received';
-  if (received > 0) return 'Partially Received';
+  const shippedOut = live.filter(l => l.status === 'shipped').length;   // scanned / on the truck
+  // Received states — the one place the two viewpoints diverge.
+  if (received === n) return hub ? 'Shipped' : (h.partial_receipt ? 'Partially Received' : 'Received');
+  if (received > 0) return hub ? 'Partially Shipped' : 'Partially Received';
+  // Pre-handoff (same wording both ways).
+  if (h.pickup) return shippedOut > 0 ? 'Ready to pick up' : 'Ready to ship';
   if (dispatched === n) return 'In Transit';
   if (dispatched > 0) return 'Partially Shipped';
   if (loaded === n) return 'Loaded';
@@ -303,7 +311,7 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   const rows = db.prepare(`
     SELECT d.*, l.name AS store_name, u.name AS requested_by_name, so.status AS vendor_status, so.vendor AS vendor_name,
       h.stage AS order_stage, h.reviewed_at AS order_reviewed_at, ru.name AS order_reviewed_by_name,
-      h.partial_load AS order_partial_load, h.partial_receipt AS order_partial_receipt
+      h.partial_load AS order_partial_load, h.partial_receipt AS order_partial_receipt, h.pickup AS order_pickup
     FROM distribution_orders d
     JOIN locations l ON l.id = d.to_location_id
     LEFT JOIN users u ON u.id = d.requested_by
@@ -316,9 +324,9 @@ router.get('/orders', requireRole(ROLES.OPS), (req, res) => {
   const byOrder = {};
   rows.forEach(r => { if (r.order_no) (byOrder[r.order_no] = byOrder[r.order_no] || []).push(r); });
   for (const r of rows) {
-    r.order_status = r.order_no && r.order_stage
-      ? orderStatusLabel({ stage: r.order_stage, reviewed_at: r.order_reviewed_at, partial_load: r.order_partial_load, partial_receipt: r.order_partial_receipt }, byOrder[r.order_no]) : null;
-    r.stage_label = lineStageLabel(r);   // the item's own true status (Ready to ship / Loaded / Shipped / Received)
+    const synthH = { stage: r.order_stage, reviewed_at: r.order_reviewed_at, partial_load: r.order_partial_load, partial_receipt: r.order_partial_receipt, pickup: r.order_pickup };
+    r.order_status = r.order_no && r.order_stage ? orderStatusLabel(synthH, byOrder[r.order_no], 'store') : null;   // store (destination) viewpoint
+    r.stage_label = lineStageLabel(r, 'store', r.order_pickup);   // the item's own true status, store side
   }
   res.json({ orders: rows });
 });
@@ -558,11 +566,11 @@ router.get('/hub-orders', requireRole(ROLES.ALL), (req, res) => {
     LEFT JOIN users u ON u.id=h.requested_by
     WHERE h.source_location_id=? ORDER BY h.created_at DESC LIMIT 400`).all(hub.id);
   const out = heads.map(h => {
-    const lines = db.prepare(`SELECT ck_qty, status, approval, received_qty, cancel_requested FROM distribution_orders WHERE order_no=?`).all(h.order_no);
+    const lines = db.prepare(`SELECT ck_qty, status, approval, received_qty, dispatched, cancel_requested FROM distribution_orders WHERE order_no=?`).all(h.order_no);
     const hubLines = lines.filter(l => l.ck_qty > 0.0005);
     return {
       order_no: h.order_no, store_id: h.to_location_id, store_name: h.store_name, priority: h.priority, created_at: h.created_at,
-      stage: h.stage, requested_by_name: h.requested_by_name, status_label: orderStatusLabel(h, lines),
+      stage: h.stage, pickup: h.pickup, requested_by_name: h.requested_by_name, status_label: orderStatusLabel(h, lines, 'hub'),
       items: hubLines.length,
       approved: hubLines.filter(l => l.approval === 'approved').length,
       held: hubLines.filter(l => l.approval === 'held').length,
@@ -587,13 +595,13 @@ router.get('/hub-orders/:orderNo', requireRole(ROLES.ALL), (req, res) => {
   if (!hub || !isHubStaff(req, hub.id)) return res.status(403).json({ error: 'Not your hub.' });
   const lines = db.prepare(`SELECT d.*, so.status AS vendor_status, so.vendor AS vendor_name
     FROM distribution_orders d LEFT JOIN supply_orders so ON so.id=d.vendor_order_id
-    WHERE d.order_no=? ORDER BY d.id`).all(h.order_no).map(l => ({ ...l, stage_label: lineStageLabel(l) }));
+    WHERE d.order_no=? ORDER BY d.id`).all(h.order_no).map(l => ({ ...l, stage_label: lineStageLabel(l, 'hub', h.pickup) }));
   const store = db.prepare(`SELECT id, name FROM locations WHERE id=?`).get(h.to_location_id);
   const reviewer = h.reviewed_by ? db.prepare(`SELECT name FROM users WHERE id=?`).get(h.reviewed_by) : null;
   const driver = h.driver_id ? db.prepare(`SELECT name FROM users WHERE id=?`).get(h.driver_id) : null;
   res.json({
     hub: { id: hub.id, name: hub.name, type: hub.type }, store, header: h,
-    status_label: orderStatusLabel(h, lines),
+    status_label: orderStatusLabel(h, lines, 'hub'),
     can_review: isHubManager(req, hub.id),
     reviewer: reviewer && reviewer.name, driver: driver && driver.name, lines,
   });
@@ -689,6 +697,39 @@ router.post('/hub-orders/:orderNo/deliver', requireRole(ROLES.OPS), (req, res) =
   res.json({ success: true, received: lines.length });
 });
 
+// Pickup hand-off: the store is collecting the order AT the CK. "Mark Received" lands every item the CK
+// has scanned (status 'shipped' = Ready to pick up) straight into the store's inventory and marks it
+// received — no delivery, no second scan at the store. Un-scanned items stay open (roll over at 9PM).
+// Done at the CK by hub staff or the person picking up (store owner / leadership).
+router.post('/hub-orders/:orderNo/pickup-receive', requireRole(ROLES.ALL), (req, res) => {
+  const h = headerOf(req.params.orderNo);
+  if (!h) return res.status(404).json({ error: 'Order not found.' });
+  const hub = hubById(h.source_location_id);
+  const canDo = seesAllLocations(req.user.role) || (hub && isHubStaff(req, hub.id)) || String(req.user.location_id) === String(h.to_location_id);
+  if (!canDo) return res.status(403).json({ error: 'Not your order.' });
+  const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND status='shipped' AND approval='approved'`).all(h.order_no);
+  if (!lines.length) return res.status(400).json({ error: 'Nothing is scanned yet — scan the items being picked up first.' });
+  db.exec('BEGIN');
+  try {
+    for (const d of lines) {
+      const landQty = r3(d.shipped_qty > 0 ? d.shipped_qty : d.ck_qty);
+      const dest = db.prepare(`SELECT * FROM inventory WHERE location_id=? AND item_name=?`).get(d.to_location_id, d.item_name);
+      let destId;
+      if (dest) { db.prepare(`UPDATE inventory SET quantity=quantity+?, last_updated=datetime('now') WHERE id=?`).run(landQty, dest.id); destId = dest.id; }
+      else destId = db.prepare(`INSERT INTO inventory (location_id, item_name, unit, quantity, min_quantity) VALUES (?,?,?,?,0)`).run(d.to_location_id, d.item_name, d.unit || 'units', landQty).lastInsertRowid;
+      receiveLot({ item_id: destId, location_id: d.to_location_id, quantity: landQty, unit_cost: dest ? dest.unit_cost || 0 : 0, user_id: req.user.id });
+      db.prepare(`INSERT INTO inventory_transactions (item_id, to_location_id, quantity, type, user_id, notes)
+        VALUES (?,?,?,'in',?,?)`).run(destId, d.to_location_id, landQty, req.user.id, `${hub ? hub.name : 'Hub'} order picked up`);
+      db.prepare(`UPDATE distribution_orders SET status='received', received_qty=?, received_by=?, cancel_requested=0, updated_at=datetime('now') WHERE id=?`).run(landQty, req.user.id, d.id);
+    }
+    if (!h.pickup) db.prepare(`UPDATE distribution_order_headers SET pickup=1 WHERE order_no=?`).run(h.order_no);
+    recomputeOrderStage(h.order_no);   // → delivered once every scanned line is picked up (leftovers roll over)
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); return res.status(500).json({ error: 'Could not record the pickup.' }); }
+  auditLog(req, 'distribution_pickup', 'location', h.to_location_id, { order_no: h.order_no, items: lines.length });
+  res.json({ success: true, received: lines.length });
+});
+
 // ── Shipping from a hub (CK / Warehouse): the scan-to-fulfil order flow ───────
 // 1) The queue: stores that have open orders for THIS hub, grouped per store.
 router.get('/ship-queue', requireRole(ROLES.ALL), (req, res) => {
@@ -719,7 +760,10 @@ router.post('/ship-scan', requireRole(ROLES.ALL), (req, res) => {
   if (r.not_on_order) return res.json({ ok: false, not_on_order: true, item_name: r.item_name, error: r.error });
   if (r.over) return res.json({ ok: false, ...r });
   if (r.error) return res.status(r.status || 400).json({ error: r.error, found: r.found, code: r.code });
-  auditLog(req, 'distribution_ship_scan', 'distribution_order', r.line_id, { item: r.item_name, qty: r.shipped, hub: hub.name, to: parseInt(req.body.to_location_id, 10), over: r.over, adjusted: r.adjusted });
+  // Picking-up mode: the store is collecting the order at the CK — mark the order a pickup so it stages
+  // at "Ready to pick up" and is closed by Mark Received (no delivery, no second scan at the store).
+  if (req.body.pickup && r.order_no) db.prepare(`UPDATE distribution_order_headers SET pickup=1, updated_at=datetime('now') WHERE order_no=? AND pickup=0`).run(r.order_no);
+  auditLog(req, 'distribution_ship_scan', 'distribution_order', r.line_id, { item: r.item_name, qty: r.shipped, hub: hub.name, to: parseInt(req.body.to_location_id, 10), over: r.over, adjusted: r.adjusted, pickup: !!req.body.pickup });
   // On an ADJUST, tell the order's creator the quantity was changed.
   if (r.adjusted && r.requested_by) {
     try { notify(req.user.id, r.requested_by, `Order ${r.order_no} updated`, `${hub.name} set ${r.item_name} to ${r.order.ck_qty} ${r.unit || ''} on order ${r.order_no} (shipped what was on hand).`); } catch { /* best-effort */ }

@@ -1537,6 +1537,9 @@ function migrate() {
     `ALTER TABLE distribution_orders ADD COLUMN dispatched INTEGER NOT NULL DEFAULT 0`,
     // A leftover line carried to a fresh next-day order at the 9PM close points back at the new order.
     `ALTER TABLE distribution_orders ADD COLUMN carried_to TEXT`,
+    // Pickup orders: the store collects the order AT the CK (no delivery). Scanned items are "Ready to
+    // pick up"; Mark Received lands them at the store with no second scan there.
+    `ALTER TABLE distribution_order_headers ADD COLUMN pickup INTEGER NOT NULL DEFAULT 0`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

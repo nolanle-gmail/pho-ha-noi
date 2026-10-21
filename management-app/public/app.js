@@ -1321,7 +1321,7 @@ async function openScanner(opts) {
   // the only ones with orders to fulfil.
   const isDist = (S.section === 'central' || S.section === 'warehouse' || S.section === 'distribution');
   const MODES = isDist
-    ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']]
+    ? [['receive', '📥 Receiving'], ['ship', '📤 Shipping'], ['pickup', '🛍️ Picking up'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']]
     : [['receive', '📥 Receiving'], ['transfer', '🔁 Transferring'], ['check', '📋 Checking Inventory'], ['use', '🍳 Use']];
   const modesHtml = MODES.map((m, i) => `<button class="btn sm${i ? ' ghost' : ''}" data-mode="${m[0]}">${m[1]}</button>`).join('');
   const host = document.createElement('div'); host.className = 'scan-overlay';
@@ -1344,14 +1344,15 @@ async function openScanner(opts) {
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
   const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
   // ── Shipping = fulfil store orders from this hub: show the order queue, tap a store, then scan ──
+  const isPickup = () => mode === 'pickup';
   async function renderShipQueue() {
-    const box = $('shipBar'); if (!box || mode !== 'ship') return;
+    const box = $('shipBar'); if (!box || (mode !== 'ship' && mode !== 'pickup')) return;
     if (shipStore) return renderShipStore();
     box.innerHTML = '<div class="muted" style="font-size:.85rem">Loading orders…</div>';
     let d; try { d = await api('/distribution/ship-queue?source_location_id=' + invLoc()); }
     catch (e) { box.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
     const ords = d.orders || [];
-    box.innerHTML = `<div class="ship-ord-h">📦 Orders waiting to ship from <strong>${esc(invName())}</strong></div>`
+    box.innerHTML = `<div class="ship-ord-h">📦 Orders ${isPickup() ? 'to pick up at' : 'waiting to ship from'} <strong>${esc(invName())}</strong></div>`
       + (ords.length ? `<div class="ship-queue">${ords.map(o => `<button class="ship-ord pick" data-store="${o.store_id}" data-name="${esc(o.store_name)}"><span>${esc(shortLoc(o.store_name))}</span><span class="mono">${o.lines} item${o.lines === 1 ? '' : 's'}${o.started ? ' · started' : ''} ›</span></button>`).join('')}</div>`
         : '<div class="muted" style="font-size:.85rem">No orders waiting to ship right now. ✅</div>');
     box.querySelectorAll('[data-store]').forEach(b => b.onclick = () => { shipStore = { id: b.dataset.store, name: b.dataset.name }; renderShipStore(); });
@@ -1362,24 +1363,25 @@ async function openScanner(opts) {
     let d; try { d = await api(`/distribution/ship-queue/${shipStore.id}?source_location_id=${invLoc()}`); }
     catch (e) { box.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
     const lines = d.lines || [];
-    box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;📤 <strong>${esc(shortLoc(shipStore.name))}</strong> — scan items to ship</div>`
+    box.innerHTML = `<div class="ship-ord-h"><button class="btn sm ghost" id="shipBack">← Orders</button> &nbsp;${isPickup() ? '🛍️' : '📤'} <strong>${esc(shortLoc(shipStore.name))}</strong> — scan items to ${isPickup() ? 'pick up' : 'ship'}</div>`
       + (lines.length ? `<div class="ship-queue">${lines.map(o => `<div class="ship-ord${o.remaining <= 0.0005 ? ' done' : ''}"><span>${esc(o.item_name)}</span><span class="mono">${numf(o.shipped_qty)} shipped / ${numf(o.requested_qty)} ordered ${esc(o.unit || '')}${o.shipped_qty > o.requested_qty + 0.0005 ? ' · over' : ''}${o.on_hand <= 0.0005 ? ' · ⚠ none here' : ''}</span></div>`).join('')}</div>`
         : '<div class="muted" style="font-size:.85rem">This order is fully shipped. ✅ <span>Pick another order above.</span></div>');
     const bk = $('shipBack'); if (bk) bk.onclick = () => { shipStore = null; renderShipQueue(); };
   }
-  const refreshShip = () => { if (mode === 'ship') { if (shipStore) renderShipStore(); else renderShipQueue(); } };
+  const refreshShip = () => { if (mode === 'ship' || mode === 'pickup') { if (shipStore) renderShipStore(); else renderShipQueue(); } };
   async function setMode(m) {
     mode = m;
     host.querySelectorAll('[data-mode]').forEach(b => b.className = 'btn sm' + (b.dataset.mode === m ? '' : ' ghost'));
-    const wantsBar = (m === 'ship' || m === 'transfer');
+    const wantsBar = (m === 'ship' || m === 'pickup' || m === 'transfer');
     $('shipBar').hidden = !wantsBar;
     $('shipBar').dataset.loaded = '';   // the bar's contents differ per mode, so rebuild on each switch
     $('scanMsg').textContent = m === 'ship' ? 'Pick an order below, then scan the items to ship.'
+      : m === 'pickup' ? 'Pick an order below, then scan the items the store is picking up.'
       : m === 'transfer' ? 'Choose a destination, then scan to transfer stock there.'
       : m === 'check' ? 'Scan an item to see stock across all locations.'
       : m === 'use' ? 'Scan an item to record stock used here.'
       : '📠 Ready — scan a barcode with your scanner.';
-    if (m === 'ship') {
+    if (m === 'ship' || m === 'pickup') {
       await renderShipQueue();   // the order queue; tap a store to start scanning its items
     } else if (m === 'transfer') {
       let tgts = []; try { tgts = await api('/inventory/ship/targets?from_location_id=' + invLoc()); } catch { /* ignore */ }
@@ -1392,8 +1394,8 @@ async function openScanner(opts) {
     if (busy) return; busy = true;
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? (shipStore ? 'Scan the next item to ship.' : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : mode === 'use' ? 'Scan another item to record use.' : '📠 Ready — scan the next barcode.'); focusManual(); };
-    if (mode === 'ship') await handleShipOrder(code, $('scanPanel'), done, shipStore, invLoc(), refreshShip);
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = (mode === 'ship' || mode === 'pickup') ? (shipStore ? `Scan the next item to ${mode === 'pickup' ? 'pick up' : 'ship'}.` : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : mode === 'use' ? 'Scan another item to record use.' : '📠 Ready — scan the next barcode.'); focusManual(); };
+    if (mode === 'ship' || mode === 'pickup') await handleShipOrder(code, $('scanPanel'), done, shipStore, invLoc(), refreshShip, mode === 'pickup');
     else if (mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), null, 'Transfer');
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
     else if (mode === 'use') await handleUse(code, $('scanPanel'), done);
@@ -1404,7 +1406,7 @@ async function openScanner(opts) {
   // Pre-open in a specific mode — e.g. "📠 Scan to load" from a hub order detail opens Shipping with
   // the order's store already picked, so the operator can start scanning items onto the truck.
   if (opts && opts.mode) {
-    if (opts.mode === 'ship' && opts.shipStore) shipStore = { id: String(opts.shipStore.id), name: opts.shipStore.name };
+    if ((opts.mode === 'ship' || opts.mode === 'pickup') && opts.shipStore) shipStore = { id: String(opts.shipStore.id), name: opts.shipStore.name };
     await setMode(opts.mode);
     focusManual();
   }
@@ -1627,8 +1629,10 @@ async function handleShip(code, panel, next, to, toName, refreshOrders, verb) {
 // Scan-to-ship an order: the hub scans an item that's on the chosen store's order, confirms the
 // count, and ships it (decrement hub → in transit). Under-ships leave the line open; over-ships
 // ask to confirm and then raise the order's count.
-async function handleShipOrder(code, panel, next, store, hubLoc, refreshShip) {
-  if (!store) { panel.innerHTML = `<div class="scan-unknown">Pick an order above first, then scan its items to ship. <button class="btn sm ghost" id="shPick">OK</button></div>`; $('shPick').onclick = next; return; }
+async function handleShipOrder(code, panel, next, store, hubLoc, refreshShip, pickup) {
+  const verb = pickup ? 'pick up' : 'ship';
+  const icon = pickup ? '🛍️' : '📤';
+  if (!store) { panel.innerHTML = `<div class="scan-unknown">Pick an order above first, then scan its items to ${verb}. <button class="btn sm ghost" id="shPick">OK</button></div>`; $('shPick').onclick = next; return; }
   panel.innerHTML = '<div class="muted">Looking up…</div>';
   // Resolve the item at the hub + find its matching open line on this store's order.
   let r, lines;
@@ -1637,28 +1641,30 @@ async function handleShipOrder(code, panel, next, store, hubLoc, refreshShip) {
     lines = (await api(`/distribution/ship-queue/${store.id}?source_location_id=${hubLoc}`)).lines || [];
   } catch (e) { panel.innerHTML = `<div class="scan-err">${esc(e.message)}</div>`; return; }
   const key = r.code || code;
-  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to ship. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  if (!r.in_stock) { panel.innerHTML = `<div class="scan-unknown">🚫 <span class="mono">${esc(key)}</span> isn't stocked at ${esc(invName())}, so there's nothing to ${verb}. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
   const it = r.item; const cw = !!it.is_catch_weight;
   const line = lines.find(l => l.item_name === it.item_name && l.remaining > 0.0005);
-  if (!line) { panel.innerHTML = `<div class="scan-unknown">⚠ <strong>${esc(it.item_name)}</strong> isn't on ${esc(shortLoc(store.name))}'s order${lines.some(l => l.item_name === it.item_name) ? ' (already fully shipped)' : ''}. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
+  if (!line) { panel.innerHTML = `<div class="scan-unknown">⚠ <strong>${esc(it.item_name)}</strong> isn't on ${esc(shortLoc(store.name))}'s order${lines.some(l => l.item_name === it.item_name) ? ' (already fully ' + (pickup ? 'picked up' : 'shipped') + ')' : ''}. <button class="btn sm ghost" id="shSkip">Skip</button></div>`; $('shSkip').onclick = next; return; }
   const dflt = (r.parsed && r.parsed.weightLb) || line.remaining || 1;
-  panel.innerHTML = `<div class="scan-found">📤 <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand · order needs ${numf(line.remaining)} ${esc(line.unit || it.unit)}</span>
-    <div class="scan-act"><input id="shQty" type="number" value="${numf(dflt)}" min="0" step="any" title="Qty to ship (${esc(it.unit)})"><span class="muted">→ ${esc(shortLoc(store.name))}</span></div>
-    <div class="scan-act"><button class="btn" id="shGo">📤 Ship</button><button class="btn ghost" id="shAdjust" title="Ship this amount and set the order to it (fewer or more than ordered); the requester is notified">✎ Adjust &amp; close</button><button class="btn ghost" id="shNext">Skip</button></div>
-    <div class="muted" style="font-size:.78rem;margin-top:.2rem">Have a different count than ordered? Enter it and tap <strong>Adjust &amp; close</strong> — the order updates to what you ship and the store is notified.</div></div>`;
+  panel.innerHTML = `<div class="scan-found">${icon} <strong>${esc(it.item_name)}</strong> <span class="muted">· ${numf(it.quantity)} ${esc(it.unit)}${cw ? ' ⚖' : ''} on hand · order needs ${numf(line.remaining)} ${esc(line.unit || it.unit)}</span>
+    <div class="scan-act"><input id="shQty" type="number" value="${numf(dflt)}" min="0" step="any" title="Qty to ${verb} (${esc(it.unit)})"><span class="muted">→ ${esc(shortLoc(store.name))}</span></div>
+    <div class="scan-act"><button class="btn" id="shGo">${icon} ${pickup ? 'Pick up' : 'Ship'}</button><button class="btn ghost" id="shAdjust" title="Record this amount and set the order to it (fewer or more than ordered); the requester is notified">✎ Adjust &amp; close</button><button class="btn ghost" id="shNext">Skip</button></div>
+    <div class="muted" style="font-size:.78rem;margin-top:.2rem">Have a different count than ordered? Enter it and tap <strong>Adjust &amp; close</strong> — the order updates to what you ${verb} and the store is notified.${pickup ? ' Then tap <strong>Mark Received</strong> on the order to hand it over.' : ''}</div></div>`;
   $('shNext').onclick = next;
   const doShip = async (adjust, btn) => {
     if (btn.disabled) return; btn.disabled = true;
     const qv = $('shQty').value;
     const body = { source_location_id: hubLoc, to_location_id: store.id, code: key, quantity: qv };
     if (adjust) body.adjust = true;
+    if (pickup) body.pickup = true;
     try {
       let rr = await api('/distribution/ship-scan', { method: 'POST', body: JSON.stringify(body) });
       if (rr && rr.over && !adjust) { if (!confirm(rr.message)) { btn.disabled = false; return; } rr = await api('/distribution/ship-scan', { method: 'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) }); }
       if (rr && rr.not_on_order) { toast(rr.error || 'Not on this order', true); btn.disabled = false; return; }
-      if (!rr || !rr.ok) { toast((rr && rr.error) || 'Could not ship.', true); btn.disabled = false; return; }
+      if (!rr || !rr.ok) { toast((rr && rr.error) || `Could not ${verb}.`, true); btn.disabled = false; return; }
       const o = rr.order;
-      toast(`📤 Shipped ${numf(rr.shipped)} ${esc(rr.unit || it.unit)} → ${esc(shortLoc(store.name))}${rr.adjusted ? ` · order set to ${numf(o.ck_qty)} ✎ (store notified)` : o ? (o.done ? ' · item loaded ✅' : ` · ${numf(o.shipped_qty)} of ${numf(o.requested_qty)} ordered`) : ''}${o && o.raised ? ' · over (original kept)' : ''}`);
+      const base = pickup ? `🛍️ ${numf(rr.shipped)} ${esc(rr.unit || it.unit)} ready to pick up` : `📤 Shipped ${numf(rr.shipped)} ${esc(rr.unit || it.unit)}`;
+      toast(`${base} → ${esc(shortLoc(store.name))}${rr.adjusted ? ` · order set to ${numf(o.ck_qty)} ✎ (store notified)` : o ? (o.done ? (pickup ? ' · ready ✅' : ' · item loaded ✅') : ` · ${numf(o.shipped_qty)} of ${numf(o.requested_qty)} ordered`) : ''}${o && o.raised ? ' · over (original kept)' : ''}`);
       invRefresh(); if (refreshShip) refreshShip(); next();
     } catch (e) { toast(e.message, true); btn.disabled = false; }
   };
@@ -7549,12 +7555,12 @@ async function renderCkProduction() {
 // hub from invLoc()/invName() and scopes the order queue + stock to it via source_location_id.
 // Badge for an order's overall status label, and for a line's approval decision.
 function orderStatusChip(label) {
-  const m = { 'New Order': 'gold', 'Approved': 'ok', 'Partially Approved': 'gold', 'Holding': 'gray', 'Rejected': 'out', 'Ready to ship': 'gold', 'Loaded': 'blue', 'Partially Loaded': 'gold', 'Shipped': 'blue', 'Partially Shipped': 'gold', 'In Transit': 'blue', 'Received': 'ok', 'Partially Received': 'gold', 'Cancelled': 'out' };
+  const m = { 'New Order': 'gold', 'Approved': 'ok', 'Partially Approved': 'gold', 'Holding': 'gray', 'Rejected': 'out', 'Ready to ship': 'gold', 'Loaded': 'blue', 'Partially Loaded': 'gold', 'Ready to pick up': 'blue', 'Shipped': 'blue', 'Partially Shipped': 'gold', 'In Transit': 'blue', 'Received': 'ok', 'Partially Received': 'gold', 'Cancelled': 'out' };
   return `<span class="badge ${m[label] || 'gray'}">${esc(label)}</span>`;
 }
-// An item's own true-status chip: Ready to ship → Loaded → Shipped → Received (server-computed stage_label).
+// An item's own true-status chip: Ready to ship → Loaded/Ready to pick up → Shipped → Received (server-computed stage_label).
 function lineStageChip(label) {
-  const m = { 'Ready to ship': 'gold', 'Loaded': 'blue', 'Shipped': 'blue', 'Received': 'ok', 'Cancelled': 'out', 'Rejected': 'out' };
+  const m = { 'Ready to ship': 'gold', 'Loaded': 'blue', 'Ready to pick up': 'blue', 'Shipped': 'blue', 'Received': 'ok', 'Cancelled': 'out', 'Rejected': 'out' };
   return `<span class="badge ${m[label] || 'gray'}">${esc(label || '')}</span>`;
 }
 // The next-step action label for an order at a given stage (board hint + detail button).
@@ -7634,22 +7640,29 @@ async function renderHubOrderDetail(orderNo) {
   const anyReady = hubLn.some(l => l.status === 'requested' || l.status === 'approved');
   const anyLoaded = hubLn.some(l => l.status === 'shipped' && !l.dispatched);
   const anyInTransit = hubLn.some(l => l.status === 'shipped' && l.dispatched);
+  const pickup = !!h.pickup;                                  // whole-order pickup (collected at the CK)
+  const anyReadyPickup = pickup && hubLn.some(l => l.status === 'shipped');   // scanned, awaiting Mark Received
+  // Pickup orders use the pickup actions (scan → Mark Received); a fresh order can start EITHER a load
+  // (delivery) or a pickup. Once it's a pickup there's no dispatch/deliver.
+  const actions = pickup
+    ? `${anyReady ? `<button class="btn ghost" id="odPickScan">🛍️ Scan to pick up</button>` : ''}${anyReadyPickup ? `<button class="btn" id="odPickRecv">✅ Mark Received</button>` : ''}`
+    : `${anyReady ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button><button class="btn ghost" id="odLoad">Load on-hand</button><button class="btn ghost" id="odPickScan">🛍️ Scan to pick up</button>` : ''}${anyLoaded ? `<button class="btn" id="odDispatch">🚚 Start delivery</button>` : ''}${anyInTransit ? `<button class="btn" id="odDeliver">Mark delivered</button>` : ''}`;
   $('view').innerHTML = `
     <div class="row-between"><div><button class="btn ghost sm" id="odBack">← All orders</button>
-      <h2 class="page" style="display:inline-block;margin:0 0 0 .5rem">Order ${esc(h.order_no)}</h2></div>
-      <div style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end">
-        ${anyReady ? `<button class="btn ghost" id="odScanLoad">📠 Scan to load</button><button class="btn ghost" id="odLoad">Load on-hand</button>` : ''}
-        ${anyLoaded ? `<button class="btn" id="odDispatch">🚚 Start delivery</button>` : ''}
-        ${anyInTransit ? `<button class="btn" id="odDeliver">Mark delivered</button>` : ''}
-      </div></div>
+      <h2 class="page" style="display:inline-block;margin:0 0 0 .5rem">Order ${esc(h.order_no)}${pickup ? ' <span class="badge blue">🛍️ Pickup</span>' : ''}</h2></div>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:flex-end">${actions}</div></div>
     <p class="sub" style="color:var(--muted)">${esc(storeName)} &nbsp;·&nbsp; ${priorityBadge(h.priority)} &nbsp;·&nbsp; ${orderStatusChip(d.status_label)} &nbsp;·&nbsp; ${esc((h.created_at || '').slice(0, 16))}${h.requested_by_name ? ' · by ' + esc(h.requested_by_name) : ''}${d.driver ? ' · driver ' + esc(d.driver) : ''}</p>
-    <p class="sub" style="color:var(--muted);margin-top:-.3rem;font-size:.82rem">Items ship in any number of trips — scan what's on hand onto the truck, start delivery, and the leftovers stay <strong>Ready to ship</strong> for the next trip. Un-shipped items roll over to a fresh order at the 9 PM close.</p>
-    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">From hub</th><th class="num">Shipped</th><th>Item status</th><th>Actions</th></tr></thead><tbody>
+    <p class="sub" style="color:var(--muted);margin-top:-.3rem;font-size:.82rem">${pickup
+      ? 'Pickup order — scan the items the store is collecting, then tap <strong>Mark Received</strong> to hand them over (lands in the store’s inventory, no second scan there). Un-picked items roll over at the 9 PM close.'
+      : 'Items ship in any number of trips — scan what’s on hand onto the truck, start delivery, and the leftovers stay <strong>Ready to ship</strong> for the next trip. Or use <strong>🛍️ Scan to pick up</strong> if the store is collecting at the CK. Un-shipped items roll over at the 9 PM close.'}</p>
+    <div class="table-wrap"><table><thead><tr><th>Item</th><th class="num">Ordered</th><th class="num">From hub</th><th class="num">${pickup ? 'Picked' : 'Shipped'}</th><th>Item status</th><th>Actions</th></tr></thead><tbody>
       ${lines.map(statusRow).join('')}
     </tbody></table></div>`;
   $('odBack').onclick = back;
   const stageAct = (path, title, note, yes, okMsg) => confirmModal(title, note, yes, async () => { const r = await api('/distribution/hub-orders/' + encodeURIComponent(orderNo) + '/' + path, { method: 'POST', body: '{}' }); toast(okMsg(r)); renderHubOrderDetail(orderNo); });
   if ($('odScanLoad')) $('odScanLoad').onclick = () => openScanner({ mode: 'ship', shipStore: { id: d.store.id, name: d.store.name }, onClose: () => renderHubOrderDetail(orderNo) });
+  if ($('odPickScan')) $('odPickScan').onclick = () => openScanner({ mode: 'pickup', shipStore: { id: d.store.id, name: d.store.name }, onClose: () => renderHubOrderDetail(orderNo) });
+  if ($('odPickRecv')) $('odPickRecv').onclick = () => stageAct('pickup-receive', 'Mark received (picked up)?', `This hands the scanned items to <strong>${esc(storeName)}</strong> — they land in the store's inventory and are marked <strong>Received</strong> right now, no second scan there. Items not yet scanned stay open.`, 'Mark Received', (r) => `Picked up — ${r.received} item${r.received === 1 ? '' : 's'} received`);
   if ($('odLoad')) $('odLoad').onclick = () => stageAct('load', 'Load on-hand items onto the truck?', `This loads every item <strong>${esc(invName())}</strong> has enough of right now and deducts it from on-hand. Items it's short on stay <strong>Ready to ship</strong> for a later trip — or use <strong>📠 Scan to load</strong> to scan and adjust quantities.`, 'Load on-hand', (r) => `Loaded ${r.loaded} item${r.loaded === 1 ? '' : 's'}${r.short ? ` · ${r.short} left (short on stock)` : ''}`);
   if ($('odDispatch')) $('odDispatch').onclick = () => stageAct('dispatch', 'Start delivery?', `A driver takes the <strong>loaded</strong> items out now (status → <strong>In transit</strong>). Items not yet loaded stay for the next trip. The store is notified.`, 'Start delivery', (r) => `In transit — ${r.dispatched} item${r.dispatched === 1 ? '' : 's'} delivering`);
   if ($('odDeliver')) $('odDeliver').onclick = () => stageAct('deliver', 'Mark delivered?', `This lands the in-transit items into <strong>${esc(storeName)}</strong>'s inventory and marks them received.`, 'Mark delivered', (r) => `Delivered — ${r.received} item${r.received === 1 ? '' : 's'} received`);

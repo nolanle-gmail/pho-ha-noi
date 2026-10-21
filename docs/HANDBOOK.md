@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 20, 2026_
+_Last updated: October 21, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1067,9 +1067,13 @@ carries its own true status** while the **order** shows an aggregate:
   hub) **→ Shipped** (dispatched / in transit) **→ Received**. An item scanned after an
   earlier dispatch is Loaded again until the next dispatch (per-line `dispatched` flag).
 - **Order (header) label:** aggregates the items — **Ready to ship**, then **Partially
-  Loaded / Loaded**, **Partially Shipped / In Transit**, **Partially Received / Received**.
-  Computed from the lines by `orderStatusLabel`; `recomputeOrderStage` keeps the coarse
-  `stage` in step after every scan / load / dispatch / receive.
+  Loaded / Loaded**, **Partially Shipped / In Transit**, and at the end a **viewpoint-dependent**
+  state (`orderStatusLabel(h, lines, viewpoint)`): the **CK / source board shows "Shipped /
+  Partially Shipped"** (the goods left the kitchen) while the **store / destination board shows
+  "Received / Partially Received"**. Pre-handoff states read the same both ways. The item chip
+  mirrors it — a received item reads **"Shipped"** to the CK and **"Received"** to the store.
+  `recomputeOrderStage` keeps the coarse `stage` in step after every scan / load / dispatch /
+  receive / pickup.
 - **Quantity adjust while shipping.** When the CK has **fewer or more** than ordered, the
   ship scanner's **✎ Adjust & close** button ships the entered amount and **resets that
   order line to it** (e.g. ordered 3, only 2 on hand → scan 2, adjust → line becomes 2 and
@@ -1081,6 +1085,16 @@ carries its own true status** while the **order** shows an aggregate:
   order; CK scans them later when stock arrives. **Load on-hand** / **Start delivery** act on
   whatever is ready / loaded right now, so an order can load, dispatch and deliver in several
   passes.
+- **Picking up (2026-10-20)** — for when someone from a store stops by the CK to collect their
+  order instead of a delivery. The CK scanner has a **🛍️ Picking up** mode (hub only): pick the
+  order from the list and scan its items exactly like Shipping (same **✎ Adjust & close**). The
+  order is marked a **pickup** (`distribution_order_headers.pickup`), scanned items read **"Ready
+  to pick up"**, and the order detail shows **✅ Mark Received**. Tapping it
+  (`POST /hub-orders/:orderNo/pickup-receive`) lands every scanned item straight into the store's
+  inventory and marks it **Received** — **no second scan at the store**. Un-scanned items stay
+  open (roll over at the 9 PM close). There is no dispatch / in-transit step for a pickup. Item
+  status is still viewpoint-aware (**Shipped** at the CK, **Received** at the store); the order
+  reads **Ready to pick up → Partially Shipped/Received → Shipped (CK) / Received (store)**.
 - **Partially Received** — the store got **fewer than were shipped** (lost/short in transit):
   the line's **Partial** button (beside **Mark received**) records the actual amount; only
   that lands, the line closes, and the header is flagged `partial_receipt`. `PUT

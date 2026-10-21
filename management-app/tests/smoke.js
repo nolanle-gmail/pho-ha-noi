@@ -1240,7 +1240,7 @@ const check = (name, ok, detail = '') => {
       && Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, wf3[0]).quantity - (storeBeforeDeliver + 4)) < 0.001
       && sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(wf.order_no).stage === 'delivered', JSON.stringify(wfDeliv));
     const wfDetail = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}`, { headers: H(token) }));
-    check('delivered order reads as Received', wfDetail.status_label === 'Received');
+    check('delivered order reads "Shipped" on the hub detail (CK viewpoint)', wfDetail.status_label === 'Shipped');
 
     // ── Multi-item order ships in several trips; items carry their own true status, order is Partial ──
     // Pick CK items with NO other open order to this store, so a scan fulfils THIS order's line
@@ -1271,12 +1271,12 @@ const check = (name, ok, detail = '') => {
     const mR1 = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND item_name=?").get(mlOrder.order_no, ml[0].item_name);
     await fetch(base + `/api/distribution/orders/${mR1.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'received' }) });
     dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
-    check('receive one of two → order "Partially Received", that item "Received"', dtl.status_label === 'Partially Received' && lbl(ml[0].item_name) === 'Received', JSON.stringify({ o: dtl.status_label, a: lbl(ml[0].item_name) }));
+    check('receive one of two → CK board "Partially Shipped", that item "Shipped"', dtl.status_label === 'Partially Shipped' && lbl(ml[0].item_name) === 'Shipped', JSON.stringify({ o: dtl.status_label, a: lbl(ml[0].item_name) }));
     // Receive item 2 → all received → order "Received", header delivered.
     const mR2 = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND item_name=?").get(mlOrder.order_no, ml[1].item_name);
     await fetch(base + `/api/distribution/orders/${mR2.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'received' }) });
     dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
-    check('receive the rest → order "Received", header delivered', dtl.status_label === 'Received' && dtl.header.stage === 'delivered', JSON.stringify({ o: dtl.status_label, s: dtl.header.stage }));
+    check('receive the rest → CK board "Shipped", header delivered', dtl.status_label === 'Shipped' && dtl.header.stage === 'delivered', JSON.stringify({ o: dtl.status_label, s: dtl.header.stage }));
 
     // ── Partial RECEIPT: the store got fewer than were shipped (short in transit) ───────────────
     const prc = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id DESC LIMIT 1").get(ckL, ckL, loc1);
@@ -1292,7 +1292,9 @@ const check = (name, ok, detail = '') => {
     check('partial receive lands only the 6 that arrived at the store', Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, prc.item_name).quantity - (prStoreBefore + 6)) < 0.001);
     const prHdr = sdb.prepare("SELECT stage, partial_receipt FROM distribution_order_headers WHERE order_no=?").get(prOrder.order_no);
     const prFinal = await j(await fetch(base + `/api/distribution/hub-orders/${prOrder.order_no}`, { headers: H(token) }));
-    check('partial receive → header delivered + partial_receipt, reads "Partially Received"', prHdr.stage === 'delivered' && prHdr.partial_receipt === 1 && prFinal.status_label === 'Partially Received', JSON.stringify({ prHdr, label: prFinal.status_label }));
+    // Short receipt is a STORE concern: the hub shipped the whole line ("Shipped"), the store got less ("Partially Received").
+    const prStoreRow = ((await j(await fetch(base + '/api/distribution/orders?scope=store&location_id=' + loc1, { headers: H(mgr.token) }))).orders || []).find(o => o.order_no === prOrder.order_no);
+    check('short receive → delivered + partial_receipt; CK "Shipped", store "Partially Received"', prHdr.stage === 'delivered' && prHdr.partial_receipt === 1 && prFinal.status_label === 'Shipped' && prStoreRow && prStoreRow.order_status === 'Partially Received', JSON.stringify({ hub: prFinal.status_label, store: prStoreRow && prStoreRow.order_status }));
 
     // ── 9 PM end-of-day close carries un-shipped items to a fresh order at the store's CURRENT need ──
     const cyItem = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 1").get(ckL, ckL, loc1);
@@ -1306,6 +1308,43 @@ const check = (name, ok, detail = '') => {
     const cyNew = sdb.prepare("SELECT requested_qty, ck_qty FROM distribution_orders WHERE order_no=? AND item_name=?").get(cyOld.carried_to, cyItem.item_name);
     check('carried item quantity = the store CURRENT need (4), not the stale 2', cyNew && Math.abs(cyNew.requested_qty - 4) < 0.001 && Math.abs(cyNew.ck_qty - 4) < 0.001, JSON.stringify(cyNew));
     check('the fully-unshipped original order closes as cancelled', sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(cyOrder.order_no).stage === 'cancelled');
+
+    // ── Viewpoint labels: the CK board ends at "Shipped" while the store board ends at "Received" ──
+    const wfHub = (await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }))).orders.find(o => o.order_no === wf.order_no);
+    check('delivered order reads "Shipped" on the CK (hub) board', wfHub && wfHub.status_label === 'Shipped', wfHub && wfHub.status_label);
+    const wfStoreList = await j(await fetch(base + '/api/distribution/orders?scope=store&location_id=' + loc1, { headers: H(mgr.token) }));
+    const wfStoreRow = (wfStoreList.orders || []).find(o => o.order_no === wf.order_no);
+    check('delivered order reads "Received" on the store board', wfStoreRow && wfStoreRow.order_status === 'Received', wfStoreRow && wfStoreRow.order_status);
+
+    // ── Picking up: store collects at the CK; scan → "Ready to pick up" → Mark Received ──────────
+    const pu = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 2").all(ckL, ckL, loc1);
+    sdb.prepare("UPDATE inventory SET barcode='ZZPU1' WHERE id=?").run(pu[0].id);
+    sdb.prepare("UPDATE inventory SET barcode='ZZPU2' WHERE id=?").run(pu[1].id);
+    const puStore = pu.map(it => sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, it.item_name));
+    const puOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: pu.map((it, i) => ({ item_id: puStore[i].id, item_name: it.item_name, quantity: 4 })) }) }));
+    const puUrl = `/api/distribution/hub-orders/${puOrder.order_no}`;
+    // Scan item 1 in PICKUP mode → order becomes a pickup, item is "Ready to pick up".
+    const ps1 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: ckL, to_location_id: loc1, code: 'ZZPU1', quantity: 4, pickup: true }) }));
+    check('pickup scan marks the order a pickup', ps1.ok === true && sdb.prepare("SELECT pickup FROM distribution_order_headers WHERE order_no=?").get(puOrder.order_no).pickup === 1, JSON.stringify(ps1 && ps1.order));
+    let puDtl = await j(await fetch(base + puUrl, { headers: H(token) }));
+    const puLbl = (nm) => (puDtl.lines.find(l => l.item_name === nm) || {}).stage_label;
+    check('scanned pickup item reads "Ready to pick up"; order "Ready to pick up"', puLbl(pu[0].item_name) === 'Ready to pick up' && puDtl.status_label === 'Ready to pick up', JSON.stringify({ a: puLbl(pu[0].item_name), o: puDtl.status_label }));
+    const puStoreBefore = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, pu[0].item_name) || { quantity: 0 }).quantity;
+    // Mark Received → item 1 lands at the store, no second scan; order partial (item 2 still open).
+    const pr1 = await j(await fetch(base + puUrl + '/pickup-receive', { method: 'POST', headers: H(token), body: '{}' }));
+    check('pickup-receive lands item 1 at the store (+4), marks it received', pr1.received === 1
+      && Math.abs(sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, pu[0].item_name).quantity - (puStoreBefore + 4)) < 0.001
+      && sdb.prepare("SELECT status FROM distribution_orders WHERE order_no=? AND item_name=?").get(puOrder.order_no, pu[0].item_name).status === 'received', JSON.stringify(pr1));
+    puDtl = await j(await fetch(base + puUrl, { headers: H(token) }));
+    check('after partial pickup: CK board "Partially Shipped", item "Shipped"', puDtl.status_label === 'Partially Shipped' && puLbl(pu[0].item_name) === 'Shipped', JSON.stringify({ o: puDtl.status_label, a: puLbl(pu[0].item_name) }));
+    const puStoreRow = ((await j(await fetch(base + '/api/distribution/orders?scope=store&location_id=' + loc1, { headers: H(mgr.token) }))).orders || []).find(o => o.order_no === puOrder.order_no && o.item_name === pu[0].item_name);
+    check('store side shows the picked item "Received" and order "Partially Received"', puStoreRow && puStoreRow.stage_label === 'Received' && puStoreRow.order_status === 'Partially Received', JSON.stringify(puStoreRow && { s: puStoreRow.stage_label, o: puStoreRow.order_status }));
+    // Pick up item 2 → whole order received → CK "Shipped", store "Received".
+    await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: ckL, to_location_id: loc1, code: 'ZZPU2', quantity: 4, pickup: true }) });
+    await fetch(base + puUrl + '/pickup-receive', { method: 'POST', headers: H(token), body: '{}' });
+    puDtl = await j(await fetch(base + puUrl, { headers: H(token) }));
+    check('fully picked up: CK board "Shipped", header delivered', puDtl.status_label === 'Shipped' && puDtl.header.stage === 'delivered', JSON.stringify({ o: puDtl.status_label, s: puDtl.header.stage }));
+    check('pickup-receive refuses when nothing is scanned', (await fetch(base + puUrl + '/pickup-receive', { method: 'POST', headers: H(token), body: '{}' })).status === 400);
 
     // Staff-app scan-to-LOAD (hub staff only), via the /invscan service-key proxy path.
     const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
