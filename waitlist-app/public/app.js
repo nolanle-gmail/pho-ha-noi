@@ -1251,7 +1251,8 @@ function mtCard(t) {
   // Comments / feedback: existing notes + (while the task isn't done) a composer.
   const comments = (ncomments || !t.done) ? `<div class="mt-comments" data-comments="${t.id}" data-editable="${!t.done ? 1 : 0}"></div>` : '';
   let status = '';
-  if (t.done) status = `<span class="mt-stamp ok">✓ Done ${esc(fmtT(t.done_at))}</span>`;
+  if (t.done && t.verified) status = `<span class="mt-stamp ok">✓ Verified${t.verified_by_name ? ' by ' + esc(t.verified_by_name) : ''}</span>`;
+  else if (t.done) status = `<span class="mt-stamp ok">✓ Done ${esc(fmtT(t.done_at))}</span> <span class="mt-stamp" style="opacity:.75">· awaiting manager review</span>`;
   else if (inProgress) status = `<span class="mt-stamp">▶ Started ${esc(fmtT(t.started_at))}</span>`;
   let actions;
   if (t.done) {

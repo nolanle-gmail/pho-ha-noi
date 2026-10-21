@@ -389,15 +389,19 @@ router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const tasks = db.prepare(`
     SELECT j.id AS job_id, j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
            ta.id AS assignment_id, ta.user_id, ta.task_time, ta.done, ta.started_at, ta.done_at,
+           ta.verified, ta.verified_at, vu.name AS verified_by_name,
            (SELECT COUNT(*) FROM task_photos tp WHERE tp.task_id=ta.id) AS photo_count,
            (SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id=ta.id) AS comment_count, u.name AS assignee_name
     FROM location_tasks lt
     JOIN jobs j ON j.id = lt.job_id
     LEFT JOIN task_assignments ta ON ta.job_id=j.id AND ta.location_id=lt.location_id AND ta.task_date=?
     LEFT JOIN users u ON u.id=ta.user_id
+    LEFT JOIN users vu ON vu.id=ta.verified_by
     WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
-    ORDER BY (j.code IS NULL OR j.code='') , j.code, j.department, j.name`).all(date, locId).map(t => ({ ...t, photo_count: t.photo_count || 0, comment_count: t.comment_count || 0, has_photo: (t.photo_count || 0) > 0 }));
+    ORDER BY (j.code IS NULL OR j.code='') , j.code, j.department, j.name`).all(date, locId).map(t => ({ ...t, verified: !!t.verified, photo_count: t.photo_count || 0, comment_count: t.comment_count || 0, has_photo: (t.photo_count || 0) > 0 }));
   const assigned = tasks.filter(t => t.user_id).length;
+  const doneCount = tasks.filter(t => t.done).length;
+  const verifiedCount = tasks.filter(t => t.verified).length;
   // Assignee candidates for the "Assigned to" dropdown. All-staff mode (temp) merges every active
   // location staffer with the scheduled ones (who keep their hours for the time picker); otherwise
   // it's exactly the scheduled staff — the original behavior.
@@ -410,7 +414,7 @@ router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   } else {
     assignees = working.map(w => ({ ...w, scheduled: true }));
   }
-  res.json({ location: loc, date, today, timezone: tz, working, assignees, all_staff_mode: DAYTASK_ASSIGN_ALL_STAFF, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
+  res.json({ location: loc, date, today, timezone: tz, working, assignees, all_staff_mode: DAYTASK_ASSIGN_ALL_STAFF, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned, done: doneCount, verified: verifiedCount } });
 });
 
 // Assign / unassign / complete a specific task for a location + date.
@@ -488,7 +492,13 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     if (existing) db.prepare(`DELETE FROM task_assignments WHERE id=?`).run(existing.id);
   } else if (existing) {
     const nd = done !== null ? done : existing.done;
-    db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
+    // A reopened (done→0) or reassigned task loses any prior manager verification — it must be re-reviewed.
+    const clearVerify = (nd === 0) || (String(existing.user_id) !== String(nu));
+    if (clearVerify) {
+      db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, verified=0, verified_by=NULL, verified_at=NULL, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
+    } else {
+      db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
+    }
   } else {
     db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by) VALUES (?,?,?,?,?,?,?)`)
       .run(locId, date, jobId, nu, nt, done || 0, req.user.id);
@@ -500,6 +510,24 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
       `You've been assigned "${job.name}"${nt ? ` at ${nt}` : ''} on ${date}.`);
   }
   res.json({ success: true });
+});
+
+// Manager / shift-lead VERIFICATION: after staff mark a day task Done, a manager reviews and confirms
+// it. A task must be assigned AND done before it can be verified; un-verifying is always allowed.
+router.post('/day-tasks/verify', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const jobId = parseInt(req.body.job_id, 10);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(req.body.date || '') ? req.body.date : null;
+  if (!locId || !jobId || !date) return res.status(400).json({ error: 'location_id, job_id and date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const verified = req.body.verified === undefined ? 1 : (req.body.verified ? 1 : 0);
+  const ta = db.prepare(`SELECT id, user_id, done FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, date, jobId);
+  if (!ta || !ta.user_id) return res.status(400).json({ error: 'Assign the task first.' });
+  if (verified && !ta.done) return res.status(400).json({ error: 'Staff must mark the task Done before you can verify it.' });
+  if (verified) db.prepare(`UPDATE task_assignments SET verified=1, verified_by=?, verified_at=datetime('now'), updated_at=datetime('now') WHERE id=?`).run(req.user.id, ta.id);
+  else db.prepare(`UPDATE task_assignments SET verified=0, verified_by=NULL, verified_at=NULL, updated_at=datetime('now') WHERE id=?`).run(ta.id);
+  auditLog(req, verified ? 'day_task_verify' : 'day_task_unverify', 'job', jobId, { location_id: locId, date });
+  res.json({ success: true, verified: !!verified });
 });
 
 // ── Per-location task lists — which specific tasks apply at a location ────────

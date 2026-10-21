@@ -1215,6 +1215,11 @@ function migrate() {
     // photo can be attached before Done (stored in task_photos).
     `ALTER TABLE task_assignments ADD COLUMN started_at TEXT`,
     `ALTER TABLE task_assignments ADD COLUMN done_at TEXT`,
+    // Manager/shift-lead verification: after staff mark a task Done, a manager reviews and confirms.
+    // Cleared automatically if the task is reopened (done→0) or reassigned to someone else.
+    `ALTER TABLE task_assignments ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE task_assignments ADD COLUMN verified_by INTEGER REFERENCES users(id)`,
+    `ALTER TABLE task_assignments ADD COLUMN verified_at TEXT`,
     // A schedule entry is a work shift by default, or a leave entry (sick /
     // vacation / on-leave). Leave carries its own hours — a full day, a number of
     // hours, or a from–to span — so the timesheet can total leave vs worked hours.

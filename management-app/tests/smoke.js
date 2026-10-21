@@ -422,6 +422,22 @@ const check = (name, ok, detail = '') => {
     check('can assign a day task to an UN-scheduled staffer', r.status === 200, await r.text());
     const dtUn = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('un-scheduled assignee shows on the task', (dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).user_id === unschedStaff.id, JSON.stringify(dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id)));
+    // ── Manager verification step: staff Done → manager Verify ──────────────────────────────────
+    const vjob = dt.tasks[2].job_id;
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, user_id: schedStaff.id }) });
+    let rv = await fetch(base + '/api/schedule/day-tasks/verify', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, verified: true }) });
+    check('cannot verify a task before it is done (400)', rv.status === 400, 'status=' + rv.status);
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, done: true }) });
+    rv = await fetch(base + '/api/schedule/day-tasks/verify', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, verified: true }) });
+    check('manager verifies a done task', rv.status === 200, await rv.text());
+    const dv = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    const vt = dv.tasks.find(t => t.job_id === vjob) || {};
+    check('verified task reports verified + verifier name + summary count', vt.verified === true && !!vt.verified_by_name && dv.summary.verified >= 1, JSON.stringify({ v: vt.verified, by: vt.verified_by_name, sum: dv.summary.verified }));
+    rv = await fetch(base + '/api/schedule/day-tasks/verify', { method: 'POST', headers: H(emp.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, verified: true }) });
+    check('a non-manager cannot verify (403)', rv.status === 403, 'status=' + rv.status);
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, done: false }) });
+    const dv2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('reopening a task clears its verification', (dv2.tasks.find(t => t.job_id === vjob) || {}).verified === false, JSON.stringify(dv2.tasks.find(t => t.job_id === vjob)));
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

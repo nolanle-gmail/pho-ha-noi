@@ -4072,6 +4072,17 @@ async function renderLocDayTasks() {
     const note = slots.length ? `within ${esc(w.start_time)}–${esc(w.end_time)}${brk}` : 'no free slots — all taken';
     return `<select data-time="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:160px">${options}</select><div class="job-note">${note}</div>`;
   };
+  // Manager/shift-lead verification: a done task shows a ✓ Verify button; once verified it shows who
+  // confirmed it. Staff can't verify — they see "awaiting review" until a manager confirms.
+  const verifyCell = (t) => {
+    if (!t.user_id) return '<span style="color:var(--muted)">—</span>';
+    if (t.verified) {
+      const who = t.verified_by_name ? ` · ${esc(t.verified_by_name)}` : '';
+      return `<span class="badge ok" title="Verified${who}">✓ Verified${who}</span>${canEdit ? ` <button type="button" class="btn sm ghost" data-unverify="${t.job_id}" title="Undo verification">↩</button>` : ''}`;
+    }
+    if (!t.done) return '<span style="color:var(--muted)" title="Staff must mark it done first">—</span>';
+    return canEdit ? `<button type="button" class="btn sm" data-verify="${t.job_id}">✓ Verify</button>` : '<span class="badge gold">awaiting review</span>';
+  };
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
     <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
     <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
@@ -4079,6 +4090,7 @@ async function renderLocDayTasks() {
     <td>${canEdit && assignList.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
+    <td>${verifyCell(t)}</td>
     <td>${t.assignment_id && (t.photo_count || t.comment_count) ? `<button type="button" class="btn sm ghost dt-photos" data-photos="${t.assignment_id}" data-taskname="${esc(t.name)}" title="View proof photos & comments">${t.photo_count ? `📷 ${t.photo_count}` : ''}${t.photo_count && t.comment_count ? ' · ' : ''}${t.comment_count ? `💬 ${t.comment_count}` : ''}</button>` : (t.assignment_id ? '<button type="button" class="btn sm ghost dt-photos" data-photos="' + t.assignment_id + '" data-taskname="' + esc(t.name) + '" title="Add a comment">💬 +</button>' : '<span style="color:var(--muted)">—</span>')}</td>
   </tr>`).join('');
   $('locBody').innerHTML = `
@@ -4087,12 +4099,13 @@ async function renderLocDayTasks() {
       <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
       <div style="display:flex;gap:.5rem;align-items:center">
         <span class="badge ${data.summary.unassigned ? 'out' : 'ok'}">${data.summary.assigned}/${data.summary.total} assigned</span>
+        <span class="badge ${data.summary.total && data.summary.verified === data.summary.total ? 'ok' : 'gray'}" title="Tasks a manager has verified">${data.summary.verified || 0}/${data.summary.total} verified</span>
         ${canEdit ? `<button class="btn sm ghost" id="dtManage">⚙ Manage list</button>` : ''}
       </div>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to a staff member so nothing's left behind. ${data.all_staff_mode ? `<strong>${assignList.length}</strong> staff selectable · <strong>${data.working.length}</strong> scheduled today (set a time only for scheduled staff).` : (data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>')}</p>
-    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Proof</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : `<tr><td colspan="7" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
+    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Verify</th><th>Proof</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : `<tr><td colspan="8" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
@@ -4111,6 +4124,14 @@ async function renderLocDayTasks() {
     });
     $('locBody').querySelectorAll('[data-done]').forEach(cb => cb.onchange = async () => {
       try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: cb.dataset.done, done: cb.checked }) }); renderLocDayTasks(); }
+      catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+    $('locBody').querySelectorAll('[data-verify]').forEach(b => b.onclick = async () => {
+      try { await api('/schedule/day-tasks/verify', { method: 'POST', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: b.dataset.verify, verified: true }) }); toast('Task verified ✓'); renderLocDayTasks(); }
+      catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+    $('locBody').querySelectorAll('[data-unverify]').forEach(b => b.onclick = async () => {
+      try { await api('/schedule/day-tasks/verify', { method: 'POST', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: b.dataset.unverify, verified: false }) }); toast('Verification removed'); renderLocDayTasks(); }
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
   }

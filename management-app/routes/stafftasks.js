@@ -46,15 +46,17 @@ router.get('/', (req, res) => {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date || '') ? req.query.date : localDate(u.timezone);
   const tasks = db.prepare(`
     SELECT ta.id, ta.job_id, ta.task_time, ta.done, ta.started_at, ta.done_at, ta.location_id, l.name AS location_name,
+           ta.verified, ta.verified_at, vu.name AS verified_by_name,
            j.code, j.name, j.description, j.department, j.complexity, j.est_minutes,
            (SELECT COUNT(*) FROM task_photos tp WHERE tp.task_id=ta.id) AS photo_count,
            (SELECT COUNT(*) FROM task_comments tc WHERE tc.task_id=ta.id) AS comment_count
     FROM task_assignments ta
     JOIN jobs j ON j.id=ta.job_id
     JOIN locations l ON l.id=ta.location_id
-    WHERE ta.user_id=? AND ta.task_date=? ORDER BY ta.task_time IS NULL, ta.task_time, j.name`).all(uid, date)
-    .map(t => ({ ...t, done: !!t.done, photo_count: t.photo_count, comment_count: t.comment_count, has_photo: t.photo_count > 0 }));
-  res.json({ user: { id: u.id, name: u.name }, date, tasks, summary: { total: tasks.length, done: tasks.filter(t => t.done).length } });
+    LEFT JOIN users vu ON vu.id=ta.verified_by
+    WHERE ta.user_id=? AND ta.task_date=? ORDER BY (j.code IS NULL OR j.code=''), j.code, ta.task_time IS NULL, ta.task_time, j.name`).all(uid, date)
+    .map(t => ({ ...t, done: !!t.done, verified: !!t.verified, photo_count: t.photo_count, comment_count: t.comment_count, has_photo: t.photo_count > 0 }));
+  res.json({ user: { id: u.id, name: u.name }, date, tasks, summary: { total: tasks.length, done: tasks.filter(t => t.done).length, verified: tasks.filter(t => t.verified).length } });
 });
 
 // Start working on a task (records started_at once; clears any done state).
@@ -63,7 +65,7 @@ router.put('/:id/start', (req, res) => {
   if (!ta) return res.status(404).json({ error: 'Task not found.' });
   if (!canTouch(req, ta)) return res.status(403).json({ error: 'That is not your task.' });
   db.prepare(`UPDATE task_assignments
-    SET started_at=COALESCE(started_at, datetime('now')), done=0, done_at=NULL, updated_at=datetime('now')
+    SET started_at=COALESCE(started_at, datetime('now')), done=0, done_at=NULL, verified=0, verified_by=NULL, verified_at=NULL, updated_at=datetime('now')
     WHERE id=?`).run(ta.id);
   const row = db.prepare(`SELECT started_at, done, done_at FROM task_assignments WHERE id=?`).get(ta.id);
   res.json({ success: true, id: ta.id, started_at: row.started_at, done: !!row.done });
@@ -81,7 +83,8 @@ router.put('/:id/done', (req, res) => {
       SET done=1, done_at=datetime('now'), started_at=COALESCE(started_at, datetime('now')), updated_at=datetime('now')
       WHERE id=?`).run(ta.id);
   } else {
-    db.prepare(`UPDATE task_assignments SET done=0, done_at=NULL, updated_at=datetime('now') WHERE id=?`).run(ta.id);
+    // Reopening a task clears any prior manager verification — it needs re-reviewing once done again.
+    db.prepare(`UPDATE task_assignments SET done=0, done_at=NULL, verified=0, verified_by=NULL, verified_at=NULL, updated_at=datetime('now') WHERE id=?`).run(ta.id);
   }
   const row = db.prepare(`SELECT done, done_at, started_at FROM task_assignments WHERE id=?`).get(ta.id);
   res.json({ success: true, id: ta.id, done: !!row.done, done_at: row.done_at, started_at: row.started_at });
