@@ -359,6 +359,14 @@ header chip), and staff see **"✓ Done · awaiting manager review"** until it's
 automatically** if the task is reopened or reassigned. `POST /schedule/day-tasks/verify`
 (manage cap + owns-location); staff cannot verify. Who may verify = the manage-cap roles
 (Manager, Assistant Manager, Kitchen Manager, GM and above) — there is no separate shift-lead role.
+**Task start time & reminders (2026-10-21).** A manager can give each task a **start time** in the
+**When** column — a shift-constrained slot list for scheduled staff, or a free time picker for an
+un-scheduled assignee (the server accepts any valid time when the person has no shift). About **5
+minutes before** a timed task is due to start, the assigned staff member gets a **live notification and
+an SMS** to their phone (`task_assignments.reminded_at` guards one send per task; `sweepTaskReminders`
+runs every minute, `TASK_REMINDER_LEAD_MIN` default 5). The reminder resets if the task's time or
+assignee changes. The Day Tasks board also **auto-refreshes every 10 s** so Done marks and
+verifications appear without leaving the tab.
 
 ```mermaid
 erDiagram
