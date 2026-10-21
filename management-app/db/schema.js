@@ -1530,6 +1530,12 @@ function migrate() {
     // "Partially Loaded" / "Partially Received" without adding new stage values.
     `ALTER TABLE distribution_order_headers ADD COLUMN partial_load INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE distribution_order_headers ADD COLUMN partial_receipt INTEGER NOT NULL DEFAULT 0`,
+    // Per-line dispatch flag: a scanned line is "Loaded" (on the truck at the hub) until the order is
+    // dispatched, then "Shipped" (in transit). Lets one order ship in several trips — a line scanned
+    // after an earlier dispatch is Loaded again until the next dispatch.
+    `ALTER TABLE distribution_orders ADD COLUMN dispatched INTEGER NOT NULL DEFAULT 0`,
+    // A leftover line carried to a fresh next-day order at the 9PM close points back at the new order.
+    `ALTER TABLE distribution_orders ADD COLUMN carried_to TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

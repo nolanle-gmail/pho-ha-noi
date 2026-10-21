@@ -42,14 +42,27 @@ function hubQueue(hubId) {
     GROUP BY d.to_location_id ORDER BY oldest_at`).all(hubId)
     .map(r => ({ ...r, remaining: r3(r.remaining) }));
 }
-// Once every APPROVED line of an order has fully shipped (loaded onto the truck), advance its header
-// from 'approved' to 'loaded'. Keeps the scan-to-load path in step with the stage machine.
-function syncLoaded(orderNo) {
+// Recompute an order's header stage from the TRUE per-line states, so an order that ships in several
+// trips stays in step. A line is: ready (requested/approved) → loaded (status 'shipped', dispatched 0)
+// → shipped (dispatched 1) → received. The header takes the furthest-along coarse stage for sorting /
+// gating; the precise board label (Ready to ship / Partially Loaded / Loaded / Partially Shipped / In
+// Transit / Partially Received / Received) is computed from the lines by orderStatusLabel. Cancelled /
+// rejected headers are never touched here.
+function recomputeOrderStage(orderNo) {
   if (!orderNo) return;
-  const approved = db.prepare(`SELECT status FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(orderNo);
-  if (approved.length && approved.every(l => ['shipped', 'received'].includes(l.status)))
-    db.prepare(`UPDATE distribution_order_headers SET stage='loaded', loaded_at=COALESCE(loaded_at, datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage='approved'`).run(orderNo);
+  const live = db.prepare(`SELECT status, dispatched FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved' AND status<>'cancelled'`).all(orderNo);
+  if (!live.length) return;   // all-cancelled is handled by syncCancelled
+  const received = live.filter(l => l.status === 'received').length;
+  let stage;
+  if (received === live.length) stage = 'delivered';
+  else if (received > 0 || live.some(l => l.status === 'shipped' && l.dispatched)) stage = 'in_transit';
+  else if (live.some(l => l.status === 'shipped')) stage = 'loaded';
+  else stage = 'approved';
+  const ts = { loaded: 'loaded_at', in_transit: 'dispatched_at', delivered: 'delivered_at' }[stage];
+  db.prepare(`UPDATE distribution_order_headers SET stage=?, updated_at=datetime('now')${ts ? `, ${ts}=COALESCE(${ts}, datetime('now'))` : ''} WHERE order_no=? AND stage NOT IN ('cancelled','rejected')`).run(stage, orderNo);
 }
+// Back-compat alias — older call sites said "syncLoaded"; the recompute covers loaded + beyond.
+const syncLoaded = recomputeOrderStage;
 // One store's open lines plus the hub's on-hand + barcode for scan matching.
 function storeLines(hubId, storeId) {
   return hubOrderLines(hubId, storeId).map(o => {
@@ -73,7 +86,7 @@ function notifySender(order, hubName) {
 //   { not_on_order, item_name, error }             — scanned item isn't on this store's order
 //   { over, message, ... }                         — over-ship; re-call with confirm:true
 //   { ok, item_name, unit, shipped, order, ... }   — shipped (committed)
-function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId }) {
+function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, adjust, userId }) {
   const hub = hubById(hubId);
   if (!hub) return { error: 'Open the scanner from a Central Kitchen or Warehouse to ship.', status: 404 };
   storeId = parseInt(storeId, 10);
@@ -98,7 +111,10 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
   const remaining = r3(Math.max(0, line.ck_qty - line.shipped_qty));
   const newShipped = r3(line.shipped_qty + qty);
   const over = newShipped > line.ck_qty + 0.0005;
-  if (over && !confirm) {
+  // `adjust` = "this is the final amount for this line" — the CK ships what it actually has (fewer or
+  // more than ordered) and the order line is reset to that amount and closed (Loaded). It bypasses the
+  // over-ship confirm (the adjust IS the confirmation) and the requester is notified the order changed.
+  if (over && !confirm && !adjust) {
     return { over: true, item_name: src.item_name, unit: src.unit, remaining, scanned: r3(qty), new_total: newShipped, ordered: r3(line.requested_qty),
       message: `You scanned ${r3(qty)} ${src.unit} of ${src.item_name} — more than the ${remaining} ${src.unit} left on this order (originally ${r3(line.requested_qty)} ${src.unit}). Accept the extra? The order keeps the original ${r3(line.requested_qty)} ${src.unit} and records ${newShipped} ${src.unit} shipped.` };
   }
@@ -109,22 +125,25 @@ function shipScanOrder({ hubId, storeId, code, quantity, weight, confirm, userId
     consumeFIFO(src.id, qty);
     db.prepare(`INSERT INTO inventory_transactions (item_id, from_location_id, to_location_id, quantity, type, user_id, notes)
       VALUES (?,?,?,?,'transfer_sent',?,?)`).run(src.id, hub.id, storeId, qty, userId || null, `Order ship (scan) · order #${line.id}`);
-    // The order's ORIGINAL amounts stay frozen — the store's request (requested_qty) and the hub's
-    // planned portion (ck_qty) are never overwritten. Only shipped_qty moves, so the requester always
-    // sees what they ordered next to what actually shipped (under, exact, or over).
-    const ckQty = line.ck_qty, requested = line.requested_qty;
-    const done = newShipped >= ckQty - 0.0005;
-    db.prepare(`UPDATE distribution_orders SET shipped_qty=?, ck_qty=?, requested_qty=?, status=?, approved_by=?, updated_at=datetime('now') WHERE id=?`)
-      .run(newShipped, ckQty, requested, done ? 'shipped' : line.status, userId || null, line.id);
-    if (done) syncLoaded(line.order_no);   // all approved items loaded ⇒ the order's header moves to 'loaded'
+    // Normally the order's ORIGINAL amounts stay frozen (requested_qty / ck_qty) so the requester sees
+    // ordered-vs-shipped. On an ADJUST the CK is redefining the line to what it shipped, so both reset
+    // to newShipped and the line closes (Loaded). Only a fresh scan sets dispatched back to 0.
+    const adjusting = !!adjust;   // only an explicit adjust redefines the ordered amount (over-confirm keeps the original)
+    const ckQty = adjusting ? newShipped : line.ck_qty;
+    const requested = adjusting ? newShipped : line.requested_qty;
+    const done = adjusting ? true : (newShipped >= ckQty - 0.0005);
+    db.prepare(`UPDATE distribution_orders SET shipped_qty=?, ck_qty=?, requested_qty=?, status=?, dispatched=CASE WHEN ? THEN 0 ELSE dispatched END, approved_by=?, updated_at=datetime('now') WHERE id=?`)
+      .run(newShipped, ckQty, requested, done ? 'shipped' : line.status, done ? 1 : 0, userId || null, line.id);
+    if (done) recomputeOrderStage(line.order_no);   // this line is loaded ⇒ bump the header stage
     db.exec('COMMIT');
     logScan({ itemId: src.id, locationId: hub.id, action: 'ship', parsed: p, quantity: qty, userId });
     const fresh = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(line.id);
     if (done) notifySender(fresh, hub.name);
     return { ok: true, success: true, hub, line_id: line.id, item_name: src.item_name, unit: src.unit, shipped: r3(qty), over: !!over,
-      order: { id: line.id, requested_qty: r3(requested), ck_qty: r3(ckQty), shipped_qty: newShipped, remaining: r3(Math.max(0, ckQty - newShipped)), done, raised: !!over },
+      adjusted: !!adjust, order_no: line.order_no, requested_by: line.requested_by,
+      order: { id: line.id, requested_qty: r3(requested), ck_qty: r3(ckQty), shipped_qty: newShipped, remaining: r3(Math.max(0, ckQty - newShipped)), done, raised: !!over && !adjusting },
       store_done: hubOrderLines(hub.id, storeId).length === 0, on_hand: r3(Math.max(0, src.quantity - qty)) };
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* */ } return { error: 'Could not ship that item.', status: 500 }; }
 }
 
-module.exports = { r3, hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender, syncLoaded, HUB_TYPES };
+module.exports = { r3, hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender, syncLoaded, recomputeOrderStage, HUB_TYPES };

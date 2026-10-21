@@ -1234,34 +1234,47 @@ const check = (name, ok, detail = '') => {
     const wfDetail = await j(await fetch(base + `/api/distribution/hub-orders/${wf.order_no}`, { headers: H(token) }));
     check('delivered order reads as Received', wfDetail.status_label === 'Received');
 
-    // ── Partial LOAD: hub ships only what it scanned; the un-scanned items are dropped ──────────
-    // Pick CK items with NO other open order to this store, so the scan fulfils THIS order's line
+    // ── Multi-item order ships in several trips; items carry their own true status, order is Partial ──
+    // Pick CK items with NO other open order to this store, so a scan fulfils THIS order's line
     // (ship-scan matches the oldest open line for an item name).
-    const pl = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 2").all(ckL, ckL, loc1);
-    sdb.prepare("UPDATE inventory SET barcode='ZZPART1' WHERE id=?").run(pl[0].id);
-    sdb.prepare("UPDATE inventory SET barcode='ZZPART2' WHERE id=?").run(pl[1].id);
-    const plStore = pl.map(it => sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, it.item_name));
-    const plOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: pl.map((it, i) => ({ item_id: plStore[i].id, item_name: it.item_name, quantity: 4 })) }) }));
-    r = await fetch(base + `/api/distribution/hub-orders/${plOrder.order_no}/ship-partial`, { method: 'POST', headers: H(token), body: '{}' });
-    check('ship-partial refuses with nothing scanned (400)', r.status === 400, 'status=' + r.status);
-    const plScan = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: ckL, to_location_id: loc1, code: 'ZZPART1', quantity: 4 }) }));
-    check('partial-load: scan of item 1 lands on THIS order', plScan.ok === true && plScan.shipped === 4, JSON.stringify(plScan));
-    const plRes = await j(await fetch(base + `/api/distribution/hub-orders/${plOrder.order_no}/ship-partial`, { method: 'POST', headers: H(token), body: '{}' }));
-    const plHdr = sdb.prepare("SELECT stage, partial_load FROM distribution_order_headers WHERE order_no=?").get(plOrder.order_no);
-    check('ship-partial: 1 shipped + 1 dropped, header loaded with partial_load set', plRes.shipped === 1 && plRes.dropped === 1 && plHdr.stage === 'loaded' && plHdr.partial_load === 1, JSON.stringify({ plRes, plHdr }));
-    check('ship-partial: the un-scanned line is dropped (cancelled)', sdb.prepare("SELECT status FROM distribution_orders WHERE order_no=? AND item_name=?").get(plOrder.order_no, pl[1].item_name).status === 'cancelled');
-    const plBoard = await j(await fetch(base + `/api/distribution/hub-orders?source_location_id=${ckL}`, { headers: H(token) }));
-    check('partially-loaded order reads "Partially Loaded"', (plBoard.orders || []).find(o => o.order_no === plOrder.order_no).status_label === 'Partially Loaded');
-    await fetch(base + `/api/distribution/hub-orders/${plOrder.order_no}/dispatch`, { method: 'POST', headers: H(token), body: '{}' });
-    const plDeliv = await j(await fetch(base + `/api/distribution/hub-orders/${plOrder.order_no}/deliver`, { method: 'POST', headers: H(token), body: '{}' }));
-    const plFinal = await j(await fetch(base + `/api/distribution/hub-orders/${plOrder.order_no}`, { headers: H(token) }));
-    check('partial load delivers the shipped line → delivered, reads "Partially Received"', plDeliv.received === 1 && plFinal.header.stage === 'delivered' && plFinal.status_label === 'Partially Received', JSON.stringify({ plDeliv, label: plFinal.status_label }));
+    const ml = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 2").all(ckL, ckL, loc1);
+    sdb.prepare("UPDATE inventory SET barcode='ZZML1' WHERE id=?").run(ml[0].id);
+    sdb.prepare("UPDATE inventory SET barcode='ZZML2' WHERE id=?").run(ml[1].id);
+    const mlStore = ml.map(it => sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, it.item_name));
+    const mlOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: ml.map((it, i) => ({ item_id: mlStore[i].id, item_name: it.item_name, quantity: 4 })) }) }));
+    const dUrl = `/api/distribution/hub-orders/${mlOrder.order_no}`;
+    // Scan item 1 fully → Loaded; item 2 untouched stays Ready to ship.
+    const ms1 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: ckL, to_location_id: loc1, code: 'ZZML1', quantity: 4 }) }));
+    let dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
+    const lbl = (nm) => (dtl.lines.find(l => l.item_name === nm) || {}).stage_label;
+    check('scan item 1 fully: item is Loaded, item 2 still Ready to ship', ms1.ok === true && lbl(ml[0].item_name) === 'Loaded' && lbl(ml[1].item_name) === 'Ready to ship', JSON.stringify({ a: lbl(ml[0].item_name), b: lbl(ml[1].item_name) }));
+    check('part-way multi-item order reads "Partially Loaded"', dtl.status_label === 'Partially Loaded', dtl.status_label);
+    // Item 2: CK only has 2 (ordered 4) → scan 2 and ADJUST the order down to 2; creator is messaged.
+    const ms2 = await j(await fetch(base + '/api/distribution/ship-scan', { method: 'POST', headers: H(token), body: JSON.stringify({ source_location_id: ckL, to_location_id: loc1, code: 'ZZML2', quantity: 2, adjust: true }) }));
+    const ml2row = sdb.prepare("SELECT requested_qty, ck_qty, shipped_qty, status FROM distribution_orders WHERE order_no=? AND item_name=?").get(mlOrder.order_no, ml[1].item_name);
+    check('adjust short: order line reset to 2 and closed (Loaded), flagged adjusted', ms2.adjusted === true && Math.abs(ml2row.requested_qty - 2) < 0.001 && Math.abs(ml2row.ck_qty - 2) < 0.001 && Math.abs(ml2row.shipped_qty - 2) < 0.001 && ml2row.status === 'shipped', JSON.stringify({ ms2adj: ms2.adjusted, ml2row }));
+    dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
+    check('both items loaded → order reads "Loaded"', dtl.status_label === 'Loaded', dtl.status_label);
+    // Dispatch → both items become Shipped (in transit); order reads "In Transit".
+    await fetch(base + dUrl + '/dispatch', { method: 'POST', headers: H(token), body: '{}' });
+    dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
+    check('after dispatch items read "Shipped" and order "In Transit"', dtl.lines.filter(l => l.ck_qty > 0 && l.status !== 'cancelled').every(l => l.stage_label === 'Shipped') && dtl.status_label === 'In Transit', JSON.stringify({ labels: dtl.lines.map(l => l.stage_label), o: dtl.status_label }));
+    // Receive item 1 only → order "Partially Received"; item 1 "Received".
+    const mR1 = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND item_name=?").get(mlOrder.order_no, ml[0].item_name);
+    await fetch(base + `/api/distribution/orders/${mR1.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'received' }) });
+    dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
+    check('receive one of two → order "Partially Received", that item "Received"', dtl.status_label === 'Partially Received' && lbl(ml[0].item_name) === 'Received', JSON.stringify({ o: dtl.status_label, a: lbl(ml[0].item_name) }));
+    // Receive item 2 → all received → order "Received", header delivered.
+    const mR2 = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND item_name=?").get(mlOrder.order_no, ml[1].item_name);
+    await fetch(base + `/api/distribution/orders/${mR2.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ status: 'received' }) });
+    dtl = await j(await fetch(base + dUrl, { headers: H(token) }));
+    check('receive the rest → order "Received", header delivered', dtl.status_label === 'Received' && dtl.header.stage === 'delivered', JSON.stringify({ o: dtl.status_label, s: dtl.header.stage }));
 
-    // ── Partial RECEIPT: the store got fewer than were shipped ─────────────────────────────────
+    // ── Partial RECEIPT: the store got fewer than were shipped (short in transit) ───────────────
     const prc = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id DESC LIMIT 1").get(ckL, ckL, loc1);
     const prcStore = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, prc.item_name);
     const prOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: prcStore.id, item_name: prc.item_name, quantity: 10 }] }) }));
-    await fetch(base + `/api/distribution/hub-orders/${prOrder.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });       // ships the full 10
+    await fetch(base + `/api/distribution/hub-orders/${prOrder.order_no}/load`, { method: 'POST', headers: H(token), body: '{}' });       // loads the full 10
     await fetch(base + `/api/distribution/hub-orders/${prOrder.order_no}/dispatch`, { method: 'POST', headers: H(token), body: '{}' });
     const prLine = sdb.prepare("SELECT id FROM distribution_orders WHERE order_no=? AND ck_qty>0 LIMIT 1").get(prOrder.order_no);
     const prStoreBefore = (sdb.prepare("SELECT quantity FROM inventory WHERE location_id=? AND item_name=?").get(loc1, prc.item_name) || { quantity: 0 }).quantity;
@@ -1272,6 +1285,19 @@ const check = (name, ok, detail = '') => {
     const prHdr = sdb.prepare("SELECT stage, partial_receipt FROM distribution_order_headers WHERE order_no=?").get(prOrder.order_no);
     const prFinal = await j(await fetch(base + `/api/distribution/hub-orders/${prOrder.order_no}`, { headers: H(token) }));
     check('partial receive → header delivered + partial_receipt, reads "Partially Received"', prHdr.stage === 'delivered' && prHdr.partial_receipt === 1 && prFinal.status_label === 'Partially Received', JSON.stringify({ prHdr, label: prFinal.status_label }));
+
+    // ── 9 PM end-of-day close carries un-shipped items to a fresh order at the store's CURRENT need ──
+    const cyItem = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>50 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 1").get(ckL, ckL, loc1);
+    const cyStore = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, cyItem.item_name);
+    const cyOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: cyStore.id, item_name: cyItem.item_name, quantity: 2 }] }) }));
+    sdb.prepare("UPDATE distribution_order_headers SET created_at=datetime('now','-2 days') WHERE order_no=?").run(cyOrder.order_no);   // a prior-day order
+    sdb.prepare("UPDATE inventory SET quantity=0, min_quantity=4, par_level=4 WHERE id=?").run(cyStore.id);                            // store now needs 4, not 2
+    const cyRes = require('../routes/distribution').carryOpenOrders({ force: true });
+    const cyOld = sdb.prepare("SELECT status, carried_to FROM distribution_orders WHERE order_no=? AND item_name=?").get(cyOrder.order_no, cyItem.item_name);
+    check('9PM close cancels the un-shipped line and records carried_to a new order', cyOld.status === 'cancelled' && cyOld.carried_to && cyOld.carried_to !== cyOrder.order_no, JSON.stringify({ cyRes, cyOld }));
+    const cyNew = sdb.prepare("SELECT requested_qty, ck_qty FROM distribution_orders WHERE order_no=? AND item_name=?").get(cyOld.carried_to, cyItem.item_name);
+    check('carried item quantity = the store CURRENT need (4), not the stale 2', cyNew && Math.abs(cyNew.requested_qty - 4) < 0.001 && Math.abs(cyNew.ck_qty - 4) < 0.001, JSON.stringify(cyNew));
+    check('the fully-unshipped original order closes as cancelled', sdb.prepare("SELECT stage FROM distribution_order_headers WHERE order_no=?").get(cyOrder.order_no).stage === 'cancelled');
 
     // Staff-app scan-to-LOAD (hub staff only), via the /invscan service-key proxy path.
     const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -1284,7 +1310,7 @@ const check = (name, ok, detail = '') => {
     check('invscan/hub: a store staffer is NOT a hub', hubChk2.is_hub === false);
     r = await fetch(base + `/api/invscan/ship-scan?key=${KEY}&as=${encodeURIComponent(storeEmail)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to_location_id: ckL, code: 'X', quantity: 1 }) });
     check('invscan/ship-scan blocked for a store staffer (403)', r.status === 403, 'status=' + r.status);
-    const ldItem = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>20 AND distributable=1 ORDER BY id LIMIT 1").get(ckL);
+    const ldItem = sdb.prepare("SELECT id, item_name FROM inventory WHERE location_id=? AND quantity>20 AND distributable=1 AND item_name NOT IN (SELECT item_name FROM distribution_orders WHERE source_location_id=? AND to_location_id=? AND status IN ('requested','approved')) ORDER BY id LIMIT 1").get(ckL, ckL, loc1);
     sdb.prepare("UPDATE inventory SET barcode='ZZLOADSCAN1' WHERE id=?").run(ldItem.id);
     const ldStore = sdb.prepare("SELECT id FROM inventory WHERE location_id=? AND item_name=?").get(loc1, ldItem.item_name);
     const ldOrder = await j(await fetch(base + '/api/distribution/order', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, source_location_id: ckL, items: [{ item_id: ldStore.id, item_name: ldItem.item_name, quantity: 4 }] }) }));

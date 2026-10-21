@@ -101,6 +101,9 @@ if (require.main === module) {
   try { require('./lib/toastSync').startToastLiveSweep(); } catch { /* optional */ }
   // One-time background backfill of pay_minutes (open→paid duration) for old orders.
   try { require('./lib/toastSync').startPayMinutesBackfill(); } catch { /* optional */ }
+  // 9 PM Pacific distribution day-close: roll each prior-day order's un-shipped items into a fresh
+  // order at the store's current need.
+  try { require('./routes/distribution').startDistributionDayClose(); } catch { /* optional */ }
 }
 
 module.exports = app;

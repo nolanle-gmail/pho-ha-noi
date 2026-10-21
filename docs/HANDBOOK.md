@@ -1056,27 +1056,39 @@ The order then moves **Ready to ship → loaded → in transit → delivered** (
 the truck, a driver dispatches, the store receives). A hub short on an item just ships
 what it has (the line stays open) or the store cancels it.
 
-**Partial shipping & receiving (2026-10-20).** The full lifecycle reads, on the board, as
-**Ready to ship → Loaded (action "Ready to deliver") → In Transit (action "Delivering") →
-Received**. Two partial outcomes are supported (both **drop-and-close** — the shortfall is
-not re-sent; the store reorders if still needed):
+**Ship-in-trips, per-item status & the 9 PM close (2026-10-20).** A multi-item order no
+longer ships all-or-nothing — it ships in **as many trips as needed**, and **each item
+carries its own true status** while the **order** shows an aggregate:
 
-- **Partially Loaded** — a hub scans only *some* of an order onto the truck (short on an
-  item, or holding stock back for another store's order) and clicks **Ship partial** on the
-  order detail. Every scanned line ships as-is; every un-scanned line is **dropped**
-  (cancelled on this order). The header moves to `loaded` with `partial_load=1` and reads
-  **"Partially Loaded"**. `POST /distribution/hub-orders/:orderNo/ship-partial` (hub staff;
-  needs at least one scanned line). It then dispatches and delivers normally.
-- **Partially Received** — the store got **fewer than were shipped**. On the order line the
-  store clicks **Partial** (next to **Mark received**) and enters the amount actually
-  received: only that much lands in inventory, the line closes `received`, and the header is
-  flagged `partial_receipt=1`, reading **"Partially Received"**. `PUT /distribution/orders/:id`
-  with `{status:'received', received_qty:<amount>}` (omit `received_qty` for a full receipt).
-
-Both flags live on `distribution_order_headers` (`partial_load`, `partial_receipt`) and
-drive the board label; a delivered order that was short on either side reads **"Partially
-Received"**. An order that only reached a partial state because some items were never
-shipped still delivers on the items that did ship — un-shipped lines never block delivery.
+- **Item (line) status:** **Ready to ship → Loaded** (scanned onto the truck, still at the
+  hub) **→ Shipped** (dispatched / in transit) **→ Received**. An item scanned after an
+  earlier dispatch is Loaded again until the next dispatch (per-line `dispatched` flag).
+- **Order (header) label:** aggregates the items — **Ready to ship**, then **Partially
+  Loaded / Loaded**, **Partially Shipped / In Transit**, **Partially Received / Received**.
+  Computed from the lines by `orderStatusLabel`; `recomputeOrderStage` keeps the coarse
+  `stage` in step after every scan / load / dispatch / receive.
+- **Quantity adjust while shipping.** When the CK has **fewer or more** than ordered, the
+  ship scanner's **✎ Adjust & close** button ships the entered amount and **resets that
+  order line to it** (e.g. ordered 3, only 2 on hand → scan 2, adjust → line becomes 2 and
+  closes as Loaded). The requester is **messaged** that the order changed. `POST
+  /distribution/ship-scan` with `{…, adjust:true}`. (A plain **📤 Ship** of less than ordered
+  just leaves the item Ready to ship for a later trip; over-ship still confirms and keeps the
+  original ordered amount.)
+- **Leftovers stay shippable.** Items the hub couldn't send stay **Ready to ship** on the
+  order; CK scans them later when stock arrives. **Load on-hand** / **Start delivery** act on
+  whatever is ready / loaded right now, so an order can load, dispatch and deliver in several
+  passes.
+- **Partially Received** — the store got **fewer than were shipped** (lost/short in transit):
+  the line's **Partial** button (beside **Mark received**) records the actual amount; only
+  that lands, the line closes, and the header is flagged `partial_receipt`. `PUT
+  /distribution/orders/:id {status:'received', received_qty:<amount>}` (omit for a full
+  receipt).
+- **9 PM Pacific daily close** (`startDistributionDayClose` → `carryOpenOrders`). Each still-
+  open order from a **prior** Pacific day is closed on what actually shipped, and its
+  **never-shipped items roll into a fresh order** — each item's quantity **recomputed from the
+  store's current need** (the count may have changed since the order was placed), not the
+  stale amount. The requester is messaged; the carried items point back via `carried_to`.
+  Processing only prior-day orders keeps the job idempotent across the evening.
 
 Every **Central Kitchen / Warehouse staffer** (not only managers) gets a **🚛 Distribution**
 item in the left menu after login. It lists the hub's ready-to-ship orders; **tap an order

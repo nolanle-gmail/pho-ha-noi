@@ -10,6 +10,7 @@
 const db = require('../db/database');
 const { receiveLot } = require('./lots');
 const { parseScan, logScan } = require('./barcode');
+const { recomputeOrderStage } = require('./shipOrder');
 
 const r3 = (n) => Math.round((Number(n) || 0) * 1000) / 1000;
 const EPS = 0.005;
@@ -77,18 +78,10 @@ function receiveAgainstOrder({ orderId, qty, code, userId, locId }) {
     const exact = Math.abs(newRecv - o.shipped_qty) <= EPS;   // only an exact match to what shipped closes it
     db.prepare(`UPDATE distribution_orders SET received_qty=?, received_by=?, status=?, updated_at=datetime('now') WHERE id=?`)
       .run(newRecv, userId || null, exact ? 'received' : 'shipped', o.id);
-    // Hand-off scan at the store: once every item that actually shipped has been received, the order's
-    // header is delivered. Lines never shipped (dropped on a partial load) don't block it, and any
-    // short/dropped line flags the header partial_receipt so the board reads "Partially Received".
-    if (exact && o.order_no) {
-      const lines = db.prepare(`SELECT status, shipped_qty, received_qty FROM distribution_orders WHERE order_no=? AND ck_qty>0.0005 AND approval='approved'`).all(o.order_no);
-      const shipped = lines.filter(l => l.shipped_qty > 0.0005);
-      if (shipped.length && shipped.every(l => l.status === 'received')) {
-        const short = shipped.some(l => l.received_qty > 0.0005 && l.received_qty < l.shipped_qty - 0.005)
-          || lines.some(l => l.status === 'cancelled' || l.shipped_qty <= 0.0005) ? 1 : 0;
-        db.prepare(`UPDATE distribution_order_headers SET stage='delivered', partial_receipt=CASE WHEN ? THEN 1 ELSE partial_receipt END, delivered_at=COALESCE(delivered_at,datetime('now')), updated_at=datetime('now') WHERE order_no=? AND stage NOT IN ('delivered','cancelled','rejected')`).run(short, o.order_no);
-      }
-    }
+    // Hand-off scan at the store: flag a short receipt, then recompute the header stage from the lines
+    // (→ delivered once every shipped line is received; items never shipped don't block it).
+    if (newRecv < o.shipped_qty - EPS) db.prepare(`UPDATE distribution_order_headers SET partial_receipt=1, updated_at=datetime('now') WHERE order_no=?`).run(o.order_no);
+    if (exact && o.order_no) recomputeOrderStage(o.order_no);
     db.exec('COMMIT');
     return { ok: true, kind: 'order', line_id: o.id, item_name: o.item_name, unit: o.unit, received: amt,
       order: { id: o.id, requested_qty: r3(o.requested_qty), shipped_qty: r3(o.shipped_qty), received_qty: newRecv,
