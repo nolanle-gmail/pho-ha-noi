@@ -412,6 +412,14 @@ const check = (name, ok, detail = '') => {
     check('assign a specific day task', r.status === 200, await r.text());
     const dt2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('day task shows the assignee', (dt2.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {}).user_id === schedStaff.id, JSON.stringify(dt2.summary));
+    // All-staff mode (temp): the Assigned-to list includes every active location staffer, even unscheduled.
+    const _dtdb = require('../db/database');
+    const unschedStaff = _dtdb.prepare("SELECT id, name FROM users WHERE location_id=? AND is_active=1 AND id<>? AND id NOT IN (SELECT user_id FROM shifts WHERE location_id=? AND shift_date=?) LIMIT 1").get(loc1, schedStaff.id, loc1, dtDay);
+    check('day-tasks assignees lists ALL location staff (more than scheduled), unscheduled flagged', dt.all_staff_mode === true && Array.isArray(dt.assignees) && dt.assignees.length > dt.working.length && !!unschedStaff && dt.assignees.some(a => a.id === unschedStaff.id && a.scheduled === false), JSON.stringify({ assignees: (dt.assignees || []).length, working: dt.working.length, unsched: !!unschedStaff }));
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, user_id: unschedStaff.id }) });
+    check('can assign a day task to an UN-scheduled staffer', r.status === 200, await r.text());
+    const dtUn = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('un-scheduled assignee shows on the task', (dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).user_id === unschedStaff.id, JSON.stringify(dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id)));
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

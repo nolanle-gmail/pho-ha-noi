@@ -345,6 +345,20 @@ router.delete('/jobs/:id', requireRole(ROLES.MANAGE), (req, res) => {
 });
 
 // ── Day tasks — assign specific tasks to that day's working staff ────────────
+// TEMP (2026-10-21, owner request): the Assigned-to dropdown lists ALL active staff at the location,
+// even those with no shift that day. Flip this to `false` to restore the original schedule-only logic
+// (only staff scheduled that day are assignable). Governs both the GET candidate list and the PUT check.
+const DAYTASK_ASSIGN_ALL_STAFF = true;
+// All active staff at a location — home staff plus anyone who can cover it (staff_locations).
+function locationStaff(locId) {
+  return db.prepare(`SELECT DISTINCT u.id, u.name, u.role FROM users u
+    LEFT JOIN staff_locations sl ON sl.user_id=u.id AND sl.location_id=?
+    WHERE u.is_active=1 AND (u.location_id=? OR sl.location_id IS NOT NULL) ORDER BY u.name`).all(locId, locId);
+}
+function isLocationStaff(uid, locId) {
+  return !!db.prepare(`SELECT 1 FROM users u LEFT JOIN staff_locations sl ON sl.user_id=u.id AND sl.location_id=?
+    WHERE u.id=? AND u.is_active=1 AND (u.location_id=? OR sl.location_id IS NOT NULL)`).get(locId, uid, locId);
+}
 router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.query.location_id, 10);
   if (!locId) return res.status(400).json({ error: 'location_id is required.' });
@@ -384,7 +398,19 @@ router.get('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     WHERE lt.location_id=? AND j.kind='specific' AND j.is_active=1
     ORDER BY j.department, j.name`).all(date, locId).map(t => ({ ...t, photo_count: t.photo_count || 0, comment_count: t.comment_count || 0, has_photo: (t.photo_count || 0) > 0 }));
   const assigned = tasks.filter(t => t.user_id).length;
-  res.json({ location: loc, date, today, timezone: tz, working, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
+  // Assignee candidates for the "Assigned to" dropdown. All-staff mode (temp) merges every active
+  // location staffer with the scheduled ones (who keep their hours for the time picker); otherwise
+  // it's exactly the scheduled staff — the original behavior.
+  let assignees;
+  if (DAYTASK_ASSIGN_ALL_STAFF) {
+    const byId = {}; working.forEach(w => { byId[w.id] = w; });
+    assignees = locationStaff(locId).map(u => byId[u.id]
+      ? { ...byId[u.id], scheduled: true }
+      : { id: u.id, name: u.name, role: u.role, scheduled: false, hours: [], breaks: [] });
+  } else {
+    assignees = working.map(w => ({ ...w, scheduled: true }));
+  }
+  res.json({ location: loc, date, today, timezone: tz, working, assignees, all_staff_mode: DAYTASK_ASSIGN_ALL_STAFF, tasks, summary: { total: tasks.length, assigned, unassigned: tasks.length - assigned } });
 });
 
 // Assign / unassign / complete a specific task for a location + date.
@@ -408,7 +434,12 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     return rows;
   };
   if (hasUser && userId && !shiftsFor(userId).length) {
-    return res.status(400).json({ error: 'Assign the task to someone working that day.' });
+    // All-staff mode: allow any active staffer at this location even with no shift today.
+    if (DAYTASK_ASSIGN_ALL_STAFF) {
+      if (!isLocationStaff(userId, locId)) return res.status(400).json({ error: 'Pick an active staff member at this location.' });
+    } else {
+      return res.status(400).json({ error: 'Assign the task to someone working that day.' });
+    }
   }
   const hasTime = Object.prototype.hasOwnProperty.call(req.body, 'time');
   let time = undefined;

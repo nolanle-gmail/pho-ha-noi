@@ -4031,7 +4031,9 @@ async function renderLocDayTasks() {
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
   const hoursById = {}; data.working.forEach(w => { hoursById[w.id] = w; });
-  const opts = (sel) => `<option value="">— unassigned —</option>` + data.working.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)} · ${esc(w.start_time)}–${esc(w.end_time)}</option>`).join('');
+  // Assignee candidates: all location staff when all_staff_mode is on, else the scheduled staff.
+  const assignList = data.assignees || data.working.map(w => ({ ...w, scheduled: true }));
+  const opts = (sel) => `<option value="">— unassigned —</option>` + assignList.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)}${w.scheduled ? ` · ${esc(w.start_time)}–${esc(w.end_time)}` : ' · not scheduled'}</option>`).join('');
   // Slot picker: 15-min starts within the assignee's hours, minus breaks and other tasks they already have.
   const SLOT = 15;
   const tm = (s) => (+s.slice(0, 2)) * 60 + (+s.slice(3, 5));
@@ -4060,6 +4062,7 @@ async function renderLocDayTasks() {
     if (!canEdit) return t.task_time ? `<strong>${esc(t.task_time)}</strong>` : '<span style="color:var(--muted)">—</span>';
     if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
     const w = hoursById[t.user_id];
+    if (!w) return '<span style="color:var(--muted)" title="Not scheduled today — no time slots until a shift is added">—</span>';
     const slots = w ? slotOptions(t, w) : [];
     const cur = t.task_time || '';
     const options = `<option value="">— time —</option>`
@@ -4073,7 +4076,7 @@ async function renderLocDayTasks() {
     <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
     <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
     <td style="white-space:nowrap;color:var(--muted)">${t.est_minutes ? `~${t.est_minutes} min` : '—'}</td>
-    <td>${canEdit && data.working.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
+    <td>${canEdit && assignList.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
     <td>${t.assignment_id && (t.photo_count || t.comment_count) ? `<button type="button" class="btn sm ghost dt-photos" data-photos="${t.assignment_id}" data-taskname="${esc(t.name)}" title="View proof photos & comments">${t.photo_count ? `📷 ${t.photo_count}` : ''}${t.photo_count && t.comment_count ? ' · ' : ''}${t.comment_count ? `💬 ${t.comment_count}` : ''}</button>` : (t.assignment_id ? '<button type="button" class="btn sm ghost dt-photos" data-photos="' + t.assignment_id + '" data-taskname="' + esc(t.name) + '" title="Add a comment">💬 +</button>' : '<span style="color:var(--muted)">—</span>')}</td>
@@ -4087,7 +4090,7 @@ async function renderLocDayTasks() {
         ${canEdit ? `<button class="btn sm ghost" id="dtManage">⚙ Manage list</button>` : ''}
       </div>
     </div>
-    <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to someone working today so nothing's left behind. ${data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>'}</p>
+    <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to a staff member so nothing's left behind. ${data.all_staff_mode ? `<strong>${assignList.length}</strong> staff selectable · <strong>${data.working.length}</strong> scheduled today (set a time only for scheduled staff).` : (data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>')}</p>
     <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Proof</th></tr></thead><tbody>
       ${data.tasks.length ? rows : `<tr><td colspan="7" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
