@@ -456,11 +456,13 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   const nu = hasUser ? userId : (existing ? existing.user_id : null);
   let nt = hasTime ? time : (existing ? existing.task_time : null);
   if (!nu) nt = null; // an unassigned task has no owner, so it has no scheduled time either
-  // A task time must fall inside one of the assignee's shifts that day, and not during a break.
+  // A task time must fall inside one of the assignee's shifts that day, and not during a break —
+  // but only when they actually have a shift. In all-staff mode an unscheduled assignee has no hours,
+  // so any valid HH:MM is accepted (the manager sets when it should start).
   if (nt) {
     if (!nu) return res.status(400).json({ error: 'Assign the task to someone before setting a time.' });
     const spans = shiftsFor(nu);
-    const inHours = spans.some(s => nt >= s.start_time && nt <= s.end_time
+    const inHours = spans.length === 0 || spans.some(s => nt >= s.start_time && nt <= s.end_time
       && !s.breaks.some(b => nt >= b.start_time && nt < b.end_time));
     if (!inHours) {
       if (hasTime) {
@@ -492,13 +494,12 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     if (existing) db.prepare(`DELETE FROM task_assignments WHERE id=?`).run(existing.id);
   } else if (existing) {
     const nd = done !== null ? done : existing.done;
+    const userChanged = String(existing.user_id) !== String(nu);
     // A reopened (done→0) or reassigned task loses any prior manager verification — it must be re-reviewed.
-    const clearVerify = (nd === 0) || (String(existing.user_id) !== String(nu));
-    if (clearVerify) {
-      db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, verified=0, verified_by=NULL, verified_at=NULL, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
-    } else {
-      db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
-    }
+    const clearVerify = (nd === 0) || userChanged;
+    // A new time or new assignee needs a fresh start-reminder.
+    const clearRemind = userChanged || (String(nt || '') !== String(existing.task_time || ''));
+    db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?${clearVerify ? ', verified=0, verified_by=NULL, verified_at=NULL' : ''}${clearRemind ? ', reminded_at=NULL' : ''}, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
   } else {
     db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by) VALUES (?,?,?,?,?,?,?)`)
       .run(locId, date, jobId, nu, nt, done || 0, req.user.id);

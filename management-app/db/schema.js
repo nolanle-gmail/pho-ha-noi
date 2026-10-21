@@ -1220,6 +1220,9 @@ function migrate() {
     `ALTER TABLE task_assignments ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE task_assignments ADD COLUMN verified_by INTEGER REFERENCES users(id)`,
     `ALTER TABLE task_assignments ADD COLUMN verified_at TEXT`,
+    // When the "task starts in ~5 min" reminder was sent (notification + SMS). Reset when the task's
+    // time or assignee changes so a fresh reminder fires.
+    `ALTER TABLE task_assignments ADD COLUMN reminded_at TEXT`,
     // A schedule entry is a work shift by default, or a leave entry (sick /
     // vacation / on-leave). Leave carries its own hours — a full day, a number of
     // hours, or a from–to span — so the timesheet can total leave vs worked hours.

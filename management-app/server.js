@@ -89,6 +89,8 @@ if (require.main === module) {
   // Background sweeps (real server only): missed clock-outs + break reminders.
   try { require('./routes/timeclock').startClockSweep(); } catch { /* optional */ }
   try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
+  // Day-task start reminders (notification + SMS ~5 min before a timed task is due to start).
+  try { require('./routes/timeclock').startTaskReminderSweep(); } catch { /* optional */ }
   // Auto-purge clock-kiosk punch photos older than the retention window (default 90 days).
   try { require('./routes/timeclock').startPunchPhotoPurge(); } catch { /* optional */ }
   // Weekly schedule auto-roll for locations that opted in.

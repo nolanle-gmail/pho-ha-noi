@@ -438,6 +438,27 @@ const check = (name, ok, detail = '') => {
     await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, done: false }) });
     const dv2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('reopening a task clears its verification', (dv2.tasks.find(t => t.job_id === vjob) || {}).verified === false, JSON.stringify(dv2.tasks.find(t => t.job_id === vjob)));
+    // A manager can set a start time even for an UN-scheduled assignee (no shift hours to slot within).
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, time: '10:30' }) });
+    check('can set a task time for an un-scheduled assignee', r.status === 200, await r.text());
+    const dtTm = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
+    check('un-scheduled task shows the picked time', (dtTm.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).task_time === '10:30');
+    // 5-min start reminder sweep: a timed task due in ~2 min (location-local, today) fires once.
+    const tz = _dtdb.prepare("SELECT timezone FROM locations WHERE id=?").get(loc1).timezone || 'America/Los_Angeles';
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+    const gp = (t) => parts.find(x => x.type === t).value;
+    const locToday = `${gp('year')}-${gp('month')}-${gp('day')}`;
+    const soon = (+gp('hour')) * 60 + (+gp('minute')) + 2;
+    if (soon < 1438) {   // skip near midnight to avoid a day-rollover edge
+      const taRow = _dtdb.prepare("SELECT id FROM task_assignments WHERE location_id=? AND job_id=? AND task_date=?").get(loc1, dt.tasks[1].job_id, dtDay);
+      const hhmm = `${String(Math.floor(soon / 60)).padStart(2, '0')}:${String(soon % 60).padStart(2, '0')}`;
+      _dtdb.prepare("DELETE FROM task_assignments WHERE location_id=? AND job_id=? AND task_date=? AND id<>?").run(loc1, dt.tasks[1].job_id, locToday, taRow.id);
+      _dtdb.prepare("UPDATE task_assignments SET task_date=?, task_time=?, done=0, reminded_at=NULL, user_id=? WHERE id=?").run(locToday, hhmm, unschedStaff.id, taRow.id);
+      require('../routes/timeclock').sweepTaskReminders();
+      const after = _dtdb.prepare("SELECT reminded_at FROM task_assignments WHERE id=?").get(taRow.id);
+      const alert = _dtdb.prepare("SELECT COUNT(*) c FROM floor_alerts WHERE location_id=? AND target_user_id=? AND body LIKE 'Task reminder:%'").get(loc1, unschedStaff.id).c;
+      check('task start-reminder sweep stamps reminded_at + raises an alert', !!after.reminded_at && alert >= 1, JSON.stringify({ reminded: after.reminded_at, alerts: alert }));
+    }
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

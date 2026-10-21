@@ -260,6 +260,39 @@ function sweepBreakReminders() {
   } catch (err) { console.error('break sweep failed:', err.message); }
 }
 
+// Remind the assigned staff member ~5 minutes before a timed day task is due to START — a live in-app
+// alert AND a text to their phone. Fires once per task (guarded by task_assignments.reminded_at, which
+// is reset when the task's time or assignee changes). Only for today's timed, not-yet-done tasks.
+const TASK_REMIND_LEAD = parseInt(process.env.TASK_REMINDER_LEAD_MIN || '', 10) || 5;
+function sweepTaskReminders() {
+  try {
+    const rows = db.prepare(`SELECT ta.id, ta.task_time, ta.user_id, ta.location_id, ta.task_date,
+        j.name AS task_name, l.timezone, u.phone AS user_phone
+      FROM task_assignments ta
+      JOIN jobs j ON j.id=ta.job_id
+      JOIN users u ON u.id=ta.user_id AND u.is_active=1
+      JOIN locations l ON l.id=ta.location_id
+      WHERE ta.reminded_at IS NULL AND ta.task_time IS NOT NULL AND ta.task_time<>'' AND ta.done=0`).all();
+    const now = new Date();
+    for (const r of rows) {
+      const tz = r.timezone || DEFAULT_TZ;
+      if (r.task_date !== localDate(tz)) continue;                     // only today's tasks
+      const until = hhmmToMin(r.task_time) - localMinutesOfDay(tz, now);
+      if (until == null || until > TASK_REMIND_LEAD || until < 0) continue;   // fire inside the lead window
+      const sender = locationLeaders(r.location_id)[0] || r.user_id;
+      const body = `Task reminder: "${r.task_name}" starts at ${r.task_time} — in about ${until} minute${until === 1 ? '' : 's'}.`;
+      // Live in-app notification (floor alert) to the assignee.
+      const ins = db.prepare(`INSERT INTO floor_alerts (location_id, sender_id, target_type, target_user_id, body, priority) VALUES (?,?, 'user', ?, ?, 'normal')`)
+        .run(r.location_id, sender, r.user_id, body);
+      const alertId = Number(ins.lastInsertRowid);
+      try { emitAlert({ id: alertId, location_id: r.location_id, target_type: 'user', target_user_id: r.user_id, target_role: null, body, priority: 'normal', sender_name: 'Task reminder', created_at: new Date().toISOString() }); } catch { /* live push best-effort */ }
+      db.prepare(`UPDATE task_assignments SET reminded_at=datetime('now') WHERE id=?`).run(r.id);
+      // Text their phone (best-effort; log-only until a provider is set).
+      if (smsEnabled() && r.user_phone) { try { sendSms(r.user_phone, body).catch(() => {}); } catch { /* */ } }
+    }
+  } catch (err) { console.error('task reminder sweep failed:', err.message); }
+}
+
 router.use(verifyToken);
 
 const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
@@ -1055,6 +1088,14 @@ module.exports.startClockSweep = function startClockSweep() {
 module.exports.startBreakSweep = function startBreakSweep() {
   sweepBreakReminders();
   const t = setInterval(sweepBreakReminders, 2 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
+module.exports.sweepTaskReminders = sweepTaskReminders;   // exported for tests / manual runs
+// Day-task start reminders need to land ~5 min ahead, so sweep every minute.
+module.exports.startTaskReminderSweep = function startTaskReminderSweep() {
+  sweepTaskReminders();
+  const t = setInterval(sweepTaskReminders, 60 * 1000);
   if (t.unref) t.unref();
   return t;
 };

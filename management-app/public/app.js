@@ -4062,7 +4062,11 @@ async function renderLocDayTasks() {
     if (!canEdit) return t.task_time ? `<strong>${esc(t.task_time)}</strong>` : '<span style="color:var(--muted)">—</span>';
     if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
     const w = hoursById[t.user_id];
-    if (!w) return '<span style="color:var(--muted)" title="Not scheduled today — no time slots until a shift is added">—</span>';
+    // Unscheduled assignee (no shift today) → a free time picker so the manager can still set a start time.
+    if (!w) {
+      const cur = t.task_time || '';
+      return `<input type="time" data-time="${t.job_id}" value="${esc(cur)}" step="900" style="margin:0;padding:.35rem .4rem;max-width:130px"><div class="job-note">not scheduled — pick any start time</div>`;
+    }
     const slots = w ? slotOptions(t, w) : [];
     const cur = t.task_time || '';
     const options = `<option value="">— time —</option>`
