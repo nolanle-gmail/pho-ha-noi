@@ -1095,6 +1095,9 @@ carries its own true status** while the **order** shows an aggregate:
   open (roll over at the 9 PM close). There is no dispatch / in-transit step for a pickup. Item
   status is still viewpoint-aware (**Shipped** at the CK, **Received** at the store); the order
   reads **Ready to pick up → Partially Shipped/Received → Shipped (CK) / Received (store)**.
+  **Verified end-to-end on prod (2026-10-21)** with a scoped throwaway order: scan →
+  "Ready to pick up" → Mark Received landed the items in the store (CK board "Shipped", store
+  board "Received"), then cleaned up.
 - **Partially Received** — the store got **fewer than were shipped** (lost/short in transit):
   the line's **Partial** button (beside **Mark received**) records the actual amount; only
   that lands, the line closes, and the header is flagged `partial_receipt`. `PUT
