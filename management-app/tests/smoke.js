@@ -459,6 +459,19 @@ const check = (name, ok, detail = '') => {
       const alert = _dtdb.prepare("SELECT COUNT(*) c FROM floor_alerts WHERE location_id=? AND target_user_id=? AND body LIKE 'Task reminder:%'").get(loc1, unschedStaff.id).c;
       check('task start-reminder sweep stamps reminded_at + raises an alert', !!after.reminded_at && alert >= 1, JSON.stringify({ reminded: after.reminded_at, alerts: alert }));
     }
+    // ── 9 PM reminder to managers/shift-leads to verify the day's assigned tasks ────────────────
+    const tmc = require('../routes/timeclock');
+    check('verify-reminder SMS stays within 140 chars', tmc.verifyReminderSms('San Francisco', 29, 29).length <= 140, 'len=' + tmc.verifyReminderSms('San Francisco', 29, 29).length);
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
+    _dtdb.prepare("DELETE FROM daily_reminders WHERE location_id=? AND kind='daytask_verify' AND remind_date=?").run(loc1, locToday);
+    tmc.sweepDayTaskVerifyReminders({ force: true });
+    const mk1 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_verify' AND remind_date=?").get(loc1, locToday).c;
+    check('9PM verify reminder fires once when tasks need verifying (marker created)', mk1 === 1, 'markers=' + mk1);
+    tmc.sweepDayTaskVerifyReminders({ force: true });
+    const mk2 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_verify' AND remind_date=?").get(loc1, locToday).c;
+    check('verify reminder is idempotent (not re-sent the same day)', mk2 === 1, 'markers=' + mk2);
+    const ckMk = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_verify' AND remind_date=? AND location_id=(SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1)").get(locToday).c;
+    check('no verify reminder for a location with no assigned tasks (CK)', ckMk === 0, 'ckMarkers=' + ckMk);
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

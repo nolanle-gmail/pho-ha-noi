@@ -1091,6 +1091,56 @@ module.exports.startBreakSweep = function startBreakSweep() {
   if (t.unref) t.unref();
   return t;
 };
+// End-of-day (9 PM location-local) nudge to a location's manager + shift lead to VERIFY the day's
+// tasks. Sent once per location per day (daily_reminders UNIQUE guard), and only when there are tasks
+// assigned today that still need verifying — if nothing was assigned (or all are already verified),
+// no message goes out. Both an app message (notify → inbox + push) and an SMS (≤140 chars).
+const VERIFY_REMIND_HOUR = parseInt(process.env.DAYTASK_VERIFY_REMIND_HOUR || '', 10) || 21;
+function verifyReminderSms(short, pending, assigned) {
+  const s = `PHN ${short}: ${pending}/${assigned} day tasks still need verifying today. Review on the Day Tasks board.`;
+  return s.length > 140 ? s.slice(0, 139) + '…' : s;
+}
+function reminderSender(leaders) {
+  const admin = db.prepare(`SELECT id FROM users WHERE role IN ('owner','admin','ceo','president','hr') AND is_active=1 ORDER BY id LIMIT 1`).get();
+  return (admin && admin.id) || leaders[0] || null;   // a sender distinct from the recipients so notify() won't self-drop
+}
+function sweepDayTaskVerifyReminders({ force = false } = {}) {
+  try {
+    const locs = db.prepare(`SELECT id, name, timezone FROM locations WHERE is_active=1`).all();
+    const now = new Date();
+    for (const loc of locs) {
+      const tz = loc.timezone || DEFAULT_TZ;
+      const hour = Math.floor(localMinutesOfDay(tz, now) / 60);
+      if (!force && hour < VERIFY_REMIND_HOUR) continue;               // evening only
+      const date = localDate(tz);
+      const row = db.prepare(`SELECT COUNT(*) AS total, SUM(CASE WHEN verified=0 THEN 1 ELSE 0 END) AS pending
+        FROM task_assignments WHERE location_id=? AND task_date=? AND user_id IS NOT NULL`).get(loc.id, date);
+      const assigned = row.total || 0, pending = row.pending || 0;
+      if (!assigned || !pending) continue;                            // nothing assigned, or all verified → no message
+      const ins = db.prepare(`INSERT OR IGNORE INTO daily_reminders (location_id, kind, remind_date) VALUES (?, 'daytask_verify', ?)`).run(loc.id, date);
+      if (!ins.changes) continue;                                     // already sent today
+      const leaders = locationLeaders(loc.id);
+      if (!leaders.length) continue;
+      const sender = reminderSender(leaders);
+      const short = String(loc.name).replace(/^Pho Ha Noi — /, '');
+      const subject = 'Verify today’s day tasks';
+      const appBody = `${pending} of ${assigned} day task${assigned === 1 ? '' : 's'} assigned at ${short} today still need your verification. Please review and confirm them on the Day Tasks board.`;
+      const sms = verifyReminderSms(short, pending, assigned);
+      for (const lid of leaders) {
+        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }
+        if (smsEnabled()) { try { const u = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (u && u.phone) sendSms(u.phone, sms).catch(() => {}); } catch { /* */ } }
+      }
+    }
+  } catch (err) { console.error('verify-reminder sweep failed:', err.message); }
+}
+module.exports.sweepDayTaskVerifyReminders = sweepDayTaskVerifyReminders;   // exported for tests
+module.exports.verifyReminderSms = verifyReminderSms;
+module.exports.startDayTaskVerifyReminderSweep = function startDayTaskVerifyReminderSweep() {
+  sweepDayTaskVerifyReminders();
+  const t = setInterval(sweepDayTaskVerifyReminders, 15 * 60 * 1000);   // every 15 min; fires once after 9 PM local
+  if (t.unref) t.unref();
+  return t;
+};
 module.exports.sweepTaskReminders = sweepTaskReminders;   // exported for tests / manual runs
 // Day-task start reminders need to land ~5 min ahead, so sweep every minute.
 module.exports.startTaskReminderSweep = function startTaskReminderSweep() {

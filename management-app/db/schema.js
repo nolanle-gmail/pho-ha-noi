@@ -913,6 +913,17 @@ function migrate() {
       acknowledged_at TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_break_reminders ON break_reminders(location_id, work_date);
+
+    -- Once-per-day end-of-day reminders (e.g. the 9 PM "verify today's day tasks" nudge to a
+    -- location's manager + shift lead). The UNIQUE key guards one send per location per day.
+    CREATE TABLE IF NOT EXISTS daily_reminders (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      location_id  INTEGER NOT NULL REFERENCES locations(id),
+      kind         TEXT NOT NULL,
+      remind_date  TEXT NOT NULL,
+      sent_at      TEXT DEFAULT (datetime('now')),
+      UNIQUE (location_id, kind, remind_date)
+    );
   `);
 
   // Outbound SMS blasts a manager/owner/admin composes to staff (one row per
