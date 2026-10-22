@@ -134,25 +134,45 @@ async function lookup(){
   // staffer can't see the previous person's employee ID when they step up to the kiosk.
   staffCode = code;
   $('code').value = '';
-  showPanel('info', `<span class="big">${escapeHtml(d.greeting)}</span>${d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.'}`);
+  const info = d.on_break
+    ? `You’re on break since ${escapeHtml(d.break_since)} — tap Clock In when you’re back (within ${d.break_limit_min || 10} min).`
+    : d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.';
+  showPanel('info', `<span class="big">${escapeHtml(d.greeting)}</span>${info}`);
   $('actions').hidden = false;
+  $('clockIn').textContent = d.on_break ? 'Clock In (back from break)' : 'Clock In';
   $('clockIn').disabled = !d.can_in;
   $('clockOut').disabled = !d.can_out;
   resetSoon(30000); // idle reset
 }
 
-async function punch(action){
+// When clocking out, the server asks whether it's a break or the end of the shift — show the choice.
+function showClockOutChoice(){
+  $('actions').hidden = true;
+  showPanel('warn', `<span class="big">Clocking out — which is it?</span>
+    <div class="row" style="margin-top:.8rem">
+      <button class="btn ghost" id="brkBreak">🍴 Break</button>
+      <button class="btn primary" id="brkEnd">🏁 End shift</button>
+    </div>`);
+  $('brkBreak').onclick = () => punch('out', 'break');
+  $('brkEnd').onclick = () => punch('out', 'shift');
+}
+
+async function punch(action, kind){
   const code = staffCode; if (!code) return;
   const photo = capturePhoto();   // best-effort snapshot; null if no camera
-  let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, photo }) });
+  const body = { employee_code: code, action, photo }; if (kind) body.kind = kind;
+  let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify(body) });
+  if (res.d && res.d.choose){ showClockOutChoice(); return; }   // break vs end-of-shift
   if (res.d && res.d.confirm){
     if (!confirm(res.d.message)) return;   // staff must accept the warning
-    res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify({ employee_code: code, action, photo, confirm: true }) });
+    res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) });
   }
   if (!res.ok){ showPanel('err', (res.d && res.d.error) || 'Something went wrong — please try again.'); return; }
   $('actions').hidden = true;
-  showPanel(action === 'out' ? 'warn' : 'info', `<span class="big">${escapeHtml(res.d.message)}</span>${res.d.at ? 'at ' + escapeHtml(res.d.at) : ''}`);
-  resetSoon(7000);
+  // Welcome-back (break return) gets the green panel; an over-limit break shows the minutes.
+  const cls = res.d.action === 'out' ? 'warn' : (res.d.welcome ? 'ok' : 'info');
+  showPanel(cls, `<span class="big">${escapeHtml(res.d.message)}</span>${res.d.at ? 'at ' + escapeHtml(res.d.at) : ''}`);
+  resetSoon(res.d.over_limit_min ? 10000 : 7000);
 }
 
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }

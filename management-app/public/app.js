@@ -6007,8 +6007,8 @@ async function renderRepTimesheets() {
       <div class="card"><div class="label">Gross pay</div><div class="value">${money(d.total_labor_cost)}</div></div>
       <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
-      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="9" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num" title="Total break minutes (not deducted from hours)">Break min</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num ${s.break_over_minutes ? 'warn' : ''}">${s.break_minutes ? s.break_minutes + (s.break_over_minutes ? ` (${s.break_over_minutes} over)` : '') : '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="10" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
     </tbody></table></div>
     ${showByLoc ? `<div class="section"><h3>Gross pay by location</h3>
       <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Staff</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Gross pay</th></tr></thead><tbody>
@@ -6063,9 +6063,9 @@ async function openStaffPunchPhotos(userId, name, start, end) {
 // Includes the per-staff breakdown (regular / OT / DT hours + gross) and a per-location
 // gross-pay summary with a grand total, so finance can reconcile pay end to end.
 function exportTimesheets(d, locName, kind) {
-  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Hourly rate', 'Gross pay'];
-  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.hourly_rate, s.labor_cost]);
-  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', '', d.total_labor_cost];
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, '', d.total_labor_cost];
   const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
   const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
   const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];

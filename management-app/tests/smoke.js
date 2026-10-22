@@ -586,6 +586,38 @@ const check = (name, ok, detail = '') => {
     r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, emp.token);
     check('non-manager cannot open a station / punch (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Break clock-out / clock-in (kiosk): break vs end-shift, 10-min over-limit, reminder sweep ──
+    const _bdb = require('../db/database');
+    let bslug = (_bdb.prepare("SELECT slug FROM locations WHERE id=?").get(loc1) || {}).slug;
+    if (!bslug) { bslug = 'loc1-break-test'; _bdb.prepare("UPDATE locations SET slug=? WHERE id=?").run(bslug, loc1); }
+    const bEmp = _bdb.prepare("SELECT id, employee_code FROM users WHERE location_id=? AND employee_code IS NOT NULL AND is_active=1 AND employee_code<>'PHN-0014' LIMIT 1").get(loc1);
+    const bTz = (_bdb.prepare("SELECT timezone FROM locations WHERE id=?").get(loc1) || {}).timezone || 'America/Los_Angeles';
+    const bParts = new Intl.DateTimeFormat('en-CA', { timeZone: bTz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const bToday = `${bParts.find(x => x.type === 'year').value}-${bParts.find(x => x.type === 'month').value}-${bParts.find(x => x.type === 'day').value}`;
+    _bdb.prepare("DELETE FROM time_entries WHERE user_id=? AND location_id=? AND work_date=?").run(bEmp.id, loc1, bToday);
+    const bEntryId = _bdb.prepare("INSERT INTO time_entries (user_id, location_id, work_date, clock_in, scheduled_minutes) VALUES (?,?,?,?,480)").run(bEmp.id, loc1, bToday, new Date(Date.now() - 3600000).toISOString()).lastInsertRowid;
+    const kpunch = (body) => fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/punch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ employee_code: bEmp.employee_code }, body)) });
+    let bres = await j(await kpunch({ action: 'out' }));
+    check('clock-out asks: break or end of shift', bres.choose === true && Array.isArray(bres.options), JSON.stringify(bres));
+    bres = await j(await kpunch({ action: 'out', kind: 'break' }));
+    check('clock out for a break starts a break (shift stays open)', bres.success === true && bres.action === 'break_out' && _bdb.prepare("SELECT clock_out FROM time_entries WHERE id=?").get(bEntryId).clock_out === null, JSON.stringify(bres));
+    const bstate = await j(await fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: bEmp.employee_code }) }));
+    check('kiosk state reports on_break (clock-in only, no clock-out)', bstate.on_break === true && bstate.can_in === true && bstate.can_out === false, JSON.stringify(bstate));
+    r = await kpunch({ action: 'out', kind: 'shift' });
+    check('cannot end the shift while on break (409)', r.status === 409, 'status=' + r.status);
+    const brkId = _bdb.prepare("SELECT id FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL").get(bEntryId).id;
+    _bdb.prepare("UPDATE time_entry_breaks SET break_out_at=? WHERE id=?").run(new Date(Date.now() - 12 * 60000).toISOString(), brkId);
+    require('../routes/timeclock').sweepBreakReturnReminders();
+    check('break-return reminder fires once past the 10-min limit', _bdb.prepare("SELECT reminded_10 FROM time_entry_breaks WHERE id=?").get(brkId).reminded_10 === 1);
+    bres = await j(await kpunch({ action: 'in' }));
+    check('clock in from break → "welcome back" + over-limit minutes', bres.action === 'break_in' && bres.welcome === true && bres.break_minutes >= 12 && bres.over_limit_min >= 2, JSON.stringify(bres));
+    check('break return does NOT end the shift', _bdb.prepare("SELECT clock_out FROM time_entries WHERE id=?").get(bEntryId).clock_out === null);
+    bres = await j(await kpunch({ action: 'out', kind: 'shift' }));
+    check('end shift after a break clocks out for the day', bres.success === true && bres.action === 'out' && _bdb.prepare("SELECT clock_out FROM time_entries WHERE id=?").get(bEntryId).clock_out !== null, JSON.stringify(bres));
+    const bts = await j(await fetch(base + `/api/reports/timesheets?location_id=${loc1}&start=${bToday}&end=${bToday}`, { headers: H(mgr.token) }));
+    const btsRow = (bts.by_staff || []).find(s => s.user_id === bEmp.id);
+    check('timesheet shows total break minutes for the day (hours unchanged)', !!btsRow && btsRow.break_minutes >= 12 && btsRow.break_over_minutes >= 2, JSON.stringify(btsRow && { b: btsRow.break_minutes, o: btsRow.break_over_minutes }));
+
     // ── Payroll / overtime approval + export ───────────────────────────────
     const p2 = (x) => String(x).padStart(2, '0');
     const dOff = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };

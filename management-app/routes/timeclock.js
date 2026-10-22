@@ -21,6 +21,28 @@ const { sendSms, smsEnabled } = require('../lib/sms');
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
+// ── Break rules ──────────────────────────────────────────────────────────────
+const BREAK_LIMIT_MIN = parseInt(process.env.BREAK_LIMIT_MIN || '', 10) || 10;   // allowed minutes per break
+const BREAK_NUDGE_MIN = parseInt(process.env.BREAK_NUDGE_MIN || '', 10) || 5;    // re-nudge cadence once over
+const BREAK_ESCALATE_OVER_MIN = parseInt(process.env.BREAK_ESCALATE_OVER_MIN || '', 10) || 20; // minutes over the limit → tell the lead
+// Close any still-open break on an entry (used when a shift is clocked out while on break — e.g. a
+// forced/auto clock-out). Counts the break up to `atISO`.
+function closeOpenBreaks(entryId, atISO) {
+  const at = atISO || new Date().toISOString();
+  const rows = db.prepare(`SELECT id, break_out_at FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL`).all(entryId);
+  for (const b of rows) {
+    const mins = Math.max(0, Math.round((new Date(at).getTime() - new Date(b.break_out_at).getTime()) / 60000));
+    db.prepare(`UPDATE time_entry_breaks SET break_in_at=?, minutes=?, over_limit_min=? WHERE id=?`).run(at, mins, Math.max(0, mins - BREAK_LIMIT_MIN), b.id);
+  }
+}
+// Total break minutes (and over-limit minutes) a user took on a work date (by the entry's local date).
+function breakMinutesFor(userId, locId, date) {
+  const r = db.prepare(`SELECT COALESCE(SUM(b.minutes),0) AS total, COALESCE(SUM(b.over_limit_min),0) AS over
+    FROM time_entry_breaks b JOIN time_entries te ON te.id=b.time_entry_id
+    WHERE te.user_id=? AND te.location_id=? AND te.work_date=? AND b.break_in_at IS NOT NULL`).get(userId, locId, date) || { total: 0, over: 0 };
+  return { total: r.total || 0, over: r.over || 0 };
+}
+
 // My own hours — any staff member (JWT), or the Staff app on their behalf
 // (service key + ?as=email). Defined before the manager auth wall below.
 router.get('/my-hours', (req, res) => {
@@ -84,8 +106,9 @@ function clockContext(slug, code) {
   const here = rows.filter(r => String(r.location_id) === String(loc.id));
   const elsewhere = rows.filter(r => String(r.location_id) !== String(loc.id));
   const open = db.prepare(`SELECT * FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NULL ORDER BY id DESC LIMIT 1`).get(staff.id, loc.id, date);
+  const openBreak = open ? db.prepare(`SELECT * FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL ORDER BY id DESC LIMIT 1`).get(open.id) : null;
   return {
-    loc, staff, tz, date, open,
+    loc, staff, tz, date, open, openBreak,
     here: here.length > 0, elsewhere: elsewhere.length > 0,
     isHome: String(staff.location_id) === String(loc.id),
     startHere: here.map(r => r.start_time).filter(Boolean).sort()[0] || null,
@@ -112,12 +135,16 @@ router.post('/kiosk/:slug/state', kioskThrottle, (req, res) => {
   if (ctx.err === 404) return res.status(404).json({ error: ctx.msg });
   if (ctx.err === 'format') return res.json({ ok: false, kind: 'format', message: 'That employee code doesn’t look right — please check it and try again.' });
   if (ctx.err === 'notfound') return res.json({ ok: false, kind: 'notfound', message: 'Employee code not found. Please check again, or ask your manager for the correct one.' });
-  const clockedIn = !!ctx.open;
+  const clockedIn = !!ctx.open, onBreak = !!ctx.openBreak;
   res.json({
     ok: true, name: ctx.staff.name,
     greeting: `${greetingWord(ctx.tz)} ${ctx.staff.name}, welcome to ${locDisplay(ctx.loc.name)}`,
-    clocked_in: clockedIn, since: clockedIn ? localTime(ctx.tz, new Date(ctx.open.clock_in)) : null,
-    can_in: !clockedIn, can_out: clockedIn,
+    clocked_in: clockedIn, on_break: onBreak,
+    since: clockedIn ? localTime(ctx.tz, new Date(ctx.open.clock_in)) : null,
+    break_since: onBreak ? localTime(ctx.tz, new Date(ctx.openBreak.break_out_at)) : null,
+    break_limit_min: BREAK_LIMIT_MIN,
+    // On break → the only action is to clock back in; on the clock → can clock out (break or end shift).
+    can_in: !clockedIn || onBreak, can_out: clockedIn && !onBreak,
   });
 });
 
@@ -145,6 +172,22 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
   const { loc, staff, tz, date } = ctx, confirm = !!(req.body && req.body.confirm), now = new Date();
 
   if ((req.body && req.body.action) === 'in') {
+    // Returning from a break → close the open break, not a new shift. "Welcome back" + over-limit notice.
+    if (ctx.openBreak) {
+      const b = ctx.openBreak;
+      const mins = Math.max(0, Math.round((now.getTime() - new Date(b.break_out_at).getTime()) / 60000));
+      const over = Math.max(0, mins - BREAK_LIMIT_MIN);
+      db.prepare(`UPDATE time_entry_breaks SET break_in_at=?, minutes=?, over_limit_min=? WHERE id=?`).run(now.toISOString(), mins, over, b.id);
+      savePunchPhoto(ctx.open.id, 'break_in', req.body && req.body.photo);
+      return res.json({
+        success: true, action: 'break_in', welcome: true, name: staff.name,
+        break_minutes: mins, over_limit_min: over, break_limit_min: BREAK_LIMIT_MIN,
+        message: over > 0
+          ? `Welcome back, ${staff.name}! Your break was ${mins} min — ${over} over the ${BREAK_LIMIT_MIN}-minute limit.`
+          : `Welcome back, ${staff.name}!`,
+        at: localTime(tz, now),
+      });
+    }
     if (ctx.open) return res.status(409).json({ error: `You’re already clocked in (since ${localTime(tz, new Date(ctx.open.clock_in))}).` });
     let reason = null, warn = null;
     if (ctx.here) {
@@ -167,6 +210,20 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
 
   if ((req.body && req.body.action) === 'out') {
     if (!ctx.open) return res.status(409).json({ error: 'You’re not clocked in here.' });
+    // On break → they must clock back IN before ending the shift.
+    if (ctx.openBreak) return res.status(409).json({ error: 'You’re on a break — tap Clock in to return before you end your shift.' });
+    // Clocking out means one of two things — ask which unless the kiosk already told us.
+    const kind = req.body && req.body.kind;
+    if (kind !== 'break' && kind !== 'shift') {
+      return res.json({ choose: true, message: 'Are you taking a break, or ending your shift?', options: ['break', 'shift'] });
+    }
+    if (kind === 'break') {
+      db.prepare(`INSERT INTO time_entry_breaks (time_entry_id, user_id, location_id, break_out_at) VALUES (?,?,?,?)`)
+        .run(ctx.open.id, staff.id, loc.id, now.toISOString());
+      savePunchPhoto(ctx.open.id, 'break_out', req.body && req.body.photo);
+      return res.json({ success: true, action: 'break_out', message: `On break, ${staff.name} — clock back in within ${BREAK_LIMIT_MIN} minutes.`, break_limit_min: BREAK_LIMIT_MIN, at: localTime(tz, now) });
+    }
+    // kind === 'shift' → end the shift (same early-out confirm as before).
     let reason = null;
     if (ctx.endHere) { const early = hhmmToMin(ctx.endHere) - localMinutesOfDay(tz, now); if (early > 30) reason = 'out_early'; }
     if (reason && !confirm) return res.json({ confirm: true, reason, message: `You’re clocking out more than 30 minutes before your ${ctx.endHere} end time. Clock out anyway?` });
@@ -174,7 +231,8 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=? WHERE id=?`).run(now.toISOString(), worked, ctx.open.id);
     savePunchPhoto(ctx.open.id, 'out', req.body && req.body.photo);
     if (reason) notifyLeaders(loc.id, staff.id, 'Early clock-out', `${staff.name} clocked out early at ${locDisplay(loc.name)} (${localTime(tz, now)}, worked ${fmtDurMin(worked)}). Please review it for their timesheet.`);
-    return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.`, at: localTime(tz, now) });
+    const brk = breakMinutesFor(staff.id, loc.id, date);
+    return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.${brk.total ? ` (Breaks: ${brk.total} min${brk.over ? `, ${brk.over} over` : ''}.)` : ''}`, at: localTime(tz, now) });
   }
   return res.status(400).json({ error: 'Unknown action.' });
 });
@@ -220,6 +278,7 @@ function sweepMissedClockOuts() {
         const r = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
           .run(clockOut.toISOString(), workedToEnd, e.id);
         if (r.changes) {
+          closeOpenBreaks(e.id, clockOut.toISOString());   // if they left while on break, close it
           try { if (sysSender) notify(sysSender, e.user_id, 'Automatically clocked out', `You didn’t clock out after your shift at ${disp}, so the system clocked you out at your scheduled end (${end}). If you worked later, ask a manager to adjust your hours.`); } catch { /* */ }
           notifyLeaders(e.location_id, e.user_id, 'Auto clock-out', `${e.name} was automatically clocked out at ${disp} — ${e.grace} min past their ${end} end with no approval. Adjust their hours if they actually worked later.`);
         }
@@ -378,6 +437,7 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
       message: `${staff.name} has worked ${fmtDurMin(worked)} of ${fmtDurMin(sched)} scheduled — ${fmtDurMin(shortBy)} short. Check out anyway?` });
   }
   db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, short_confirmed=? WHERE id=?`).run(now.toISOString(), worked, isShort ? 1 : 0, open.id);
+  closeOpenBreaks(open.id, now.toISOString());   // a manager clocking out someone on break closes it
   if (isShort) {
     const msg = `${staff.name} clocked out ${fmtDurMin(shortBy)} early — worked ${fmtDurMin(worked)} of ${fmtDurMin(sched)} scheduled.`;
     db.prepare(`INSERT INTO staff_alerts (location_id, user_id, kind, message, time_entry_id) VALUES (?,?,?,?,?)`).run(locId, staff.id, 'short_shift', msg, open.id);
@@ -437,6 +497,7 @@ router.post('/overrun/:id/force-out', requireRole(ROLES.MANAGE), (req, res) => {
   const now = new Date(), worked = Math.max(0, Math.round((now.getTime() - new Date(e.clock_in).getTime()) / 60000));
   db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='forced', overrun_decided_by=?, overrun_decided_at=datetime('now') WHERE id=?`)
     .run(now.toISOString(), worked, req.user.id, e.id);
+  closeOpenBreaks(e.id, now.toISOString());   // if forced out while on break, close it
   auditLog(req, 'overrun_forced_out', 'user', e.user_id, { time_entry_id: e.id, worked_minutes: worked });
   try { notify(req.user.id, e.user_id, 'Clocked out by a manager', `You didn’t clock out after your shift, so a manager clocked you out. Please check with them about the extra time for your timesheet.`); } catch { /* */ }
   res.json({ success: true, worked_minutes: worked });
@@ -1088,6 +1149,56 @@ module.exports.startClockSweep = function startClockSweep() {
 module.exports.startBreakSweep = function startBreakSweep() {
   sweepBreakReminders();
   const t = setInterval(sweepBreakReminders, 2 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
+
+// Raise a live in-app alert to one staffer (same channel as break reminders).
+function raiseStaffAlert(locId, userId, body, senderName) {
+  const sender = locationLeaders(locId)[0] || userId;
+  const ins = db.prepare(`INSERT INTO floor_alerts (location_id, sender_id, target_type, target_user_id, body, priority) VALUES (?,?, 'user', ?, ?, 'normal')`).run(locId, sender, userId, body);
+  try { emitAlert({ id: Number(ins.lastInsertRowid), location_id: locId, target_type: 'user', target_user_id: userId, target_role: null, body, priority: 'normal', sender_name: senderName || 'Reminder', created_at: new Date().toISOString() }); } catch { /* best-effort */ }
+}
+// Break-return reminders: once a break passes the limit, nudge the staffer (in-app + SMS) to clock back
+// in, repeating every BREAK_NUDGE_MIN; escalate to the shift lead once well over; stop at the shift end.
+function sweepBreakReturnReminders() {
+  try {
+    const open = db.prepare(`SELECT b.id, b.break_out_at, b.reminded_10, b.last_nudge_at, b.escalated,
+        te.user_id, te.location_id, te.work_date, u.name, u.phone, l.timezone
+      FROM time_entry_breaks b
+      JOIN time_entries te ON te.id=b.time_entry_id AND te.clock_out IS NULL
+      JOIN users u ON u.id=te.user_id AND u.is_active=1
+      JOIN locations l ON l.id=te.location_id
+      WHERE b.break_in_at IS NULL`).all();
+    const now = Date.now();
+    for (const b of open) {
+      const tz = b.timezone || DEFAULT_TZ;
+      const elapsed = Math.floor((now - new Date(b.break_out_at).getTime()) / 60000);
+      if (elapsed < BREAK_LIMIT_MIN) continue;
+      // Stop nudging the staffer once the shift's scheduled end has passed (a leader handles it then).
+      const endRow = db.prepare(`SELECT MAX(end_time) AS e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(b.user_id, b.location_id, b.work_date);
+      const pastEnd = endRow && endRow.e ? localMinutesOfDay(tz, new Date(now)) > hhmmToMin(endRow.e) : elapsed > 90;
+      if (!pastEnd) {
+        const sinceNudge = b.last_nudge_at ? (now - new Date(b.last_nudge_at).getTime()) / 60000 : Infinity;
+        if (!b.reminded_10 || sinceNudge >= BREAK_NUDGE_MIN) {
+          const body = `Your ${BREAK_LIMIT_MIN}-min break is up — please clock back in. You've been on break ${elapsed} min.`;
+          raiseStaffAlert(b.location_id, b.user_id, body, 'Break over');
+          if (smsEnabled() && b.phone) { try { sendSms(b.phone, body).catch(() => {}); } catch { /* */ } }
+          db.prepare(`UPDATE time_entry_breaks SET reminded_10=1, last_nudge_at=datetime('now') WHERE id=?`).run(b.id);
+        }
+      }
+      // Escalate to the location's manager/shift lead once, when well over the limit.
+      if (!b.escalated && elapsed >= BREAK_LIMIT_MIN + BREAK_ESCALATE_OVER_MIN) {
+        notifyLeaders(b.location_id, b.user_id, 'Staff still on break', `${b.name} has been on break ${elapsed} min (limit ${BREAK_LIMIT_MIN}) and hasn’t clocked back in. Please check in with them.`);
+        db.prepare(`UPDATE time_entry_breaks SET escalated=1 WHERE id=?`).run(b.id);
+      }
+    }
+  } catch (err) { console.error('break-return sweep failed:', err.message); }
+}
+module.exports.sweepBreakReturnReminders = sweepBreakReturnReminders;   // exported for tests
+module.exports.startBreakReturnSweep = function startBreakReturnSweep() {
+  sweepBreakReturnReminders();
+  const t = setInterval(sweepBreakReturnReminders, 60 * 1000);   // 1-min granularity for the 5-min cadence
   if (t.unref) t.unref();
   return t;
 };

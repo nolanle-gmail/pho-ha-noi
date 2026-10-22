@@ -95,7 +95,9 @@ function timesheetReport(req) {
   const { locId } = scope(req); const { start, end } = dateRange(req);
   const conds = ['t.work_date>=?', 't.work_date<=?', 't.worked_minutes IS NOT NULL'], args = [start, end];
   if (locId) { conds.push('t.location_id=?'); args.push(locId); }
-  const rows = db.prepare(`SELECT t.user_id, t.work_date, t.worked_minutes, t.location_id,
+  const rows = db.prepare(`SELECT t.id, t.user_id, t.work_date, t.worked_minutes, t.location_id,
+      (SELECT COALESCE(SUM(b.minutes),0) FROM time_entry_breaks b WHERE b.time_entry_id=t.id AND b.break_in_at IS NOT NULL) AS break_min,
+      (SELECT COALESCE(SUM(b.over_limit_min),0) FROM time_entry_breaks b WHERE b.time_entry_id=t.id AND b.break_in_at IS NOT NULL) AS break_over,
       u.name, u.role, u.employee_code, u.hourly_rate, l.name location
     FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN locations l ON l.id=t.location_id
     WHERE ${conds.join(' AND ')}`).all(...args);
@@ -108,8 +110,9 @@ function timesheetReport(req) {
     const rate = r.hourly_rate || 0;
     const dayGross = tsHrs(sp.reg) * rate + tsHrs(sp.ot) * rate * TS_OT_MULT + tsHrs(sp.dt) * rate * TS_DT_MULT;
     let u = byUser.get(r.user_id);
-    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, locMin: {} }; byUser.set(r.user_id, u); }
+    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, breakMin: 0, breakOver: 0, locMin: {} }; byUser.set(r.user_id, u); }
     u.shifts++; u.min += r.worked_minutes; u.reg += sp.reg; u.ot += sp.ot; u.dt += sp.dt; u.gross += dayGross;
+    u.breakMin += r.break_min || 0; u.breakOver += r.break_over || 0;
     u.locMin[r.location_id] = (u.locMin[r.location_id] || 0) + r.worked_minutes;
     // Per-location roll-up: each day's pay is attributed to the location it was worked at.
     let L = byLoc.get(r.location_id);
@@ -126,6 +129,7 @@ function timesheetReport(req) {
       location: locName[plId] || null, location_id: plId != null ? Number(plId) : null,
       shifts: u.shifts, hours: tsHrs(u.min), reg_hours: tsHrs(u.reg),
       ot_hours: tsHrs(u.ot + u.dt), dt_hours: tsHrs(u.dt),
+      break_minutes: u.breakMin, break_over_minutes: u.breakOver,   // total break min in range + minutes over the per-break limit (not deducted from hours yet)
       hourly_rate: u.hourly_rate, labor_cost: Math.round(u.gross * 100) / 100,
     };
   }).sort((a, b) => b.hours - a.hours);
@@ -141,6 +145,8 @@ function timesheetReport(req) {
     start, end, location_id: locId ? Number(locId) : null,
     ot_rule: { ot_after_h: 8, dt_after_h: 12, ot_mult: TS_OT_MULT, dt_mult: TS_DT_MULT },
     total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100,
+    total_break_minutes: by_staff.reduce((a, r) => a + (r.break_minutes || 0), 0),
+    total_break_over_minutes: by_staff.reduce((a, r) => a + (r.break_over_minutes || 0), 0),
     total_labor_cost: Math.round(tot.labor * 100) / 100, headcount: by_staff.length,
     by_staff, by_location,
   };
@@ -161,9 +167,9 @@ router.post('/timesheets/gsheet', requireRole(ROLES.REPORTS), async (req, res) =
   const rl = (k) => roleLabels[k] || k;
   const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
   const locName = d.location_id ? shortLoc((db.prepare('SELECT name FROM locations WHERE id=?').get(d.location_id) || {}).name || 'Selected location') : 'All locations';
-  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Hourly rate', 'Gross pay'];
-  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', rl(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.hourly_rate, s.labor_cost]);
-  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', '', d.total_labor_cost];
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', rl(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, '', d.total_labor_cost];
   const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
   const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
   const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];

@@ -914,6 +914,26 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS idx_break_reminders ON break_reminders(location_id, work_date);
 
+    -- Break punches WITHIN a shift. A staffer clocks out "for a break" (break_out_at) and clocks back
+    -- in to end it (break_in_at + minutes). Separate from the shift's clock_out so worked_minutes stays
+    -- the full span; break minutes are tracked here (daily total + per-break over-limit). Many per day.
+    CREATE TABLE IF NOT EXISTS time_entry_breaks (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      time_entry_id  INTEGER NOT NULL REFERENCES time_entries(id),
+      user_id        INTEGER NOT NULL REFERENCES users(id),
+      location_id    INTEGER NOT NULL REFERENCES locations(id),
+      break_out_at   TEXT NOT NULL,                 -- ISO datetime the break started
+      break_in_at    TEXT,                          -- ISO datetime they returned (null = still on break)
+      minutes        INTEGER,                        -- break length, filled on return / force-close
+      over_limit_min INTEGER NOT NULL DEFAULT 0,     -- minutes beyond the per-break limit (default 10)
+      reminded_10    INTEGER NOT NULL DEFAULT 0,     -- the "break's up, clock in" reminder has gone out
+      last_nudge_at  TEXT,                           -- last 5-min nudge sent while still on break
+      escalated      INTEGER NOT NULL DEFAULT 0,     -- shift-lead escalation sent (well over the limit)
+      created_at     TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_te_breaks ON time_entry_breaks(time_entry_id);
+    CREATE INDEX IF NOT EXISTS idx_te_breaks_open ON time_entry_breaks(break_in_at);
+
     -- Once-per-day end-of-day reminders (e.g. the 9 PM "verify today's day tasks" nudge to a
     -- location's manager + shift lead). The UNIQUE key guards one send per location per day.
     CREATE TABLE IF NOT EXISTS daily_reminders (
