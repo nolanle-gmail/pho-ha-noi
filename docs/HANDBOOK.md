@@ -471,6 +471,17 @@ clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager'
 `ot_approvals` sign-off (which can be escalated to Owner / GM / Admin); managers can
 `time_adjustments` (rounding) and finally `timesheet_approvals` a whole period.
 
+**Breaks (2026-10-22).** Clocking out on the kiosk asks **🍴 Break** or **🏁 End shift**. A break is a
+punch *inside* the shift — it does **not** set the day's `clock_out`, so total worked hours are
+unchanged; each break is logged in `time_entry_breaks` (break-out/in + minutes), and a staffer can
+take several a day. **Clock in** while on break ends it, shows **"Welcome back, \<name\>"**, and if the
+break ran over the **10-minute per-break limit** pops the minutes taken. You **can't end the shift while
+on break** — clock in first. Once a break passes 10 min the staffer is nudged to clock back in (in-app +
+**SMS**) every 5 min until they return or the shift ends; if they're ~20 min over, the location's
+manager/shift lead is alerted. A forced/auto/manager clock-out closes any open break. The payroll
+timesheet gains a **Break min** (and over-limit) column; **worked hours aren't reduced** today (a future
+option can subtract the over-limit minutes — already stored per break).
+
 **Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
 `time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
 filterable by **location or all locations** + a date range. A **Run report** button
