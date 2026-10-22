@@ -1161,15 +1161,16 @@ function raiseStaffAlert(locId, userId, body, senderName) {
 }
 // Break-return reminders: once a break passes the limit, nudge the staffer (in-app + SMS) to clock back
 // in, repeating every BREAK_NUDGE_MIN; escalate to the shift lead once well over; stop at the shift end.
-function sweepBreakReturnReminders() {
+function sweepBreakReturnReminders({ breakId = null } = {}) {
   try {
+    // breakId scopes the run to one break (for isolated verification); otherwise all open breaks.
     const open = db.prepare(`SELECT b.id, b.break_out_at, b.reminded_10, b.last_nudge_at, b.escalated,
         te.user_id, te.location_id, te.work_date, u.name, u.phone, l.timezone
       FROM time_entry_breaks b
       JOIN time_entries te ON te.id=b.time_entry_id AND te.clock_out IS NULL
       JOIN users u ON u.id=te.user_id AND u.is_active=1
       JOIN locations l ON l.id=te.location_id
-      WHERE b.break_in_at IS NULL`).all();
+      WHERE b.break_in_at IS NULL${breakId ? ' AND b.id=?' : ''}`).all(...(breakId ? [breakId] : []));
     const now = Date.now();
     for (const b of open) {
       const tz = b.timezone || DEFAULT_TZ;
