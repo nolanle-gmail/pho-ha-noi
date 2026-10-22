@@ -470,8 +470,12 @@ const check = (name, ok, detail = '') => {
     tmc.sweepDayTaskVerifyReminders({ force: true });
     const mk2 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_verify' AND remind_date=?").get(loc1, locToday).c;
     check('verify reminder is idempotent (not re-sent the same day)', mk2 === 1, 'markers=' + mk2);
-    const ckMk = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_verify' AND remind_date=? AND location_id=(SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1)").get(locToday).c;
+    const ckId = _dtdb.prepare("SELECT id FROM locations WHERE type='central_kitchen' LIMIT 1").get().id;
+    const ckMk = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_verify' AND remind_date=? AND location_id=?").get(locToday, ckId).c;
     check('no verify reminder for a location with no assigned tasks (CK)', ckMk === 0, 'ckMarkers=' + ckMk);
+    tmc.sweepDayTaskVerifyReminders({ force: true, locationId: ckId });   // location-scoped run
+    const ckMk2 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_verify' AND remind_date=? AND location_id=?").get(locToday, ckId).c;
+    check('location-scoped verify-reminder respects the no-tasks skip', ckMk2 === 0, 'ckMarkers=' + ckMk2);
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

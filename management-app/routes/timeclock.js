@@ -1104,9 +1104,12 @@ function reminderSender(leaders) {
   const admin = db.prepare(`SELECT id FROM users WHERE role IN ('owner','admin','ceo','president','hr') AND is_active=1 ORDER BY id LIMIT 1`).get();
   return (admin && admin.id) || leaders[0] || null;   // a sender distinct from the recipients so notify() won't self-drop
 }
-function sweepDayTaskVerifyReminders({ force = false } = {}) {
+function sweepDayTaskVerifyReminders({ force = false, locationId = null } = {}) {
   try {
-    const locs = db.prepare(`SELECT id, name, timezone FROM locations WHERE is_active=1`).all();
+    // locationId scopes the run to one location (for isolated verification); otherwise all active ones.
+    const locs = locationId
+      ? db.prepare(`SELECT id, name, timezone FROM locations WHERE id=? AND is_active=1`).all(locationId)
+      : db.prepare(`SELECT id, name, timezone FROM locations WHERE is_active=1`).all();
     const now = new Date();
     for (const loc of locs) {
       const tz = loc.timezone || DEFAULT_TZ;
