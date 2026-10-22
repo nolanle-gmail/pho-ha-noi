@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 21, 2026_
+_Last updated: October 22, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -367,6 +367,12 @@ an SMS** to their phone (`task_assignments.reminded_at` guards one send per task
 runs every minute, `TASK_REMINDER_LEAD_MIN` default 5). The reminder resets if the task's time or
 assignee changes. The Day Tasks board also **auto-refreshes every 10 s** so Done marks and
 verifications appear without leaving the tab.
+**End-of-day verify reminder (2026-10-22).** At **9 PM** (location-local) each location's **manager and
+shift lead** get an **app message and an SMS** (SMS capped at 140 chars) reminding them to verify the
+day's assigned tasks — sent **only if** tasks were assigned that day and some still need verifying;
+nothing assigned (or all already verified) → no message. One send per location per day
+(`daily_reminders` table); `sweepDayTaskVerifyReminders` runs every 15 min and fires after 9 PM local
+(`DAYTASK_VERIFY_REMIND_HOUR` default 21). Recipients are the manage-cap roles via `locationLeaders`.
 
 ```mermaid
 erDiagram
