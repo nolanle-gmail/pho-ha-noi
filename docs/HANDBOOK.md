@@ -392,6 +392,16 @@ task's progress + verification + start-reminder (a fresh occurrence), **rejects 
 that **already has that task**, and notifies the assignee. The start reminder and 9 PM verify sweep are
 per-date, so a future task only reminds on its own day. To run a task a couple of times a week, assign
 it and set each day in turn.
+**Morning re-check for pre-assigned tasks (2026-10-23).** A task set up days ahead assumes the assignee
+will be working that day — but people call in sick or get rescheduled. On the task's **own morning**
+(~**7 AM** location-local, window to noon) the location's **manager + shift lead** get an **app message
+and an SMS** listing every task that was **assigned in advance** (created on an earlier day) and is due
+today, **flagging any whose assignee has no shift today**, so they can confirm coverage and reassign if
+someone is out. One send per location per day (`daily_reminders` kind `daytask_morning`); **skipped when
+nothing was pre-assigned** — a same-day assignment never triggers it. Needs
+`task_assignments.created_at` (added 2026-10-23, backfilled from `updated_at`) to tell advance from
+same-day. `routes/timeclock.js` `sweepDayTaskMorningRecheck` + `startDayTaskMorningRecheckSweep` (every
+15 min; `DAYTASK_MORNING_RECHECK_HOUR` default 7, `…_END_HOUR` default 12).
 
 ```mermaid
 erDiagram
