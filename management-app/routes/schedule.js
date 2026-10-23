@@ -501,7 +501,7 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
     const clearRemind = userChanged || (String(nt || '') !== String(existing.task_time || ''));
     db.prepare(`UPDATE task_assignments SET user_id=?, task_time=?, done=?${clearVerify ? ', verified=0, verified_by=NULL, verified_at=NULL' : ''}${clearRemind ? ', reminded_at=NULL' : ''}, updated_at=datetime('now') WHERE id=?`).run(nu, nt, nd, existing.id);
   } else {
-    db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by) VALUES (?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO task_assignments (location_id, task_date, job_id, user_id, task_time, done, created_by, created_at) VALUES (?,?,?,?,?,?,?,datetime('now'))`)
       .run(locId, date, jobId, nu, nt, done || 0, req.user.id);
   }
   auditLog(req, 'day_task_assign', 'job', jobId, { location_id: locId, date, user_id: hasUser ? userId : undefined, time: hasTime ? time : undefined, done });

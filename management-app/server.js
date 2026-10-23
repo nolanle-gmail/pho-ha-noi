@@ -95,6 +95,8 @@ if (require.main === module) {
   try { require('./routes/timeclock').startTaskReminderSweep(); } catch { /* optional */ }
   // 9 PM local reminder to each location's manager + shift lead to verify the day's assigned tasks.
   try { require('./routes/timeclock').startDayTaskVerifyReminderSweep(); } catch { /* optional */ }
+  // Morning (~7 AM local) nudge to re-check tasks assigned in advance (staff may be out that day).
+  try { require('./routes/timeclock').startDayTaskMorningRecheckSweep(); } catch { /* optional */ }
   // Auto-purge clock-kiosk punch photos older than the retention window (default 90 days).
   try { require('./routes/timeclock').startPunchPhotoPurge(); } catch { /* optional */ }
   // Weekly schedule auto-roll for locations that opted in.

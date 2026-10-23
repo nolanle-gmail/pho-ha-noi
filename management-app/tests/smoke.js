@@ -497,6 +497,25 @@ const check = (name, ok, detail = '') => {
     tmc.sweepDayTaskVerifyReminders({ force: true, locationId: ckId });   // location-scoped run
     const ckMk2 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_verify' AND remind_date=? AND location_id=?").get(locToday, ckId).c;
     check('location-scoped verify-reminder respects the no-tasks skip', ckMk2 === 0, 'ckMarkers=' + ckMk2);
+    // ── Morning re-check nudge for tasks assigned IN ADVANCE (staff may be out that day) ─────────
+    check('morning-recheck SMS stays within 140 chars', tmc.morningRecheckSms('Fountain Valley', 12, 5).length <= 140, 'len=' + tmc.morningRecheckSms('Fountain Valley', 12, 5).length);
+    const mrJob = dt.tasks[4].job_id;
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: mrJob, user_id: unschedStaff.id }) });
+    _dtdb.prepare("DELETE FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").run(loc1, locToday);
+    tmc.sweepDayTaskMorningRecheck({ force: true, locationId: loc1 });
+    const mm0 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").get(loc1, locToday).c;
+    check('no morning nudge when today’s tasks were all assigned same-day', mm0 === 0, 'markers=' + mm0);
+    // Stamp it as assigned two days ago → it becomes a pre-assigned task the morning sweep flags.
+    _dtdb.prepare("UPDATE task_assignments SET created_at = datetime('now','-2 days') WHERE location_id=? AND task_date=? AND job_id=?").run(loc1, locToday, mrJob);
+    tmc.sweepDayTaskMorningRecheck({ force: true, locationId: loc1 });
+    const mm1 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").get(loc1, locToday).c;
+    check('morning re-check fires once for a pre-assigned task (marker created)', mm1 === 1, 'markers=' + mm1);
+    tmc.sweepDayTaskMorningRecheck({ force: true, locationId: loc1 });
+    const mm2 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").get(loc1, locToday).c;
+    check('morning re-check is idempotent (one send per day)', mm2 === 1, 'markers=' + mm2);
+    tmc.sweepDayTaskMorningRecheck({ force: true, locationId: ckId });
+    const ckMm = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE kind='daytask_morning' AND remind_date=? AND location_id=?").get(locToday, ckId).c;
+    check('no morning nudge for a location with no tasks (CK)', ckMm === 0, 'ck=' + ckMm);
     const wk6 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
     const st6 = (wk6.staff.find(s => s.id === schedStaff.id) || {}).shifts.find(s => s.shift_date === dtDay);
     check('assigned task appears on staff schedule summary', !!st6 && (st6.tasks || []).some(t => t.id === dt.tasks[0].job_id), JSON.stringify(st6 && st6.tasks));

@@ -523,6 +523,7 @@ function migrate() {
       task_time   TEXT,                          -- HH:MM, within the assignee's working hours
       done        INTEGER NOT NULL DEFAULT 0,
       created_by  INTEGER REFERENCES users(id),
+      created_at  TEXT DEFAULT (datetime('now')),  -- when first assigned (advance vs same-day)
       updated_at  TEXT DEFAULT (datetime('now')),
       UNIQUE (location_id, task_date, job_id)
     );
@@ -1587,6 +1588,11 @@ function migrate() {
     // Pickup orders: the store collects the order AT the CK (no delivery). Scanned items are "Ready to
     // pick up"; Mark Received lands them at the store with no second scan there.
     `ALTER TABLE distribution_order_headers ADD COLUMN pickup INTEGER NOT NULL DEFAULT 0`,
+    // When a day-task assignment was created — so a morning sweep can tell a task set up IN ADVANCE
+    // (created before its task_date) from a same-day one, and remind managers to re-check the former.
+    // (Can't ADD COLUMN with a datetime('now') default in SQLite, so backfill it right after.)
+    `ALTER TABLE task_assignments ADD COLUMN created_at TEXT`,
+    `UPDATE task_assignments SET created_at = COALESCE(updated_at, datetime('now')) WHERE created_at IS NULL`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

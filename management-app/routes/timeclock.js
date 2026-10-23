@@ -1250,6 +1250,70 @@ function sweepDayTaskVerifyReminders({ force = false, locationId = null } = {}) 
 }
 module.exports.sweepDayTaskVerifyReminders = sweepDayTaskVerifyReminders;   // exported for tests
 module.exports.verifyReminderSms = verifyReminderSms;
+
+// Morning (≈7 AM location-local) safety net for tasks assigned IN ADVANCE. A task set up days earlier
+// assumes the assignee will be working that day — but people call in sick or get rescheduled. On the
+// task's own morning, remind the location's manager + shift lead to re-check every pre-assigned task
+// (created before today) and confirm the staff are in and can do it — flagging any whose assignee has
+// no shift today. One app message + SMS per location per day; skipped when nothing was pre-assigned.
+const MORNING_RECHECK_HOUR = parseInt(process.env.DAYTASK_MORNING_RECHECK_HOUR || '', 10) || 7;
+const MORNING_RECHECK_END_HOUR = parseInt(process.env.DAYTASK_MORNING_RECHECK_END_HOUR || '', 10) || 12;
+function morningRecheckSms(short, n, noShift) {
+  const tail = noShift ? `, ${noShift} w/ no shift` : '';
+  const s = `PHN ${short}: ${n} task${n === 1 ? '' : 's'} pre-assigned today${tail} — recheck staff & reassign if out. Day Tasks board.`;
+  return s.length > 140 ? s.slice(0, 139) + '…' : s;
+}
+function sweepDayTaskMorningRecheck({ force = false, locationId = null } = {}) {
+  try {
+    const locs = locationId
+      ? db.prepare(`SELECT id, name, timezone FROM locations WHERE id=? AND is_active=1`).all(locationId)
+      : db.prepare(`SELECT id, name, timezone FROM locations WHERE is_active=1`).all();
+    const now = new Date();
+    for (const loc of locs) {
+      const tz = loc.timezone || DEFAULT_TZ;
+      const hour = Math.floor(localMinutesOfDay(tz, now) / 60);
+      if (!force && (hour < MORNING_RECHECK_HOUR || hour >= MORNING_RECHECK_END_HOUR)) continue;  // morning window only
+      const date = localDate(tz);
+      const rows = db.prepare(`SELECT ta.id, ta.user_id, ta.created_at, j.name AS task_name, u.name AS staff_name,
+          (SELECT COUNT(*) FROM shifts s WHERE s.user_id=ta.user_id AND s.location_id=ta.location_id AND s.shift_date=? AND s.kind='work') AS shifts_today
+        FROM task_assignments ta
+        JOIN jobs j ON j.id=ta.job_id
+        JOIN users u ON u.id=ta.user_id AND u.is_active=1
+        WHERE ta.location_id=? AND ta.task_date=? AND ta.user_id IS NOT NULL AND ta.done=0`).all(date, loc.id, date);
+      // Keep only tasks assigned on an earlier local day than today (set up in advance).
+      const advance = rows.filter(r => {
+        if (!r.created_at) return false;
+        let cd; try { cd = localDate(tz, new Date(String(r.created_at).replace(' ', 'T') + 'Z')); } catch { return false; }
+        return cd < date;
+      });
+      if (!advance.length) continue;                                  // nothing pre-assigned → no message
+      const ins = db.prepare(`INSERT OR IGNORE INTO daily_reminders (location_id, kind, remind_date) VALUES (?, 'daytask_morning', ?)`).run(loc.id, date);
+      if (!ins.changes) continue;                                     // already sent today
+      const leaders = locationLeaders(loc.id);
+      if (!leaders.length) continue;
+      const sender = reminderSender(leaders);
+      const short = String(loc.name).replace(/^Pho Ha Noi — /, '');
+      const n = advance.length;
+      const noShift = advance.filter(r => !r.shifts_today).length;
+      const lines = advance.map(r => `• ${r.task_name} — ${r.staff_name}${r.shifts_today ? '' : ' (no shift today!)'}`).join('\n');
+      const subject = 'Check today’s pre-assigned tasks';
+      const appBody = `${n} task${n === 1 ? ' was' : 's were'} assigned in advance for ${short} today. Please confirm the assigned staff are working today and can complete them — reassign any whose person is out${noShift ? ` (${noShift} ${noShift === 1 ? 'has' : 'have'} no shift scheduled today)` : ''}:\n${lines}\nReview on the Day Tasks board.`;
+      const sms = morningRecheckSms(short, n, noShift);
+      for (const lid of leaders) {
+        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }
+        if (smsEnabled()) { try { const u = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (u && u.phone) sendSms(u.phone, sms).catch(() => {}); } catch { /* */ } }
+      }
+    }
+  } catch (err) { console.error('morning-recheck sweep failed:', err.message); }
+}
+module.exports.sweepDayTaskMorningRecheck = sweepDayTaskMorningRecheck;   // exported for tests
+module.exports.morningRecheckSms = morningRecheckSms;
+module.exports.startDayTaskMorningRecheckSweep = function startDayTaskMorningRecheckSweep() {
+  sweepDayTaskMorningRecheck();
+  const t = setInterval(sweepDayTaskMorningRecheck, 15 * 60 * 1000);   // every 15 min; fires once in the morning window
+  if (t.unref) t.unref();
+  return t;
+};
 module.exports.startDayTaskVerifyReminderSweep = function startDayTaskVerifyReminderSweep() {
   sweepDayTaskVerifyReminders();
   const t = setInterval(sweepDayTaskVerifyReminders, 15 * 60 * 1000);   // every 15 min; fires once after 9 PM local
