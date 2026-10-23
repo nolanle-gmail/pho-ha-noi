@@ -299,6 +299,15 @@ to `seated` (idempotent) and emits a waitlist event so the Front Desk board upda
 waitlist board filters `status='waiting'`, so the guest drops off all of them; the public live list
 (`/checkin/<slug>/current`) also refreshes every **5 s** (was 15 s, then 8 s) so it clears promptly.
 
+**Waitlist watchdog — alert Nha Le past 30 min (2026-10-22).** Staff sometimes forget to clear guests
+who already left, so a party can sit on the waitlist for hours. Management-app `lib/waitlistMonitor.js`
+(`startWaitlistMonitor`, booted in `server.js`) reads the live waitlist — `GET ${WAITLIST_URL}/api/wl-feed/active`
+over the shared service key — every **5 min**, and for any party `waiting` longer than **30 min**
+(`WAITLIST_OVER_MIN`) sends **Nha Le** (the fulfilment contact, `name LIKE 'Nha Le%'`) an app message
+**and** an SMS (≤140 chars), grouped by location. It alerts **once per guest** — a `waitlist_over30_alerts`
+row keyed by the waitlist entry id dedupes — and **never removes** a guest; a person checks the table and
+clears them. Rows older than 7 days are swept so a returning entry id can re-alert.
+
 ```mermaid
 erDiagram
   locations ||--o{ floor_areas : "has"
