@@ -934,6 +934,14 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_te_breaks ON time_entry_breaks(time_entry_id);
     CREATE INDEX IF NOT EXISTS idx_te_breaks_open ON time_entry_breaks(break_in_at);
 
+    -- One row per waitlist guest we've already alerted Nha Le about (waiting > 30 min), so the
+    -- monitor texts/messages once per guest, not every sweep. wl_entry_id = the waitlist app's row id.
+    CREATE TABLE IF NOT EXISTS waitlist_over30_alerts (
+      wl_entry_id INTEGER PRIMARY KEY,
+      location_id INTEGER,
+      alerted_at  TEXT DEFAULT (datetime('now'))
+    );
+
     -- Once-per-day end-of-day reminders (e.g. the 9 PM "verify today's day tasks" nudge to a
     -- location's manager + shift lead). The UNIQUE key guards one send per location per day.
     CREATE TABLE IF NOT EXISTS daily_reminders (

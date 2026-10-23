@@ -110,6 +110,9 @@ if (require.main === module) {
   // 9 PM Pacific distribution day-close: roll each prior-day order's un-shipped items into a fresh
   // order at the store's current need.
   try { require('./routes/distribution').startDistributionDayClose(); } catch { /* optional */ }
+  // Watch the live waitlist and alert Nha Le (app message + SMS, once per guest) when a party has
+  // been waiting over 30 min — staff sometimes forget to clear guests who already left.
+  try { require('./lib/waitlistMonitor').startWaitlistMonitor(); } catch { /* optional */ }
 }
 
 module.exports = app;
