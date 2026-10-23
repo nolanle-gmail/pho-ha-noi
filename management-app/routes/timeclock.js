@@ -61,6 +61,52 @@ router.get('/my-hours', (req, res) => {
   res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
 });
 
+// Resolve the acting staff member for a self-service call — a JWT, or the Staff app
+// on their behalf (service key + ?as=email). Returns { id, name } or null.
+function resolveMyUser(req) {
+  const key = req.headers['x-service-key'] || req.query.key;
+  if (key && key === SERVICE_KEY) {
+    const email = String(req.query.as || '').toLowerCase().trim();
+    return email ? db.prepare(`SELECT id, name FROM users WHERE lower(email)=? AND is_active=1`).get(email) : null;
+  }
+  try { const p = jwt.verify((req.headers.authorization || '').replace('Bearer ', ''), SECRET); return { id: p.id, name: p.name }; } catch { return null; }
+}
+
+// End-of-day sign-off — the staffer reviews a day's worked hours and confirms they're correct.
+// Operates on every completed entry for that (staffer, date), so a day split across locations signs
+// off together. Confirming clears any prior dispute (they changed their mind and it's fine now).
+router.post('/my-hours/confirm', (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const date = validDate(req.body && req.body.date);
+  if (!date) return res.status(400).json({ error: 'A valid date is required.' });
+  const entries = db.prepare(`SELECT id FROM time_entries WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL`).all(u.id, date);
+  if (!entries.length) return res.status(404).json({ error: 'No completed hours to confirm for that day.' });
+  db.prepare(`UPDATE time_entries SET hours_confirmed=1, hours_confirmed_at=datetime('now'), hours_disputed=0, hours_disputed_at=NULL
+    WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL`).run(u.id, date);
+  res.json({ success: true, date, status: 'confirmed' });
+});
+
+// The staffer flags a day's hours as wrong — mark it disputed and message the location's manager +
+// shift lead to review and correct it (with the clocked-vs-scheduled totals and any note they left).
+router.post('/my-hours/dispute', (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const date = validDate(req.body && req.body.date);
+  if (!date) return res.status(400).json({ error: 'A valid date is required.' });
+  const note = String((req.body && req.body.note) || '').trim().slice(0, 500);
+  const entries = db.prepare(`SELECT id, location_id, worked_minutes, scheduled_minutes FROM time_entries WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL`).all(u.id, date);
+  if (!entries.length) return res.status(404).json({ error: 'No completed hours to report for that day.' });
+  db.prepare(`UPDATE time_entries SET hours_disputed=1, hours_disputed_at=datetime('now'), hours_confirmed=0, hours_confirmed_at=NULL
+    WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL`).run(u.id, date);
+  const worked = entries.reduce((a, e) => a + (e.worked_minutes || 0), 0);
+  const sched = entries.reduce((a, e) => Math.max(a, e.scheduled_minutes || 0), 0);
+  const subject = 'Worked-hours correction requested';
+  const body = `${u.name} flagged their worked hours for ${date} as incorrect (clocked ${fmtDurMin(worked)}${sched ? ` vs ${fmtDurMin(sched)} scheduled` : ''}).${note ? ` Note: “${note}”` : ''} Please review and correct them on the Time Clock / Timesheet.`;
+  for (const lid of [...new Set(entries.map(e => e.location_id))]) notifyLeaders(lid, u.id, subject, body);
+  res.json({ success: true, date, status: 'disputed' });
+});
+
 // ── Public per-location clock kiosk (/clock/<slug>) — no login ────────────────
 // A tablet at a store opens its own URL; staff clock in/out with just an employee
 // code. The physical location + code is the trust model (like the guest kiosk).
@@ -205,7 +251,14 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
       const why = { early: 'more than 30 minutes early', wrong_location: 'at a location they’re not scheduled at today', no_schedule: 'without being scheduled today', no_schedule_wrong_location: 'without being scheduled today, and at an unusual location' }[reason];
       notifyLeaders(loc.id, staff.id, 'Clock-in to review', `${staff.name} clocked in at ${locDisplay(loc.name)} ${why} (${localTime(tz, now)}). Please review it for their timesheet.`);
     }
-    return res.json({ success: true, action: 'in', message: `You’re clocked in — have a great shift, ${staff.name}!`, at: localTime(tz, now) });
+    // Still-pending sign-off from an earlier day → remind them to review it (doesn't block clock-in).
+    const pend = db.prepare(`SELECT work_date FROM time_entries WHERE user_id=? AND clock_out IS NOT NULL
+      AND hours_confirmed=0 AND hours_disputed=0 AND work_date < ? ORDER BY work_date DESC`).all(staff.id, date);
+    const hoursPending = pend.length ? { date: pend[0].work_date, count: new Set(pend.map(p => p.work_date)).size } : null;
+    return res.json({ success: true, action: 'in', message: `You’re clocked in — have a great shift, ${staff.name}!`,
+      hours_review_pending: hoursPending,
+      hours_prompt: hoursPending ? `Before your shift: please open My Hours and confirm your worked hours for ${hoursPending.date}${hoursPending.count > 1 ? ` and ${hoursPending.count - 1} earlier day${hoursPending.count > 2 ? 's' : ''}` : ''}.` : null,
+      at: localTime(tz, now) });
   }
 
   if ((req.body && req.body.action) === 'out') {
@@ -232,7 +285,10 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     savePunchPhoto(ctx.open.id, 'out', req.body && req.body.photo);
     if (reason) notifyLeaders(loc.id, staff.id, 'Early clock-out', `${staff.name} clocked out early at ${locDisplay(loc.name)} (${localTime(tz, now)}, worked ${fmtDurMin(worked)}). Please review it for their timesheet.`);
     const brk = breakMinutesFor(staff.id, loc.id, date);
-    return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.${brk.total ? ` (Breaks: ${brk.total} min${brk.over ? `, ${brk.over} over` : ''}.)` : ''}`, at: localTime(tz, now) });
+    return res.json({ success: true, action: 'out', message: `Goodbye ${staff.name}! You worked ${fmtDurMin(worked)} today.${brk.total ? ` (Breaks: ${brk.total} min${brk.over ? `, ${brk.over} over` : ''}.)` : ''}`,
+      // Remind them to sign off today's hours in their own app (this kiosk is a shared tablet).
+      remind_hours: true, hours_prompt: 'Please open My Hours in your app and confirm your worked hours for today are correct.',
+      at: localTime(tz, now) });
   }
   return res.status(400).json({ error: 'Unknown action.' });
 });
@@ -751,9 +807,10 @@ const FULL_DAY_HOURS = 8; // an "all day" leave entry counts as a standard workd
 // One person's own hours for a period, across whatever location(s) they worked.
 function myHoursData(userId, start, end, kind) {
   const byDate = {};
-  for (const r of db.prepare(`SELECT work_date, worked_minutes, late_minutes FROM time_entries WHERE user_id=? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL`).all(userId, start, end)) {
-    const d = byDate[r.work_date] || (byDate[r.work_date] = { worked: 0, late: 0 });
+  for (const r of db.prepare(`SELECT work_date, worked_minutes, late_minutes, hours_confirmed, hours_disputed FROM time_entries WHERE user_id=? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL`).all(userId, start, end)) {
+    const d = byDate[r.work_date] || (byDate[r.work_date] = { worked: 0, late: 0, n: 0, conf: 0, disp: 0 });
     d.worked += r.worked_minutes || 0; d.late = Math.max(d.late, r.late_minutes || 0);
+    d.n++; if (r.hours_confirmed) d.conf++; if (r.hours_disputed) d.disp++;
   }
   const schedByDate = {};
   for (const s of db.prepare(`SELECT shift_date, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ? AND kind='work'`).all(userId, start, end)) {
@@ -771,7 +828,7 @@ function myHoursData(userId, start, end, kind) {
   for (const a of db.prepare(`SELECT work_date, approved, rejected, escalated, ot_minutes, dt_minutes FROM ot_approvals WHERE user_id=? AND work_date BETWEEN ? AND ?`).all(userId, start, end)) otByDate[a.work_date] = a;
   const tsAppr = db.prepare(`SELECT * FROM timesheet_approvals WHERE user_id=? AND period_kind=? AND period_start=?`).get(userId, kind, start);
   const h = (m) => round2(m / 60);
-  let totalMin = 0, reg = 0, otAppr = 0, dtAppr = 0, otPend = 0, dtPend = 0, lateMin = 0, lateDays = 0, shortDays = 0;
+  let totalMin = 0, reg = 0, otAppr = 0, dtAppr = 0, otPend = 0, dtPend = 0, lateMin = 0, lateDays = 0, shortDays = 0, signoffPending = 0;
   const days = Object.entries(byDate).sort().map(([date, d]) => {
     const adj = adjByDate[date]; const eff = adj != null ? adj : d.worked;
     totalMin += eff; const sp = daySplit(eff); reg += sp.reg;
@@ -780,12 +837,15 @@ function myHoursData(userId, start, end, kind) {
     const sched = schedByDate[date] || 0; const shortM = sched > eff ? sched - eff : 0;
     if (d.late > 0) { lateMin += d.late; lateDays++; } if (shortM > 0) shortDays++;
     const otStatus = sp.ot <= 0 && sp.dt <= 0 ? 'none' : (a && a.approved ? 'approved' : (a && a.rejected ? 'rejected' : (a && a.escalated ? 'escalated' : 'pending')));
-    return { date, scheduled_min: sched, worked_min: d.worked, effective_min: eff, adjusted: adj != null, late_min: d.late, short_min: shortM, ot_min: sp.ot, dt_min: sp.dt, ot_status: otStatus };
+    const reviewStatus = d.disp > 0 ? 'disputed' : (d.n > 0 && d.conf === d.n ? 'confirmed' : 'pending');
+    if (reviewStatus === 'pending') signoffPending++;
+    return { date, scheduled_min: sched, worked_min: d.worked, effective_min: eff, adjusted: adj != null, late_min: d.late, short_min: shortM, ot_min: sp.ot, dt_min: sp.dt, ot_status: otStatus, review_status: reviewStatus };
   });
   return {
     kind, start, end, days,
     totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), late_days: lateDays, late_minutes: lateMin, short_days: shortDays, sick_hours: round2(leave.sick), vacation_hours: round2(leave.vacation), leave_hours: round2(leave.leave) },
     approved: tsAppr ? 1 : 0, approved_by: tsAppr ? (userName(tsAppr.approved_by) || null) : null,
+    signoff: { pending: signoffPending },
     rules: { ot_after_h: OT_AFTER_MIN / 60, ot_mult: OT_MULT, late_grace_min: LATE_GRACE_MIN },
   };
 }
@@ -1311,6 +1371,45 @@ module.exports.morningRecheckSms = morningRecheckSms;
 module.exports.startDayTaskMorningRecheckSweep = function startDayTaskMorningRecheckSweep() {
   sweepDayTaskMorningRecheck();
   const t = setInterval(sweepDayTaskMorningRecheck, 15 * 60 * 1000);   // every 15 min; fires once in the morning window
+  if (t.unref) t.unref();
+  return t;
+};
+
+// Worked-hours sign-off reminder: a staffer who finished a day but hasn't confirmed (or disputed) their
+// hours gets ONE in-app nudge. A PRIOR day reminds as soon as the sweep runs; TODAY's entry waits until
+// the evening so we don't nag right after clock-out (the clock-out popup already prompted them). This is
+// the backstop behind the clock-out and next-morning clock-in popups — in-app message only (not SMS), so
+// a routine daily confirmation doesn't text every staffer. `hours_reminded_at` makes it one-shot.
+const HOURS_SIGNOFF_EVENING_HOUR = parseInt(process.env.HOURS_SIGNOFF_EVENING_HOUR || '', 10) || 20;
+function sweepHoursSignoffReminders({ force = false } = {}) {
+  try {
+    const rows = db.prepare(`SELECT te.id, te.user_id, te.work_date, u.name, l.timezone
+      FROM time_entries te JOIN users u ON u.id=te.user_id AND u.is_active=1 JOIN locations l ON l.id=te.location_id
+      WHERE te.clock_out IS NOT NULL AND te.hours_confirmed=0 AND te.hours_disputed=0 AND te.hours_reminded_at IS NULL`).all();
+    const now = new Date();
+    const admin = (db.prepare(`SELECT id FROM users WHERE role IN ('owner','admin','ceo','president','hr') AND is_active=1 ORDER BY id LIMIT 1`).get() || {}).id;
+    const groups = {};
+    for (const r of rows) {
+      if (!force) {
+        const tz = r.timezone || DEFAULT_TZ, today = localDate(tz);
+        const hour = Math.floor(localMinutesOfDay(tz, now) / 60);
+        if (!(r.work_date < today || (r.work_date === today && hour >= HOURS_SIGNOFF_EVENING_HOUR))) continue;
+      }
+      const k = r.user_id + '|' + r.work_date;
+      (groups[k] = groups[k] || { user_id: r.user_id, name: r.name, date: r.work_date, ids: [] }).ids.push(r.id);
+    }
+    for (const k in groups) {
+      const g = groups[k];
+      const sender = admin && admin !== g.user_id ? admin : null;
+      try { if (sender) notify(sender, g.user_id, 'Confirm your worked hours', `Please review and confirm your worked hours for ${g.date} in My Hours. If anything looks off, tap “Report issue” and your manager will review it.`); } catch { /* best-effort */ }
+      db.prepare(`UPDATE time_entries SET hours_reminded_at=datetime('now') WHERE id IN (${g.ids.map(() => '?').join(',')})`).run(...g.ids);
+    }
+  } catch (err) { console.error('hours sign-off reminder sweep failed:', err.message); }
+}
+module.exports.sweepHoursSignoffReminders = sweepHoursSignoffReminders;   // exported for tests
+module.exports.startHoursSignoffReminderSweep = function startHoursSignoffReminderSweep() {
+  sweepHoursSignoffReminders();
+  const t = setInterval(sweepHoursSignoffReminders, 30 * 60 * 1000);   // every 30 min
   if (t.unref) t.unref();
   return t;
 };

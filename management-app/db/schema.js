@@ -579,6 +579,13 @@ function migrate() {
       worked_minutes    INTEGER,                     -- filled at check-out
       short_confirmed   INTEGER NOT NULL DEFAULT 0,  -- staff confirmed leaving early
       opened_by         INTEGER REFERENCES users(id),-- manager/opener who opened the station
+      -- End-of-day sign-off: the staffer reviews their worked hours and either confirms them correct
+      -- or disputes them (which messages their manager to fix it). Reminder stamp drives the nudge.
+      hours_confirmed   INTEGER NOT NULL DEFAULT 0,
+      hours_confirmed_at TEXT,
+      hours_disputed    INTEGER NOT NULL DEFAULT 0,
+      hours_disputed_at TEXT,
+      hours_reminded_at TEXT,
       created_at        TEXT DEFAULT (datetime('now'))
     );
 
@@ -1593,6 +1600,12 @@ function migrate() {
     // (Can't ADD COLUMN with a datetime('now') default in SQLite, so backfill it right after.)
     `ALTER TABLE task_assignments ADD COLUMN created_at TEXT`,
     `UPDATE task_assignments SET created_at = COALESCE(updated_at, datetime('now')) WHERE created_at IS NULL`,
+    // End-of-day worked-hours sign-off: a staffer confirms their hours are correct or disputes them.
+    `ALTER TABLE time_entries ADD COLUMN hours_confirmed INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE time_entries ADD COLUMN hours_confirmed_at TEXT`,
+    `ALTER TABLE time_entries ADD COLUMN hours_disputed INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE time_entries ADD COLUMN hours_disputed_at TEXT`,
+    `ALTER TABLE time_entries ADD COLUMN hours_reminded_at TEXT`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

@@ -1001,14 +1001,23 @@ async function renderMyHours() {
   try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const t = d.totals;
   const pill = (k, l) => `<button class="navbtn ${S.hoursKind === k ? 'active' : ''}" data-hk="${k}">${l}</button>`;
+  // End-of-day sign-off per completed day: status + Confirm / Report-issue controls.
+  const reviewCell = (x) => {
+    const confirmBtn = `<button class="btn" data-confirm-day="${x.date}">✓ Confirm</button>`;
+    const reportBtn = `<button class="btn ghost" data-dispute-day="${x.date}">Report issue</button>`;
+    if (x.review_status === 'confirmed') return `<span class="badge seated">✓ Confirmed</span> <button class="btn ghost" data-dispute-day="${x.date}">Report</button>`;
+    if (x.review_status === 'disputed') return `<span class="badge waiting">⚠ Reported</span> ${confirmBtn}`;
+    return `${confirmBtn} ${reportBtn}`;
+  };
   const dayRows = (d.days || []).map(x => {
     const flags = [
       x.late_min > 0 ? `<span class="badge" style="background:var(--warn-bg);color:#92400e">⏰ ${fmtHrs(x.late_min)} late</span>` : '',
       x.ot_min > 0 ? `<span class="badge" style="background:#dbeafe;color:#1d4ed8">＋${fmtHrs(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : x.ot_status === 'pending' ? ' ⏳' : x.ot_status === 'escalated' ? ' ⏳' : ''}</span>` : '',
       x.short_min > 0 ? `<span class="badge left">${fmtHrs(x.short_min)} short</span>` : '',
     ].filter(Boolean).join(' ');
-    return `<tr><td>${new Date(x.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</td><td>${x.scheduled_min ? fmtHrs(x.scheduled_min) : '—'}</td><td><strong>${fmtHrs(x.effective_min)}</strong>${x.adjusted ? ' <span class="muted" style="font-size:.8rem" title="rounded by manager">(adj)</span>' : ''}</td><td>${flags || '—'}</td></tr>`;
+    return `<tr><td>${new Date(x.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</td><td>${x.scheduled_min ? fmtHrs(x.scheduled_min) : '—'}</td><td><strong>${fmtHrs(x.effective_min)}</strong>${x.adjusted ? ' <span class="muted" style="font-size:.8rem" title="rounded by manager">(adj)</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
   }).join('');
+  const pending = d.signoff && d.signoff.pending || 0;
   v.innerHTML = `
     <div class="section-head"><h2>My Hours</h2>
       <div style="display:flex;gap:.3rem;align-items:center"><button class="btn ghost" data-hnav="-1">‹</button><span style="font-weight:700">${esc(hoursRangeLabel(d))}</span><button class="btn ghost" data-hnav="1">›</button></div></div>
@@ -1022,10 +1031,21 @@ async function renderMyHours() {
       ${t.vacation_hours ? `<div class="stat"><div class="label">PTO</div><div class="value">${t.vacation_hours}h</div></div>` : ''}
       ${t.leave_hours ? `<div class="stat"><div class="label">Unpaid Time Off</div><div class="value">${t.leave_hours}h <span class="muted" style="font-size:.7rem">unpaid</span></div></div>` : ''}
     </div>
+    ${pending ? `<div style="margin:.2rem 0 .8rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft);color:#92400e;font-weight:700">⏱️ Please review &amp; confirm your worked hours — ${pending} day${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your sign-off. Tap <b>Confirm</b> on each day, or <b>Report issue</b> if anything’s wrong.</div>` : ''}
     ${d.approved ? `<p class="sub" style="color:var(--ok)">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
-    <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th></tr></thead><tbody>${dayRows || '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
+    <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th><th>Review</th></tr></thead><tbody>${dayRows || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
   v.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHours(); });
   v.querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNav(+b.dataset.hnav));
+  v.querySelectorAll('[data-confirm-day]').forEach(b => b.onclick = async () => {
+    try { await api('/timeclock/my-hours/confirm', { method: 'POST', body: JSON.stringify({ date: b.dataset.confirmDay }) }); toast('Hours confirmed ✓'); renderMyHours(); }
+    catch (e) { toast(e.message, true); }
+  });
+  v.querySelectorAll('[data-dispute-day]').forEach(b => b.onclick = async () => {
+    const note = prompt(`What looks wrong with your hours for ${b.dataset.disputeDay}? (optional)\nYour manager / shift lead will review and correct it.`);
+    if (note === null) return;
+    try { await api('/timeclock/my-hours/dispute', { method: 'POST', body: JSON.stringify({ date: b.dataset.disputeDay, note }) }); toast('Sent to your manager to review'); renderMyHours(); }
+    catch (e) { toast(e.message, true); }
+  });
 }
 
 // ── My Schedule: the staff member's own shifts (set by managers), by period ───

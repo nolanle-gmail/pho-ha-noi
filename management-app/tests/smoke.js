@@ -658,6 +658,54 @@ const check = (name, ok, detail = '') => {
     const btsRow = (bts.by_staff || []).find(s => s.user_id === bEmp.id);
     check('timesheet shows total break minutes for the day (hours unchanged)', !!btsRow && btsRow.break_minutes >= 12 && btsRow.break_over_minutes >= 2, JSON.stringify(btsRow && { b: btsRow.break_minutes, o: btsRow.break_over_minutes }));
 
+    // ── Worked-hours end-of-day sign-off (confirm / dispute / reminder + kiosk popups) ──────────
+    // Use a plain employee (not a manage-cap leader) so a dispute has a distinct manager to message.
+    const tmc2 = require('../routes/timeclock');
+    const soStaff = _bdb.prepare("SELECT id, email, employee_code FROM users WHERE is_active=1 AND location_id=? AND role='employee' AND employee_code IS NOT NULL ORDER BY id LIMIT 1").get(loc1);
+    const soYest = (() => { const x = new Date(bToday + 'T12:00:00'); x.setDate(x.getDate() - 1); return x.toISOString().slice(0, 10); })();
+    // FK-safe purge of this staffer's entries for the two test dates (time_entry_breaks + staff_alerts reference time_entries).
+    const soPurge = () => {
+      const ids = _bdb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date IN (?,?)").all(soStaff.id, bToday, soYest).map(r => r.id);
+      if (!ids.length) return;
+      const qs = ids.map(() => '?').join(',');
+      _bdb.prepare(`DELETE FROM time_entry_breaks WHERE time_entry_id IN (${qs})`).run(...ids);
+      _bdb.prepare(`DELETE FROM staff_alerts WHERE time_entry_id IN (${qs})`).run(...ids);
+      _bdb.prepare(`DELETE FROM time_entries WHERE id IN (${qs})`).run(...ids);
+    };
+    soPurge();
+    const soEntryId = _bdb.prepare("INSERT INTO time_entries (user_id, location_id, work_date, clock_in, clock_out, worked_minutes, scheduled_minutes) VALUES (?,?,?,?,?,?,480)")
+      .run(soStaff.id, loc1, bToday, new Date(Date.now() - 8 * 3600000).toISOString(), new Date(Date.now() - 1 * 3600000).toISOString(), 420).lastInsertRowid;
+    const HK = { 'X-Service-Key': 'dev-floorplan-key', 'Content-Type': 'application/json' };
+    const soGet = async () => j(await fetch(base + `/api/timeclock/my-hours?as=${encodeURIComponent(soStaff.email)}&kind=weekly&anchor=${bToday}`, { headers: HK }));
+    const soDay = (resp) => (resp.days || []).find(x => x.date === bToday) || {};
+    let soResp = await soGet();
+    check('My Hours marks a completed, not-signed-off day as pending', soDay(soResp).review_status === 'pending' && (soResp.signoff || {}).pending >= 1, JSON.stringify({ rs: soDay(soResp).review_status, pending: (soResp.signoff || {}).pending }));
+    let hc = await fetch(base + `/api/timeclock/my-hours/confirm?as=${encodeURIComponent(soStaff.email)}`, { method: 'POST', headers: HK, body: JSON.stringify({ date: bToday }) });
+    check('staff confirms a day’s worked hours', hc.status === 200 && _bdb.prepare("SELECT hours_confirmed FROM time_entries WHERE id=?").get(soEntryId).hours_confirmed === 1, 'status=' + hc.status);
+    soResp = await soGet();
+    check('confirmed day shows as confirmed + drops out of pending', soDay(soResp).review_status === 'confirmed', JSON.stringify(soDay(soResp).review_status));
+    const msgBefore = _bdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Worked-hours correction requested'").get().c;
+    hc = await fetch(base + `/api/timeclock/my-hours/dispute?as=${encodeURIComponent(soStaff.email)}`, { method: 'POST', headers: HK, body: JSON.stringify({ date: bToday, note: 'ZZ smoke — I worked longer' }) });
+    const dRow = _bdb.prepare("SELECT hours_confirmed, hours_disputed FROM time_entries WHERE id=?").get(soEntryId);
+    const msgAfter = _bdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Worked-hours correction requested'").get().c;
+    check('staff reports a day as wrong → disputed + manager messaged', hc.status === 200 && dRow.hours_disputed === 1 && dRow.hours_confirmed === 0 && msgAfter > msgBefore, JSON.stringify({ status: hc.status, dRow, msgBefore, msgAfter }));
+    soResp = await soGet();
+    check('disputed day shows as reported', soDay(soResp).review_status === 'disputed', JSON.stringify(soDay(soResp).review_status));
+    // Forgot-to-sign-off reminder sweep: reset to pending, force a sweep, expect one nudge + stamp.
+    _bdb.prepare("UPDATE time_entries SET hours_confirmed=0, hours_disputed=0, hours_reminded_at=NULL WHERE id=?").run(soEntryId);
+    const remBefore = _bdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Confirm your worked hours'").get().c;
+    tmc2.sweepHoursSignoffReminders({ force: true });
+    check('sign-off reminder sweep nudges once + stamps reminded_at', !!_bdb.prepare("SELECT hours_reminded_at FROM time_entries WHERE id=?").get(soEntryId).hours_reminded_at && _bdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Confirm your worked hours'").get().c > remBefore);
+    // Kiosk popups: clock-in flags a prior unsigned day; clock-out (end shift) prompts to review hours.
+    _bdb.prepare("INSERT INTO time_entries (user_id, location_id, work_date, clock_in, clock_out, worked_minutes, scheduled_minutes) VALUES (?,?,?,?,?,?,480)")
+      .run(soStaff.id, loc1, soYest, new Date(Date.now() - 26 * 3600000).toISOString(), new Date(Date.now() - 19 * 3600000).toISOString(), 420);
+    const kin = await j(await fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/punch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: soStaff.employee_code, action: 'in', confirm: true }) }));
+    check('clock-in reminds about a prior unsigned day', kin.success === true && kin.hours_review_pending && kin.hours_review_pending.date === soYest, JSON.stringify(kin.hours_review_pending));
+    const kout = await j(await fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/punch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: soStaff.employee_code, action: 'out', kind: 'shift', confirm: true }) }));
+    check('clock-out at end of shift prompts to review hours', kout.success === true && kout.remind_hours === true, JSON.stringify({ a: kout.action, r: kout.remind_hours }));
+    // cleanup every entry this block created for the sign-off staffer (FK-safe)
+    soPurge();
+
     // ── Payroll / overtime approval + export ───────────────────────────────
     const p2 = (x) => String(x).padStart(2, '0');
     const dOff = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };

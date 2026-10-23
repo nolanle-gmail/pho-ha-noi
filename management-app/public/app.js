@@ -4696,14 +4696,23 @@ async function renderMyHoursMgmt() {
   try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const t = d.totals;
   const pill = (k, l) => `<button class="btn sm ${S.hoursKind === k ? '' : 'ghost'}" data-hk="${k}">${l}</button>`;
+  // End-of-day sign-off: each completed day shows its review state + Confirm / Report-issue controls.
+  const reviewCell = (x) => {
+    const confirmBtn = `<button class="btn sm" data-confirm-day="${x.date}">✓ Confirm</button>`;
+    const reportBtn = `<button class="btn sm ghost" data-dispute-day="${x.date}">Report issue</button>`;
+    if (x.review_status === 'confirmed') return `<span class="badge ok">✓ Confirmed</span> <button class="btn sm ghost" data-dispute-day="${x.date}" title="Report a problem after all">Report</button>`;
+    if (x.review_status === 'disputed') return `<span class="badge out">⚠ Reported to manager</span> ${confirmBtn}`;
+    return `${confirmBtn} ${reportBtn}`;
+  };
   const rows = (d.days || []).map(x => {
     const flags = [
       x.late_min > 0 ? `<span class="badge low">⏰ ${fmtDur(x.late_min)} late</span>` : '',
       x.ot_min > 0 ? `<span class="badge blue">+${fmtDur(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : (x.ot_status === 'pending' || x.ot_status === 'escalated') ? ' ⏳' : ''}</span>` : '',
       x.short_min > 0 ? `<span class="badge out">${fmtDur(x.short_min)} short</span>` : '',
     ].filter(Boolean).join(' ');
-    return `<tr><td>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td></tr>`;
+    return `<tr><td>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
   }).join('');
+  const pending = d.signoff && d.signoff.pending || 0;
   $('view').innerHTML = `
     <div class="overview-hero"><h2>My Hours</h2><p>Your clocked hours, overtime and any late starts.</p></div>
     <div class="row-between" style="margin:.2rem 0 .6rem;flex-wrap:wrap;gap:.5rem">
@@ -4716,10 +4725,21 @@ async function renderMyHoursMgmt() {
       <div class="card"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
       <div class="card"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
     </div>
+    ${pending ? `<div style="margin:.2rem 0 .6rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);font-weight:600">⏱️ Please review &amp; confirm your worked hours — ${pending} day${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} your sign-off. Check each day and tap <b>Confirm</b>, or <b>Report issue</b> if anything’s wrong.</div>` : ''}
     ${d.approved ? `<p class="sub" style="color:var(--ok,#16a34a);font-weight:600">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
-    <div class="section" style="margin-top:.8rem"><div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Scheduled</th><th class="num">Worked</th><th>Notes</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="empty">No clocked hours this period.</td></tr>'}</tbody></table></div></div>`;
+    <div class="section" style="margin-top:.8rem"><div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Scheduled</th><th class="num">Worked</th><th>Notes</th><th>Review</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">No clocked hours this period.</td></tr>'}</tbody></table></div></div>`;
   $('view').querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHoursMgmt(); });
   $('view').querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNavMgmt(+b.dataset.hnav));
+  $('view').querySelectorAll('[data-confirm-day]').forEach(b => b.onclick = async () => {
+    try { await api('/timeclock/my-hours/confirm', { method: 'POST', body: JSON.stringify({ date: b.dataset.confirmDay }) }); toast('Hours confirmed ✓'); renderMyHoursMgmt(); }
+    catch (e) { toast(e.message, true); }
+  });
+  $('view').querySelectorAll('[data-dispute-day]').forEach(b => b.onclick = async () => {
+    const note = prompt(`What looks wrong with your hours for ${b.dataset.disputeDay}? (optional)\nYour manager / shift lead will review and correct it.`);
+    if (note === null) return;   // cancelled
+    try { await api('/timeclock/my-hours/dispute', { method: 'POST', body: JSON.stringify({ date: b.dataset.disputeDay, note }) }); toast('Sent to your manager to review'); renderMyHoursMgmt(); }
+    catch (e) { toast(e.message, true); }
+  });
 }
 
 // ── Performance / attendance history for a location (manager review) ──────────

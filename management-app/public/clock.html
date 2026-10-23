@@ -171,8 +171,11 @@ async function punch(action, kind){
   $('actions').hidden = true;
   // Welcome-back (break return) gets the green panel; an over-limit break shows the minutes.
   const cls = res.d.action === 'out' ? 'warn' : (res.d.welcome ? 'ok' : 'info');
-  showPanel(cls, `<span class="big">${escapeHtml(res.d.message)}</span>${res.d.at ? 'at ' + escapeHtml(res.d.at) : ''}`);
-  resetSoon(res.d.over_limit_min ? 10000 : 7000);
+  // A reminder to review/confirm worked hours (shown at end-of-shift clock-out, and at clock-in when a
+  // previous day still isn't signed off). The kiosk is shared, so it just nudges them to use their app.
+  const sub = res.d.hours_prompt ? `<div style="margin-top:.7rem;font-size:1.02rem;line-height:1.4;opacity:.92">📋 ${escapeHtml(res.d.hours_prompt)}</div>` : '';
+  showPanel(cls, `<span class="big">${escapeHtml(res.d.message)}</span>${res.d.at ? 'at ' + escapeHtml(res.d.at) : ''}${sub}`);
+  resetSoon(res.d.over_limit_min ? 10000 : (res.d.hours_prompt ? 11000 : 7000));
 }
 
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }

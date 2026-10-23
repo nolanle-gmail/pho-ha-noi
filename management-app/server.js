@@ -97,6 +97,8 @@ if (require.main === module) {
   try { require('./routes/timeclock').startDayTaskVerifyReminderSweep(); } catch { /* optional */ }
   // Morning (~7 AM local) nudge to re-check tasks assigned in advance (staff may be out that day).
   try { require('./routes/timeclock').startDayTaskMorningRecheckSweep(); } catch { /* optional */ }
+  // Remind staff who finished a day but haven't signed off (confirmed/disputed) their worked hours.
+  try { require('./routes/timeclock').startHoursSignoffReminderSweep(); } catch { /* optional */ }
   // Auto-purge clock-kiosk punch photos older than the retention window (default 90 days).
   try { require('./routes/timeclock').startPunchPhotoPurge(); } catch { /* optional */ }
   // Weekly schedule auto-roll for locations that opted in.
