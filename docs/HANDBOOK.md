@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 22, 2026_
+_Last updated: October 23, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -382,6 +382,16 @@ day's assigned tasks — sent **only if** tasks were assigned that day and some 
 nothing assigned (or all already verified) → no message. One send per location per day
 (`daily_reminders` table); `sweepDayTaskVerifyReminders` runs every 15 min and fires after 9 PM local
 (`DAYTASK_VERIFY_REMIND_HOUR` default 21). Recipients are the manage-cap roles via `locationLeaders`.
+**Schedule a task for a future day (2026-10-23).** The **When** column now carries a **date picker**
+beside the time, so a manager can plan the week ahead — set a specific task up at the start of the week
+and it lands on the staffer's **My Tasks** on that future day. Changing a task's date **moves** it onto
+that day's list (it leaves the day in view); the time picker still applies to the day shown. Backed by
+`PUT /schedule/day-tasks/reschedule` (`from_date` → `to_date`): it carries the assignee and time
+(**dropping the time** if it no longer fits the new day's shift, to be re-picked there), resets the
+task's progress + verification + start-reminder (a fresh occurrence), **rejects a past date** and a day
+that **already has that task**, and notifies the assignee. The start reminder and 9 PM verify sweep are
+per-date, so a future task only reminds on its own day. To run a task a couple of times a week, assign
+it and set each day in turn.
 
 ```mermaid
 erDiagram
