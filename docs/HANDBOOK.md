@@ -511,6 +511,20 @@ manager/shift lead is alerted. A forced/auto/manager clock-out closes any open b
 timesheet gains a **Break min** (and over-limit) column; **worked hours aren't reduced** today (a future
 option can subtract the over-limit minutes — already stored per break).
 
+**End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
+the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
+correct) or **Report issue** (flags it) — plus a banner counting days that still need sign-off. Reporting
+an issue messages the location's **manager + shift lead** (`notifyLeaders`, app + SMS) with the
+clocked-vs-scheduled totals and an optional note, so they review and correct it on the Time Clock /
+Timesheet. State lives on `time_entries` (`hours_confirmed` / `hours_disputed` + `_at`); a day split
+across locations signs off together. Three nudges so nobody forgets: **(1)** the kiosk **clock-out** (end
+of shift) prompts them to review today's hours; **(2)** the next **clock-in** reminds them of any prior
+**unsigned** day (doesn't block the punch); **(3)** `sweepHoursSignoffReminders` sends an in-app message
+to anyone who finished a day without signing off — a prior day right away, today's after the evening
+(`HOURS_SIGNOFF_EVENING_HOUR`, default 20), once per day (`hours_reminded_at`). Reminders are in-app
+(push), not SMS, since it's a routine daily confirmation. Endpoints `POST /timeclock/my-hours/{confirm,dispute}`
+(a staff JWT, or the Staff app via service key + `?as=`).
+
 **Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
 `time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
 filterable by **location or all locations** + a date range. A **Run report** button
