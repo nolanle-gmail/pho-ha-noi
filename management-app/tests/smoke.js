@@ -459,6 +459,27 @@ const check = (name, ok, detail = '') => {
       const alert = _dtdb.prepare("SELECT COUNT(*) c FROM floor_alerts WHERE location_id=? AND target_user_id=? AND body LIKE 'Task reminder:%'").get(loc1, unschedStaff.id).c;
       check('task start-reminder sweep stamps reminded_at + raises an alert', !!after.reminded_at && alert >= 1, JSON.stringify({ reminded: after.reminded_at, alerts: alert }));
     }
+    // ── Reschedule a day task to a future date (manager plans the week ahead) ───────────────────
+    {
+      const rsJob = dt.tasks[3].job_id;
+      const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+      const future = addDays(locToday, 5);
+      // Assign today, then move it to a future day.
+      await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: rsJob, user_id: schedStaff.id }) });
+      let rr = await fetch(base + '/api/schedule/day-tasks/reschedule', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, job_id: rsJob, from_date: locToday, to_date: future }) });
+      check('reschedule an assigned day task to a future date', rr.status === 200, await rr.text());
+      const todayBoard = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${locToday}`, { headers: H(mgr.token) }));
+      check('rescheduled task leaves today’s list', !(todayBoard.tasks.find(t => t.job_id === rsJob) || {}).user_id);
+      const futBoard = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${future}`, { headers: H(mgr.token) }));
+      check('rescheduled task lands on the future day with the same staffer', (futBoard.tasks.find(t => t.job_id === rsJob) || {}).user_id === schedStaff.id, JSON.stringify(futBoard.tasks.find(t => t.job_id === rsJob)));
+      rr = await fetch(base + '/api/schedule/day-tasks/reschedule', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, job_id: rsJob, from_date: future, to_date: addDays(locToday, -3) }) });
+      check('cannot reschedule into the past (400)', rr.status === 400, 'status=' + rr.status);
+      // Conflict: the future day already holds this task, so moving another copy there is rejected.
+      await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: rsJob, user_id: schedStaff.id }) });
+      rr = await fetch(base + '/api/schedule/day-tasks/reschedule', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, job_id: rsJob, from_date: locToday, to_date: future }) });
+      check('cannot reschedule onto a day that already has that task (400)', rr.status === 400, 'status=' + rr.status);
+      _dtdb.prepare("DELETE FROM task_assignments WHERE location_id=? AND job_id=? AND task_date IN (?,?)").run(loc1, rsJob, future, locToday);
+    }
     // ── 9 PM reminder to managers/shift-leads to verify the day's assigned tasks ────────────────
     const tmc = require('../routes/timeclock');
     check('verify-reminder SMS stays within 140 chars', tmc.verifyReminderSms('San Francisco', 29, 29).length <= 140, 'len=' + tmc.verifyReminderSms('San Francisco', 29, 29).length);

@@ -513,6 +513,50 @@ router.put('/day-tasks', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
+// Reschedule an assigned day task from one date to another — so a manager can set up a task for a
+// future day (e.g. plan the week ahead). Moving carries the assignee + time (dropping the time if it
+// no longer fits the new day's shift) and resets any progress/verification, since it's a fresh
+// occurrence. The task then shows on that staffer's My Tasks on the new day.
+router.put('/day-tasks/reschedule', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const jobId = parseInt(req.body.job_id, 10);
+  const fromDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body.from_date || '') ? req.body.from_date : null;
+  const toDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body.to_date || '') ? req.body.to_date : null;
+  if (!locId || !jobId || !fromDate || !toDate) return res.status(400).json({ error: 'location_id, job_id, from_date and to_date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const job = db.prepare(`SELECT id, name, kind FROM jobs WHERE id=? AND is_active=1`).get(jobId);
+  if (!job || job.kind !== 'specific') return res.status(400).json({ error: 'That is not an assignable day task.' });
+  if (!db.prepare(`SELECT 1 FROM location_tasks WHERE location_id=? AND job_id=?`).get(locId, jobId)) {
+    return res.status(400).json({ error: "That task isn't on this location's list." });
+  }
+  const today = localDate(locTz(locId));
+  if (toDate < today) return res.status(400).json({ error: 'Pick today or a future date.' });
+  const existing = db.prepare(`SELECT id, user_id, task_time FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, fromDate, jobId);
+  if (!existing || !existing.user_id) return res.status(400).json({ error: 'Assign the task to someone before scheduling a date.' });
+  if (toDate === fromDate) return res.json({ success: true, to_date: toDate, time: existing.task_time, time_cleared: false });
+  if (db.prepare(`SELECT 1 FROM task_assignments WHERE location_id=? AND task_date=? AND job_id=?`).get(locId, toDate, jobId)) {
+    return res.status(400).json({ error: `“${job.name}” is already on the list for ${toDate}.` });
+  }
+  // Keep the time only if it still falls inside the assignee's shift on the NEW day (an unscheduled
+  // staffer that day has no hours to check, so any time stands); otherwise drop it to re-pick there.
+  let time = existing.task_time;
+  const hadTime = !!time;
+  if (time) {
+    const breaksForShift = db.prepare(`SELECT start_time, end_time FROM shift_breaks WHERE shift_id=? ORDER BY start_time`);
+    const spans = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(existing.user_id, locId, toDate);
+    spans.forEach(s => { s.breaks = breaksForShift.all(s.id); });
+    const fits = spans.length === 0 || spans.some(s => time >= s.start_time && time <= s.end_time
+      && !s.breaks.some(b => time >= b.start_time && time < b.end_time));
+    if (!fits) time = null;
+  }
+  db.prepare(`UPDATE task_assignments SET task_date=?, task_time=?, done=0, started_at=NULL, done_at=NULL,
+      verified=0, verified_by=NULL, verified_at=NULL, reminded_at=NULL, updated_at=datetime('now') WHERE id=?`)
+    .run(toDate, time, existing.id);
+  auditLog(req, 'day_task_reschedule', 'job', jobId, { location_id: locId, from_date: fromDate, to_date: toDate, user_id: existing.user_id, time });
+  try { notify(req.user.id, existing.user_id, 'Task rescheduled', `"${job.name}" is now scheduled for ${toDate}${time ? ` at ${time}` : ''}.`); } catch { /* best-effort */ }
+  res.json({ success: true, to_date: toDate, time, time_cleared: hadTime && !time });
+});
+
 // Manager / shift-lead VERIFICATION: after staff mark a day task Done, a manager reviews and confirms
 // it. A task must be assigned AND done before it can be verified; un-verifying is always allowed.
 router.post('/day-tasks/verify', requireRole(ROLES.MANAGE), (req, res) => {

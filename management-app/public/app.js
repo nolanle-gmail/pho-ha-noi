@@ -4058,6 +4058,9 @@ async function renderLocDayTasks() {
     });
     return out;
   };
+  // A date picker lets a manager schedule the task for a future day (plan the week ahead). Changing it
+  // moves the task onto that day's list (it leaves this day); the time picker below applies to this day.
+  const dateField = (t) => `<input type="date" data-movedate="${t.job_id}" value="${data.date}" min="${data.today || data.date}" title="Day this task is scheduled for" style="margin:0 0 .3rem;padding:.35rem .4rem;max-width:150px;display:block">`;
   const whenCell = (t) => {
     if (!canEdit) return t.task_time ? `<strong>${esc(t.task_time)}</strong>` : '<span style="color:var(--muted)">—</span>';
     if (!t.user_id) return '<span style="color:var(--muted)" title="Assign someone first">—</span>';
@@ -4065,7 +4068,7 @@ async function renderLocDayTasks() {
     // Unscheduled assignee (no shift today) → a free time picker so the manager can still set a start time.
     if (!w) {
       const cur = t.task_time || '';
-      return `<input type="time" data-time="${t.job_id}" value="${esc(cur)}" step="900" style="margin:0;padding:.35rem .4rem;max-width:130px"><div class="job-note">not scheduled — pick any start time</div>`;
+      return `${dateField(t)}<input type="time" data-time="${t.job_id}" value="${esc(cur)}" step="900" style="margin:0;padding:.35rem .4rem;max-width:130px"><div class="job-note">not scheduled that day — pick any start time</div>`;
     }
     const slots = w ? slotOptions(t, w) : [];
     const cur = t.task_time || '';
@@ -4074,7 +4077,7 @@ async function renderLocDayTasks() {
       + (cur && !slots.includes(cur) ? `<option value="${cur}" selected>${f12(tm(cur))} ⚠</option>` : '');
     const brk = w && w.breaks && w.breaks.length ? ` · excl. break ${w.breaks.map(b => `${esc(b.start_time)}–${esc(b.end_time)}`).join(', ')}` : '';
     const note = slots.length ? `within ${esc(w.start_time)}–${esc(w.end_time)}${brk}` : 'no free slots — all taken';
-    return `<select data-time="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:160px">${options}</select><div class="job-note">${note}</div>`;
+    return `${dateField(t)}<select data-time="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:160px">${options}</select><div class="job-note">${note}</div>`;
   };
   // Manager/shift-lead verification: a done task shows a ✓ Verify button; once verified it shows who
   // confirmed it. Staff can't verify — they see "awaiting review" until a manager confirms.
@@ -4125,6 +4128,16 @@ async function renderLocDayTasks() {
     $('locBody').querySelectorAll('[data-time]').forEach(inp => inp.onchange = async () => {
       try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: inp.dataset.time, time: inp.value || null }) }); toast(inp.value ? 'Time set' : 'Time cleared'); renderLocDayTasks(); }
       catch (e) { toast(e.message, true); renderLocDayTasks(); }
+    });
+    // Date picker → schedule this task for another day (it moves off this day's list onto that day's).
+    $('locBody').querySelectorAll('[data-movedate]').forEach(inp => inp.onchange = async () => {
+      const to = inp.value;
+      if (!to || to === data.date) return;
+      try {
+        const r = await api('/schedule/day-tasks/reschedule', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, job_id: inp.dataset.movedate, from_date: data.date, to_date: to }) });
+        toast(`Scheduled for ${fmtDay(to)}${r.time ? ' at ' + r.time : ''}${r.time_cleared ? ' — set a time on that day' : ''}`);
+        renderLocDayTasks();
+      } catch (e) { toast(e.message, true); renderLocDayTasks(); }
     });
     $('locBody').querySelectorAll('[data-done]').forEach(cb => cb.onchange = async () => {
       try { await api('/schedule/day-tasks', { method: 'PUT', body: JSON.stringify({ location_id: S.locDetailId, date: data.date, job_id: cb.dataset.done, done: cb.checked }) }); renderLocDayTasks(); }
