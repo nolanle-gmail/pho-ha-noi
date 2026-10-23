@@ -14,9 +14,9 @@ const LOCATIONS = [
   ['Pho Ha Noi — Palo Alto', '654 University Ave, Palo Alto, CA 94301', 10],
   ['Pho Ha Noi — Berkeley', '987 Shattuck Ave, Berkeley, CA 94704', 9],
   ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St, Fountain Valley, CA 92708', 8],
-  ['Pho Ha Noi — Santa Clara', '753 El Camino Real, Santa Clara, CA 95050', 7],
-  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave, Sunnyvale, CA 94086', 8],
-  ['Pho Ha Noi — Oakland', '426 Broadway, Oakland, CA 94607', 9],
+  ['Pho Ha Noi — San Francisco', '350 Clement St, San Francisco, CA 94118', 7],
+  ['Pho Ha Noi — Daly City', '1901 Junipero Serra Blvd, Daly City, CA 94014', 8],
+  ['Pho Ha Noi — Millbrae', '400 Broadway, Millbrae, CA 94030', 9],
 ];
 
 const PARTIES = [

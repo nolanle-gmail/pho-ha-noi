@@ -77,9 +77,9 @@ const LOCATIONS = [
   ['Pho Ha Noi — Palo Alto', '654 University Ave', 'Palo Alto', 'CA', '94301', '(650) 555-0165', 84, '2023-01-10'],
   ['Pho Ha Noi — Berkeley', '987 Shattuck Ave', 'Berkeley', 'CA', '94704', '(510) 555-0136', 48, '2023-04-01'],
   ['Pho Ha Noi — Fountain Valley', '159 Brookhurst St', 'Fountain Valley', 'CA', '92708', '(714) 555-0117', 70, '2023-07-01'],
-  ['Pho Ha Noi — Santa Clara', '753 El Camino Real', 'Santa Clara', 'CA', '95050', '(408) 555-0158', 62, '2023-10-01'],
-  ['Pho Ha Noi — Sunnyvale', '852 Murphy Ave', 'Sunnyvale', 'CA', '94086', '(408) 555-0149', 58, '2024-02-01'],
-  ['Pho Ha Noi — Oakland', '426 Broadway', 'Oakland', 'CA', '94607', '(510) 555-0170', 72, '2024-06-01'],
+  ['Pho Ha Noi — San Francisco', '350 Clement St', 'San Francisco', 'CA', '94118', '(415) 555-0158', 62, '2023-10-01'],
+  ['Pho Ha Noi — Daly City', '1901 Junipero Serra Blvd', 'Daly City', 'CA', '94014', '(650) 555-0149', 58, '2024-02-01'],
+  ['Pho Ha Noi — Millbrae', '400 Broadway', 'Millbrae', 'CA', '94030', '(650) 555-0170', 72, '2024-06-01'],
 ];
 
 // Weekly hours (index 0=Mon … 6=Sun): [open1, close1, open2, close2] — two service
@@ -541,8 +541,8 @@ function seedStaffProfiles(db, locIds, managerIds) {
   ];
   const CITIES = [
     ['San Jose', '95112'], ['Milpitas', '95035'], ['Cupertino', '95014'], ['Fremont', '94536'],
-    ['Palo Alto', '94301'], ['Berkeley', '94704'], ['Santa Clara', '95050'], ['Sunnyvale', '94086'],
-    ['Oakland', '94607'], ['Fountain Valley', '92708'],
+    ['Palo Alto', '94301'], ['Berkeley', '94704'], ['San Francisco', '94118'], ['Daly City', '94014'],
+    ['Millbrae', '94030'], ['Fountain Valley', '92708'],
   ];
   const STREETS = ['Oak', 'Maple', 'Cedar', 'Pine', 'Elm', 'Willow', 'Lincoln', 'Mission', 'Bascom', 'King', 'Alum Rock', 'Story', 'Tully', 'Berryessa'];
   const FOH_TITLES = ['Server', 'Host', 'Cashier', 'Busser', 'Barista', 'Shift Lead', 'Food Runner'];

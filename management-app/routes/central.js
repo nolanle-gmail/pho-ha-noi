@@ -199,9 +199,9 @@ router.get('/production', requireRole(...A), (req, res) => {
 // ── 4. Fulfillment & logistics ───────────────────────────────────────────────
 // Delivery routes group stores for the trucks servicing them.
 const ROUTES = {
-  'North Bay': ['Berkeley', 'Oakland'],
-  'Peninsula': ['Palo Alto', 'Fremont'],
-  'South Bay': ['San Jose', 'Santa Clara', 'Sunnyvale', 'Cupertino', 'Milpitas'],
+  'North Bay': ['Berkeley'],
+  'Peninsula': ['San Francisco', 'Daly City', 'Millbrae', 'Palo Alto', 'Fremont'],
+  'South Bay': ['San Jose', 'Cupertino', 'Milpitas'],
   'SoCal': ['Fountain Valley'],
 };
 // Drivers can view fulfillment (pick lists / delivery manifests) too, read-only.
