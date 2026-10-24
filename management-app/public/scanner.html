@@ -43,6 +43,11 @@
   .who b{ color:var(--red-dark); }
   .who a{ color:var(--muted); font-size:.82rem; text-decoration:underline; cursor:pointer; }
   .scanmsg{ text-align:center; color:var(--muted); font-size:.9rem; margin:.4rem 0; }
+  /* Phone-camera fallback: live viewfinder + an aiming "scan window" frame. */
+  #reader{ position:relative; width:100%; border-radius:14px; overflow:hidden; background:#0f172a; min-height:230px; margin-bottom:.4rem; }
+  #reader video{ width:100% !important; border-radius:14px; display:block; }
+  .scan-win{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:78%; height:42%; border:3px solid rgba(255,255,255,.95); border-radius:12px; box-shadow:0 0 0 100vmax rgba(15,23,42,.35); pointer-events:none; }
+  .scan-win::after{ content:"Point the barcode here"; position:absolute; left:0; right:0; bottom:-1.6rem; text-align:center; color:#fff; font-size:.78rem; text-shadow:0 1px 3px rgba(0,0,0,.7); }
   .result{ border:1px solid var(--line); border-radius:14px; padding:.9rem; margin-top:.4rem; background:#fff; }
   .result .name{ font-size:1.1rem; font-weight:700; color:var(--ink); }
   .result .sub{ color:var(--muted); font-size:.9rem; margin-top:.15rem; }
@@ -100,9 +105,11 @@
       <div class="who"><span>Scanning as <b id="whoName"></b></span><a id="signout">Not you?</a></div>
       <div class="modes" id="modes"><button class="btn sm primary" data-mode="receive">📥 Receiving</button><button class="btn sm ghost" data-mode="check">📋 Checking Inventory</button></div>
       <div id="shipBar" class="ship-bar" hidden></div>
+      <div id="reader" hidden><div class="scan-win" aria-hidden="true"></div></div>
       <div class="scanmsg" id="scanmsg">📠 Ready — scan a barcode with your scanner.</div>
       <div id="result"></div>
       <div class="manual"><input id="manual" inputmode="numeric" autocomplete="off" placeholder="📠 Scan with your scanner — or type a code" /><button class="btn sm primary" id="manualGo">Go</button></div>
+      <button class="btn sm ghost" id="camToggle" style="display:block;width:100%;margin-top:.6rem">📷 Turn on Phone Scanner</button>
     </div>
 
     <div class="hint" id="hint"></div>
@@ -154,13 +161,43 @@ function startScanner(){
   focusManual();
 }
 const focusManual = () => { const m = $('manual'); if (m) setTimeout(() => { try { m.focus(); } catch {} }, 80); };
-function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = '📠 Ready — scan the next barcode.'; focusManual(); }
+function resume(){ busy = false; $('result').innerHTML = ''; $('scanmsg').textContent = camOn ? 'Point the scan window at the next barcode.' : '📠 Ready — scan the next barcode.'; try { if (qr && camOn) qr.resume(); } catch {} focusManual(); }
 
 async function handleCode(code){
   if (busy) return; busy = true;
+  try { if (qr && camOn) await qr.pause(true); } catch {}
   try { navigator.vibrate && navigator.vibrate(50); } catch {}
   $('scanmsg').textContent = 'Scanned: ' + code;
   await onScanned(code);
+}
+
+// ── Emergency phone-camera scanner (opt-in) ──────────────────────────────
+// Default is the Inateck hardware scanner (keyboard-wedge into #manual). If it's not handy, tap
+// "Turn on Phone Scanner" to decode with the camera. html5-qrcode is lazy-loaded only on first use.
+let _libP = null, qr = null, camOn = false, camStarting = false;
+function loadScanLib(){ if (window.Html5Qrcode) return Promise.resolve(); if (!_libP) _libP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/html5-qrcode.min.js'; s.onload = res; s.onerror = () => { _libP = null; rej(new Error('Scanner library failed to load — check your connection.')); }; document.head.appendChild(s); }); return _libP; }
+const camFormats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+async function camStart(){
+  if (camOn || camStarting) return; camStarting = true; $('camToggle').textContent = '📷 Starting camera…';
+  try {
+    await loadScanLib();
+    $('reader').hidden = false;
+    qr = new Html5Qrcode('reader', { formatsToSupport: camFormats(), verbose: false });
+    // Full-frame decode (no qrbox) for long case labels; plain environment camera (no resolution
+    // constraints — they broke camera-open on iOS).
+    await qr.start({ facingMode: 'environment' }, { fps: 10 }, (code) => handleCode(code), () => {});
+    camOn = true; camStarting = false; $('camToggle').textContent = '📷 Turn off Phone Scanner';
+    $('scanmsg').textContent = 'Point the scan window at a barcode.';
+  } catch (e) {
+    camStarting = false; $('reader').hidden = true; try { if (qr) qr.clear(); } catch {} qr = null;
+    $('camToggle').textContent = '📷 Turn on Phone Scanner';
+    $('scanmsg').innerHTML = '📷 Camera unavailable (' + esc(e && e.message || 'no access') + '). Use your scanner or type a code.';
+  }
+}
+async function camStop(){
+  camOn = false;
+  if (qr) { try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch {} try { qr.clear(); } catch {} qr = null; }
+  $('reader').hidden = true; $('camToggle').textContent = '📷 Turn on Phone Scanner';
 }
 const onScanned = (code) => scanMode === 'ship' ? handleShipOrder(code) : (scanMode === 'transfer' ? handleShip(code) : (scanMode === 'check' ? handleCheck(code) : (scanMode === 'use' ? handleUse(code) : handleScan(code))));
 
@@ -528,6 +565,7 @@ async function start(){
   $('signout').onclick = signOut;
   $('manualGo').onclick = () => { const c = ($('manual').value||'').trim(); if (c){ $('manual').value=''; handleCode(c); focusManual(); } };
   $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') $('manualGo').click(); });
+  $('camToggle').onclick = () => (camOn ? camStop() : camStart());
   $('code').focus();
 }
 start();

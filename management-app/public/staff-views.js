@@ -349,17 +349,19 @@ async function svOpenScanner() {
     <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
     <div class="scan-modes"><button class="btn sm" data-mode="receive">📥 Receiving</button>${isHub ? '<button class="btn sm ghost" data-mode="ship">📤 Shipping</button>' : ''}<button class="btn sm ghost" data-mode="transfer">🔁 Transferring</button><button class="btn sm ghost" data-mode="check">📋 Checking Inventory</button><button class="btn sm ghost" data-mode="use">🍳 Use</button></div>
     <div id="shipBar" class="ship-bar" hidden></div>
+    <div id="scanReader" class="scan-reader" hidden><div class="scan-win" aria-hidden="true"></div></div>
     <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
     <div id="scanPanel"></div>
     <div class="scan-manual"><input id="scanManual" placeholder="📠 Scan with your scanner — or type a code" inputmode="numeric" autocomplete="off"><button class="btn sm" id="scanManualGo">Go</button></div>
+    <button class="btn sm ghost scan-cam-btn" data-camtoggle>📷 Turn on Phone Scanner</button>
   </div>`;
   document.body.appendChild(host);
   // A USB/Bluetooth barcode scanner is a keyboard-wedge: it types the code + Enter. Keep this field
-  // focused so scans land here hands-free (phone, tablet or PC — no camera needed).
+  // focused so scans land here hands-free (phone, tablet or PC). The 📷 button is the camera fallback.
   const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
   setTimeout(focusManual, 60);
-  let busy = false, mode = 'receive', shipStore = null;
-  const close = () => { host.remove(); };
+  let busy = false, mode = 'receive', shipStore = null, cam = null;
+  const close = () => { if (cam) cam.stop(); host.remove(); };
   host.querySelector('[data-x]').onclick = close;
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
   const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
@@ -406,9 +408,10 @@ async function svOpenScanner() {
   host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   const onCode = async (code) => {
     if (busy) return; busy = true;
+    if (cam) await cam.pause();
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? (shipStore ? 'Scan the next item to load.' : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : '📠 Ready — scan the next barcode.')); focusManual(); };
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = mode === 'ship' ? (shipStore ? 'Scan the next item to load.' : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another to check.' : (mode === 'use' ? 'Scan another to record use.' : '📠 Ready — scan the next barcode.')); if (cam) cam.resume(); focusManual(); };
     if (mode === 'ship') await svHandleShipOrder(code, $('scanPanel'), done, shipStore, refreshShip);
     else if (mode === 'transfer') await svHandleShip(code, $('scanPanel'), done, shipTo(), shipToName(), () => {}, 'Transfer');
     else if (mode === 'check') await svHandleCheck(code, $('scanPanel'), done);
@@ -417,6 +420,7 @@ async function svOpenScanner() {
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
   $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
+  cam = attachPhoneScan(host, onCode, $('scanMsg'));   // emergency phone-camera fallback (shared helper from app.js)
 }
 
 // Scan an item to LOAD a line of the picked store's approved order (hub staff). Decrements the hub;

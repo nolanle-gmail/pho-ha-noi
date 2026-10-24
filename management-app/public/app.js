@@ -1311,9 +1311,66 @@ function statusBadge(qty, min) {
 // ── Barcode scanner (hardware scanner → resolve / receive / link / create) ──────
 // Reuses retail UPC/EAN barcodes: scan a product, and it resolves to the item at the
 // active location (or the Central Kitchen). Unknown codes → look up a name (Open Food
-// Facts) and create or link. Input is a USB/Bluetooth barcode scanner (keyboard-wedge)
-// typing into the auto-focused field — no phone camera.
+// Facts) and create or link. The default input is a USB/Bluetooth barcode scanner
+// (keyboard-wedge) typing into the auto-focused field. If the Inateck scanner isn't handy,
+// a "Turn on Phone Scanner" button opens the camera as an emergency fallback (below).
 function invRefresh() { if (S.section === 'central') renderCentral(); else if (S.section === 'warehouse') renderWarehouse(); else if (S.section === 'distribution') renderDistribution(); else if (S.section === 'inventory') render(); }
+
+// ── Emergency phone-camera scanner (opt-in) ─────────────────────────────────────
+// The team scans with the Inateck hardware scanner; but if it's not handy, a staffer taps
+// "Turn on Phone Scanner" to decode with the device camera. The html5-qrcode library is
+// LAZY-LOADED here (only when the camera is actually turned on) so the hardware path never
+// pays its ~375 KB cost and the service-worker install stays light.
+let _scanLibP = null;
+function loadScanLib() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (!_scanLibP) _scanLibP = new Promise((res, rej) => { const s = document.createElement('script'); s.src = '/html5-qrcode.min.js'; s.onload = res; s.onerror = () => { _scanLibP = null; rej(new Error('Scanner library failed to load — check your connection.')); }; document.head.appendChild(s); });
+  return _scanLibP;
+}
+const scanFormats = () => (window.Html5QrcodeSupportedFormats ? [Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E, Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8, Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39, Html5QrcodeSupportedFormats.QR_CODE] : undefined);
+// The markup a scan-card needs for the camera fallback: a hidden viewfinder + a toggle button.
+// Dropped into the card so every scan surface (console, staff app) shares one implementation.
+const PHONE_SCAN_HTML = `<div id="scanReader" class="scan-reader" hidden><div class="scan-win" aria-hidden="true"></div></div>
+  <button class="btn sm ghost scan-cam-btn" data-camtoggle>📷 Turn on Phone Scanner</button>`;
+// Wire the camera fallback into an open scan overlay. `onCode` is the surface's existing code handler;
+// `msg` is the #scanMsg element. Returns { stop, pause, resume, isOn } — the surface pauses the camera
+// while a scan is processed (so it doesn't re-fire) and stops it on close.
+function attachPhoneScan(host, onCode, msg) {
+  const card = host.querySelector('.scan-card');
+  const btn = host.querySelector('[data-camtoggle]');
+  const reader = host.querySelector('#scanReader');
+  if (!btn || !reader) return { stop() {}, pause() {}, resume() {}, isOn: () => false };
+  let qr = null, on = false, starting = false;
+  const setLabel = (t) => { btn.textContent = t; };
+  async function start() {
+    if (on || starting) return;
+    starting = true; setLabel('📷 Starting camera…');
+    try {
+      await loadScanLib();
+      reader.hidden = false; card.classList.add('cam-on');
+      qr = new Html5Qrcode('scanReader', { formatsToSupport: scanFormats(), verbose: false });
+      // Full-frame decode (no qrbox) so long linear GS1-128 case labels fit; plain environment
+      // camera with NO width/height ideal constraints (those broke camera-open on iOS).
+      await qr.start({ facingMode: 'environment' }, { fps: 10 }, (code) => onCode(code), () => { /* per-frame no-op */ });
+      on = true; starting = false; setLabel('📷 Turn off Phone Scanner');
+      if (msg) msg.textContent = 'Point the scan window at a barcode.';
+    } catch (e) {
+      starting = false; reader.hidden = true; card.classList.remove('cam-on');
+      try { if (qr) qr.clear(); } catch { /* ignore */ } qr = null;
+      setLabel('📷 Turn on Phone Scanner');
+      if (msg) msg.innerHTML = `📷 Camera unavailable (${esc((e && e.message) || 'no access')}). Use your scanner or type a code below.`;
+    }
+  }
+  async function stop() {
+    on = false;
+    if (!qr) { reader.hidden = true; card.classList.remove('cam-on'); setLabel('📷 Turn on Phone Scanner'); return; }
+    try { if (qr.getState && qr.getState() === 2) await qr.stop(); } catch { /* not scanning */ }
+    try { qr.clear(); } catch { /* ignore */ }
+    qr = null; reader.hidden = true; card.classList.remove('cam-on'); setLabel('📷 Turn on Phone Scanner');
+  }
+  btn.onclick = () => (on ? stop() : start());
+  return { stop, pause: async () => { try { if (qr && on) await qr.pause(true); } catch { /* ignore */ } }, resume: () => { try { if (qr && on) qr.resume(); } catch { /* ignore */ } }, isOn: () => on };
+}
 
 async function openScanner(opts) {
   // Every location can Receive, Transfer, Check Inventory and Use (consume) stock. The Warehouse &
@@ -1329,17 +1386,19 @@ async function openScanner(opts) {
     <div class="scan-head"><strong>📠 Scan</strong><button class="btn sm ghost" data-x>✕ Close</button></div>
     <div class="scan-modes">${modesHtml}</div>
     <div id="shipBar" class="ship-bar" hidden></div>
+    <div id="scanReader" class="scan-reader" hidden><div class="scan-win" aria-hidden="true"></div></div>
     <div id="scanMsg" class="scan-msg">📠 Ready — scan a barcode with your scanner.</div>
     <div id="scanPanel"></div>
     <div class="scan-manual"><input id="scanManual" placeholder="📠 Scan with your scanner — or type a code" inputmode="numeric" autocomplete="off"><button class="btn sm" id="scanManualGo">Go</button></div>
+    <button class="btn sm ghost scan-cam-btn" data-camtoggle>📷 Turn on Phone Scanner</button>
   </div>`;
   document.body.appendChild(host);
   // A USB/Bluetooth barcode scanner is a keyboard-wedge: it types the code + Enter. Keep this field
-  // focused so scans land here hands-free (laptop, phone or tablet — no camera needed).
+  // focused so scans land here hands-free (laptop, phone or tablet). The 📷 button is the camera fallback.
   const focusManual = () => { const m = $('scanManual'); if (m) { try { m.focus(); } catch { /* ignore */ } } };
   setTimeout(focusManual, 60);
-  let busy = false, mode = 'receive', shipStore = null;   // shipStore = the order (store) being filled
-  const close = () => { host.remove(); if (opts && opts.onClose) { try { opts.onClose(); } catch { /* ignore */ } } };
+  let busy = false, mode = 'receive', shipStore = null, cam = null;   // shipStore = the order (store) being filled; cam = phone-scanner controller
+  const close = () => { if (cam) cam.stop(); host.remove(); if (opts && opts.onClose) { try { opts.onClose(); } catch { /* ignore */ } } };
   host.querySelector('[data-x]').onclick = close;
   const shipTo = () => { const s = $('shipTo'); return s ? s.value : ''; };
   const shipToName = () => { const s = $('shipTo'); return s && s.selectedOptions[0] ? s.selectedOptions[0].textContent : ''; };
@@ -1392,9 +1451,10 @@ async function openScanner(opts) {
   host.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
   const onCode = async (code) => {
     if (busy) return; busy = true;
+    if (cam) await cam.pause();   // freeze the camera (if on) while we process this scan
     try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
     $('scanMsg').textContent = 'Scanned: ' + code;
-    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = (mode === 'ship' || mode === 'pickup') ? (shipStore ? `Scan the next item to ${mode === 'pickup' ? 'pick up' : 'ship'}.` : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : mode === 'use' ? 'Scan another item to record use.' : '📠 Ready — scan the next barcode.'); focusManual(); };
+    const done = () => { busy = false; $('scanPanel').innerHTML = ''; $('scanMsg').textContent = (mode === 'ship' || mode === 'pickup') ? (shipStore ? `Scan the next item to ${mode === 'pickup' ? 'pick up' : 'ship'}.` : 'Pick an order below, then scan its items.') : mode === 'transfer' ? 'Scan the next item to transfer.' : (mode === 'check' ? 'Scan another item to check.' : mode === 'use' ? 'Scan another item to record use.' : '📠 Ready — scan the next barcode.'); if (cam) cam.resume(); focusManual(); };
     if (mode === 'ship' || mode === 'pickup') await handleShipOrder(code, $('scanPanel'), done, shipStore, invLoc(), refreshShip, mode === 'pickup');
     else if (mode === 'transfer') await handleShip(code, $('scanPanel'), done, shipTo(), shipToName(), null, 'Transfer');
     else if (mode === 'check') await handleCheck(code, $('scanPanel'), done);
@@ -1403,6 +1463,7 @@ async function openScanner(opts) {
   };
   $('scanManualGo').onclick = () => { const el = $('scanManual'); const c = (el.value || '').trim(); el.value = ''; if (c) onCode(c); focusManual(); };
   $('scanManual').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); $('scanManualGo').click(); } };
+  cam = attachPhoneScan(host, onCode, $('scanMsg'));   // emergency phone-camera fallback (opt-in button)
   // Pre-open in a specific mode — e.g. "📠 Scan to load" from a hub order detail opens Shipping with
   // the order's store already picked, so the operator can start scanning items onto the truck.
   if (opts && opts.mode) {

@@ -615,6 +615,13 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: 
 .scan-err { color: #b91c1c; padding: .6rem; }
 .scan-card .mono { font-family: ui-monospace, monospace; }
 .scan-card .muted { color: var(--muted, #64748b); }
+/* Phone-camera fallback: the live viewfinder + an aiming "scan window" frame. */
+.scan-reader { position: relative; width: 100%; border-radius: 10px; overflow: hidden; background: #0f172a; min-height: 230px; margin: .4rem 0; }
+.scan-reader video { width: 100% !important; border-radius: 10px; display: block; }
+.scan-win { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 78%; height: 42%; border: 3px solid rgba(255,255,255,.95); border-radius: 12px; box-shadow: 0 0 0 100vmax rgba(15,23,42,.35); pointer-events: none; }
+.scan-win::after { content: "Point the barcode here"; position: absolute; left: 0; right: 0; bottom: -1.6rem; text-align: center; color: #fff; font-size: .78rem; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.scan-cam-btn { display: block; width: 100%; margin-top: .6rem; }
+.scan-card.cam-on .scan-cam-btn { color: var(--red, #b91c1c); }
 
 .scan-gs1 { margin-top: .5rem; padding: .45rem .6rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; font-size: .85rem; color: #1e3a8a; }
 .scan-diff { margin-top: .5rem; padding: .45rem .6rem; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; font-size: .85rem; color: #92400e; }
