@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 23, 2026_
+_Last updated: October 24, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -945,15 +945,25 @@ The **standalone kiosk** (`/scanner/<slug>`) is section-aware: it reads its loca
   production / to serve): decrements the scanned location (FIFO) and logs an `out` transaction.
   `POST /inventory/barcode/use` (console) / `POST /invscan/use` (staff) / `POST /kiosk/:slug/use` (kiosk).
 
-**All scanning is done with a hardware barcode scanner** (e.g. an Inateck Hyper 160 on a USB
-dongle / Bluetooth) — the **phone-camera option was removed** on all three surfaces (console,
-staff app and kiosk) once the team standardized on the handheld scanner. A handheld scanner is a
+**Scanning defaults to a hardware barcode scanner** (e.g. an Inateck Hyper 160 on a USB
+dongle / Bluetooth) — the team standardized on the handheld scanner. A handheld scanner is a
 **keyboard-wedge** (it types the barcode + Enter), so each scan screen is just an **auto-focused**
 barcode field (re-focused after each scan) that feeds the typed/scanned code into the
 resolve → receive/ship/check/use flow. It works the same on a laptop/PC, phone or tablet — a
 Bluetooth scanner pairs with an iPhone/iPad or Android in **HID (keyboard) mode**; the USB dongle
 is for a laptop/PC. No driver or backend change — set the scanner to US-English layout with an
-Enter suffix. (The old `html5-qrcode` camera library is no longer shipped.)
+Enter suffix.
+
+**Emergency phone-camera fallback (opt-in, 2026-10-24).** If the Inateck scanner isn't handy, every
+scan surface has a **"📷 Turn on Phone Scanner"** button. Tapping it opens the device camera with a
+live **viewfinder + a framed "scan window"** to aim at the barcode; it decodes straight into the same
+flow, and tapping again (or closing) turns it off. The hardware/keyboard-wedge field stays the default
+— the camera is off until the button is pressed. The `html5-qrcode` library is **lazy-loaded only when
+the camera is turned on** (so the hardware path and the service-worker install never pay its cost), with
+a full-frame decode, the environment-facing camera, and no resolution constraints (iOS-safe); camera
+access denied → a graceful "Camera unavailable — use your scanner or type a code" message. Wired through
+a shared `attachPhoneScan()` helper (console + Staff app) with mirror copies in the waitlist Staff app
+and the `/scanner` kiosk.
 
 - **Management console** — a **📠 Scan** button on Inventory → Stock and Glossary
   (and in the Central Kitchen, scoped to CK). Uses the JWT inventory API scoped by the
