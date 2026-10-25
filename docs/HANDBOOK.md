@@ -520,13 +520,17 @@ clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager'
 **Breaks (2026-10-22).** Clocking out on the kiosk asks **🍴 Break** or **🏁 End shift**. A break is a
 punch *inside* the shift — it does **not** set the day's `clock_out`, so total worked hours are
 unchanged; each break is logged in `time_entry_breaks` (break-out/in + minutes), and a staffer can
-take several a day. **Clock in** while on break ends it, shows **"Welcome back, \<name\>"**, and if the
-break ran over the **10-minute per-break limit** pops the minutes taken. You **can't end the shift while
-on break** — clock in first. Once a break passes 10 min the staffer is nudged to clock back in (in-app +
-**SMS**) every 5 min until they return or the shift ends; if they're ~20 min over, the location's
-manager/shift lead is alerted. A forced/auto/manager clock-out closes any open break. The payroll
-timesheet gains a **Break min** (and over-limit) column; **worked hours aren't reduced** today (a future
-option can subtract the over-limit minutes — already stored per break).
+take several a day. **Minimum break (2026-10-25):** a staffer must take the **full 10-minute break**
+before they can clock back in — tapping **Clock In** early is **blocked** with a popup telling them how
+many minutes are left (`BREAK_MIN_MIN`, default 10; the kiosk state carries `break_min_left` / `break_ready`
+for a live countdown). **Clock in** once the break is done ends it and shows **"Welcome back, \<name\>"**;
+if the break also ran over the **10-minute limit** it pops the minutes taken. You **can't end the shift
+while on break** — clock in first. **Right at the 10-minute mark** the staffer is messaged (in-app +
+**SMS**) that their break is finished and to clock back in; if they linger it re-nudges every 5 min until
+they return or the shift ends, and ~20 min over the location's manager/shift lead is alerted. A
+forced/auto/manager clock-out closes any open break. The payroll timesheet gains a **Break min** (and
+over-limit) column; **worked hours aren't reduced** today (a future option can subtract the over-limit
+minutes — already stored per break).
 
 **End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
 the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
