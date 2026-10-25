@@ -497,6 +497,16 @@ sweep **auto-purges photos older than 90 days** (override via `PUNCH_PHOTO_RETEN
 runs at startup then daily) so image bytes don't accumulate — the time entries themselves
 (hours) are kept for payroll history.
 
+**Clock tablet setup (for a dedicated clock station).** The in-app wake lock keeps the screen on only
+while the OS allows it, so pair it with the device settings below so the tablet never sleeps and the
+punch-photo camera stays live all day:
+- **Open the store's own clock URL and leave it open:** `/clock/<slug>` — e.g. `pho-ha-noi-management.fly.dev/clock/san-jose`. Each store has its own slug (renamed stores: `san-francisco`, `daly-city`, `millbrae`). Add it to the Home Screen so it opens full-screen with no browser chrome.
+- **Grant the camera once, persistently.** The first time, tap **Allow** when the browser asks for the camera; as an installed/Home-Screen app the permission sticks, so the camera never falls back to the "unavailable" path.
+- **Turn off display auto-sleep.** *iPad:* Settings → Display & Brightness → **Auto-Lock → Never**. *Android:* Settings → Display → **Screen timeout → longest** (and Developer options → **Stay awake while charging**, if available).
+- **Keep it plugged in** (and on Wi-Fi) — it's a wall station; charging also enables the Android "stay awake" option.
+- **Lock staff to the clock page** so it can't be swiped away or sleep mid-shift. *iPad:* **Guided Access** (Settings → Accessibility → Guided Access; triple-click to start). *Android:* **Screen pinning** (Settings → Security → App pinning) or a kiosk-launcher app.
+- **Sanity check:** let the screen sit untouched for a few minutes, wake it, confirm the live camera preview is still showing, then do a test clock-in and verify its **📷 photo** appears on the Time Clock board.
+
 **Shared-kiosk privacy (2026-10-09).** The clock kiosk is a shared tablet, so the moment a staffer
 taps **Continue** (their code is looked up and the Clock In / Out buttons appear) the **employee-code
 field is cleared** — the next person in line never sees the previous staffer's ID. The looked-up code
