@@ -643,9 +643,13 @@ const check = (name, ok, detail = '') => {
     check('clock out for a break starts a break (shift stays open)', bres.success === true && bres.action === 'break_out' && _bdb.prepare("SELECT clock_out FROM time_entries WHERE id=?").get(bEntryId).clock_out === null, JSON.stringify(bres));
     const bstate = await j(await fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: bEmp.employee_code }) }));
     check('kiosk state reports on_break (clock-in only, no clock-out)', bstate.on_break === true && bstate.can_in === true && bstate.can_out === false, JSON.stringify(bstate));
+    check('state shows the break isn’t finished yet (minutes left)', bstate.break_ready === false && bstate.break_min_left >= 1 && bstate.break_min_min === 10, JSON.stringify({ ready: bstate.break_ready, left: bstate.break_min_left }));
     r = await kpunch({ action: 'out', kind: 'shift' });
     check('cannot end the shift while on break (409)', r.status === 409, 'status=' + r.status);
     const brkId = _bdb.prepare("SELECT id FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL").get(bEntryId).id;
+    // Minimum break: clocking in before 10 min is blocked (break stays open; tells them how long is left).
+    const bEarly = await j(await kpunch({ action: 'in' }));
+    check('clock-in before the 10-min break is finished is blocked, with minutes left', bEarly.break_wait === true && bEarly.min_left >= 1 && _bdb.prepare("SELECT break_in_at FROM time_entry_breaks WHERE id=?").get(brkId).break_in_at === null, JSON.stringify({ bw: bEarly.break_wait, left: bEarly.min_left }));
     _bdb.prepare("UPDATE time_entry_breaks SET break_out_at=? WHERE id=?").run(new Date(Date.now() - 12 * 60000).toISOString(), brkId);
     require('../routes/timeclock').sweepBreakReturnReminders();
     check('break-return reminder fires once past the 10-min limit', _bdb.prepare("SELECT reminded_10 FROM time_entry_breaks WHERE id=?").get(brkId).reminded_10 === 1);

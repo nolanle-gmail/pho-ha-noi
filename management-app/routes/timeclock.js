@@ -23,6 +23,9 @@ const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
 // ── Break rules ──────────────────────────────────────────────────────────────
 const BREAK_LIMIT_MIN = parseInt(process.env.BREAK_LIMIT_MIN || '', 10) || 10;   // allowed minutes per break
+// Minimum break: a staffer must stay on break at least this long before they can clock back in (they
+// can't shortchange the break). Defaults to the limit, so the break is exactly ~10 min.
+const BREAK_MIN_MIN = parseInt(process.env.BREAK_MIN_MIN || '', 10) || BREAK_LIMIT_MIN;
 const BREAK_NUDGE_MIN = parseInt(process.env.BREAK_NUDGE_MIN || '', 10) || 5;    // re-nudge cadence once over
 const BREAK_ESCALATE_OVER_MIN = parseInt(process.env.BREAK_ESCALATE_OVER_MIN || '', 10) || 20; // minutes over the limit → tell the lead
 // Close any still-open break on an entry (used when a shift is clocked out while on break — e.g. a
@@ -188,7 +191,10 @@ router.post('/kiosk/:slug/state', kioskThrottle, (req, res) => {
     clocked_in: clockedIn, on_break: onBreak,
     since: clockedIn ? localTime(ctx.tz, new Date(ctx.open.clock_in)) : null,
     break_since: onBreak ? localTime(ctx.tz, new Date(ctx.openBreak.break_out_at)) : null,
-    break_limit_min: BREAK_LIMIT_MIN,
+    break_limit_min: BREAK_LIMIT_MIN, break_min_min: BREAK_MIN_MIN,
+    // While on break, how long is left before they can clock in (minimum break), and whether it's done.
+    break_min_left: onBreak ? Math.max(0, Math.ceil((BREAK_MIN_MIN * 60000 - (Date.now() - new Date(ctx.openBreak.break_out_at).getTime())) / 60000)) : null,
+    break_ready: onBreak ? (Date.now() - new Date(ctx.openBreak.break_out_at).getTime()) >= BREAK_MIN_MIN * 60000 : null,
     // On break → the only action is to clock back in; on the clock → can clock out (break or end shift).
     can_in: !clockedIn || onBreak, can_out: clockedIn && !onBreak,
   });
@@ -221,7 +227,17 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
     // Returning from a break → close the open break, not a new shift. "Welcome back" + over-limit notice.
     if (ctx.openBreak) {
       const b = ctx.openBreak;
-      const mins = Math.max(0, Math.round((now.getTime() - new Date(b.break_out_at).getTime()) / 60000));
+      const elapsedMs = now.getTime() - new Date(b.break_out_at).getTime();
+      // Minimum break: block clock-in until the full break has been taken; tell them how long is left.
+      if (elapsedMs < BREAK_MIN_MIN * 60000) {
+        const minLeft = Math.max(1, Math.ceil((BREAK_MIN_MIN * 60000 - elapsedMs) / 60000));
+        return res.json({
+          break_wait: true, name: staff.name, min_left: minLeft, break_min_min: BREAK_MIN_MIN,
+          message: `Please finish your break first, ${staff.name} — ${minLeft} more minute${minLeft === 1 ? '' : 's'} to go before you can clock back in.`,
+          at: localTime(tz, now),
+        });
+      }
+      const mins = Math.max(0, Math.round(elapsedMs / 60000));
       const over = Math.max(0, mins - BREAK_LIMIT_MIN);
       db.prepare(`UPDATE time_entry_breaks SET break_in_at=?, minutes=?, over_limit_min=? WHERE id=?`).run(now.toISOString(), mins, over, b.id);
       savePunchPhoto(ctx.open.id, 'break_in', req.body && req.body.photo);
@@ -274,7 +290,7 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
       db.prepare(`INSERT INTO time_entry_breaks (time_entry_id, user_id, location_id, break_out_at) VALUES (?,?,?,?)`)
         .run(ctx.open.id, staff.id, loc.id, now.toISOString());
       savePunchPhoto(ctx.open.id, 'break_out', req.body && req.body.photo);
-      return res.json({ success: true, action: 'break_out', message: `On break, ${staff.name} — clock back in within ${BREAK_LIMIT_MIN} minutes.`, break_limit_min: BREAK_LIMIT_MIN, at: localTime(tz, now) });
+      return res.json({ success: true, action: 'break_out', message: `On break, ${staff.name} — take your full ${BREAK_MIN_MIN}-minute break, then clock back in.`, break_limit_min: BREAK_LIMIT_MIN, break_min_min: BREAK_MIN_MIN, at: localTime(tz, now) });
     }
     // kind === 'shift' → end the shift (same early-out confirm as before).
     let reason = null;
@@ -1235,15 +1251,18 @@ function sweepBreakReturnReminders({ breakId = null } = {}) {
     for (const b of open) {
       const tz = b.timezone || DEFAULT_TZ;
       const elapsed = Math.floor((now - new Date(b.break_out_at).getTime()) / 60000);
-      if (elapsed < BREAK_LIMIT_MIN) continue;
+      if (elapsed < BREAK_MIN_MIN) continue;   // not done with the minimum break yet
       // Stop nudging the staffer once the shift's scheduled end has passed (a leader handles it then).
       const endRow = db.prepare(`SELECT MAX(end_time) AS e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(b.user_id, b.location_id, b.work_date);
       const pastEnd = endRow && endRow.e ? localMinutesOfDay(tz, new Date(now)) > hhmmToMin(endRow.e) : elapsed > 90;
       if (!pastEnd) {
         const sinceNudge = b.last_nudge_at ? (now - new Date(b.last_nudge_at).getTime()) / 60000 : Infinity;
         if (!b.reminded_10 || sinceNudge >= BREAK_NUDGE_MIN) {
-          const body = `Your ${BREAK_LIMIT_MIN}-min break is up — please clock back in. You've been on break ${elapsed} min.`;
-          raiseStaffAlert(b.location_id, b.user_id, body, 'Break over');
+          // First nudge (right at the minimum) = "your break is finished, clock in"; repeats if they linger.
+          const body = b.reminded_10
+            ? `You're still on break (${elapsed} min) — please clock back in.`
+            : `Your ${BREAK_MIN_MIN}-minute break is finished — please clock back in now.`;
+          raiseStaffAlert(b.location_id, b.user_id, body, b.reminded_10 ? 'Break over' : 'Break finished');
           if (smsEnabled() && b.phone) { try { sendSms(b.phone, body).catch(() => {}); } catch { /* */ } }
           db.prepare(`UPDATE time_entry_breaks SET reminded_10=1, last_nudge_at=datetime('now') WHERE id=?`).run(b.id);
         }

@@ -169,9 +169,11 @@ async function lookup(){
   staffCode = code;
   $('code').value = '';
   const info = d.on_break
-    ? `You’re on break since ${escapeHtml(d.break_since)} — tap Clock In when you’re back (within ${d.break_limit_min || 10} min).`
+    ? (d.break_ready
+        ? `Your break is finished — tap Clock In to get back to work.`
+        : `You’re on break since ${escapeHtml(d.break_since)} — finish your ${d.break_min_min || 10}-minute break first. About ${d.break_min_left} more minute${d.break_min_left === 1 ? '' : 's'} before you can clock in.`)
     : d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.';
-  showPanel('info', `<span class="big">${escapeHtml(d.greeting)}</span>${info}`);
+  showPanel(d.on_break && !d.break_ready ? 'warn' : 'info', `<span class="big">${escapeHtml(d.greeting)}</span>${info}`);
   $('actions').hidden = false;
   $('clockIn').textContent = d.on_break ? 'Clock In (back from break)' : 'Clock In';
   $('clockIn').disabled = !d.can_in;
@@ -197,6 +199,8 @@ async function punch(action, kind){
   const body = { employee_code: code, action, photo }; if (kind) body.kind = kind;
   let res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify(body) });
   if (res.d && res.d.choose){ showClockOutChoice(); return; }   // break vs end-of-shift
+  // Tried to clock in before the minimum break is over → tell them how long is left, keep them on break.
+  if (res.d && res.d.break_wait){ $('actions').hidden = true; showPanel('warn', `<span class="big">⏳ Finish your break</span>${escapeHtml(res.d.message)}`); resetSoon(9000); return; }
   if (res.d && res.d.confirm){
     if (!confirm(res.d.message)) return;   // staff must accept the warning
     res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) });
