@@ -481,7 +481,14 @@ staffer clocks **in or out** (a `getUserMedia` frame → ~40 KB JPEG), stored pe
 `time_entry_photos` (`kind` = in/out, image `bytes` in the DB, like task photos) to deter
 buddy-punching. It's **best-effort** — if the camera is unavailable or access is denied, the
 punch still succeeds without a photo, so a broken camera never blocks a shift. The kiosk
-shows a live preview and the notice *"A photo is taken when you clock in or out."* Managers
+shows a live preview and the notice *"A photo is taken when you clock in or out."*
+**Camera keep-alive (2026-10-24).** The clock station is a wall tablet left open all day, so the
+camera is kept running the whole time the page is open: a ~4 s **watchdog** re-acquires the stream
+whenever it drops (screen sleep, the OS reclaiming the camera, a track ending) or the page returns to
+the foreground, and the page holds a **screen wake lock** so the tablet doesn't sleep in the first
+place (re-requested on visibility, since locks release when hidden). `startCamera()` is
+idempotent/restartable; a hard permission denial pauses the interval retries (a foreground change still
+retries once). Still best-effort. Managers
 review them two ways: a **📷 thumbnail on each Time Clock board entry** (in and out), and a
 **📷 per-staff drill-in on the Timesheet report** showing that person's punches over the
 range. Photos serve JWT-protected and location-scoped via `GET /api/timeclock/photo/:id`;
