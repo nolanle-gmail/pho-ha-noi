@@ -97,15 +97,49 @@ const slug = decodeURIComponent(location.pathname.replace(/^\/clock\/?/, '')).tr
 function tick(){ const n=new Date(); $('now').textContent = n.toLocaleDateString(undefined,{weekday:'long',month:'short',day:'numeric'}) + ' · ' + n.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'}); }
 setInterval(tick, 1000); tick();
 
-// Punch-photo camera (best-effort: a broken/denied camera never blocks clocking).
-let camStream = null;
+// Punch-photo camera (best-effort: a broken/denied camera never blocks clocking). The clock station
+// is a wall tablet left open all day, so we KEEP the camera alive: a watchdog re-acquires the stream
+// whenever it drops (screen sleep, the OS reclaiming the camera, a track ending, or the tab coming
+// back to the foreground), and a screen wake lock keeps the tablet from sleeping in the first place.
+let camStream = null, camStarting = false, camDenied = false;
 async function startCamera(){
+  if (camStarting) return;
+  if (camStream && camStream.getVideoTracks().some(t => t.readyState === 'live')) return;   // already live
+  camStarting = true;
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-    camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
-    const v = $('cam'); v.srcObject = camStream; $('camWrap').hidden = false; $('camNote').hidden = false;
-  } catch { camStream = null; $('camWrap').hidden = true; }   // no camera / denied → clock still works
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { camStarting = false; return; }
+    try { if (camStream) camStream.getTracks().forEach(t => t.stop()); } catch {}   // drop a stale stream first
+    const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width:{ideal:640}, height:{ideal:480} }, audio:false });
+    camStream = s; camDenied = false;
+    const v = $('cam'); v.srcObject = s; $('camWrap').hidden = false; $('camNote').hidden = false;
+    try { await v.play(); } catch {}
+    // If a track ends (sleep / OS reclaim / unplug), clear it so the watchdog brings it back.
+    s.getVideoTracks().forEach(t => { t.onended = () => { camStream = null; }; });
+  } catch (e) {
+    camStream = null; $('camWrap').hidden = true;   // no camera / denied → clock still works
+    // A hard permission denial won't recover by hammering getUserMedia, so pause the interval retries
+    // (a foreground/visibility change still retries once, in case the permission was fixed).
+    if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) camDenied = true;
+  } finally { camStarting = false; }
 }
+// Every few seconds, if the page is visible, make sure the camera is still live (re-acquire if it
+// dropped) and the preview is actually playing. Cheap when healthy — it only acts when something broke.
+function startCameraWatchdog(){
+  setInterval(() => {
+    if (document.visibilityState !== 'visible' || camDenied) return;
+    const v = $('cam');
+    const live = camStream && camStream.getVideoTracks().some(t => t.readyState === 'live');
+    if (!live) startCamera();
+    else if (v && v.paused) { try { v.play(); } catch {} }
+  }, 4000);
+}
+// Keep the wall tablet's screen awake so it doesn't sleep (which is what kills the camera). The lock is
+// released automatically when the page is hidden, so we re-request it when the page becomes visible.
+let wake = null;
+async function keepAwake(){ try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { keepAwake(); camDenied = false; startCamera(); }
+});
 function capturePhoto(){
   try {
     const v = $('cam'); if (!camStream || !v || !v.videoWidth) return null;
@@ -194,7 +228,9 @@ async function start(){
   document.title = `Clock — ${d.display}`;
   $('loc').textContent = d.display;
   $('kiosk').hidden = false;
-  startCamera();   // begin the punch-photo preview (best-effort)
+  startCamera();          // begin the punch-photo preview (best-effort)
+  startCameraWatchdog();  // keep it alive all day (re-acquire if it drops)
+  keepAwake();            // hold a screen wake lock so the tablet doesn't sleep
   $('hint').textContent = 'Enter your 6-digit employee code to clock in or out.';
   $('go').onclick = lookup;
   $('code').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
