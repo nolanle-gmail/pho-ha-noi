@@ -2,6 +2,7 @@
 // (the Management app calls this server-to-server) — no guest/staff tokens. Read-only.
 const express = require('express');
 const db = require('../db/database');
+const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -81,6 +82,21 @@ router.put('/seat-match', (req, res) => {
   db.prepare(`UPDATE waitlist SET status='seated', seated_at=datetime('now'), table_number=COALESCE(?, table_number) WHERE id=? AND status='waiting'`).run(table, w.id);
   try { require('../lib/events').emitWaitlist(w.location_id); } catch { /* bus optional */ }
   res.json({ ok: true, matched: true, id: w.id });
+});
+
+// Mark a waiting party LEFT — called by the Management waitlist watchdog when it auto-clears a guest
+// who's clearly walked off (waited past the threshold, or plenty of tables free but still waiting).
+// Service-key auth; idempotent (only flips a row that's still 'waiting'); logs the reason + broadcasts
+// so every waitlist board drops the guest at once.
+router.put('/left/:id', (req, res) => {
+  const w = db.prepare(`SELECT id, location_id, status, guest_name, party_size FROM waitlist WHERE id=?`).get(req.params.id);
+  if (!w) return res.status(404).json({ ok: false, error: 'not found' });
+  if (w.status === 'waiting') {
+    db.prepare(`UPDATE waitlist SET status='left' WHERE id=? AND status='waiting'`).run(w.id);
+    const reason = (req.body && req.body.reason) ? String(req.body.reason).slice(0, 160) : 'auto: waited past the limit';
+    auditLog(req, w.location_id, 'party_left', w.id, { guest: w.guest_name, party_size: w.party_size, reason, by: 'Waitlist watchdog' });
+  }
+  res.json({ ok: true, status: 'left' });
 });
 
 module.exports = router;

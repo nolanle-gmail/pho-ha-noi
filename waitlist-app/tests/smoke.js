@@ -204,6 +204,18 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     check('seat-match with no matching name → matched:false (no-op)', r.status === 200 && (await j(r)).matched === false);
     r = await fetch(base + '/api/wl-feed/seat-match', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location_id: loc, guest_name: 'x' }) });
     check('seat-match without service key → 401', r.status === 401, 'status=' + r.status);
+    // wl-feed/left/:id (service key) — the Management watchdog auto-clears a guest who walked off.
+    const lv = await j(await fetch(base + '/api/waitlist/', { method: 'POST', headers: H(token), body: JSON.stringify({ location_id: loc, guest_name: 'LeftSync Party', party_size: 2 }) }));
+    r = await fetch(base + '/api/wl-feed/left/' + lv.id, { method: 'PUT', headers: svcK, body: JSON.stringify({ reason: 'weekday — waited 40 min' }) });
+    check('wl-feed left via service key marks the party left (200)', r.status === 200 && (await j(r)).status === 'left', 'status=' + r.status);
+    const w3 = await j(await fetch(base + `/api/waitlist/?location_id=${loc}`, { headers: H(token) }));
+    check('auto-left party drops off the waitlist board', !w3.some(p => p.id === lv.id));
+    const lvAudit = await j(await fetch(base + `/api/wl-feed/history?location_id=${loc}&status=left`, { headers: svcK }));
+    check('auto-left party is recorded as left', (lvAudit.guests || []).some(g => g.id === lv.id));
+    r = await fetch(base + '/api/wl-feed/left/99999999', { method: 'PUT', headers: svcK, body: '{}' });
+    check('wl-feed left unknown id → 404', r.status === 404, 'status=' + r.status);
+    r = await fetch(base + '/api/wl-feed/left/' + lv.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    check('wl-feed left without service key → 401', r.status === 401, 'status=' + r.status);
 
     // ── PWA: installable Staff app (manifest + service worker + icons) ─────
     const mani = await fetch(base + '/manifest.webmanifest');
