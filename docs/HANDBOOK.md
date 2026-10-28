@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 24, 2026_
+_Last updated: October 27, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -299,14 +299,22 @@ to `seated` (idempotent) and emits a waitlist event so the Front Desk board upda
 waitlist board filters `status='waiting'`, so the guest drops off all of them; the public live list
 (`/checkin/<slug>/current`) also refreshes every **5 s** (was 15 s, then 8 s) so it clears promptly.
 
-**Waitlist watchdog — alert Nha Le past 30 min (2026-10-22).** Staff sometimes forget to clear guests
-who already left, so a party can sit on the waitlist for hours. Management-app `lib/waitlistMonitor.js`
-(`startWaitlistMonitor`, booted in `server.js`) reads the live waitlist — `GET ${WAITLIST_URL}/api/wl-feed/active`
-over the shared service key — every **5 min**, and for any party `waiting` longer than **30 min**
-(`WAITLIST_OVER_MIN`) sends **Nha Le** (the fulfilment contact, `name LIKE 'Nha Le%'`) an app message
-**and** an SMS (≤140 chars), grouped by location. It alerts **once per guest** — a `waitlist_over30_alerts`
-row keyed by the waitlist entry id dedupes — and **never removes** a guest; a person checks the table and
-clears them. Rows older than 7 days are swept so a returning entry id can re-alert.
+**Waitlist watchdog — auto-mark-left (2026-10-27).** Guests often leave without staff clearing them, so a
+party can sit on the waitlist for hours. Management-app `lib/waitlistMonitor.js` (`startWaitlistMonitor`,
+booted in `server.js`) reads the live waitlist — `GET ${WAITLIST_URL}/api/wl-feed/active` over the shared
+service key — every **5 min** and **auto-marks a waiting party `left`** when they've clearly walked off:
+- **Weekday:** waited **more than 35 min** (`WAITLIST_LEAVE_WEEKDAY_MIN`). **Weekend (Sat/Sun):** **more
+  than 45 min** (`WAITLIST_LEAVE_WEEKEND_MIN`). Weekend is decided in the **location's own timezone**.
+- **Any day, availability fast path:** when the restaurant has **≥ 30 %** of its tables free
+  (`WAITLIST_LEAVE_AVAIL_PCT`) **and** the guest has waited **≥ 30 min** (`WAITLIST_LEAVE_AVAIL_WAIT_MIN`)
+  — plenty of seating is open but they're still waiting ⇒ they're gone. Availability comes from the same
+  live floor picture as the Floor Plan (`routes/floorplan.js` `buildFloorplan`, `summary.available/tables`).
+
+Removal is cross-app: the monitor calls the Waitlist app's new **`PUT /api/wl-feed/left/:id`** (service
+key), which flips a still-`waiting` row to `left`, logs `party_left` (reason + `by: Waitlist watchdog`)
+and broadcasts so every board drops the guest at once. After a sweep, **Nha Le** (`name LIKE 'Nha Le%'`)
+gets **one app message** listing who was cleared and why — **app only, no SMS** (owner's call). Thresholds
+are all env-tunable; the decision logic (`evaluateParties`) is pure/injectable for tests.
 
 ```mermaid
 erDiagram
