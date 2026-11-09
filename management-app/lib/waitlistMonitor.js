@@ -1,7 +1,7 @@
 // Waitlist watchdog: guests often leave without staff clearing them, so a party can sit on the waitlist
 // for ages. Every few minutes this reads the live waitlist (from the Waitlist app over the shared service
 // key) and AUTO-MARKS a party 'left' when they've clearly walked off:
-//   • weekday: waited MORE THAN WEEKDAY_MIN (35 min)     • weekend: waited MORE THAN WEEKEND_MIN (45 min)
+//   • weekday: waited MORE THAN WEEKDAY_MIN (25 min)     • weekend: waited MORE THAN WEEKEND_MIN (30 min)
 //   • OR, any day, when the restaurant has at least AVAIL_PCT (30%) of its tables free AND they've waited
 //     AVAIL_WAIT_MIN (30 min) — plenty of seating is open but they're still waiting ⇒ they're gone.
 // It then sends Nha Le (the fulfilment contact) a single APP message listing who was cleared (no SMS).
@@ -11,8 +11,8 @@ const { DEFAULT_TZ } = require('../lib/tz');
 
 const WL_URL = (process.env.WAITLIST_URL || 'https://pho-ha-noi-waitlist.fly.dev').replace(/\/+$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
-const WEEKDAY_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKDAY_MIN || '', 10) || 35;
-const WEEKEND_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKEND_MIN || '', 10) || 45;
+const WEEKDAY_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKDAY_MIN || '', 10) || 25;
+const WEEKEND_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKEND_MIN || '', 10) || 30;
 const AVAIL_PCT = parseInt(process.env.WAITLIST_LEAVE_AVAIL_PCT || '', 10) || 30;
 const AVAIL_WAIT_MIN = parseInt(process.env.WAITLIST_LEAVE_AVAIL_WAIT_MIN || '', 10) || 30;
 
