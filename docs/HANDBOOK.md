@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: October 27, 2026_
+_Last updated: November 9, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -303,8 +303,8 @@ waitlist board filters `status='waiting'`, so the guest drops off all of them; t
 party can sit on the waitlist for hours. Management-app `lib/waitlistMonitor.js` (`startWaitlistMonitor`,
 booted in `server.js`) reads the live waitlist — `GET ${WAITLIST_URL}/api/wl-feed/active` over the shared
 service key — every **5 min** and **auto-marks a waiting party `left`** when they've clearly walked off:
-- **Weekday:** waited **more than 35 min** (`WAITLIST_LEAVE_WEEKDAY_MIN`). **Weekend (Sat/Sun):** **more
-  than 45 min** (`WAITLIST_LEAVE_WEEKEND_MIN`). Weekend is decided in the **location's own timezone**.
+- **Weekday:** waited **more than 25 min** (`WAITLIST_LEAVE_WEEKDAY_MIN`). **Weekend (Sat/Sun):** **more
+  than 30 min** (`WAITLIST_LEAVE_WEEKEND_MIN`). Weekend is decided in the **location's own timezone**.
 - **Any day, availability fast path:** when the restaurant has **≥ 30 %** of its tables free
   (`WAITLIST_LEAVE_AVAIL_PCT`) **and** the guest has waited **≥ 30 min** (`WAITLIST_LEAVE_AVAIL_WAIT_MIN`)
   — plenty of seating is open but they're still waiting ⇒ they're gone. Availability comes from the same
