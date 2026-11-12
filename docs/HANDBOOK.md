@@ -1916,7 +1916,9 @@ action asks for an employee code before it fires** (so a passer-by can't tap one
 validated against Management (`POST /api/wl-staff/validate`, service key — employee codes live there),
 requiring an **active host/floor-capable staffer at that location**, and the action is audited to that
 person's name. **Board joins skip the join confirmation text** (the guest watches the board) and make the
-**mobile number optional**. Backed by `GET /api/public/board/:slug` and `POST /api/public/board-action`;
+**mobile number optional** — but **Notify still texts** the guest ("your table is ready, see the host")
+and stamps them paged (🔔) whenever they left a number, exactly like the Front Desk notify, so a guest who
+stepped away is still called back. Backed by `GET /api/public/board/:slug` and `POST /api/public/board-action`;
 board joins are exempt from the strict per-guest check-in cap (a busy host adds many from one tablet).
 **Which link is the board:** the board is now the **default** at every store's own waitlist link —
 **`/checkin/<slug>/`** and **`/checkin?loc=<id>`** (and the kept alias `/checkin/<slug>/board`). The
