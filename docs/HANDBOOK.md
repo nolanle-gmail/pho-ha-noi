@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 11, 2026_
+_Last updated: November 12, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1920,6 +1920,12 @@ number optional**; the regular `/checkin` kiosks are unchanged. Backed by `GET /
 and `POST /api/public/board-action`; board joins are exempt from the strict per-guest check-in cap (a
 busy host adds many from one tablet). **Scoped by the URL** — only a tablet pointed at `…/board` gets it,
 so rollout to other stores is just opening their own `/checkin/<slug>/board`.
+**Tablet/iPad fit (2026-11-12):** on a tablet (≥760px) the board **locks to one screen** — the logo
+header is trimmed and the Join form + footer stay put while **only the "Who's waiting" queue scrolls**,
+so a busy night (12+ parties) never scrolls the whole page or pushes the Join form off the top. The
+**Options popup is a centered action sheet** (not an inline dropdown), so a bottom-row menu can't be
+clipped at the screen edge or inside the scrolling list, and the buttons are larger touch targets. On
+phones the board keeps normal full-page scrolling.
 
 ### Staff app (PWA)
 
