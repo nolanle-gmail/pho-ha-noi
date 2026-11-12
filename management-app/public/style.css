@@ -195,6 +195,10 @@ td.sched-name { font-size: .86rem; }
 .sched-alllocs { margin-top: .1rem; font-size: .72rem; font-weight: 600; color: var(--muted); }
 .sched-alllocs.over { color: var(--out, #b91c1c); }
 .sched-name-row { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* Position group dividers: staff rows in the schedule are grouped by job title for roster-building. */
+.sched-role-group td { background: var(--gold-soft, #fff7ed); border-top: 2px solid var(--gold-strong, #d1a054); padding: .32rem .55rem !important; }
+.sched-role-group .srg-title { font-weight: 800; font-size: .82rem; color: var(--ink); letter-spacing: .01em; }
+.sched-role-group .srg-count { margin-left: .5rem; font-size: .72rem; color: var(--muted); font-weight: 600; }
 /* Read/unread eye: solid when the staffer has opened their schedule, dimmed + slashed when not. */
 .sched-seen { position: relative; display: inline-block; margin-left: auto; font-size: .95rem; line-height: 1; cursor: default; }
 .sched-seen.unread { opacity: .4; }

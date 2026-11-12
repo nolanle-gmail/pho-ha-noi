@@ -2193,14 +2193,17 @@ seven days):
   deliberate.
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
-- **Staff rows are ordered by the job they're assigned** (not account order), front-of-house
-  leadership first through the kitchen and cleanup: **Shift Lead / Lead → Host →
-  Server / Back Server / Food Runner → Barista / Bartender → Busser → Dishwasher →
-  Line Cook (incl. Pho / Nuong / Cuon / Expo) → Clean up / Clean Up LB**, then **everything
-  else**, alphabetical by name within a tier. A row's rank is the **highest-priority job
-  across that person's shifts at this location** in the current view (Week or Day); someone
-  with **no job assigned** falls back to their **account role**. Month view is a calendar,
-  not staff rows, so the ordering applies to Week and Day.
+- **Staff rows are grouped by position**, so a manager builds the week role-by-role. Each
+  staffer sits under their **profile job title** (Server, Line Cook, Host …) — or their
+  **account role** when no title is set — and a **labelled divider row** (e.g. **Shift Lead ·
+  3 people**) heads each group. Groups run management first, then front-of-house through the
+  kitchen: **General Manager / Manager → Shift Lead → Host / Front Desk / Cashier →
+  Food Runner / Server → Barista / Bartender → Busser → Dishwasher → Line / Grill / Prep /
+  Broth Cook (incl. Pho / Nuong / Cuon / Expo) / Kitchen Assistant → everything else**,
+  alphabetical by name within a group. The grouping uses the person's **stable job title**
+  (not the per-shift job), so it works even on a brand-new **empty week** before any shift is
+  assigned — which is exactly when a manager sets the roster up. Headers are hidden when the
+  **Position** filter narrows to a single group; Month view is a calendar, not staff rows.
 - Each work shift is a **colour-coded block** — the whole block takes the assigned job's
   colour (white text), and every job keeps the **same colour everywhere**, so roles are
   easy to tell apart at a glance across the grid. A multi-job shift uses the first job's
@@ -2240,7 +2243,8 @@ seven days):
     `manage` cap) can **Approve** or **Reject** each request **inline** — approving writes
     the leave shifts and re-renders the schedule on the spot, without switching to Messages
     → Requests. (An all-location approver's list is scoped to the store being viewed.)
-  - **Role** — show only one role (the dropdown lists the roles present at this location).
+  - **Position** — show only one job title (the dropdown lists the positions present at this
+    location, in the same group order as the rows).
   - A **Clear** button resets the filters, and a totals chip on the right reads
     **"Showing *N* of *M* · *X* hrs · $*Y*"** for the staff currently shown.
 - **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,

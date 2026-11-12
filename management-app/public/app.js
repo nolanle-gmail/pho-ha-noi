@@ -3500,7 +3500,7 @@ function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%
 // first tier that matches wins, so more specific tiers are listed before broader ones.
 const SCHED_ROLE_ORDER = [
   ['shift lead', 'lead', 'leader'],                                                     // 1 Shift lead / Lead
-  ['host'],                                                                             // 2 Host
+  ['host', 'front desk', 'frontdesk', 'cashier', 'register'],                           // 2 Host / Front Desk / Cashier
   ['server', 'back service', 'back server', 'food runner', 'runner', 'waiter', 'waitstaff', 'serve', 'food'], // 3 Server / Back Server / Food Runner
   ['barista', 'bartender', 'backbar'],                                                  // 4 Barista / Bartender
   ['busser', 'bus'],                                                                    // 5 Busser / Bus
@@ -3516,6 +3516,15 @@ function schedJobRank(name) {
     if (SCHED_ROLE_ORDER[i].some(k => n.includes(k))) return i + 1;
   }
   return 99;                                                    // everything else, after
+}
+// Order scheduling GROUPS (a staffer's job title — Server, Line Cook, Host … — or their
+// account role when no title is set) for roster-building: management first, then the
+// front-of-house → kitchen → support order from SCHED_ROLE_ORDER, with anything
+// unrecognised last. Lets the weekly/day schedule group staff by position, leads on top.
+function schedGroupRank(label) {
+  const n = String(label || '').toLowerCase().trim();
+  if (/general manager|assistant manager|\bmanager\b|\bgm\b/.test(n)) return 0;   // management up top
+  return schedJobRank(n);                                       // 1..8 operational, 99 = everything else
 }
 const shiftWorkedHours = (s) => isLeaveShift(s) ? 0 : shiftHours(s.start_time, s.end_time);
 // Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
@@ -3615,19 +3624,6 @@ async function renderLocSchedule() {
   const workedAll = (st) => sumHours(allShifts(st));                   // worked hours across all locations
   const paidAll = (st) => workedAll(st) + sumPaidLeaveHours(allShifts(st));
   const otherLocCount = (st) => new Set(allShifts(st).filter(s => !inThisLoc(s)).map(s => s.location_id)).size;
-  // Sort key for a staff row: the highest-priority job they're assigned at THIS
-  // location in view (leads first … cleanup last; unlisted jobs sort after as
-  // "everything else"). Only when they have no job assigned here do we fall back to
-  // their account role — so an assigned "everything else" job still sorts last.
-  const staffJobRank = (st) => {
-    const jobbed = hereShifts(st).filter(s => !isLeaveShift(s) && (s.jobs || []).length);
-    if (jobbed.length) {
-      let best = 99;
-      for (const s of jobbed) for (const j of s.jobs) { const r = schedJobRank(j.name); if (r < best) best = r; }
-      return best;
-    }
-    return schedJobRank([st.role, roleLabel(st.role)].join(' '));   // no assigned job → use role
-  };
   const cell = (st, day) => {
     const dayShifts = st.shifts.filter(s => s.shift_date === day);
     const here = dayShifts.filter(s => String(s.location_id) === String(data.location.id));
@@ -3687,18 +3683,27 @@ async function renderLocSchedule() {
     return `<span class="sched-seen ${st.schedule_seen ? 'read' : 'unread'}" title="${esc(title)}" aria-label="${st.schedule_seen ? 'Schedule viewed' : 'Schedule not viewed'}">👁️</span>`;
   };
 
-  // Roles present at this location (for the role filter), and the client-side
-  // filtered list of staff to actually show.
-  const rolesPresent = [...new Set(data.staff.map(s => s.role))].sort();
-  if (F.role && !rolesPresent.includes(F.role)) F.role = '';   // role no longer here
+  // Position (job title) each staffer rosters under — Server, Line Cook, Host … —
+  // falling back to their account role when no title is set. Drives both the group
+  // headers and the Position filter.
+  const groupLabel = (st) => (st.job_title && String(st.job_title).trim()) || roleLabel(st.role);
+  const grpRank = (st) => schedGroupRank(groupLabel(st));
+  // Positions present here, ordered the same as the groups (leadership → front-of-house
+  // → kitchen → support), for the Position filter dropdown.
+  const positionsPresent = [...new Set(data.staff.map(groupLabel))]
+    .sort((a, b) => schedGroupRank(a) - schedGroupRank(b) || a.localeCompare(b));
+  if (F.role && !positionsPresent.includes(F.role)) F.role = '';   // that position is no longer here
   const hasLeaveHere = (st) => hereShifts(st).some(isLeaveShift);   // any leave (PTO / sick / unpaid) in view
   let shownStaff = data.staff;
-  if (F.role) shownStaff = shownStaff.filter(s => s.role === F.role);
+  if (F.role) shownStaff = shownStaff.filter(s => groupLabel(s) === F.role);     // filter by position
   if (F.timeOff) shownStaff = shownStaff.filter(hasLeaveHere);                  // only staff on leave this view
   else if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0); // scheduled at this location
-  // Order rows by assigned job (leads first … cleanup last, everything else after),
-  // then alphabetically by name within the same tier.
-  shownStaff = shownStaff.slice().sort((a, b) => staffJobRank(a) - staffJobRank(b) || (a.name || '').localeCompare(b.name || ''));
+  // Order the shown staff by position group, then alphabetically by name (group
+  // headers are inserted below).
+  shownStaff = shownStaff.slice().sort((a, b) =>
+    grpRank(a) - grpRank(b)
+    || groupLabel(a).localeCompare(groupLabel(b))
+    || (a.name || '').localeCompare(b.name || ''));
   const totH = shownStaff.reduce((t, s) => t + paidHere(s), 0);
   const totLeave = shownStaff.reduce((t, s) => t + leaveHere(s), 0);
   const totPay = shownStaff.reduce((t, s) => t + paidHere(s) * (Number(s.hourly_rate) || 0), 0);
@@ -3729,6 +3734,26 @@ async function renderLocSchedule() {
   const dayLabel = () => { const d = S.schedDay, wd = WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]; return `${wd}, <strong>${fmtDay(d)}</strong>, ${d.slice(0, 4)}${d === data.today ? ' · <span class="badge blue">Today</span>' : ''}`; };
   const weekLabel = `Week of <strong>${fmtDay(days[0])}</strong> – <strong>${fmtDay(days[6])}</strong>, ${days[6].slice(0, 4)}`;
 
+  // Staff rows, grouped by position: a divider header precedes each new job-title group
+  // so a manager building a fresh week reads the roster position-by-position (leads →
+  // servers → cooks → …). Headers are skipped when only one group is in view.
+  const multiGroup = new Set(shownStaff.map(groupLabel)).size > 1;
+  let _grp = null;
+  const staffRows = shownStaff.map(st => {
+    const gl = groupLabel(st);
+    let header = '';
+    if (multiGroup && gl !== _grp) {
+      _grp = gl;
+      const n = shownStaff.filter(s => groupLabel(s) === gl).length;
+      header = `<tr class="sched-role-group"><td colspan="${colspan}"><span class="srg-title">${esc(gl)}</span><span class="srg-count">${n} ${n === 1 ? 'person' : 'people'}</span></td></tr>`;
+    }
+    return header + `<tr>
+        <td class="sched-name"><div class="sched-name-row"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
+          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}${seenEye(st)}</div>${nameTotal(st)}</td>
+        ${viewDays.map(d => cell(st, d)).join('')}
+      </tr>`;
+  }).join('');
+
   $('locBody').innerHTML = `
     <div class="row-between sched-head">
       <div class="week-nav">
@@ -3750,7 +3775,7 @@ async function renderLocSchedule() {
       <label class="chk" title="Show only shifts at this location; hide shifts staff work at other locations."><input type="checkbox" id="fThisLoc" ${F.thisLocOnly ? 'checked' : ''}/> This location only</label>
       <label class="chk" title="Show total hours and pay under each name."><input type="checkbox" id="fShowPay" ${F.showPay ? 'checked' : ''}/> Show hours &amp; pay</label>
       <label class="chk" title="Show only staff scheduled as time off (PTO, Paid Sick Leave or Unpaid Time Off), and list pending time-off requests awaiting approval."><input type="checkbox" id="fTimeOff" ${F.timeOff ? 'checked' : ''}/> Time off &amp; requests</label>
-      <label class="sched-filter-role">Role <select id="fRole"><option value="">All roles</option>${rolesPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
+      <label class="sched-filter-role">Position <select id="fRole"><option value="">All positions</option>${positionsPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
       ${anyFilter ? '<button class="btn sm ghost" id="fClear" title="Clear all filters">Clear</button>' : ''}
       <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid leave (Paid Sick Leave + PTO); Unpaid Time Off is not counted">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} paid leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
     </div>
@@ -3759,11 +3784,7 @@ async function renderLocSchedule() {
       <th class="sched-name">Staff</th>
       ${viewDays.map((d) => `<th class="${d === (data.today || todayIso()) ? 'is-today' : ''}">${WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7]}<div class="sched-date">${fmtDay(d)}</div></th>`).join('')}
     </tr></thead><tbody>
-      ${shownStaff.length ? shownStaff.map(st => `<tr>
-        <td class="sched-name"><div class="sched-name-row"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
-          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}${seenEye(st)}</div>${nameTotal(st)}</td>
-        ${viewDays.map(d => cell(st, d)).join('')}
-      </tr>`).join('') : `<tr><td colspan="${colspan}" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
+      ${shownStaff.length ? staffRows : `<tr><td colspan="${colspan}" class="empty">${data.staff.length ? 'No staff match the current filters. <button class="btn sm ghost" id="fClear2">Clear filters</button>' : 'No staff assigned to this location. Add or assign staff in the Staff section first.'}</td></tr>`}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.6rem;font-size:.8rem">Complexity: <span class="badge ok">low</span> <span class="badge blue">medium</span> <span class="badge low">high</span>. Limits: <strong>${DAILY_MAX}h/day</strong>, <strong>${WEEKLY_MAX}h/week</strong> — over-limit shifts are flagged ⚠ (approve an exception when editing). Click a shift to edit; use + to add.</p>`;
 
