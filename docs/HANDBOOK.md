@@ -1907,19 +1907,22 @@ shows phone numbers**. It's backed by the public
 Jose is `san-jose`). This is the link a guest gets in their **join-confirmation text**
 (below), so they can open it on their phone and see who's ahead of them.
 
-**Front-desk BOARD — `/checkin/<slug>/board` (2026-11-11, piloting on Berkeley).** A shared host-stand
-screen with the **Join form on the left and the live "Who's waiting" list on the right**, so guests can
-see who's ahead of them while staff run the list from the same screen. The list is a simple numbered
-list — **position · full guest name · party size (e.g. `3p`) · an Options button** — and **never shows a
-phone number**. **Options → Notify / Seat / Left**, and **each action asks for an employee code before it
-fires** (so a passer-by can't tap one by accident); the code is validated against Management
-(`POST /api/wl-staff/validate`, service key — employee codes live there), requiring an **active
-host/floor-capable staffer at that location**, and the action is audited to that person's name.
-**Board joins skip the join confirmation text** (the guest watches the board) and make the **mobile
-number optional**; the regular `/checkin` kiosks are unchanged. Backed by `GET /api/public/board/:slug`
-and `POST /api/public/board-action`; board joins are exempt from the strict per-guest check-in cap (a
-busy host adds many from one tablet). **Scoped by the URL** — only a tablet pointed at `…/board` gets it,
-so rollout to other stores is just opening their own `/checkin/<slug>/board`.
+**Front-desk BOARD — the per-location waitlist link (piloted on Berkeley 2026-11-11, rolled out to all
+stores 2026-11-12).** A shared host-stand screen with the **Join form on the left and the live "Who's
+waiting" list on the right**, so guests can see who's ahead of them while staff run the list from the
+same screen. The list is a simple numbered list — **position · full guest name · party size (e.g. `3p`) ·
+an Options button** — and **never shows a phone number**. **Options → Notify / Seat / Left**, and **each
+action asks for an employee code before it fires** (so a passer-by can't tap one by accident); the code is
+validated against Management (`POST /api/wl-staff/validate`, service key — employee codes live there),
+requiring an **active host/floor-capable staffer at that location**, and the action is audited to that
+person's name. **Board joins skip the join confirmation text** (the guest watches the board) and make the
+**mobile number optional**. Backed by `GET /api/public/board/:slug` and `POST /api/public/board-action`;
+board joins are exempt from the strict per-guest check-in cap (a busy host adds many from one tablet).
+**Which link is the board:** the board is now the **default** at every store's own waitlist link —
+**`/checkin/<slug>/`** and **`/checkin?loc=<id>`** (and the kept alias `/checkin/<slug>/board`). The
+**`/checkin/<slug>/current`** link stays the **read-only** public live list, and a bare `/checkin` with no
+store named still restores a saved check-in or shows the location picker. Rolling out to a new store is
+nothing more than pointing its host-stand tablet at its own `/checkin/<slug>/`.
 **Tablet/iPad fit (2026-11-12):** on a tablet (≥760px) the board **locks to one screen** — the logo
 header is trimmed and the Join form + footer stay put while **only the "Who's waiting" queue scrolls**,
 so a busy night (12+ parties) never scrolls the whole page or pushes the Join form off the top. The
