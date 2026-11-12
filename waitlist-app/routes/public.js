@@ -22,6 +22,9 @@ const checkinLimiter = rateLimit({
   max: num(process.env.CHECKIN_MAX, 20),
   key: (req) => 'checkin|' + (req.ip || (req.socket && req.socket.remoteAddress) || 'unknown'),
   message: 'You have added several parties recently. Please ask the host if you need another.',
+  // A host-operated front-desk board adds many parties from one tablet, so exempt board joins from the
+  // strict per-guest cap (they're still covered by the generic public limiter above).
+  skip: (req) => !!(req.body && req.body.board),
 });
 
 // Current wait at a location: parties ahead × the location's average turn time.
@@ -83,10 +86,13 @@ router.post('/checkin', checkinLimiter, (req, res) => {
   if (!name) return res.status(400).json({ error: 'Please enter your name.' });
   const size = Math.max(1, Math.min(50, parseInt(req.body.party_size, 10) || 2));
   const phone = (req.body.phone || '').toString().trim().slice(0, 40) || null;
-  // Mobile number is now REQUIRED on self check-in (guests must give a number so we can text them).
-  if (!phone || (phone.match(/\d/g) || []).length < 10) return res.status(400).json({ error: 'A valid mobile number is required.' });
-  // Providing the required number on a self check-in is the opt-in to table-status texts.
-  const smsConsent = 1;
+  // Front-desk BOARD joins skip the join confirmation text (the guest watches the board) and make the
+  // mobile number OPTIONAL. A regular self check-in still REQUIRES a number so we can text them.
+  const board = !!(req.body && req.body.board);
+  if (!board && (!phone || (phone.match(/\d/g) || []).length < 10)) return res.status(400).json({ error: 'A valid mobile number is required.' });
+  if (board && phone && (phone.match(/\d/g) || []).length < 10) return res.status(400).json({ error: 'That mobile number doesn’t look right — leave it blank or fix it.' });
+  // A provided number is the opt-in to table-status texts; no number → we can't text (host calls them).
+  const smsConsent = phone ? 1 : 0;
   const notes = (req.body.notes || '').toString().trim().slice(0, 300) || null; // special requests
   // Duplicate-submit guard: if an identical party is already waiting here (double
   // tap, page reload, back button), return that entry instead of a second one.
@@ -110,8 +116,9 @@ router.post('/checkin', checkinLimiter, (req, res) => {
       .run(locId, 'party_added', 'waitlist', r.lastInsertRowid, JSON.stringify({ guest: name.slice(0, 120), party_size: size, source: 'self' }));
   } catch { /* audit is best-effort */ }
   try { require('../lib/events').emitWaitlist(locId); } catch { /* live-push best-effort */ }
-  // Text the guest a join confirmation with their spot + a link to the live waitlist — only if they opted in.
-  if (phone && smsConsent) {
+  // Text the guest a join confirmation with their spot + a link to the live waitlist — only if they opted
+  // in AND this isn't a board join (board guests watch their name on the screen, so no join text).
+  if (!board && phone && smsConsent) {
     const pos = s.parties_ahead + 1;
     const wait = s.quoted_minutes > 0 ? `about ${s.quoted_minutes} min` : 'a short wait';
     const base = (process.env.WAITLIST_PUBLIC_URL || ('https://' + (req.get('host') || 'pho-ha-noi-waitlist.fly.dev'))).replace(/\/+$/, '');
@@ -140,6 +147,90 @@ router.get('/position/:ref', (req, res) => {
     quoted_minutes: position != null ? Math.max(0, position - 1) * (location ? location.avg_turn_minutes : 3) : 0,
     location: location ? location.name : '',
   });
+});
+
+// ── Front-desk BOARD (/checkin/<slug>/board) ─────────────────────────────────
+// A shared host-stand screen: guests watch who's ahead, staff run the list. The list carries the FULL
+// guest name + party size (never the phone). Staff actions go through /board-action, gated by an
+// employee code so a passer-by can't tap one by accident.
+const MGMT_URL = (process.env.MGMT_URL || 'http://localhost:4001').replace(/\/+$/, '');
+const SVC_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const locBySlug = (slug) => db.prepare(`SELECT id, name, avg_turn_minutes FROM locations WHERE is_active=1`).all()
+  .find(l => norm(slugify(l.name)) === norm(slug));
+
+// The waiting list for the board: order, FULL name, party size, how long they've waited (no phone).
+router.get('/board/:slug', (req, res) => {
+  const loc = locBySlug(req.params.slug);
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const rows = db.prepare(`SELECT id, guest_name, party_size, phone, notified_at,
+      CAST((julianday('now') - julianday(created_at)) * 1440 AS INTEGER) AS waited_min
+    FROM waitlist WHERE location_id=? AND status='waiting' ORDER BY created_at ASC, id ASC`).all(loc.id);
+  const parties = rows.map((w, i) => ({
+    id: w.id, position: i + 1, name: String(w.guest_name || 'Guest').slice(0, 80),
+    party_size: w.party_size, waiting_min: Math.max(0, w.waited_min || 0),
+    has_phone: !!w.phone, notified: !!w.notified_at,
+  }));
+  res.json({ location: { id: loc.id, name: loc.name, slug: norm(req.params.slug) }, count: parties.length,
+    quoted_minutes: parties.length * (loc.avg_turn_minutes || 3), parties });
+});
+
+// A board action (notify / seat / left) — validated by an employee code (checked against Management,
+// where codes live) before it fires. Rate-limited by the shared public limiter above.
+router.post('/board-action', async (req, res) => {
+  const loc = locBySlug((req.body && req.body.slug) || '');
+  if (!loc) return res.status(404).json({ error: 'Location not found.' });
+  const action = ['notify', 'seat', 'left'].includes(req.body && req.body.action) ? req.body.action : null;
+  if (!action) return res.status(400).json({ error: 'Unknown action.' });
+  const pid = parseInt(req.body && req.body.party_id, 10);
+  const code = String((req.body && req.body.employee_code) || '').trim();
+  if (!pid || !code) return res.status(400).json({ error: 'Pick a guest and enter your employee code.' });
+  // Verify the employee code with Management (service-key, server-to-server).
+  let v = { ok: false };
+  try {
+    const r = await fetch(`${MGMT_URL}/api/wl-staff/validate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': SVC_KEY },
+      body: JSON.stringify({ employee_code: code, location_id: loc.id }),
+    });
+    v = await r.json().catch(() => ({ ok: false }));
+  } catch { v = { ok: false, reason: 'offline' }; }
+  if (!v.ok) {
+    const msg = v.reason === 'notfound' ? 'Employee code not recognized.'
+      : v.reason === 'role' ? 'That code isn’t allowed to manage the waitlist.'
+      : v.reason === 'location' ? 'That code isn’t for this location.'
+      : 'Couldn’t verify that employee code — please try again.';
+    return res.status(403).json({ error: msg });
+  }
+  const w = db.prepare(`SELECT * FROM waitlist WHERE id=? AND location_id=?`).get(pid, loc.id);
+  if (!w) return res.status(404).json({ error: 'That guest is no longer on the list.' });
+  if (w.status !== 'waiting') return res.status(409).json({ error: `That guest is already ${w.status}.` });
+  const by = v.name || 'Staff';
+  const audit = (act, detail) => {
+    try { db.prepare(`INSERT INTO audit_log (user_id, user_name, user_role, location_id, action, entity, entity_id, detail) VALUES (NULL,?,?,?,?,?,?,?)`)
+      .run(by, v.role || null, loc.id, act, 'waitlist', w.id, JSON.stringify(detail)); } catch { /* best-effort */ }
+  };
+  const bump = () => { try { require('../lib/events').emitWaitlist(loc.id); } catch { /* */ } };
+
+  if (action === 'notify') {
+    const canText = !!(w.phone && w.sms_consent);
+    const short = String(loc.name || '').replace('Pho Ha Noi — ', '');
+    const body = `Hi ${String(w.guest_name || '').trim()}, your table at ${short} is ready! Please see the host to be seated.`;
+    notifyGuest(w.id, canText ? w.phone : null, body, 'ready');
+    audit('party_notified', { guest: w.guest_name, by, channel: canText ? 'sms' : 'none' });
+    bump();
+    return res.json({ ok: true, action, texted: canText, by });
+  }
+  if (action === 'seat') {
+    db.prepare(`UPDATE waitlist SET status='seated', seated_at=datetime('now') WHERE id=? AND status='waiting'`).run(w.id);
+    audit('party_seated', { guest: w.guest_name, party_size: w.party_size, by });
+    bump();
+    return res.json({ ok: true, action, by });
+  }
+  // left
+  db.prepare(`UPDATE waitlist SET status='left' WHERE id=? AND status='waiting'`).run(w.id);
+  audit('party_left', { guest: w.guest_name, party_size: w.party_size, by });
+  bump();
+  return res.json({ ok: true, action, by });
 });
 
 module.exports = router;

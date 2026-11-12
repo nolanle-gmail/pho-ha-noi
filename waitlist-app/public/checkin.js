@@ -14,13 +14,16 @@ async function api(path, opts = {}) {
 
 const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null };
 
-// Route: /checkin/<slug> is the join form; /checkin/<slug>/current is the public
-// live waitlist (who's waiting, in order) linked from the confirmation text.
+// Route: /checkin/<slug> is the join form; /checkin/<slug>/current is the public live waitlist;
+// /checkin/<slug>/board is the front-desk board (join form + staff-run list, side by side).
 const ROUTE = (() => {
   const raw = decodeURIComponent(location.pathname.replace(/^\/checkin\/?/, '')).toLowerCase().replace(/\/+$/, '');
-  const current = raw === 'current' || raw.endsWith('/current');
-  const slug = current ? raw.replace(/\/?current$/, '').replace(/\/+$/, '') : raw;
-  return { current, slug };
+  const board = raw === 'board' || raw.endsWith('/board');
+  const current = !board && (raw === 'current' || raw.endsWith('/current'));
+  let slug = raw;
+  if (board) slug = raw.replace(/\/?board$/, '').replace(/\/+$/, '');
+  else if (current) slug = raw.replace(/\/?current$/, '').replace(/\/+$/, '');
+  return { board, current, slug };
 })();
 
 function stopPolling() { if (K.pollTimer) { clearInterval(K.pollTimer); K.pollTimer = null; } }
@@ -182,9 +185,147 @@ async function startCurrent() {
   K.pollTimer = setInterval(renderCurrent, 5000);   // refresh fast so a new guest / a seated party drops on/off within seconds
 }
 
-// Boot: the public live-list route, a restored check-in, or the join form.
+// ── Front-desk board (/checkin/<slug>/board): join form + the staff-run waiting list ──────────────
+async function startBoard() {
+  try { K.locations = await api('/locations'); }
+  catch (e) { KV().innerHTML = `<div class="k-card"><div class="k-big">Unavailable</div><p class="k-note">${esc(e.message)}</p></div>`; return; }
+  const chosen = K.locations.find(l => normSlug(l.slug) === normSlug(ROUTE.slug));
+  if (!chosen) { KV().innerHTML = `<div class="k-card"><div class="k-big">Location not found</div></div>`; return; }
+  K.loc = String(chosen.id); K.boardName = (chosen.name || '').replace('Pho Ha Noi — ', '');
+  document.body.classList.add('board-mode');
+  const subEl = document.querySelector('.kiosk-sub'); if (subEl) subEl.textContent = K.boardName;
+  renderBoard();
+  stopPolling();
+  K.pollTimer = setInterval(refreshBoardList, 5000);
+}
+const normSlug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function renderBoard() {
+  KV().innerHTML = `
+    <div class="k-board">
+      <div class="k-card k-board-join">
+        <div class="k-sub2">Join the waitlist</div>
+        <label class="k-label">Your name</label>
+        <input id="bName" class="k-input" placeholder="e.g. Kim" autocomplete="off" />
+        <label class="k-label">Party size</label>
+        <div class="k-stepper"><button type="button" id="bMinus">−</button><span id="bSize">${K.size}</span><button type="button" id="bPlus">+</button></div>
+        <label class="k-label">Mobile number <span class="k-opt">(optional)</span></label>
+        <input id="bPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="off" />
+        <div class="k-err" id="bErr"></div>
+        <button class="k-btn" id="bJoin">Join the waitlist</button>
+        <div class="k-ok" id="bOk"></div>
+      </div>
+      <div class="k-card k-board-list">
+        <div class="k-sub2">Who's waiting <span id="bCount" class="k-count"></span></div>
+        <div id="bList"><div class="k-note">Loading…</div></div>
+      </div>
+    </div>`;
+  const setSize = () => { $('bSize').textContent = K.size; };
+  $('bPlus').onclick = () => { K.size = Math.min(50, K.size + 1); setSize(); };
+  $('bMinus').onclick = () => { K.size = Math.max(1, K.size - 1); setSize(); };
+  $('bJoin').onclick = boardJoin;
+  refreshBoardList();
+}
+
+async function boardJoin() {
+  const err = $('bErr'), ok = $('bOk'); err.textContent = ''; ok.textContent = '';
+  const name = $('bName').value.trim();
+  if (!name) { err.textContent = 'Please enter the guest’s name.'; return; }
+  const phone = $('bPhone').value.trim();
+  if (phone && (phone.match(/\d/g) || []).length < 10) { err.textContent = 'That mobile number doesn’t look right — leave it blank or fix it.'; return; }
+  $('bJoin').disabled = true;
+  try {
+    await api('/checkin', { method: 'POST', body: JSON.stringify({ location_id: K.loc, guest_name: name, party_size: K.size, phone: phone || null, board: true }) });
+    $('bName').value = ''; $('bPhone').value = ''; K.size = 2; $('bSize').textContent = K.size;
+    ok.textContent = `Added ${name} — you're on the board.`;
+    setTimeout(() => { if ($('bOk')) $('bOk').textContent = ''; }, 4000);
+    refreshBoardList();
+  } catch (e) { err.textContent = e.message; }
+  finally { if ($('bJoin')) $('bJoin').disabled = false; }
+}
+
+async function refreshBoardList() {
+  const box = $('bList'); if (!box) return;
+  // Don't repaint while a staffer has the Options menu or the employee-code prompt open (it would
+  // wipe the menu out from under them). The next poll picks the list back up once they're done.
+  if (document.querySelector('.k-codemodal') || document.querySelector('.k-optmenu')) return;
+  let d; try { d = await api('/board/' + encodeURIComponent(ROUTE.slug)); }
+  catch { return; }
+  if (!$('bList')) return;
+  $('bCount').textContent = d.count ? `· ${d.count}` : '';
+  if (!d.parties.length) { box.innerHTML = '<div class="k-note">No one is waiting right now.</div>'; return; }
+  box.innerHTML = d.parties.map(p => `<div class="k-brow">
+      <span class="k-bpos">${p.position}.</span>
+      <span class="k-bname">${esc(p.name)}</span>
+      <span class="k-bsize">${p.party_size}p</span>
+      ${p.notified ? '<span class="k-bnote">🔔</span>' : ''}
+      <button class="k-bopt" data-id="${p.id}" data-name="${esc(p.name)}">Options</button>
+    </div>`).join('');
+  box.querySelectorAll('.k-bopt').forEach(b => b.onclick = () => openOptions(b.dataset.id, b.dataset.name, b));
+}
+
+// Tapping Options shows Notify / Seat / Left; choosing one asks for an employee code before it fires.
+function openOptions(id, name, btn) {
+  closeOptions();
+  const menu = document.createElement('div'); menu.className = 'k-optmenu';
+  menu.innerHTML = `<button data-act="notify">🔔 Notify</button><button data-act="seat">🪑 Seat</button><button data-act="left">🚪 Left</button><button data-act="cancel" class="k-optcancel">Cancel</button>`;
+  btn.parentNode.appendChild(menu);
+  menu.querySelectorAll('button').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    const act = b.dataset.act; closeOptions();
+    if (act !== 'cancel') askCodeAndAct(id, name, act);
+  });
+}
+function closeOptions() { document.querySelectorAll('.k-optmenu').forEach(m => m.remove()); }
+
+function askCodeAndAct(id, name, action) {
+  const label = { notify: 'Notify', seat: 'Seat', left: 'mark Left' }[action];
+  const host = document.createElement('div'); host.className = 'k-codemodal';
+  host.innerHTML = `<div class="k-codecard">
+      <div class="k-codeh">${esc(label)} — <strong>${esc(name)}</strong></div>
+      <p class="k-note">Enter your employee code to confirm.</p>
+      <input id="kCode" class="k-input" inputmode="numeric" autocomplete="off" placeholder="Employee code" />
+      <div class="k-err" id="kCodeErr"></div>
+      <div class="k-coderow"><button class="k-btn ghost" id="kCodeCancel">Cancel</button><button class="k-btn" id="kCodeGo">Confirm</button></div>
+    </div>`;
+  document.body.appendChild(host);
+  const code = host.querySelector('#kCode'); setTimeout(() => { try { code.focus(); } catch { /* */ } }, 50);
+  const close = () => host.remove();
+  host.querySelector('#kCodeCancel').onclick = close;
+  host.onclick = (e) => { if (e.target === host) close(); };
+  const go = async () => {
+    const c = code.value.trim();
+    if (!c) { host.querySelector('#kCodeErr').textContent = 'Enter your employee code.'; return; }
+    host.querySelector('#kCodeGo').disabled = true; host.querySelector('#kCodeErr').textContent = '';
+    try {
+      const r = await api('/board-action', { method: 'POST', body: JSON.stringify({ slug: ROUTE.slug, party_id: id, action, employee_code: c }) });
+      close();
+      const msg = action === 'notify' ? (r.texted ? `Texted ${name} — table ready.` : `${name} marked ready (no phone — please call them).`)
+        : action === 'seat' ? `${name} seated.` : `${name} marked left.`;
+      boardToast(msg);
+      refreshBoardList();
+    } catch (e) {
+      host.querySelector('#kCodeErr').textContent = e.message;
+      host.querySelector('#kCodeGo').disabled = false;
+    }
+  };
+  host.querySelector('#kCodeGo').onclick = go;
+  code.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+}
+
+function boardToast(msg) {
+  let t = document.querySelector('.k-toast');
+  if (!t) { t = document.createElement('div'); t.className = 'k-toast'; document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(boardToast._t); boardToast._t = setTimeout(() => t.classList.remove('show'), 3500);
+}
+document.addEventListener('click', (e) => { if (!e.target.closest('.k-optmenu') && !e.target.closest('.k-bopt')) closeOptions(); });
+
+// Boot: the front-desk board, the public live-list route, a restored check-in, or the join form.
 const savedRef = sessionStorage.getItem('phnw_ref');
-if (ROUTE.current) {
+if (ROUTE.board) {
+  startBoard();
+} else if (ROUTE.current) {
   startCurrent();
 } else if (savedRef) {
   api('/position/' + savedRef).then(p => {

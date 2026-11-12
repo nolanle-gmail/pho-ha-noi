@@ -4,9 +4,10 @@
 // or every request will look like it comes from the proxy.
 const buckets = new Map(); // key -> { count, resetAt }
 
-function rateLimit({ windowMs = 60000, max = 60, key, message = 'Too many requests — please slow down and try again shortly.' } = {}) {
+function rateLimit({ windowMs = 60000, max = 60, key, message = 'Too many requests — please slow down and try again shortly.', skip } = {}) {
   const keyOf = key || ((req) => req.ip || (req.socket && req.socket.remoteAddress) || 'unknown');
   return (req, res, next) => {
+    if (skip && skip(req)) return next();   // exempt (e.g. a host-operated front-desk board join)
     const now = Date.now();
     const k = keyOf(req);
     let b = buckets.get(k);

@@ -5,6 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>Pho Ha Noi — Check In</title>
   <link rel="stylesheet" href="/style.css" />
+  <style>
+    /* Front-desk board (/checkin/<slug>/board): join form + staff-run list, side by side. */
+    .board-mode .kiosk { max-width: 920px; }
+    .k-board { display: grid; gap: 14px; grid-template-columns: 1fr; width: 100%; }
+    @media (min-width: 760px) { .k-board { grid-template-columns: 0.88fr 1.12fr; align-items: start; } }
+    .k-board .k-card { text-align: left; }
+    .k-sub2 { font-weight: 700; font-size: 1.08rem; margin-bottom: .5rem; color: #1f2937; }
+    .k-count { color: #9ca3af; font-weight: 600; font-size: .9rem; }
+    .k-opt { color: #9ca3af; font-weight: 400; font-size: .85em; }
+    .k-ok { color: #15803d; font-weight: 600; margin-top: .55rem; min-height: 1.1rem; }
+    .k-brow { position: relative; display: flex; align-items: center; gap: 10px; padding: 11px 4px; border-bottom: 1px solid #eef0f2; }
+    .k-brow:last-child { border-bottom: 0; }
+    .k-bpos { font-weight: 800; color: #b91c1c; min-width: 26px; }
+    .k-bname { flex: 1; font-weight: 600; font-size: 1.06rem; color: #111827; }
+    .k-bsize { color: #4b5563; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .k-bnote { font-size: .95rem; }
+    .k-bopt { background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 9px; padding: .45rem .75rem; font-weight: 600; cursor: pointer; color: #111827; }
+    .k-bopt:hover { background: #e9ebee; }
+    .k-optmenu { position: absolute; right: 4px; top: calc(100% - 2px); z-index: 20; background: #fff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.18); display: flex; flex-direction: column; min-width: 160px; overflow: hidden; }
+    .k-optmenu button { padding: .78rem .95rem; border: 0; background: #fff; text-align: left; font-size: 1.02rem; cursor: pointer; border-bottom: 1px solid #f1f2f4; }
+    .k-optmenu button:hover { background: #f7f8f9; }
+    .k-optmenu .k-optcancel { color: #9ca3af; font-weight: 600; }
+    .k-codemodal { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+    .k-codecard { background: #fff; border-radius: 16px; padding: 1.15rem 1.25rem 1.3rem; width: 100%; max-width: 360px; box-shadow: 0 24px 64px rgba(0,0,0,.4); text-align: left; }
+    .k-codeh { font-size: 1.12rem; margin-bottom: .2rem; color: #111827; }
+    .k-coderow { display: flex; gap: .6rem; margin-top: .8rem; }
+    .k-coderow .k-btn { flex: 1; margin-top: 0; }
+    .k-btn.ghost { background: #eef0f2; color: #374151; }
+    .k-toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(18px); background: #111827; color: #fff; padding: .7rem 1.15rem; border-radius: 999px; opacity: 0; transition: opacity .22s, transform .22s; z-index: 60; font-weight: 600; max-width: 90vw; text-align: center; }
+    .k-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  </style>
 </head>
 <body class="kiosk-body">
   <div class="kiosk">

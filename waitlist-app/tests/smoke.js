@@ -217,6 +217,26 @@ const check = (n, ok, d = '') => { if (ok) { pass++; console.log('  PASS  ' + n)
     r = await fetch(base + '/api/wl-feed/left/' + lv.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     check('wl-feed left without service key → 401', r.status === 401, 'status=' + r.status);
 
+    // ── Front-desk BOARD: join without a phone (no join text) + list (full name, no phone) + action gating ──
+    const locsPub = await j(await fetch(base + '/api/public/locations'));
+    const bSlug = (locsPub.find(l => l.id === loc) || locsPub[0]).slug;
+    const pub = (path, body) => fetch(base + '/api/public' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const bj = await j(await pub('/checkin', { location_id: loc, guest_name: 'Board Guy', party_size: 4, board: true }));
+    check('board check-in with NO phone succeeds', bj.success === true, JSON.stringify(bj));
+    const board = await j(await fetch(base + '/api/public/board/' + encodeURIComponent(bSlug)));
+    const bParty = (board.parties || []).find(p => p.name === 'Board Guy');
+    check('board list shows the full name + party size, never a phone', !!bParty && bParty.party_size === 4 && board.parties.every(p => !('phone' in p)), JSON.stringify(bParty || null));
+    const notifs = await j(await fetch(base + '/api/wl-feed/notifications/' + bParty.id, { headers: svcK }));
+    check('a board join sends NO join text', (notifs.notifications || []).length === 0, JSON.stringify(notifs));
+    let ba = await fetch(base + '/api/public/board-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: bSlug, party_id: bParty.id, action: 'seat' }) });
+    check('board-action without an employee code → 400', ba.status === 400, 'status=' + ba.status);
+    ba = await fetch(base + '/api/public/board-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: bSlug, party_id: bParty.id, action: 'seat', employee_code: 'XYZ000' }) });
+    check('board-action with an unverifiable code → 403 (not performed)', ba.status === 403, 'status=' + ba.status);
+    const still = await j(await fetch(base + '/api/public/board/' + encodeURIComponent(bSlug)));
+    check('a rejected board action leaves the guest waiting', (still.parties || []).some(p => p.id === bParty.id));
+    ba = await fetch(base + '/api/public/board-action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ slug: bSlug, party_id: bParty.id, action: 'fly', employee_code: 'XYZ000' }) });
+    check('board-action with an unknown action → 400', ba.status === 400, 'status=' + ba.status);
+
     // ── PWA: installable Staff app (manifest + service worker + icons) ─────
     const mani = await fetch(base + '/manifest.webmanifest');
     check('PWA manifest served', mani.status === 200);

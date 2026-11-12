@@ -66,6 +66,7 @@ app.use('/api/cleanup', require('./routes/cleanup'));   // public busser Cleanup
 app.use('/api/floorboard', require('./routes/floorboard')); // public full-screen Floor Board TV display (no login, read-only)
 app.use('/api/invscan', require('./routes/invscan'));
 app.use('/api/scannerkiosk', require('./routes/scannerkiosk'));
+app.use('/api/wl-staff', require('./routes/wlstaff'));   // service-key: validate an employee code for the Waitlist front-desk board
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/translate', require('./routes/translate'));
 app.use('/api/timeclock', require('./routes/timeclock'));

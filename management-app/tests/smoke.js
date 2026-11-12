@@ -1865,6 +1865,27 @@ const check = (name, ok, detail = '') => {
       check('Nha Le gets a single auto-cleared app message', nres.notified === 1 && !!wmsg && wdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Waitlist: guests auto-cleared'").get().c === msgBefore + 1, JSON.stringify({ nres, wmsg }));
       if (wmsg) { wdb.prepare("DELETE FROM message_recipients WHERE message_id=?").run(wmsg.id); wdb.prepare("DELETE FROM messages WHERE id=?").run(wmsg.id); }
     }
+
+    // ── Waitlist front-desk board: employee-code validation (service key) ──
+    {
+      const vdb = require('../db/database');
+      const vcode = 'ZZBOARD' + String(Date.now()).slice(-6);
+      const vId = vdb.prepare("INSERT INTO users (name, role, location_id, is_active, email, password_hash, employee_code) VALUES ('ZZ Board Host','server',?,1,?, 'x', ?)")
+        .run(loc1, 'zzboard+' + Date.now() + '@x.invalid', vcode).lastInsertRowid;
+      const V = async (body) => j(await fetch(base + '/api/wl-staff/validate', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Service-Key': 'dev-floorplan-key' }, body: JSON.stringify(body) }));
+      let vr = await V({ employee_code: vcode, location_id: loc1 });
+      check('wl-staff validate: host code at its location → ok + name', vr.ok === true && vr.name === 'ZZ Board Host', JSON.stringify(vr));
+      vr = await V({ employee_code: vcode, location_id: loc2 });
+      check('wl-staff validate: a different location → rejected', vr.ok === false && vr.reason === 'location', JSON.stringify(vr));
+      vr = await V({ employee_code: 'NOPE-' + Date.now(), location_id: loc1 });
+      check('wl-staff validate: unknown code → notfound', vr.ok === false && vr.reason === 'notfound', JSON.stringify(vr));
+      vdb.prepare("UPDATE users SET role='employee' WHERE id=?").run(vId);   // not a board/host role
+      vr = await V({ employee_code: vcode, location_id: loc1 });
+      check('wl-staff validate: a non-host role → rejected', vr.ok === false && vr.reason === 'role', JSON.stringify(vr));
+      const r401 = await fetch(base + '/api/wl-staff/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: vcode, location_id: loc1 }) });
+      check('wl-staff validate without the service key → 401', r401.status === 401, 'status=' + r401.status);
+      vdb.prepare("DELETE FROM users WHERE id=?").run(vId);
+    }
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {
