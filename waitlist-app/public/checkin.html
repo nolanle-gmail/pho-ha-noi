@@ -9,7 +9,20 @@
     /* Front-desk board (/checkin/<slug>/board): join form + staff-run list, side by side. */
     .board-mode .kiosk { max-width: 920px; }
     .k-board { display: grid; gap: 14px; grid-template-columns: 1fr; width: 100%; }
-    @media (min-width: 760px) { .k-board { grid-template-columns: 0.88fr 1.12fr; align-items: start; } }
+    @media (min-width: 760px) {
+      .k-board { grid-template-columns: 0.88fr 1.12fr; align-items: stretch; }
+      /* Tablet / iPad: lock the board to one screen — trim the header, keep the join form put, scroll only the queue. */
+      .kiosk-body.board-mode { height: 100dvh; align-items: stretch; padding: .9rem 1.2rem; overflow: hidden; }
+      .board-mode .kiosk { display: flex; flex-direction: column; min-height: 0; margin-top: 0; max-width: 980px; }
+      .board-mode .kiosk-brand { align-self: center; padding: .55rem 1.3rem; margin-bottom: .35rem; }
+      .board-mode .kiosk-sub { align-self: center; }
+      .board-mode .kiosk-logo { height: 58px; }
+      .board-mode .kiosk-sub { margin: .05rem 0 .7rem; }
+      .board-mode #kview { flex: 1; min-height: 0; display: flex; }
+      .board-mode .k-board { flex: 1; min-height: 0; }
+      .board-mode .k-board-list { display: flex; flex-direction: column; min-height: 0; }
+      .board-mode .k-board-list #bList { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    }
     .k-board .k-card { text-align: left; }
     .k-sub2 { font-weight: 700; font-size: 1.08rem; margin-bottom: .5rem; color: #1f2937; }
     .k-count { color: #9ca3af; font-weight: 600; font-size: .9rem; }
@@ -23,10 +36,12 @@
     .k-bnote { font-size: .95rem; }
     .k-bopt { background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 9px; padding: .45rem .75rem; font-weight: 600; cursor: pointer; color: #111827; }
     .k-bopt:hover { background: #e9ebee; }
-    .k-optmenu { position: absolute; right: 4px; top: calc(100% - 2px); z-index: 20; background: #fff; border: 1px solid #d1d5db; border-radius: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.18); display: flex; flex-direction: column; min-width: 160px; overflow: hidden; }
-    .k-optmenu button { padding: .78rem .95rem; border: 0; background: #fff; text-align: left; font-size: 1.02rem; cursor: pointer; border-bottom: 1px solid #f1f2f4; }
-    .k-optmenu button:hover { background: #f7f8f9; }
-    .k-optmenu .k-optcancel { color: #9ca3af; font-weight: 600; }
+    /* Options opens as a centered action sheet (never clipped by the row, the list scroll, or the screen edge). */
+    .k-sheet { max-width: 340px; text-align: center; }
+    .k-sheet .k-codeh { text-align: center; font-size: 1.15rem; margin-bottom: .9rem; }
+    .k-sheetbtn { display: block; width: 100%; padding: .95rem; margin-top: .6rem; border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb; font-size: 1.08rem; font-weight: 600; color: #111827; cursor: pointer; text-align: center; }
+    .k-sheetbtn:hover { background: #f1f3f5; }
+    .k-sheetcancel { color: #6b7280; margin-top: .85rem; }
     .k-codemodal { position: fixed; inset: 0; background: rgba(15,23,42,.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
     .k-codecard { background: #fff; border-radius: 16px; padding: 1.15rem 1.25rem 1.3rem; width: 100%; max-width: 360px; box-shadow: 0 24px 64px rgba(0,0,0,.4); text-align: left; }
     .k-codeh { font-size: 1.12rem; margin-bottom: .2rem; color: #111827; }

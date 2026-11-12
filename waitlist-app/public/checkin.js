@@ -248,7 +248,7 @@ async function refreshBoardList() {
   const box = $('bList'); if (!box) return;
   // Don't repaint while a staffer has the Options menu or the employee-code prompt open (it would
   // wipe the menu out from under them). The next poll picks the list back up once they're done.
-  if (document.querySelector('.k-codemodal') || document.querySelector('.k-optmenu')) return;
+  if (document.querySelector('.k-codemodal') || document.querySelector('.k-optsheet')) return;
   let d; try { d = await api('/board/' + encodeURIComponent(ROUTE.slug)); }
   catch { return; }
   if (!$('bList')) return;
@@ -261,22 +261,30 @@ async function refreshBoardList() {
       ${p.notified ? '<span class="k-bnote">🔔</span>' : ''}
       <button class="k-bopt" data-id="${p.id}" data-name="${esc(p.name)}">Options</button>
     </div>`).join('');
-  box.querySelectorAll('.k-bopt').forEach(b => b.onclick = () => openOptions(b.dataset.id, b.dataset.name, b));
+  box.querySelectorAll('.k-bopt').forEach(b => b.onclick = () => openOptions(b.dataset.id, b.dataset.name));
 }
 
-// Tapping Options shows Notify / Seat / Left; choosing one asks for an employee code before it fires.
-function openOptions(id, name, btn) {
+// Tapping Options shows Notify / Seat / Left as a centered sheet (never clipped at a screen edge or inside
+// the scrolling queue); choosing one asks for an employee code before it fires.
+function openOptions(id, name) {
   closeOptions();
-  const menu = document.createElement('div'); menu.className = 'k-optmenu';
-  menu.innerHTML = `<button data-act="notify">🔔 Notify</button><button data-act="seat">🪑 Seat</button><button data-act="left">🚪 Left</button><button data-act="cancel" class="k-optcancel">Cancel</button>`;
-  btn.parentNode.appendChild(menu);
-  menu.querySelectorAll('button').forEach(b => b.onclick = (e) => {
+  const host = document.createElement('div'); host.className = 'k-codemodal k-optsheet';
+  host.innerHTML = `<div class="k-codecard k-sheet">
+      <div class="k-codeh"><strong>${esc(name)}</strong></div>
+      <button class="k-sheetbtn" data-act="notify">🔔 Notify</button>
+      <button class="k-sheetbtn" data-act="seat">🪑 Seat</button>
+      <button class="k-sheetbtn" data-act="left">🚪 Left</button>
+      <button class="k-sheetbtn k-sheetcancel" data-act="cancel">Cancel</button>
+    </div>`;
+  document.body.appendChild(host);
+  host.onclick = (e) => { if (e.target === host) closeOptions(); };
+  host.querySelectorAll('.k-sheetbtn').forEach(b => b.onclick = (e) => {
     e.stopPropagation();
     const act = b.dataset.act; closeOptions();
     if (act !== 'cancel') askCodeAndAct(id, name, act);
   });
 }
-function closeOptions() { document.querySelectorAll('.k-optmenu').forEach(m => m.remove()); }
+function closeOptions() { document.querySelectorAll('.k-optsheet').forEach(m => m.remove()); }
 
 function askCodeAndAct(id, name, action) {
   const label = { notify: 'Notify', seat: 'Seat', left: 'mark Left' }[action];
@@ -319,7 +327,7 @@ function boardToast(msg) {
   t.textContent = msg; t.classList.add('show');
   clearTimeout(boardToast._t); boardToast._t = setTimeout(() => t.classList.remove('show'), 3500);
 }
-document.addEventListener('click', (e) => { if (!e.target.closest('.k-optmenu') && !e.target.closest('.k-bopt')) closeOptions(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOptions(); });
 
 // Boot: the front-desk board, the public live-list route, a restored check-in, or the join form.
 const savedRef = sessionStorage.getItem('phnw_ref');
