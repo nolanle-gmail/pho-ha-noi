@@ -14,8 +14,9 @@ async function api(path, opts = {}) {
 
 const K = { locations: [], loc: null, size: 2, fixed: false, pollTimer: null };
 
-// Route: /checkin/<slug> is the join form; /checkin/<slug>/current is the public live waitlist;
-// /checkin/<slug>/board is the front-desk board (join form + staff-run list, side by side).
+// Route: /checkin/<slug> (and /checkin?loc=<id>) is the front-desk board (join form + staff-run
+// list, side by side); /checkin/<slug>/current is the read-only public live waitlist;
+// /checkin/<slug>/board is a kept alias for the board.
 const ROUTE = (() => {
   const raw = decodeURIComponent(location.pathname.replace(/^\/checkin\/?/, '')).toLowerCase().replace(/\/+$/, '');
   const board = raw === 'board' || raw.endsWith('/board');
@@ -185,12 +186,17 @@ async function startCurrent() {
   K.pollTimer = setInterval(renderCurrent, 5000);   // refresh fast so a new guest / a seated party drops on/off within seconds
 }
 
-// ── Front-desk board (/checkin/<slug>/board): join form + the staff-run waiting list ──────────────
+// ── Front-desk board — the per-location waitlist link (/checkin/<slug>/ or /checkin?loc=<id>, and the
+//    /checkin/<slug>/board alias): join form + the staff-run waiting list ──────────────
 async function startBoard() {
   try { K.locations = await api('/locations'); }
   catch (e) { KV().innerHTML = `<div class="k-card"><div class="k-big">Unavailable</div><p class="k-note">${esc(e.message)}</p></div>`; return; }
-  const chosen = K.locations.find(l => normSlug(l.slug) === normSlug(ROUTE.slug));
+  const params = new URLSearchParams(location.search);
+  const chosen = ROUTE.slug
+    ? K.locations.find(l => normSlug(l.slug) === normSlug(ROUTE.slug))
+    : K.locations.find(l => String(l.id) === String(params.get('loc')));
   if (!chosen) { KV().innerHTML = `<div class="k-card"><div class="k-big">Location not found</div></div>`; return; }
+  try { localStorage.setItem(SAVED_LOC, String(chosen.id)); } catch { /* private mode */ }
   K.loc = String(chosen.id); K.boardName = (chosen.name || '').replace('Pho Ha Noi — ', '');
   document.body.classList.add('board-mode');
   const subEl = document.querySelector('.kiosk-sub'); if (subEl) subEl.textContent = K.boardName;
@@ -329,12 +335,15 @@ function boardToast(msg) {
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOptions(); });
 
-// Boot: the front-desk board, the public live-list route, a restored check-in, or the join form.
+// Boot: a per-location link is the front-desk board (join + live "who's waiting" list + code-gated
+// staff actions). /checkin/<slug>/current is the read-only public list; bare /checkin (no store named)
+// still restores a saved check-in or shows the join/picker.
 const savedRef = sessionStorage.getItem('phnw_ref');
-if (ROUTE.board) {
-  startBoard();
-} else if (ROUTE.current) {
+const bootParams = new URLSearchParams(location.search);
+if (ROUTE.current) {
   startCurrent();
+} else if (ROUTE.slug || bootParams.get('loc')) {
+  startBoard();
 } else if (savedRef) {
   api('/position/' + savedRef).then(p => {
     if (p.status === 'waiting') renderConfirm(savedRef, { position: p.position, quoted_minutes: p.quoted_minutes, party_size: p.party_size, guest_name: p.guest_name });
