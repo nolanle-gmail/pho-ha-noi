@@ -215,6 +215,9 @@ router.post('/board-action', async (req, res) => {
     const canText = !!(w.phone && w.sms_consent);
     const short = String(loc.name || '').replace('Pho Ha Noi — ', '');
     const body = `Hi ${String(w.guest_name || '').trim()}, your table at ${short} is ready! Please see the host to be seated.`;
+    // Stamp notified_at (same as the Front Desk notify) so the 🔔 shows on the board and the guest
+    // isn't paged twice; then text them if they left a number (a guest who stepped away still gets it).
+    db.prepare(`UPDATE waitlist SET notified_at=datetime('now') WHERE id=?`).run(w.id);
     notifyGuest(w.id, canText ? w.phone : null, body, 'ready');
     audit('party_notified', { guest: w.guest_name, by, channel: canText ? 'sms' : 'none' });
     bump();
