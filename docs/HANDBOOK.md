@@ -290,9 +290,10 @@ long, it tends not to repeat. URL `…/shiftboard/<slug>` (e.g. `/shiftboard/san
 case/hyphen-insensitively); bare `/shiftboard` is a picker. Only people with a **scheduled shift here that
 day** appear (an unscheduled punch doesn't put anyone on the board). The page (`public/shiftboard.html`) is
 a row per staffer — **name · scheduled hours · clock-in · clock-out · breaks · status** — where the
-**scheduled hours show every block of a split shift** (e.g. `10:00–14:00` and `17:00–20:00`, both listed,
-not merged), with the
-**row colour-coded** and a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
+**scheduled hours show every block of a split shift** (e.g. `10:00a–2:00p` and `5:00p–8:00p`, both listed,
+not merged). **All times on the board are 12-hour** (e.g. `8:07a`, `10:00a–6:00p`, `12:00p`) — scheduled
+hours, clock-in/out and break times alike (2026-11-13). Each row is
+**row colour-coded** and carries a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
 not in once past their start — the late flag persists all day; a late clock-in also shows **(N min late)**
 in red right under the clock-in time), **🔴 LONGER THAN 10-MIN BREAK** (a break over the 10-min limit, live
 while on it or after — the break's own time shows **(N min extra)** in the Breaks column), **⚠ BREAK
@@ -305,7 +306,10 @@ as chips (both when there are two; next highlighted, past dimmed); once taken, *
 with **(N min extra)** in red for any that ran long; and the live "on break <time> · Nm" while on one. It reads
 `GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only), which merges today's
 `shifts` with their `time_entries` + `time_entry_breaks` and the manager-set `shift_breaks` (for the
-break times, the 10-min flash, and the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to
+break times, the 10-min flash, and the upcoming/missed-break signals). The board shows **current-day
+information only** — all three queries are scoped to today (the store's timezone), and a punch left
+**open from a previous day** (someone who forgot to clock out) is **not** carried over, so it never shows
+up as today's clock-in; that staffer simply reads **NOT IN YET** until they punch in today (2026-11-13). It **fits the TV automatically** — rows grow to
 fill the screen, and when there are more staff than fit it **paginates and flips between pages every ~15 s**
 (a page indicator shows "Page 1 / 2"); it refreshes the data every ~8 s and holds a screen wake-lock. A
 **📺 Shift Board** link is on **every location's card in the Locations list** (rolled out to all stores
