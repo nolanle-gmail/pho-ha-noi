@@ -576,6 +576,24 @@ forced/auto/manager clock-out closes any open break. The payroll timesheet gains
 over-limit) column; **worked hours aren't reduced** today (a future option can subtract the over-limit
 minutes — already stored per break).
 
+**Break compliance — missed & long breaks for performance review (2026-11-13).** Two kinds of break
+problem are now kept as a durable history managers can pull for reviews. **Over-limit breaks** were
+already persisted (`time_entry_breaks.over_limit_min` — minutes a break ran past the 10-min limit).
+**Missed breaks** were only computed live on the Shift Board and lost at day's end, so they now get their
+own record: a **`missed_breaks`** table + an end-of-day sweep (`sweepMissedBreaks` /
+`startMissedBreakSweep`, every ~15 min) that, **once a staffer's work day is over** (all their entries
+clocked out **and** the last scheduled shift end has passed, or it's a prior day), writes one row for
+every **scheduled break (`shift_breaks`) they never took** — `max(0, scheduledBreaks − breaksTaken)`,
+attributed to the latest slots. It's **idempotent** (a `UNIQUE(user, date, shift_break)` guard) and
+won't finalize a **split shift** at a mid-day gap (it waits for the day's last shift end). A new
+**Reports → Breaks "Break compliance"** report (`GET /reports/break-compliance`, `REPORTS` cap,
+owner/admin/GM see all locations, a manager theirs) shows, over a location + date range, each staffer's
+**missed** and **over-10-min** break counts and a **dated per-incident list** (e.g. "2026-11-12 ·
+Scheduled 14:00 break not taken"; "17 min break — 7 over the limit"), with **CSV / Excel** export; the
+break-reminder audit trail moves to a collapsible section below it. The **payroll timesheet report** also
+gains **Long breaks** + **Missed breaks** count columns and a **Break issues** KPI (and they flow into
+its CSV / Excel / Google-Sheets exports).
+
 **End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
 the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
 correct) or **Report issue** (flags it) — plus a banner counting days that still need sign-off. Reporting
