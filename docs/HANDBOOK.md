@@ -2194,15 +2194,18 @@ seven days):
 - Because each shift carries its own location, a person can be scheduled at different
   stores on different days; away shifts show as read-only "@ store" cards.
 - **Staff rows are grouped by position**, so a manager builds the week role-by-role. Each
-  staffer sits under their **profile job title** (Server, Line Cook, Host …) — or their
-  **account role** when no title is set — and a **labelled divider row** (e.g. **Shift Lead ·
-  3 people**) heads each group. Groups run management first, then front-of-house through the
-  kitchen: **General Manager / Manager → Shift Lead → Host / Front Desk / Cashier →
-  Food Runner / Server → Barista / Bartender → Busser → Dishwasher → Line / Grill / Prep /
-  Broth Cook (incl. Pho / Nuong / Cuon / Expo) / Kitchen Assistant → everything else**,
-  alphabetical by name within a group. The grouping uses the person's **stable job title**
-  (not the per-shift job), so it works even on a brand-new **empty week** before any shift is
-  assigned — which is exactly when a manager sets the roster up. Headers are hidden when the
+  staffer falls into a **named group** from their **profile job title** (or their **account
+  role** when no title is set), and a **labelled divider row** (e.g. **Line Cook · 8 people**)
+  heads each group. Groups run in the house's own order — management pinned on top, then:
+  **Management → Lead → Host → Service → Bar → Bus → Line Cook → Food Runner →
+  Dishwasher → Central Kitchen → Driver → Helper Handy Man → Other**, alphabetical by name
+  within a group. Several job titles **fold into one group**: Host also takes **Front Desk**;
+  **Service** = Server + Cashier; **Line Cook** = Line / Pho / Grill / Prep / Broth Cook
+  (incl. Nuong / Cuon / Expo / Pastry) **+ Kitchen Assistant**; **Bar** = Barista / Bartender.
+  Any title that matches no group lands in **Other** at the end (HR is migrating staff onto
+  these titles). A group with **nobody in it is not shown**. The grouping uses the person's
+  **stable job title** (not the per-shift job), so it works even on a brand-new **empty week**
+  before any shift is assigned — which is exactly when a manager sets the roster up. Headers are hidden when the
   **Position** filter narrows to a single group; Month view is a calendar, not staff rows.
 - Each work shift is a **colour-coded block** — the whole block takes the assigned job's
   colour (white text), and every job keeps the **same colour everywhere**, so roles are

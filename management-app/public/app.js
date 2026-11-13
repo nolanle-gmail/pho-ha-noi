@@ -3494,37 +3494,36 @@ const PAID_LEAVE_KINDS = ['sick', 'vacation'];   // vacation = PTO, sick = paid 
 // saturation/lightness keeps white chip text legible for every hue.
 function jobHue(name) { let h = 0; const s = String(name || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
 function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%)`, bd: `hsl(${h} 55% 30%)` }; }
-// Schedule row ordering. Staff are grouped by the job they're assigned, front-of-house
-// leadership first through kitchen and cleanup last, then everything else. Each tier's
-// keywords are matched (case-insensitive substring) against a job or role name; the
-// first tier that matches wins, so more specific tiers are listed before broader ones.
-const SCHED_ROLE_ORDER = [
-  ['shift lead', 'lead', 'leader'],                                                     // 1 Shift lead / Lead
-  ['host', 'front desk', 'frontdesk', 'cashier', 'register'],                           // 2 Host / Front Desk / Cashier
-  ['server', 'back service', 'back server', 'food runner', 'runner', 'waiter', 'waitstaff', 'serve', 'food'], // 3 Server / Back Server / Food Runner
-  ['barista', 'bartender', 'backbar'],                                                  // 4 Barista / Bartender
-  ['busser', 'bus'],                                                                    // 5 Busser / Bus
-  ['dishwasher', 'dish'],                                                               // 6 Dishwasher
-  ['line cook', 'cook line', 'cook', 'kitchen', 'pho', 'nuong', 'cuon', 'expo', 'pastry'], // 7 Cook line / Line Cook
-  ['clean up', 'cleanup'],                                                              // 8 Clean up / Clean Up LB
+// Schedule row grouping. Staff are grouped for roster-building in the house's own order:
+// management pinned on top, then Lead → Host → Service → Bar → Bus → Line Cook →
+// Food Runner → Dishwasher → Central Kitchen → Driver → Helper Handy Man, with anything
+// unrecognised in an "Other" group last. Each group's keywords are matched (case-insensitive
+// substring) against a staffer's job title (or account role when no title is set); the FIRST
+// group that matches wins, so keep the order and keep the keywords specific. All cook titles
+// (Grill / Prep / Broth / Line / Pho Cook + Kitchen Assistant) fold into Line Cook; Cashier
+// sits under Service. HR is migrating staff onto these titles — a group with nobody shows.
+const SCHED_GROUPS = [
+  { name: 'Management',       keys: ['manager', 'general manager', 'assistant manager', 'owner'] },
+  { name: 'Lead',             keys: ['shift lead', 'lead', 'leader'] },
+  { name: 'Host',             keys: ['host', 'front desk', 'frontdesk'] },
+  { name: 'Service',          keys: ['server', 'service', 'waiter', 'waitstaff', 'serve', 'cashier', 'register'] },
+  { name: 'Bar',              keys: ['barista', 'bartender', 'backbar', 'bar'] },
+  { name: 'Bus',              keys: ['busser', 'bus'] },
+  { name: 'Line Cook',        keys: ['line cook', 'pho cook', 'grill cook', 'prep cook', 'broth cook', 'kitchen assistant', 'cook', 'nuong', 'cuon', 'expo', 'pastry'] },
+  { name: 'Food Runner',      keys: ['food runner', 'runner'] },
+  { name: 'Dishwasher',       keys: ['dishwasher', 'dish'] },
+  { name: 'Central Kitchen',  keys: ['central kitchen', 'central', 'commissary'] },
+  { name: 'Driver',           keys: ['driver', 'delivery'] },
+  { name: 'Helper Handy Man', keys: ['helper', 'handyman', 'handy man', 'handy', 'maintenance'] },
 ];
-function schedJobRank(name) {
-  const n = String(name || '').toLowerCase().trim();
-  if (!n) return 99;
-  if (n === 'ser') return 3;                                    // "Ser" is a server shorthand
-  for (let i = 0; i < SCHED_ROLE_ORDER.length; i++) {
-    if (SCHED_ROLE_ORDER[i].some(k => n.includes(k))) return i + 1;
-  }
-  return 99;                                                    // everything else, after
-}
-// Order scheduling GROUPS (a staffer's job title — Server, Line Cook, Host … — or their
-// account role when no title is set) for roster-building: management first, then the
-// front-of-house → kitchen → support order from SCHED_ROLE_ORDER, with anything
-// unrecognised last. Lets the weekly/day schedule group staff by position, leads on top.
-function schedGroupRank(label) {
+const SCHED_OTHER = { name: 'Other', rank: 99 };
+// Resolve a job title / role label to its roster group ({ name, rank }). First match wins.
+function schedGroup(label) {
   const n = String(label || '').toLowerCase().trim();
-  if (/general manager|assistant manager|\bmanager\b|\bgm\b/.test(n)) return 0;   // management up top
-  return schedJobRank(n);                                       // 1..8 operational, 99 = everything else
+  if (n) for (let i = 0; i < SCHED_GROUPS.length; i++) {
+    if (SCHED_GROUPS[i].keys.some(k => n.includes(k))) return { name: SCHED_GROUPS[i].name, rank: i };
+  }
+  return SCHED_OTHER;
 }
 const shiftWorkedHours = (s) => isLeaveShift(s) ? 0 : shiftHours(s.start_time, s.end_time);
 // Break rules: 10 min each; allowed once the shift is at least 3.5h (then as many
@@ -3683,19 +3682,20 @@ async function renderLocSchedule() {
     return `<span class="sched-seen ${st.schedule_seen ? 'read' : 'unread'}" title="${esc(title)}" aria-label="${st.schedule_seen ? 'Schedule viewed' : 'Schedule not viewed'}">👁️</span>`;
   };
 
-  // Position (job title) each staffer rosters under — Server, Line Cook, Host … —
-  // falling back to their account role when no title is set. Drives both the group
-  // headers and the Position filter.
-  const groupLabel = (st) => (st.job_title && String(st.job_title).trim()) || roleLabel(st.role);
-  const grpRank = (st) => schedGroupRank(groupLabel(st));
-  // Positions present here, ordered the same as the groups (leadership → front-of-house
-  // → kitchen → support), for the Position filter dropdown.
-  const positionsPresent = [...new Set(data.staff.map(groupLabel))]
-    .sort((a, b) => schedGroupRank(a) - schedGroupRank(b) || a.localeCompare(b));
-  if (F.role && !positionsPresent.includes(F.role)) F.role = '';   // that position is no longer here
+  // The roster GROUP each staffer falls in (Lead, Host, Service, Line Cook …), from their
+  // job title — or account role when no title is set. Drives the group headers, the row
+  // order and the Position filter; management is pinned on top, unknown titles → "Other".
+  const staffGroup = (st) => schedGroup((st.job_title && String(st.job_title).trim()) || roleLabel(st.role));
+  const groupLabel = (st) => staffGroup(st).name;
+  const grpRank = (st) => staffGroup(st).rank;
+  // Groups present here, in roster order, for the Position filter dropdown.
+  const seenG = new Map();
+  for (const s of data.staff) { const g = staffGroup(s); if (!seenG.has(g.name)) seenG.set(g.name, g.rank); }
+  const positionsPresent = [...seenG.entries()].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0])).map(e => e[0]);
+  if (F.role && !positionsPresent.includes(F.role)) F.role = '';   // that group is no longer here
   const hasLeaveHere = (st) => hereShifts(st).some(isLeaveShift);   // any leave (PTO / sick / unpaid) in view
   let shownStaff = data.staff;
-  if (F.role) shownStaff = shownStaff.filter(s => groupLabel(s) === F.role);     // filter by position
+  if (F.role) shownStaff = shownStaff.filter(s => groupLabel(s) === F.role);     // filter by group
   if (F.timeOff) shownStaff = shownStaff.filter(hasLeaveHere);                  // only staff on leave this view
   else if (F.scheduledOnly) shownStaff = shownStaff.filter(s => paidHere(s) > 0); // scheduled at this location
   // Order the shown staff by position group, then alphabetically by name (group
