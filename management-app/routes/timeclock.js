@@ -391,6 +391,64 @@ function sweepBreakReminders() {
   } catch (err) { console.error('break sweep failed:', err.message); }
 }
 
+// Minutes a scheduled break must be past before a day-over sweep will count it as missed.
+const BREAK_MISS_GRACE_MIN = parseInt(process.env.BREAK_MISS_GRACE_MIN || '', 10) || 15;
+// Record MISSED scheduled breaks for performance review. The live Shift Board flags a missed break
+// while the day is in progress, but nothing persisted it. This runs once a staffer's work day is OVER
+// (all their entries clocked out AND the last scheduled shift end has passed, or it's a prior day) and
+// writes a durable missed_breaks row for every scheduled break beyond the number they actually took.
+// Idempotent: INSERT OR IGNORE against the UNIQUE(user, date, shift_break) key, so re-runs don't dup.
+function sweepMissedBreaks() {
+  try {
+    const now = new Date();
+    // Scheduled break slots on recent work shifts (today + a couple of days back to catch late closes).
+    const slots = db.prepare(`
+      SELECT sb.id AS break_id, sb.start_time, s.user_id, s.location_id, s.shift_date, l.timezone
+      FROM shift_breaks sb
+      JOIN shifts s ON s.id=sb.shift_id AND s.kind='work'
+      JOIN users u ON u.id=s.user_id AND u.is_active=1
+      JOIN locations l ON l.id=s.location_id
+      WHERE sb.start_time IS NOT NULL AND sb.start_time<>'' AND s.shift_date >= date('now','-3 days')`).all();
+    const groups = new Map();
+    for (const r of slots) {
+      const key = `${r.user_id}|${r.location_id}|${r.shift_date}`;
+      if (!groups.has(key)) groups.set(key, { user_id: r.user_id, location_id: r.location_id, work_date: r.shift_date, tz: r.timezone || DEFAULT_TZ, slots: [] });
+      groups.get(key).slots.push({ break_id: r.break_id, start: r.start_time });
+    }
+    for (const g of groups.values()) {
+      // Only finalize a day that's OVER for this person: ≥1 closed entry, 0 open entries.
+      const open = db.prepare(`SELECT COUNT(*) c FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NULL`).get(g.user_id, g.location_id, g.work_date).c;
+      const closed = db.prepare(`SELECT COUNT(*) c FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? AND clock_out IS NOT NULL`).get(g.user_id, g.location_id, g.work_date).c;
+      if (open > 0 || closed === 0) continue;        // still on the clock, or never clocked in
+      // And the whole day's scheduled work has ended (so split shifts aren't finalized at a mid-day gap).
+      const todayLocal = localDate(g.tz);
+      let dayOver;
+      if (g.work_date < todayLocal) dayOver = true;
+      else if (g.work_date > todayLocal) dayOver = false;
+      else {
+        const endRow = db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(g.user_id, g.location_id, g.work_date);
+        dayOver = endRow && endRow.e ? localMinutesOfDay(g.tz, now) > hhmmToMin(endRow.e) : false;
+      }
+      if (!dayOver) continue;
+      // Slots already past the miss grace (all of them once the day is over). Sorted by time.
+      const nowMin = localMinutesOfDay(g.tz, now);
+      const pastSlots = g.slots
+        .filter(s => g.work_date < todayLocal || (nowMin - hhmmToMin(s.start)) > BREAK_MISS_GRACE_MIN)
+        .sort((a, b) => hhmmToMin(a.start) - hhmmToMin(b.start));
+      if (!pastSlots.length) continue;
+      const taken = db.prepare(`SELECT COUNT(*) c FROM time_entry_breaks b JOIN time_entries te ON te.id=b.time_entry_id
+        WHERE te.user_id=? AND te.location_id=? AND te.work_date=? AND b.break_in_at IS NOT NULL`).get(g.user_id, g.location_id, g.work_date).c;
+      const missedCount = Math.max(0, pastSlots.length - taken);
+      if (!missedCount) continue;
+      // Attribute the misses to the latest scheduled slots (the ones left uncovered).
+      const missedSlots = pastSlots.slice(pastSlots.length - missedCount);
+      const anyEntry = db.prepare(`SELECT id FROM time_entries WHERE user_id=? AND location_id=? AND work_date=? ORDER BY id LIMIT 1`).get(g.user_id, g.location_id, g.work_date);
+      const ins = db.prepare(`INSERT OR IGNORE INTO missed_breaks (user_id, location_id, work_date, shift_break_id, scheduled_time, time_entry_id) VALUES (?,?,?,?,?,?)`);
+      for (const s of missedSlots) ins.run(g.user_id, g.location_id, g.work_date, s.break_id, s.start, anyEntry ? anyEntry.id : null);
+    }
+  } catch (err) { console.error('missed-break sweep failed:', err.message); }
+}
+
 // Remind the assigned staff member ~5 minutes before a timed day task is due to START — a live in-app
 // alert AND a text to their phone. Fires once per task (guarded by task_assignments.reminded_at, which
 // is reset when the task's time or assignee changes). Only for today's timed, not-yet-done tasks.
@@ -1225,6 +1283,14 @@ module.exports.startClockSweep = function startClockSweep() {
 module.exports.startBreakSweep = function startBreakSweep() {
   sweepBreakReminders();
   const t = setInterval(sweepBreakReminders, 2 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
+module.exports.sweepMissedBreaks = sweepMissedBreaks;   // exported for tests/manual runs
+// Record missed scheduled breaks once a staffer's day is over: at startup, then every 15 min.
+module.exports.startMissedBreakSweep = function startMissedBreakSweep() {
+  sweepMissedBreaks();
+  const t = setInterval(sweepMissedBreaks, 15 * 60 * 1000);
   if (t.unref) t.unref();
   return t;
 };

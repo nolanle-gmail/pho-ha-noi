@@ -96,6 +96,8 @@ if (require.main === module) {
   // Background sweeps (real server only): missed clock-outs + break reminders.
   try { require('./routes/timeclock').startClockSweep(); } catch { /* optional */ }
   try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
+  // Record missed scheduled breaks (for performance review) once each staffer's day is over.
+  try { require('./routes/timeclock').startMissedBreakSweep(); } catch { /* optional */ }
   // Break-return reminders: nudge staff to clock back in once a break runs over the limit.
   try { require('./routes/timeclock').startBreakReturnSweep(); } catch { /* optional */ }
   // Day-task start reminders (notification + SMS ~5 min before a timed task is due to start).

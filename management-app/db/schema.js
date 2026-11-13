@@ -1606,6 +1606,22 @@ function migrate() {
     `ALTER TABLE time_entries ADD COLUMN hours_disputed INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE time_entries ADD COLUMN hours_disputed_at TEXT`,
     `ALTER TABLE time_entries ADD COLUMN hours_reminded_at TEXT`,
+    // Durable record of a SCHEDULED break a staffer never took, captured once the work day is over
+    // (so it survives past the live Shift Board, for performance review). Long/over-limit breaks are
+    // already persisted on time_entry_breaks.over_limit_min, so only the "missed" case needs its own
+    // row. One row per scheduled break slot per day (the UNIQUE guards the end-of-day sweep's re-runs).
+    `CREATE TABLE IF NOT EXISTS missed_breaks (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id        INTEGER NOT NULL REFERENCES users(id),
+      location_id    INTEGER NOT NULL REFERENCES locations(id),
+      work_date      TEXT NOT NULL,                 -- ISO local date the break was scheduled for
+      shift_break_id INTEGER,                        -- the scheduled shift_breaks slot that went untaken
+      scheduled_time TEXT,                           -- HH:MM the break was scheduled for
+      time_entry_id  INTEGER,                        -- the day's entry, for reference
+      detected_at    TEXT DEFAULT (datetime('now')),
+      UNIQUE (user_id, work_date, shift_break_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_missed_breaks ON missed_breaks(location_id, work_date)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {

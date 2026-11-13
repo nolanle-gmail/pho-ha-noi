@@ -6131,9 +6131,10 @@ async function renderRepTimesheets() {
       <div class="card"><div class="label">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
       <div class="card"><div class="label">Gross pay</div><div class="value">${money(d.total_labor_cost)}</div></div>
       <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
+      <div class="card"><div class="label" title="Scheduled breaks not taken + breaks over 10 min">Break issues</div><div class="value ${(d.total_missed_breaks || d.total_long_breaks) ? 'warn' : ''}">${(d.total_missed_breaks || 0)} missed · ${(d.total_long_breaks || 0)} long</div></div>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num" title="Total break minutes (not deducted from hours)">Break min</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
-      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num ${s.break_over_minutes ? 'warn' : ''}">${s.break_minutes ? s.break_minutes + (s.break_over_minutes ? ` (${s.break_over_minutes} over)` : '') : '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="10" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num" title="Total break minutes (not deducted from hours)">Break min</th><th class="num" title="Scheduled breaks the staffer never took">Missed</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num ${s.break_over_minutes ? 'warn' : ''}">${s.break_minutes ? s.break_minutes + (s.break_over_minutes ? ` (${s.break_over_minutes} over)` : '') : '—'}</td><td class="num ${s.missed_breaks ? 'warn' : ''}">${s.missed_breaks || '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="11" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
     </tbody></table></div>
     ${showByLoc ? `<div class="section"><h3>Gross pay by location</h3>
       <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Staff</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Gross pay</th></tr></thead><tbody>
@@ -6188,9 +6189,9 @@ async function openStaffPunchPhotos(userId, name, start, end) {
 // Includes the per-staff breakdown (regular / OT / DT hours + gross) and a per-location
 // gross-pay summary with a grand total, so finance can reconcile pay end to end.
 function exportTimesheets(d, locName, kind) {
-  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Hourly rate', 'Gross pay'];
-  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.hourly_rate, s.labor_cost]);
-  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, '', d.total_labor_cost];
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Long breaks', 'Missed breaks', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.long_breaks || 0, s.missed_breaks || 0, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, d.total_long_breaks || 0, d.total_missed_breaks || 0, '', d.total_labor_cost];
   const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
   const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
   const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
@@ -6243,29 +6244,69 @@ async function renderRepPayments() {
   wireReportFilters(true);
 }
 
-// ── Break reminders (compliance archive across all locations) ────────────────
+// ── Break compliance (missed + over-limit breaks, for performance review) ────
+// Primary: every scheduled break a staffer never took + every break over the 10-min
+// limit, per-staff counts and a dated per-incident list. The break-reminder audit
+// trail (proof staff were reminded) is kept below as a collapsible section.
 async function renderRepBreaks() {
-  const d = await api('/reports/break-reminders' + reportQuery(true));
-  const ackPct = d.total ? Math.round(d.acknowledged / d.total * 100) : 0;
+  const [d, rem] = await Promise.all([
+    api('/reports/break-compliance' + reportQuery(true)),
+    api('/reports/break-reminders' + reportQuery(true)).catch(() => null),
+  ]);
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  const typeChip = (t) => t === 'missed' ? '<span class="badge red">Missed break</span>' : '<span class="badge gold">Long break</span>';
   $('view').innerHTML = `${reportFilters(true)}
-    <p class="sub" style="margin:0 0 .8rem;color:var(--muted)">Audit trail of break reminders staff were sent (~10&nbsp;min before each scheduled break). Kept as proof that every staff member was reminded to take their breaks.</p>
-    <div class="kpis">
-      <div class="card"><div class="label">Reminders sent</div><div class="value">${d.total}</div></div>
-      <div class="card"><div class="label">Acknowledged</div><div class="value">${d.acknowledged} · ${ackPct}%</div></div>
-      <div class="card"><div class="label">Not acknowledged</div><div class="value ${d.pending ? 'warn' : ''}">${d.pending}</div></div>
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="bcRun">▶ Run report</button>
+      <button class="btn ghost" id="bcCsv" ${d.incidents.length ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="bcXls" ${d.incidents.length ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Location</th><th>Staff</th><th>Code</th><th class="num">Break</th><th class="num">Reminded</th><th class="num">Acknowledged</th></tr></thead><tbody>
-      ${d.reminders.length ? d.reminders.map(r => `<tr>
-        <td>${esc(r.work_date)}</td>
-        <td>${esc(shortLoc(r.location))}</td>
-        <td><strong>${esc(r.name)}</strong></td>
-        <td>${esc(r.employee_code || '—')}</td>
-        <td class="num">${esc(r.break_time)}</td>
-        <td class="num">${esc(r.sent_at || '—')}</td>
-        <td class="num">${r.acknowledged_at ? `<span class="badge green">${esc(r.acknowledged_at)}</span>` : '<span class="badge gray">—</span>'}</td>
-      </tr>`).join('') : '<tr><td colspan="7" class="empty">No break reminders in range.</td></tr>'}
-    </tbody></table></div>`;
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Break compliance for performance review: every <strong>scheduled break a staff member never took</strong> and every <strong>break over the 10-minute limit</strong>. A missed break is recorded once that staffer's work day is over.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Missed breaks</div><div class="value ${d.total_missed ? 'warn' : ''}">${d.total_missed}</div></div>
+      <div class="card"><div class="label">Long breaks · &gt;10 min</div><div class="value ${d.total_long ? 'warn' : ''}">${d.total_long}</div></div>
+      <div class="card"><div class="label">Staff affected</div><div class="value">${d.staff_affected}</div></div>
+    </div>
+    <div class="section"><h3>By staff</h3>
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Location</th><th class="num">Missed</th><th class="num">Long</th></tr></thead><tbody>
+        ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num ${s.missed ? 'warn' : ''}">${s.missed || '—'}</td><td class="num ${s.long ? 'warn' : ''}">${s.long || '—'}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No missed or long breaks in this range. 🎉</td></tr>'}
+      </tbody></table></div></div>
+    <div class="section"><h3>Every incident</h3>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Staff</th><th>Location</th><th>Type</th><th class="num">Time</th><th>Detail</th></tr></thead><tbody>
+        ${d.incidents.length ? d.incidents.map(i => `<tr><td>${esc(i.work_date)}</td><td><strong>${esc(i.name)}</strong></td><td>${esc(shortLoc(i.location) || '—')}</td><td>${typeChip(i.type)}</td><td class="num">${esc(i.time || '—')}</td><td>${esc(i.detail)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No incidents in range.</td></tr>'}
+      </tbody></table></div></div>
+    ${rem ? `<details class="section" style="margin-top:1rem"><summary style="cursor:pointer;font-weight:600">Break-reminder audit trail · ${rem.total} sent, ${rem.acknowledged} acknowledged</summary>
+      <p class="sub" style="margin:.4rem 0;color:var(--muted)">Proof each staff member was reminded ~10&nbsp;min before a scheduled break.</p>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Location</th><th>Staff</th><th class="num">Break</th><th class="num">Reminded</th><th class="num">Acknowledged</th></tr></thead><tbody>
+        ${rem.reminders.length ? rem.reminders.map(r => `<tr><td>${esc(r.work_date)}</td><td>${esc(shortLoc(r.location))}</td><td>${esc(r.name)}</td><td class="num">${esc(r.break_time)}</td><td class="num">${esc(r.sent_at || '—')}</td><td class="num">${r.acknowledged_at ? `<span class="badge green">${esc(r.acknowledged_at)}</span>` : '<span class="badge gray">—</span>'}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No break reminders in range.</td></tr>'}
+      </tbody></table></div></details>` : ''}`;
   wireReportFilters(true);
+  $('bcRun').onclick = renderRepBreaks;
+  $('bcCsv').onclick = () => exportBreakCompliance(d, locName, 'csv');
+  $('bcXls').onclick = () => exportBreakCompliance(d, locName, 'xls');
+}
+
+// CSV / Excel export of the break-compliance incident list (for a performance-review file).
+function exportBreakCompliance(d, locName, kind) {
+  const cols = ['Date', 'Staff', 'Employee code', 'Location', 'Type', 'Time', 'Detail'];
+  const rows = d.incidents.map(i => [i.work_date, i.name, i.employee_code || '', shortLoc(i.location) || '', i.type === 'missed' ? 'Missed break' : 'Long break', i.time || '', i.detail]);
+  const base = `break-compliance_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
+  const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
+  const title = `Phở Hà Nội — Break compliance · ${locName} · ${d.start} to ${d.end}`;
+  const summary = `${d.total_missed} missed break(s), ${d.total_long} over-limit break(s), ${d.staff_affected} staff affected.`;
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [summary], [], cols, ...rows];
+    downloadBlob(block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr) => '<tr>' + arr.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+    const tbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${rows.map(bodyRow).join('')}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>${escHtml(title)}</h3><p>${escHtml(summary)}</p>${tbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${d.incidents.length} incident(s) · ${kind.toUpperCase()}`);
 }
 
 // Waitlist history — every guest who was ever on the Front Desk waitlist, with phone

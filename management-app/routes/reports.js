@@ -98,9 +98,17 @@ function timesheetReport(req) {
   const rows = db.prepare(`SELECT t.id, t.user_id, t.work_date, t.worked_minutes, t.location_id,
       (SELECT COALESCE(SUM(b.minutes),0) FROM time_entry_breaks b WHERE b.time_entry_id=t.id AND b.break_in_at IS NOT NULL) AS break_min,
       (SELECT COALESCE(SUM(b.over_limit_min),0) FROM time_entry_breaks b WHERE b.time_entry_id=t.id AND b.break_in_at IS NOT NULL) AS break_over,
+      (SELECT COUNT(*) FROM time_entry_breaks b WHERE b.time_entry_id=t.id AND b.break_in_at IS NOT NULL AND b.over_limit_min>0) AS long_breaks,
       u.name, u.role, u.employee_code, u.hourly_rate, l.name location
     FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN locations l ON l.id=t.location_id
     WHERE ${conds.join(' AND ')}`).all(...args);
+
+  // Missed scheduled breaks per staffer in the same scope/range (durable record, for review).
+  const mbConds = ['mb.work_date>=?', 'mb.work_date<=?'], mbArgs = [start, end];
+  if (locId) { mbConds.push('mb.location_id=?'); mbArgs.push(locId); }
+  const missedByUser = {};
+  db.prepare(`SELECT user_id, COUNT(*) c FROM missed_breaks mb WHERE ${mbConds.join(' AND ')} GROUP BY user_id`).all(...mbArgs)
+    .forEach(r => { missedByUser[r.user_id] = r.c; });
 
   const byUser = new Map(), byLoc = new Map();
   const locName = {};
@@ -110,9 +118,9 @@ function timesheetReport(req) {
     const rate = r.hourly_rate || 0;
     const dayGross = tsHrs(sp.reg) * rate + tsHrs(sp.ot) * rate * TS_OT_MULT + tsHrs(sp.dt) * rate * TS_DT_MULT;
     let u = byUser.get(r.user_id);
-    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, breakMin: 0, breakOver: 0, locMin: {} }; byUser.set(r.user_id, u); }
+    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, breakMin: 0, breakOver: 0, longBreaks: 0, locMin: {} }; byUser.set(r.user_id, u); }
     u.shifts++; u.min += r.worked_minutes; u.reg += sp.reg; u.ot += sp.ot; u.dt += sp.dt; u.gross += dayGross;
-    u.breakMin += r.break_min || 0; u.breakOver += r.break_over || 0;
+    u.breakMin += r.break_min || 0; u.breakOver += r.break_over || 0; u.longBreaks += r.long_breaks || 0;
     u.locMin[r.location_id] = (u.locMin[r.location_id] || 0) + r.worked_minutes;
     // Per-location roll-up: each day's pay is attributed to the location it was worked at.
     let L = byLoc.get(r.location_id);
@@ -130,6 +138,7 @@ function timesheetReport(req) {
       shifts: u.shifts, hours: tsHrs(u.min), reg_hours: tsHrs(u.reg),
       ot_hours: tsHrs(u.ot + u.dt), dt_hours: tsHrs(u.dt),
       break_minutes: u.breakMin, break_over_minutes: u.breakOver,   // total break min in range + minutes over the per-break limit (not deducted from hours yet)
+      long_breaks: u.longBreaks, missed_breaks: missedByUser[u.user_id] || 0,   // break-compliance counts (for performance review)
       hourly_rate: u.hourly_rate, labor_cost: Math.round(u.gross * 100) / 100,
     };
   }).sort((a, b) => b.hours - a.hours);
@@ -147,6 +156,8 @@ function timesheetReport(req) {
     total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100,
     total_break_minutes: by_staff.reduce((a, r) => a + (r.break_minutes || 0), 0),
     total_break_over_minutes: by_staff.reduce((a, r) => a + (r.break_over_minutes || 0), 0),
+    total_long_breaks: by_staff.reduce((a, r) => a + (r.long_breaks || 0), 0),
+    total_missed_breaks: by_staff.reduce((a, r) => a + (r.missed_breaks || 0), 0),
     total_labor_cost: Math.round(tot.labor * 100) / 100, headcount: by_staff.length,
     by_staff, by_location,
   };
@@ -167,9 +178,9 @@ router.post('/timesheets/gsheet', requireRole(ROLES.REPORTS), async (req, res) =
   const rl = (k) => roleLabels[k] || k;
   const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
   const locName = d.location_id ? shortLoc((db.prepare('SELECT name FROM locations WHERE id=?').get(d.location_id) || {}).name || 'Selected location') : 'All locations';
-  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Hourly rate', 'Gross pay'];
-  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', rl(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.hourly_rate, s.labor_cost]);
-  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, '', d.total_labor_cost];
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Long breaks', 'Missed breaks', 'Hourly rate', 'Gross pay'];
+  const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', rl(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.long_breaks || 0, s.missed_breaks || 0, s.hourly_rate, s.labor_cost]);
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, d.total_long_breaks || 0, d.total_missed_breaks || 0, '', d.total_labor_cost];
   const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
   const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
   const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
@@ -254,6 +265,57 @@ router.get('/break-reminders', requireRole(ROLES.REPORTS), (req, res) => {
     acknowledged: reminders.filter(r => r.acknowledged_at).length,
     pending: reminders.filter(r => !r.acknowledged_at).length,
     reminders,
+  });
+});
+
+// ── Break-compliance report (missed + over-limit breaks, for performance review) ──
+// The durable history a manager pulls for a review: every SCHEDULED break a staffer
+// never took (missed_breaks, written by the end-of-day sweep) and every break that
+// ran over the 10-min limit (time_entry_breaks.over_limit_min). Per-staff counts plus
+// a flat, dated per-incident list. Owner/admin/GM see all locations; a manager theirs.
+router.get('/break-compliance', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req); const { start, end } = dateRange(req);
+
+  const mConds = ['mb.work_date>=?', 'mb.work_date<=?'], mArgs = [start, end];
+  if (locId) { mConds.push('mb.location_id=?'); mArgs.push(locId); }
+  const missed = db.prepare(`SELECT mb.work_date, mb.scheduled_time, u.id user_id, u.name, u.employee_code, u.role, l.name location
+    FROM missed_breaks mb JOIN users u ON u.id=mb.user_id JOIN locations l ON l.id=mb.location_id
+    WHERE ${mConds.join(' AND ')}`).all(...mArgs);
+
+  const lConds = ['te.work_date>=?', 'te.work_date<=?', 'b.break_in_at IS NOT NULL', 'b.over_limit_min>0'], lArgs = [start, end];
+  if (locId) { lConds.push('te.location_id=?'); lArgs.push(locId); }
+  const long = db.prepare(`SELECT te.work_date, b.break_out_at, b.minutes, b.over_limit_min,
+      u.id user_id, u.name, u.employee_code, u.role, l.name location, l.timezone
+    FROM time_entry_breaks b JOIN time_entries te ON te.id=b.time_entry_id
+    JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${lConds.join(' AND ')}`).all(...lArgs);
+
+  const byUser = new Map();
+  const staffOf = (r) => {
+    let u = byUser.get(r.user_id);
+    if (!u) { u = { user_id: r.user_id, name: r.name, employee_code: r.employee_code, role: r.role, location: r.location, missed: 0, long: 0 }; byUser.set(r.user_id, u); }
+    return u;
+  };
+  const incidents = [];
+  for (const r of missed) {
+    staffOf(r).missed++;
+    incidents.push({ work_date: r.work_date, type: 'missed', user_id: r.user_id, name: r.name, employee_code: r.employee_code, location: r.location,
+      time: r.scheduled_time || null, detail: `Scheduled ${r.scheduled_time || ''} break not taken` });
+  }
+  for (const r of long) {
+    staffOf(r).long++;
+    const at = r.break_out_at ? localTime(r.timezone || DEFAULT_TZ, new Date(r.break_out_at)) : null;
+    incidents.push({ work_date: r.work_date, type: 'long', user_id: r.user_id, name: r.name, employee_code: r.employee_code, location: r.location,
+      time: at, detail: `${r.minutes} min break — ${r.over_limit_min} over the limit` });
+  }
+  incidents.sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : a.name.localeCompare(b.name)));
+  const by_staff = [...byUser.values()].sort((a, b) => (b.missed + b.long) - (a.missed + a.long) || a.name.localeCompare(b.name));
+
+  res.json({
+    start, end, location_id: locId ? Number(locId) : null,
+    total_missed: missed.length, total_long: long.length,
+    staff_affected: by_staff.length,
+    by_staff, incidents,
   });
 });
 

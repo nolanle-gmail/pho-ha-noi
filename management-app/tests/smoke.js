@@ -662,6 +662,34 @@ const check = (name, ok, detail = '') => {
     const btsRow = (bts.by_staff || []).find(s => s.user_id === bEmp.id);
     check('timesheet shows total break minutes for the day (hours unchanged)', !!btsRow && btsRow.break_minutes >= 12 && btsRow.break_over_minutes >= 2, JSON.stringify(btsRow && { b: btsRow.break_minutes, o: btsRow.break_over_minutes }));
 
+    // ── Missed-break tracking + break-compliance report (durable, for performance review) ──────
+    const tmcMB = require('../routes/timeclock');
+    const mbDate = (() => { const x = new Date(bToday + 'T12:00:00'); x.setDate(x.getDate() - 2); return x.toISOString().slice(0, 10); })();
+    // Fresh scenario for bEmp on a fully-past day: a work shift with one scheduled break at 14:00,
+    // and a completed entry that day with NO break taken → that scheduled break was missed.
+    _bdb.prepare("DELETE FROM missed_breaks WHERE user_id=? AND work_date=?").run(bEmp.id, mbDate);
+    for (const id of _bdb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date=?").all(bEmp.id, mbDate).map(r => r.id)) {
+      _bdb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(id); _bdb.prepare("DELETE FROM time_entries WHERE id=?").run(id);
+    }
+    for (const id of _bdb.prepare("SELECT id FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?").all(bEmp.id, loc1, mbDate).map(r => r.id)) {
+      _bdb.prepare("DELETE FROM shift_breaks WHERE shift_id=?").run(id); _bdb.prepare("DELETE FROM shifts WHERE id=?").run(id);
+    }
+    const mbShift = _bdb.prepare("INSERT INTO shifts (user_id, location_id, shift_date, start_time, end_time, kind) VALUES (?,?,?,?,?,'work')").run(bEmp.id, loc1, mbDate, '09:00', '17:00');
+    _bdb.prepare("INSERT INTO shift_breaks (shift_id, start_time) VALUES (?, '14:00')").run(mbShift.lastInsertRowid);
+    _bdb.prepare("INSERT INTO time_entries (user_id, location_id, work_date, clock_in, clock_out, scheduled_minutes, worked_minutes, late_minutes, opened_by) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(bEmp.id, loc1, mbDate, mbDate + 'T17:00:00.000Z', mbDate + 'T18:00:00.000Z', 480, 480, 0, bEmp.id);
+    tmcMB.sweepMissedBreaks();
+    const mbRow = _bdb.prepare("SELECT * FROM missed_breaks WHERE user_id=? AND work_date=?").get(bEmp.id, mbDate);
+    check('missed-break sweep records an untaken scheduled break (durable)', !!mbRow && mbRow.scheduled_time === '14:00', JSON.stringify(mbRow || null));
+    tmcMB.sweepMissedBreaks();
+    const mbCnt = _bdb.prepare("SELECT COUNT(*) c FROM missed_breaks WHERE user_id=? AND work_date=?").get(bEmp.id, mbDate).c;
+    check('missed-break sweep is idempotent (no duplicate on re-run)', mbCnt === 1, 'count=' + mbCnt);
+    const bcomp = await j(await fetch(base + `/api/reports/break-compliance?location_id=${loc1}&start=${mbDate}&end=${bToday}`, { headers: H(mgr.token) }));
+    check('break-compliance report ok + shape', Array.isArray(bcomp.by_staff) && Array.isArray(bcomp.incidents) && typeof bcomp.total_missed === 'number' && typeof bcomp.total_long === 'number', JSON.stringify({ bs: Array.isArray(bcomp.by_staff), inc: Array.isArray(bcomp.incidents) }));
+    const bcMine = (bcomp.by_staff || []).find(s => s.user_id === bEmp.id);
+    check('break-compliance counts the missed and the long break for the staffer', !!bcMine && bcMine.missed >= 1 && bcMine.long >= 1, JSON.stringify(bcMine || null));
+    check('break-compliance lists a missed-break incident with its scheduled time', (bcomp.incidents || []).some(i => i.user_id === bEmp.id && i.type === 'missed' && i.time === '14:00'));
+
     // ── Worked-hours end-of-day sign-off (confirm / dispute / reminder + kiosk popups) ──────────
     // Use a plain employee (not a manage-cap leader) so a dispute has a distinct manager to message.
     const tmc2 = require('../routes/timeclock');
