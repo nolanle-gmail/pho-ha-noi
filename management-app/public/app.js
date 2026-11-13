@@ -4502,7 +4502,10 @@ async function renderLocTimeClock() {
     <div class="row-between sched-head">
       <div class="week-nav"><button class="btn sm ghost" id="tcPrev">‹ Prev</button><button class="btn sm ghost" id="tcToday">Today</button><button class="btn sm ghost" id="tcNext">Next ›</button></div>
       <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
-      <a class="btn sm" href="/clock" target="_blank" rel="noopener">⏱ Open clock kiosk</a>
+      <div style="display:flex;gap:.4rem">
+        <a class="btn sm ghost" href="/shiftboard/${encodeURIComponent(String((loc.name || '')).replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || (loc.name || ''))}" target="_blank" rel="noopener" title="Full-screen TV board of today's scheduled staff + clock/break status">📺 Shift Board (TV)</a>
+        <a class="btn sm" href="/clock" target="_blank" rel="noopener">⏱ Open clock kiosk</a>
+      </div>
     </div>
     <div class="tc-summary">
       <span class="badge ok">${sm.on_clock} on the clock</span>

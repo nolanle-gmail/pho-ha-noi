@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#7f1414" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Shift Board — Phở Hà Nội</title>
+<style>
+  :root{
+    --brand:#B91C1C; --brand-deep:#7f1414; --ink:#241a15; --muted:#6e5f51; --line:#e7dccc;
+    --paper:#f3ede3; --board:#fbf9f4;
+    --red:#b91c1c; --red-bg:#fbe7e5; --amber:#b45309; --amber-bg:#fdf0d9;
+    --blue:#1d4ed8; --blue-bg:#e6edfc; --green:#15803d; --green-bg:#e4f3e9; --grey:#6b7280; --grey-bg:#eceae6;
+    --rowh:64px; --fs:1rem;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body{ margin:0; height:100%; overflow:hidden; }
+  body{ font:16px/1.25 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--paper); color:var(--ink); height:100vh; display:flex; flex-direction:column; }
+  header{ background:linear-gradient(180deg,var(--brand-deep),var(--brand)); color:#fff;
+    padding:calc(.45rem + env(safe-area-inset-top)) 1.1rem .5rem; display:flex; align-items:center; gap:1rem; flex:0 0 auto; }
+  header img.logo{ height:32px; width:auto; }
+  header .h-t{ font-weight:800; font-size:1.45rem; display:flex; align-items:baseline; gap:.55rem; white-space:nowrap; }
+  header .h-loc{ opacity:.95; }
+  header .h-date{ opacity:.8; font-weight:700; font-size:.9rem; }
+  header .spacer{ flex:1; }
+  .legend{ display:flex; gap:.4rem; flex-wrap:wrap; align-items:center; justify-content:flex-end; }
+  .leg{ background:rgba(255,255,255,.14); border-radius:999px; padding:.26rem .66rem; font-weight:800; font-size:.92rem;
+    display:inline-flex; align-items:center; gap:.4rem; white-space:nowrap; }
+  .leg .dot{ width:.78rem; height:.78rem; border-radius:50%; box-shadow:0 0 0 2px rgba(255,255,255,.3) inset; }
+  .leg .n{ font-variant-numeric:tabular-nums; }
+  .leg.off{ opacity:.45; }
+  header .clockwrap{ display:flex; flex-direction:column; align-items:flex-end; margin-left:.3rem; }
+  header .clock{ font-weight:800; font-size:1.3rem; font-variant-numeric:tabular-nums; }
+  header .upd{ opacity:.82; font-size:.68rem; }
+  header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:800; font-size:1.15rem; padding:.28rem .56rem; cursor:pointer; }
+
+  main{ flex:1 1 auto; display:flex; flex-direction:column; min-height:0; padding:.5rem .7rem .3rem; }
+  .thead,.trow{ display:grid; grid-template-columns:2.2fr 1.1fr .9fr .9fr 1.25fr 1.9fr; align-items:center; gap:.5rem; }
+  .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
+    text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
+  .thead .num,.trow .num{ text-align:center; }
+  .rows{ flex:1 1 auto; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+  .trow{ height:var(--rowh); padding:0 .7rem; border-bottom:1px solid var(--line);
+    background:var(--board); border-left:7px solid transparent; }
+  .trow.sev-red{ background:var(--red-bg); border-left-color:var(--red); }
+  .trow.sev-amber{ background:var(--amber-bg); border-left-color:var(--amber); }
+  .trow.sev-blue{ background:var(--blue-bg); border-left-color:var(--blue); }
+  .trow.dim{ opacity:.62; }
+  .nm{ font-weight:800; font-size:calc(var(--fs) * 1.12); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .job{ color:var(--muted); font-weight:700; font-size:calc(var(--fs) * .72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sched{ font-weight:700; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
+  .sched small{ color:var(--muted); font-weight:700; }
+  .punch{ font-weight:800; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
+  .punch.late{ color:var(--red); }
+  .punch .ded{ color:var(--muted); font-weight:700; }
+  .punch .sub{ display:block; font-size:calc(var(--fs) * .66); font-weight:800; }
+  .brk{ font-weight:800; font-size:calc(var(--fs) * .92); text-align:center; white-space:nowrap; }
+  .brk .o{ color:var(--red); }
+  .brk .ok{ color:var(--muted); font-weight:700; }
+  .badges{ display:flex; gap:.35rem; flex-wrap:wrap; align-items:center; }
+  .bdg{ font-weight:900; font-size:calc(var(--fs) * .82); padding:.2em .6em; border-radius:999px; white-space:nowrap;
+    display:inline-flex; align-items:center; gap:.25em; letter-spacing:.01em; }
+  .bdg.red{ background:var(--red); color:#fff; }
+  .bdg.amber{ background:var(--amber); color:#fff; }
+  .bdg.blue{ background:var(--blue); color:#fff; }
+  .bdg.green{ background:var(--green-bg); color:var(--green); box-shadow:0 0 0 1.5px var(--green) inset; }
+  .bdg.grey{ background:var(--grey-bg); color:var(--grey); box-shadow:0 0 0 1.5px var(--grey) inset; }
+  .bdg.flash{ animation:flash 1.3s ease-in-out infinite; }
+  @keyframes flash{ 0%,100%{ filter:none; } 50%{ filter:brightness(1.22); } }
+
+  footer{ flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:1rem;
+    padding:.25rem .9rem; color:var(--muted); font-weight:700; font-size:.82rem; }
+  .pager{ display:flex; align-items:center; gap:.5rem; }
+  .dots{ display:flex; gap:.3rem; }
+  .dots i{ width:.6rem; height:.6rem; border-radius:50%; background:var(--line); display:inline-block; }
+  .dots i.on{ background:var(--brand); }
+  .foot-legend{ display:flex; gap:.9rem; flex-wrap:wrap; }
+  .foot-legend b{ color:var(--ink); }
+
+  .picks{ max-width:560px; margin:auto; display:grid; gap:.7rem; width:100%; padding:1rem; }
+  .pick{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.3rem; font-size:1.3rem; font-weight:800;
+    display:flex; justify-content:space-between; align-items:center; cursor:pointer; text-decoration:none; color:var(--ink); }
+  .pick::after{ content:"›"; color:var(--muted); font-size:1.6rem; margin-left:.6rem; }
+  .note{ text-align:center; color:var(--muted); padding:3rem 1rem; font-size:1.3rem; max-width:640px; margin:auto; }
+  .note h2{ color:var(--ink); font-size:1.8rem; margin:.3rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="/brand.svg" alt="Phở Hà Nội" onerror="this.style.display='none'" />
+  <div class="h-t">🕒 Shift Board <span class="h-loc" id="hLoc"></span></div>
+  <div class="h-date" id="hDate"></div>
+  <div class="spacer"></div>
+  <div class="legend" id="legend"></div>
+  <div class="clockwrap"><div class="clock" id="clock">—</div><div class="upd" id="upd"></div></div>
+  <button id="full" title="Fullscreen">⛶</button>
+</header>
+<main id="main"><div class="note">Loading…</div></main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const shortLoc = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || n;
+const SLUG = decodeURIComponent((location.pathname.match(/^\/shiftboard\/(.+?)\/?$/i) || [, ''])[1] || '').trim();
+
+let dataTimer = null, pageTimer = null, lastData = null, curPage = 0, perPage = 1, pages = 1;
+const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 56, MAX_ROW = 150;
+
+async function api(path) {
+  const r = await fetch('/api/shiftboard' + path, { headers: { 'Content-Type': 'application/json' } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok && !d.error) throw new Error('Something went wrong.');
+  return d;
+}
+
+// Keep the screen awake + a live wall clock.
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { keepAwake(); if (SLUG) load(); } });
+function tickClock() { $('clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+setInterval(tickClock, 10000); tickClock();
+$('full').onclick = () => { const el = document.documentElement; if (!document.fullscreenElement) (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); else document.exitFullscreen && document.exitFullscreen(); };
+
+// ── Bare /shiftboard: pick a store ──────────────────────────────────────────
+async function pickStore() {
+  $('hLoc').textContent = ''; $('legend').innerHTML = ''; $('upd').textContent = ''; $('hDate').textContent = '';
+  let d; try { d = await api('/locations'); } catch { $('main').innerHTML = '<div class="note">Couldn’t load locations. Try again.</div>'; return; }
+  if (!d.locations || !d.locations.length) { $('main').innerHTML = '<div class="note">No locations yet.</div>'; return; }
+  $('main').innerHTML = '<div class="picks"><div class="note" style="padding:0 0 .4rem">Pick a location to show on this screen — then bookmark it / add to the home screen.</div>'
+    + d.locations.map(l => `<a class="pick" href="/shiftboard/${esc(l.slug)}">${esc(shortLoc(l.name))}</a>`).join('') + '</div>';
+}
+
+// ── Status badges for one staffer (most-severe first) ───────────────────────
+function badgesFor(s, limit) {
+  const b = [];
+  if (s.late_min > 0) b.push(`<span class="bdg red flash">⏰ LATE ${s.late_min}m${s.status === 'not_in' ? ' · NOT IN' : ''}</span>`);
+  if (s.long_break) b.push(`<span class="bdg red">☕ LONG BREAK +${(s.break_over_now || s.break_over_total)}m</span>`);
+  if (s.break_missed) b.push(`<span class="bdg red">⚠ BREAK MISSED</span>`);
+  if (s.break_soon_min != null) b.push(`<span class="bdg amber">☕ BREAK IN ${s.break_soon_min}m</span>`);
+  if (s.on_break && !s.long_break) b.push(`<span class="bdg blue">☕ ON BREAK ${s.break_elapsed_min}m</span>`);
+  if (!s.scheduled) b.push(`<span class="bdg amber">＋ UNSCHEDULED</span>`);
+  if (!b.length) {
+    if (s.status === 'in') b.push(`<span class="bdg green">✓ ON THE CLOCK</span>`);
+    else if (s.status === 'out') b.push(`<span class="bdg grey">● DONE</span>`);
+    else if (s.status === 'not_in') b.push(`<span class="bdg grey">○ NOT IN YET</span>`);
+  }
+  return b.join('');
+}
+
+function rowHtml(s) {
+  const sevClass = s.sev === 3 ? 'sev-red' : s.sev === 2 ? 'sev-amber' : s.sev === 1 ? 'sev-blue' : '';
+  const dim = s.status === 'out' ? ' dim' : '';
+  const sched = s.shift_start ? `${s.shift_start}<small>–${s.shift_end || '?'}</small>` : '<span class="ok" style="color:var(--muted)">—</span>';
+  const inCell = s.clock_in
+    ? `<span class="${s.late_min > 0 && s.status !== 'not_in' ? 'late' : ''}">${s.clock_in}${s.late_min > 0 && s.status !== 'not_in' ? `<span class="sub">+${s.late_min}m late</span>` : ''}</span>`
+    : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
+  const outCell = s.clock_out ? s.clock_out : (s.status === 'out' ? '' : '<span class="ded">·</span>');
+  let brk;
+  if (s.on_break) brk = `<span class="${s.break_over_now > 0 ? 'o' : ''}">on break ${s.break_elapsed_min}m</span>`;
+  else if (s.breaks_taken) brk = `<span class="${s.break_over_total > 0 ? 'o' : 'ok'}">${s.breaks_taken}× ${s.break_total_min}m${s.break_over_total > 0 ? ` (+${s.break_over_total})` : ''}</span>`;
+  else brk = '<span class="ok">—</span>';
+  return `<div class="trow ${sevClass}${dim}">
+    <div><div class="nm">${esc(s.name)}</div>${s.job ? `<div class="job">${esc(s.job)}</div>` : ''}</div>
+    <div class="sched">${sched}</div>
+    <div class="punch">${inCell}</div>
+    <div class="punch">${outCell}</div>
+    <div class="brk">${brk}</div>
+    <div class="badges">${badgesFor(s)}</div>
+  </div>`;
+}
+
+function renderChrome(d) {
+  $('hLoc').textContent = shortLoc(d.location.name || '');
+  document.title = 'Shift Board · ' + shortLoc(d.location.name || '');
+  const dt = new Date((d.date || '') + 'T00:00:00');
+  $('hDate').textContent = isNaN(dt) ? '' : dt.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
+  const sm = d.summary || {};
+  const L = [
+    ['on_clock', 'On clock', 'var(--green)', sm.on_clock],
+    ['late', 'Late', 'var(--red)', sm.late],
+    ['long_break', 'Long break', 'var(--red)', sm.long_break],
+    ['break_missed', 'Missed break', 'var(--amber)', sm.break_missed],
+    ['done', 'Done', 'var(--grey)', sm.done],
+    ['not_in', 'Not in', 'var(--grey)', sm.not_in],
+  ];
+  $('legend').innerHTML = L.map(([k, lbl, c, n]) =>
+    `<span class="leg ${n ? '' : 'off'}"><span class="dot" style="background:${c}"></span>${lbl} <span class="n">${n || 0}</span></span>`).join('');
+  $('upd').textContent = 'updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
+// Lay the current page out so rows fill the screen; paginate when they don't fit.
+function layout() {
+  const d = lastData; if (!d) return;
+  const staff = d.staff || [];
+  if (!staff.length) {
+    $('main').innerHTML = '<div class="note"><h2>No one scheduled today</h2>Nobody is on the schedule for this location today.</div>';
+    pages = 1; return;
+  }
+  // Build the shell once so we can measure the rows area.
+  $('main').innerHTML = `<div class="thead">
+      <div>Staff</div><div class="num">Scheduled</div><div class="num">Clock In</div>
+      <div class="num">Clock Out</div><div class="num">Breaks</div><div>Status</div>
+    </div><div class="rows" id="rows"></div>
+    <footer><div class="foot-legend">
+        <span><b style="color:var(--red)">●</b> Late / long break</span>
+        <span><b style="color:var(--amber)">●</b> Heads-up</span>
+        <span>Break limit <b>${(d.thresholds && d.thresholds.break_limit_min) || 10} min</b></span>
+      </div><div class="pager" id="pager"></div></footer>`;
+  const rowsEl = $('rows');
+  const bodyH = rowsEl.clientHeight;
+  // How many rows fit at a readable minimum. If everyone fits, show them all on one
+  // page and let the rows grow to fill the screen (capped); otherwise paginate.
+  const maxFit = Math.max(1, Math.floor(bodyH / MIN_ROW));
+  perPage = staff.length <= maxFit ? staff.length : maxFit;
+  pages = Math.max(1, Math.ceil(staff.length / perPage));
+  if (curPage >= pages) curPage = 0;
+  const rowH = Math.max(MIN_ROW, Math.min(MAX_ROW, Math.floor(bodyH / perPage)));
+  document.documentElement.style.setProperty('--rowh', rowH + 'px');
+  document.documentElement.style.setProperty('--fs', Math.max(0.95, Math.min(1.9, rowH / 44)).toFixed(3) + 'rem');
+  renderPage();
+}
+
+function renderPage() {
+  const d = lastData; if (!d) return;
+  const staff = d.staff || [];
+  const start = curPage * perPage;
+  const slice = staff.slice(start, start + perPage);
+  const rowsEl = $('rows'); if (rowsEl) rowsEl.innerHTML = slice.map(rowHtml).join('');
+  const pager = $('pager');
+  if (pager) pager.innerHTML = pages > 1
+    ? `<span>Page ${curPage + 1} / ${pages}</span><span class="dots">${Array.from({ length: pages }, (_, i) => `<i class="${i === curPage ? 'on' : ''}"></i>`).join('')}</span>`
+    : `<span>${staff.length} staff</span>`;
+}
+
+function render(d) {
+  lastData = d;
+  renderChrome(d);
+  layout();
+}
+
+async function load() {
+  clearTimeout(dataTimer);
+  if (!SLUG) return;
+  let d; try { d = await api('/board?slug=' + encodeURIComponent(SLUG)); }
+  catch (e) { if (!lastData) $('main').innerHTML = `<div class="note">${esc(e.message)}</div>`; dataTimer = setTimeout(load, REFRESH_SECONDS * 1000); return; }
+  if (!d.ok) { $('main').innerHTML = `<div class="note"><h2>Shift Board unavailable</h2>${esc(d.error || '')}</div>`; dataTimer = setTimeout(load, REFRESH_SECONDS * 1000); return; }
+  render(d);
+  dataTimer = setTimeout(load, REFRESH_SECONDS * 1000);   // constant refresh
+}
+
+// Flip between pages every PAGE_SECONDS (only matters when there's more than one).
+pageTimer = setInterval(() => { if (pages > 1) { curPage = (curPage + 1) % pages; renderPage(); } }, PAGE_SECONDS * 1000);
+
+let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(layout, 180); });
+(function boot() { keepAwake(); if (SLUG) load(); else pickStore(); })();
+</script>
+</body>
+</html>

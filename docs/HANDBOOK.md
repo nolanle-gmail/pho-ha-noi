@@ -282,6 +282,25 @@ Floor Plan tab opens the board for that location in a new tab. A long table capt
 snapshot, and the Staff Table Map** (`ftLabel()` in each app's SPA + `white-space:nowrap` on
 `.ftable-l`), so all the floor surfaces look alike.
 
+**Full-screen Shift Board for a TV (2026-11-12).** A second no-login, read-only wall display — for the
+**back office / break room**, not the dining room — that shows **today's scheduled staff** for one store
+and, at a glance, who's **on time, late, on a break (and whether it ran long), and who forgot/owes a
+break**. The point is peer-visible accountability: when everyone sees that a punch was late or a break ran
+long, it tends not to repeat. URL `…/shiftboard/<slug>` (e.g. `/shiftboard/san-jose`, slug matched
+case/hyphen-insensitively); bare `/shiftboard` is a picker. The page (`public/shiftboard.html`) is a row
+per staffer — **name · position · scheduled span · clock-in · clock-out · breaks · status** — with the
+**row colour-coded** and a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
+not in once past their start — the late flag persists all day), **🔴 LONG BREAK +Nm** (a break over the
+10-min limit, live while on it or after), **⚠ BREAK MISSED** (a scheduled break went > 15 min unused),
+**🟠 BREAK IN Nm** (a scheduled break is within 10 min), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**, **DONE**,
+**NOT IN YET**. It reads `GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only),
+which merges today's `shifts` with their `time_entries` + `time_entry_breaks` and the manager-set
+`shift_breaks` (for the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to
+fill the screen, and when there are more staff than fit it **paginates and flips between pages every ~15 s**
+(a page indicator shows "Page 1 / 2"); it refreshes the data every ~8 s and holds a screen wake-lock. A
+**📺 Shift Board (TV)** link in the Management **Time Clock** tab opens it for that location. Thresholds
+(late grace, break limit, soon/missed windows) are env-tunable and default to the clock kiosk's.
+
 **Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
 own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch
 it, so a guest seated anywhere other than the Front Desk "Seat" button (whose JS fires a companion

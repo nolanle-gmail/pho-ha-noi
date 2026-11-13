@@ -42,6 +42,11 @@ app.get('/cleanup/:slug', (req, res) => res.sendFile(path.join(__dirname, 'publi
 // Routing is case-insensitive, so /floorplan/san-jose works too.
 app.get('/Floorplan', (req, res) => res.sendFile(path.join(__dirname, 'public', 'floorboard.html')));
 app.get('/Floorplan/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'floorboard.html')));
+// Full-screen Shift Board for a TV in the back office / break room (no login, read-only). Shows
+// today's scheduled staff + their clock-in / out, late, and break status. /shiftboard = picker;
+// /shiftboard/<slug> pins one store (e.g. /shiftboard/san-jose).
+app.get('/shiftboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'shiftboard.html')));
+app.get('/shiftboard/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'shiftboard.html')));
 
 // Activity trail — records logins, writes, and denied attempts across the API.
 app.use(require('./lib/activity').activityLogger);
@@ -64,6 +69,7 @@ app.use('/api/sf', require('./routes/sfstaff'));
 app.use('/api/sfkiosk', require('./routes/sfkiosk'));   // public Service Flow kiosk (employee code, no JWT)
 app.use('/api/cleanup', require('./routes/cleanup'));   // public busser Cleanup board (no login)
 app.use('/api/floorboard', require('./routes/floorboard')); // public full-screen Floor Board TV display (no login, read-only)
+app.use('/api/shiftboard', require('./routes/shiftboard')); // public full-screen Shift Board TV display (no login, read-only)
 app.use('/api/invscan', require('./routes/invscan'));
 app.use('/api/scannerkiosk', require('./routes/scannerkiosk'));
 app.use('/api/wl-staff', require('./routes/wlstaff'));   // service-key: validate an employee code for the Waitlist front-desk board

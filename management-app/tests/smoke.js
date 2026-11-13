@@ -1886,6 +1886,18 @@ const check = (name, ok, detail = '') => {
       check('wl-staff validate without the service key → 401', r401.status === 401, 'status=' + r401.status);
       vdb.prepare("DELETE FROM users WHERE id=?").run(vId);
     }
+
+    // ── Public Shift Board TV display (no login) ────────────────────────────────
+    {
+      const SB = async (p) => j(await fetch(base + '/api/shiftboard' + p));
+      const sbLocs = await SB('/locations');
+      check('shiftboard locations list (all active)', sbLocs.ok === true && Array.isArray(sbLocs.locations) && sbLocs.locations.length >= 10, JSON.stringify(sbLocs.locations && sbLocs.locations.length));
+      const slug = (sbLocs.locations && sbLocs.locations[0] && sbLocs.locations[0].slug) || 'cupertino';
+      const sb = await SB('/board?slug=' + encodeURIComponent(slug));
+      check('shiftboard board ok + shape', sb.ok === true && !!sb.location && Array.isArray(sb.staff) && !!sb.summary && typeof sb.summary.total === 'number', JSON.stringify({ ok: sb.ok, hasLoc: !!sb.location, staff: Array.isArray(sb.staff), sum: !!sb.summary }));
+      const sbBad = await fetch(base + '/api/shiftboard/board?slug=nope-' + Date.now());
+      check('shiftboard unknown slug → 404', sbBad.status === 404, 'status=' + sbBad.status);
+    }
   } catch (e) {
     fail++; console.log('  FAIL  exception: ' + e.message);
   } finally {
