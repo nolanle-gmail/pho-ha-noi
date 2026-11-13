@@ -196,9 +196,9 @@ function rowHtml(s) {
     : '<span class="ok" style="color:var(--muted)">—</span>';
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
-    ? `<span class="${lateHere ? 'late' : ''}">${s.clock_in}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
+    ? `<span class="${lateHere ? 'late' : ''}">${fmt12(s.clock_in)}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
     : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
-  const outCell = s.clock_out ? s.clock_out : (s.status === 'out' ? '' : '<span class="ded">·</span>');
+  const outCell = s.clock_out ? fmt12(s.clock_out) : (s.status === 'out' ? '' : '<span class="ded">·</span>');
   return `<div class="trow ${sevClass}${dim}${flash}">
     <div class="nm">${esc(s.name)}</div>
     <div class="sched">${sched}</div>
