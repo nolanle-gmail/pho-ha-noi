@@ -66,6 +66,7 @@
   .bchip.past{ opacity:.42; }
   .bchip.soon{ background:var(--amber); color:#fff; box-shadow:none; }
   .bchip.done{ background:var(--green-bg); color:var(--green); box-shadow:0 0 0 1.5px var(--green) inset; }
+  .bchip.over{ background:var(--red-bg); color:var(--red); box-shadow:0 0 0 1.5px var(--red) inset; }
   /* Gentle "take your break" flash on the whole row, ~10 min before a scheduled break. */
   .trow.flash-soon{ animation:rowsoon 1.5s ease-in-out infinite; }
   @keyframes rowsoon{ 0%,100%{ background:#fff6e6; } 50%{ background:#fcdf9e; } }
@@ -77,6 +78,7 @@
   .bdg.blue{ background:var(--blue); color:#fff; }
   .bdg.green{ background:var(--green-bg); color:var(--green); box-shadow:0 0 0 1.5px var(--green) inset; }
   .bdg.grey{ background:var(--grey-bg); color:var(--grey); box-shadow:0 0 0 1.5px var(--grey) inset; }
+  .bdg.wrap{ white-space:normal; text-align:center; line-height:1.08; }
   .bdg.flash{ animation:flash 1.3s ease-in-out infinite; }
   @keyframes flash{ 0%,100%{ filter:none; } 50%{ filter:brightness(1.22); } }
 
@@ -148,7 +150,7 @@ async function pickStore() {
 function badgesFor(s, limit) {
   const b = [];
   if (s.late_min > 0) b.push(`<span class="bdg red flash">⏰ LATE ${s.late_min}m${s.status === 'not_in' ? ' · NOT IN' : ''}</span>`);
-  if (s.long_break) b.push(`<span class="bdg red">☕ LONG BREAK +${(s.break_over_now || s.break_over_total)}m</span>`);
+  if (s.long_break) b.push(`<span class="bdg red wrap">☕ LONGER THAN 10-MIN BREAK</span>`);
   if (s.break_missed) b.push(`<span class="bdg red">⚠ BREAK MISSED</span>`);
   if (s.break_soon_min != null) b.push(`<span class="bdg amber">☕ BREAK IN ${s.break_soon_min}m${s.next_break ? ` · ${fmt12(s.next_break)}` : ''}</span>`);
   if (s.break_due) b.push(`<span class="bdg amber">☕ DUE A BREAK</span>`);
@@ -162,20 +164,27 @@ function badgesFor(s, limit) {
   return b.join('');
 }
 
-// Breaks cell: if on break, show the live timer; otherwise show the scheduled break
-// TIME(S) as chips (the next one amber, past ones dimmed), plus a ✓ of any taken.
+// Breaks cell. On break → the live timer next to the break's start time, with "(N min
+// extra)" if it's already run over. Once breaks are taken → show each break's TIME with
+// "(N min extra)" in red for any that ran long. Before any break → the scheduled break
+// TIME(S) as chips (next one amber, past dimmed, flashing row 10 min out).
 function breakCell(s) {
-  if (s.on_break) return `<span class="brk-live ${s.break_over_now > 0 ? 'o' : ''}">☕ on break ${s.break_elapsed_min}m${s.break_over_now > 0 ? ` <span class="o">+${s.break_over_now}</span>` : ''}</span>`;
+  if (s.on_break) {
+    const extra = s.break_over_now > 0 ? ` <span class="o">(${s.break_over_now} min extra)</span>` : '';
+    return `<span class="brk-live ${s.break_over_now > 0 ? 'o' : ''}">☕ ${s.break_start ? fmt12(s.break_start) + ' · ' : ''}${s.break_elapsed_min}m${extra}</span>`;
+  }
+  if (s.breaks && s.breaks.length) {
+    return `<div class="bchips">${s.breaks.map(b =>
+      `<span class="bchip ${b.over > 0 ? 'over' : 'done'}">${fmt12(b.at)}${b.over > 0 ? ` <span class="o">(${b.over} min extra)</span>` : ''}</span>`).join('')}</div>`;
+  }
   if (s.sched_breaks && s.sched_breaks.length) {
     const chips = s.sched_breaks.map(t => {
       const soon = s.next_break === t && s.break_soon_min != null;
       const past = toMin(t) < NOWMIN;
       return `<span class="bchip ${soon ? 'soon' : past ? 'past' : ''}">${fmt12(t)}</span>`;
     }).join('');
-    const taken = s.breaks_taken ? `<span class="bchip done">✓${s.breaks_taken}${s.break_over_total > 0 ? ` +${s.break_over_total}` : ''}</span>` : '';
-    return `<div class="bchips">${chips}${taken}</div>`;
+    return `<div class="bchips">${chips}</div>`;
   }
-  if (s.breaks_taken) return `<span class="brk-live ok">${s.breaks_taken}× ${s.break_total_min}m${s.break_over_total > 0 ? ` <span class="o">(+${s.break_over_total})</span>` : ''}</span>`;
   return '<span class="ok">—</span>';
 }
 
@@ -184,8 +193,9 @@ function rowHtml(s) {
   const flash = s.break_soon_min != null ? ' flash-soon' : '';
   const dim = s.status === 'out' ? ' dim' : '';
   const sched = s.shift_start ? `${s.shift_start}<small>–${s.shift_end || '?'}</small>` : '<span class="ok" style="color:var(--muted)">—</span>';
+  const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
-    ? `<span class="${s.late_min > 0 && s.status !== 'not_in' ? 'late' : ''}">${s.clock_in}${s.late_min > 0 && s.status !== 'not_in' ? `<span class="sub">+${s.late_min}m late</span>` : ''}</span>`
+    ? `<span class="${lateHere ? 'late' : ''}">${s.clock_in}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
     : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
   const outCell = s.clock_out ? s.clock_out : (s.status === 'out' ? '' : '<span class="ded">·</span>');
   return `<div class="trow ${sevClass}${dim}${flash}">

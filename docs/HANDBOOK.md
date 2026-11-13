@@ -290,14 +290,16 @@ long, it tends not to repeat. URL `…/shiftboard/<slug>` (e.g. `/shiftboard/san
 case/hyphen-insensitively); bare `/shiftboard` is a picker. The page (`public/shiftboard.html`) is a row
 per staffer — **name · position · scheduled span · clock-in · clock-out · breaks · status** — with the
 **row colour-coded** and a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
-not in once past their start — the late flag persists all day), **🔴 LONG BREAK +Nm** (a break over the
-10-min limit, live while on it or after), **⚠ BREAK MISSED** (a scheduled break went > 15 min unused),
-**🟠 BREAK IN Nm · <time>** (a scheduled break is within 10 min — the staffer's whole **row also gently
-flashes** so they/anyone can see it's break time), **☕ DUE A BREAK** (a heuristic that works even with no
-break scheduled — a rest break is earned per ~4 worked hours, so anyone who's earned more than they've
-taken is flagged), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**, **DONE**, **NOT IN YET**. The **Breaks column**
-shows the **scheduled break start time(s)** as chips (both when there are two; the next one highlighted,
-past ones dimmed, with a ✓ of any taken), or the live "on break Nm" while someone's on one. It reads
+not in once past their start — the late flag persists all day; a late clock-in also shows **(N min late)**
+in red right under the clock-in time), **🔴 LONGER THAN 10-MIN BREAK** (a break over the 10-min limit, live
+while on it or after — the break's own time shows **(N min extra)** in the Breaks column), **⚠ BREAK
+MISSED** (a scheduled break went > 15 min unused), **🟠 BREAK IN Nm · <time>** (a scheduled break is within
+10 min — the staffer's whole **row also gently flashes** so they/anyone can see it's break time), **☕ DUE A
+BREAK** (a heuristic that works even with no break scheduled — a rest break is earned per ~4 worked hours,
+so anyone who's earned more than they've taken is flagged), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**,
+**DONE**, **NOT IN YET**. The **Breaks column** shows, before a break, the **scheduled break start time(s)**
+as chips (both when there are two; next highlighted, past dimmed); once taken, **each break's actual time**
+with **(N min extra)** in red for any that ran long; and the live "on break <time> · Nm" while on one. It reads
 `GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only), which merges today's
 `shifts` with their `time_entries` + `time_entry_breaks` and the manager-set `shift_breaks` (for the
 break times, the 10-min flash, and the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to

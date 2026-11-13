@@ -51,6 +51,7 @@ router.get('/board', (req, res) => {
   const date = localDate(tz);
   const now = new Date();
   const nowMin = localMinOfDay(tz, now);
+  const toLocalHHMM = (iso) => { const m = localMinOfDay(tz, new Date(iso)); return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
 
   // Everyone scheduled to work here today: their shift span + first job + profile title.
   const scheduled = db.prepare(`
@@ -103,8 +104,9 @@ router.get('/board', (req, res) => {
     // Clock status.
     let status = 'not_in';
     let clock_in = null, clock_out = null, worked_min = 0, late_min = 0;
-    let on_break = false, break_elapsed_min = 0, break_over_now = 0;
+    let on_break = false, break_elapsed_min = 0, break_over_now = 0, break_start = null;
     let breaks_taken = 0, break_total_min = 0, break_over_total = 0;
+    const breaks = [];   // completed breaks: { at:'HH:MM', minutes, over }
     const flags = [];
 
     if (e) {
@@ -120,9 +122,12 @@ router.get('/board', (req, res) => {
       }
       // Breaks on this entry.
       for (const b of breaksStmt.all(e.id)) {
-        if (b.break_in_at) { breaks_taken++; break_total_min += (b.minutes || 0); break_over_total += (b.over_limit_min || 0); }
-        else {
+        if (b.break_in_at) {
+          breaks_taken++; break_total_min += (b.minutes || 0); break_over_total += (b.over_limit_min || 0);
+          breaks.push({ at: toLocalHHMM(b.break_out_at), minutes: b.minutes || 0, over: b.over_limit_min || 0 });
+        } else {
           on_break = true; status = 'on_break';
+          break_start = toLocalHHMM(b.break_out_at);
           break_elapsed_min = Math.max(0, Math.round((now.getTime() - new Date(b.break_out_at).getTime()) / 60000));
           break_over_now = Math.max(0, break_elapsed_min - BREAK_LIMIT_MIN);
         }
@@ -174,8 +179,8 @@ router.get('/board', (req, res) => {
       shift_start: p.shift_start, shift_end: p.shift_end,
       clock_in, clock_out, status, worked_min,
       late_min, not_in_late: not_in_late > 0 ? not_in_late : 0,
-      on_break, break_elapsed_min, break_over_now,
-      breaks_taken, break_total_min, break_over_total,
+      on_break, break_start, break_elapsed_min, break_over_now,
+      breaks_taken, break_total_min, break_over_total, breaks,
       sched_breaks, next_break, break_soon_min, break_missed, break_due, long_break,
       flags,
       // Top severity for row tint / sort: 0 none, 1 blue, 2 amber, 3 red.
