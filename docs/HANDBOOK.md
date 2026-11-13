@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 12, 2026_
+_Last updated: November 13, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -287,8 +287,11 @@ snapshot, and the Staff Table Map** (`ftLabel()` in each app's SPA + `white-spac
 and, at a glance, who's **on time, late, on a break (and whether it ran long), and who forgot/owes a
 break**. The point is peer-visible accountability: when everyone sees that a punch was late or a break ran
 long, it tends not to repeat. URL `…/shiftboard/<slug>` (e.g. `/shiftboard/san-jose`, slug matched
-case/hyphen-insensitively); bare `/shiftboard` is a picker. The page (`public/shiftboard.html`) is a row
-per staffer — **name · position · scheduled span · clock-in · clock-out · breaks · status** — with the
+case/hyphen-insensitively); bare `/shiftboard` is a picker. Only people with a **scheduled shift here that
+day** appear (an unscheduled punch doesn't put anyone on the board). The page (`public/shiftboard.html`) is
+a row per staffer — **name · scheduled hours · clock-in · clock-out · breaks · status** — where the
+**scheduled hours show every block of a split shift** (e.g. `10:00–14:00` and `17:00–20:00`, both listed,
+not merged), with the
 **row colour-coded** and a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
 not in once past their start — the late flag persists all day; a late clock-in also shows **(N min late)**
 in red right under the clock-in time), **🔴 LONGER THAN 10-MIN BREAK** (a break over the 10-min limit, live

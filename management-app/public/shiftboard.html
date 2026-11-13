@@ -155,7 +155,6 @@ function badgesFor(s, limit) {
   if (s.break_soon_min != null) b.push(`<span class="bdg amber">☕ BREAK IN ${s.break_soon_min}m${s.next_break ? ` · ${fmt12(s.next_break)}` : ''}</span>`);
   if (s.break_due) b.push(`<span class="bdg amber">☕ DUE A BREAK</span>`);
   if (s.on_break && !s.long_break) b.push(`<span class="bdg blue">☕ ON BREAK ${s.break_elapsed_min}m</span>`);
-  if (!s.scheduled) b.push(`<span class="bdg amber">＋ UNSCHEDULED</span>`);
   if (!b.length) {
     if (s.status === 'in') b.push(`<span class="bdg green">✓ ON THE CLOCK</span>`);
     else if (s.status === 'out') b.push(`<span class="bdg grey">● DONE</span>`);
@@ -192,14 +191,16 @@ function rowHtml(s) {
   const sevClass = s.sev === 3 ? 'sev-red' : s.sev === 2 ? 'sev-amber' : s.sev === 1 ? 'sev-blue' : '';
   const flash = s.break_soon_min != null ? ' flash-soon' : '';
   const dim = s.status === 'out' ? ' dim' : '';
-  const sched = s.shift_start ? `${s.shift_start}<small>–${s.shift_end || '?'}</small>` : '<span class="ok" style="color:var(--muted)">—</span>';
+  const sched = (s.shift_blocks && s.shift_blocks.length)
+    ? s.shift_blocks.map(b => `${b.start}<small>–${b.end || '?'}</small>`).join('<br>')
+    : '<span class="ok" style="color:var(--muted)">—</span>';
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
     ? `<span class="${lateHere ? 'late' : ''}">${s.clock_in}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
     : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
   const outCell = s.clock_out ? s.clock_out : (s.status === 'out' ? '' : '<span class="ded">·</span>');
   return `<div class="trow ${sevClass}${dim}${flash}">
-    <div><div class="nm">${esc(s.name)}</div>${s.job ? `<div class="job">${esc(s.job)}</div>` : ''}</div>
+    <div class="nm">${esc(s.name)}</div>
     <div class="sched">${sched}</div>
     <div class="punch">${inCell}</div>
     <div class="punch">${outCell}</div>
