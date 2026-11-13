@@ -14,8 +14,9 @@ const router = express.Router();
 // Thresholds (env-tunable, with the same defaults the clock kiosk uses).
 const LATE_GRACE_MIN = parseInt(process.env.LATE_GRACE_MIN || '', 10) || 5;       // minutes past start before "late"
 const BREAK_LIMIT_MIN = parseInt(process.env.BREAK_LIMIT_MIN || '', 10) || 10;     // a break over this is "long"
-const BREAK_SOON_LEAD_MIN = parseInt(process.env.BREAK_SOON_LEAD_MIN || '', 10) || 10; // flag an upcoming break this early
+const BREAK_SOON_LEAD_MIN = parseInt(process.env.BREAK_SOON_LEAD_MIN || '', 10) || 10; // flash + flag an upcoming break this early
 const BREAK_MISS_GRACE_MIN = parseInt(process.env.BREAK_MISS_GRACE_MIN || '', 10) || 15; // scheduled break this overdue → "missed"
+const BREAK_DUE_AFTER_MIN = parseInt(process.env.BREAK_DUE_AFTER_MIN || '', 10) || 240;  // earns a rest break per this many worked minutes (CA ~4h)
 
 // Light per-IP abuse guard (a TV polls on a timer; allow generous headroom).
 const rate = new Map();
@@ -136,15 +137,26 @@ router.get('/board', (req, res) => {
       if (over > LATE_GRACE_MIN) { not_in_late = over; late_min = over; }
     }
 
-    // Scheduled-break signals (only when the manager set break times).
-    const schedBreaks = e || status !== 'not_in' ? schedBreaksStmt.all(p.user_id, loc.id, date).map(r => hhmmToMin(r.start_time)).filter(m => m != null) : [];
-    let break_soon_min = null, break_missed = false;
-    if ((status === 'in') && schedBreaks.length) {
-      const upcoming = schedBreaks.filter(m => m >= nowMin).sort((a, b) => a - b)[0];
-      if (upcoming != null && upcoming - nowMin <= BREAK_SOON_LEAD_MIN && breaks_taken === 0 && !on_break) break_soon_min = upcoming - nowMin;
-      const overdue = schedBreaks.some(m => nowMin - m > BREAK_MISS_GRACE_MIN);
-      if (overdue && breaks_taken === 0 && !on_break) break_missed = true;
+    // Scheduled break times the manager set (shown on the board; drive the 10-min flash,
+    // the "break in N" heads-up, and "break missed"). Sorted HH:MM list + minutes.
+    const sched_breaks = schedBreaksStmt.all(p.user_id, loc.id, date).map(r => hhmm(r.start_time)).filter(Boolean).sort();
+    const schedMins = sched_breaks.map(hhmmToMin);
+    let break_soon_min = null, break_missed = false, next_break = null;
+    const upcoming = schedMins.filter(m => m >= nowMin).sort((a, b) => a - b)[0];
+    if (upcoming != null) next_break = sched_breaks[schedMins.indexOf(upcoming)];
+    if (status === 'in' && !on_break) {
+      // Flash/flag the next scheduled break only if they still owe one up to that slot.
+      const dueBySlot = schedMins.filter(m => m <= (upcoming != null ? upcoming : -1)).length;
+      if (upcoming != null && upcoming - nowMin <= BREAK_SOON_LEAD_MIN && breaks_taken < dueBySlot) break_soon_min = upcoming - nowMin;
+      const overdueCount = schedMins.filter(m => nowMin - m > BREAK_MISS_GRACE_MIN).length;
+      if (overdueCount > breaks_taken) break_missed = true;
     }
+
+    // "Due a break" heuristic — works even when no break times were scheduled: a rest break
+    // is earned per ~4 worked hours, so flag anyone on the clock who's earned more than they've
+    // taken (and isn't already on break, about to take one, or flagged as having missed one).
+    const breaks_earned = Math.floor(worked_min / BREAK_DUE_AFTER_MIN);
+    const break_due = status === 'in' && !on_break && breaks_earned > breaks_taken && !break_missed && break_soon_min == null;
 
     const long_break = break_over_now > 0 || break_over_total > 0;
 
@@ -153,6 +165,7 @@ router.get('/board', (req, res) => {
     if (long_break) flags.push({ kind: 'long_break', sev: 'red', min: break_over_now || break_over_total });
     if (break_missed) flags.push({ kind: 'break_missed', sev: 'red' });
     if (break_soon_min != null) flags.push({ kind: 'break_soon', sev: 'amber', min: break_soon_min });
+    if (break_due) flags.push({ kind: 'break_due', sev: 'amber' });
     if (on_break && !long_break) flags.push({ kind: 'on_break', sev: 'blue', min: break_elapsed_min });
     if (!p.scheduled) flags.push({ kind: 'unscheduled', sev: 'amber' });
 
@@ -163,7 +176,7 @@ router.get('/board', (req, res) => {
       late_min, not_in_late: not_in_late > 0 ? not_in_late : 0,
       on_break, break_elapsed_min, break_over_now,
       breaks_taken, break_total_min, break_over_total,
-      break_soon_min, break_missed, long_break,
+      sched_breaks, next_break, break_soon_min, break_missed, break_due, long_break,
       flags,
       // Top severity for row tint / sort: 0 none, 1 blue, 2 amber, 3 red.
       sev: flags.some(f => f.sev === 'red') ? 3 : flags.some(f => f.sev === 'amber') ? 2 : flags.some(f => f.sev === 'blue') ? 1 : 0,
@@ -187,12 +200,13 @@ router.get('/board', (req, res) => {
     late: staff.filter(s => s.late_min > 0).length,
     long_break: staff.filter(s => s.long_break).length,
     break_missed: staff.filter(s => s.break_missed).length,
+    break_due: staff.filter(s => s.break_due).length,
   };
 
   res.json({
     ok: true,
     location: { id: loc.id, name: loc.name, slug: loc.slug || normSlug(loc.name) },
-    date, timezone: tz, now_hhmm: localTime(tz, now),
+    date, timezone: tz, now_hhmm: localTime(tz, now), now_min: nowMin,
     thresholds: { break_limit_min: BREAK_LIMIT_MIN, late_grace_min: LATE_GRACE_MIN },
     staff, summary,
   });

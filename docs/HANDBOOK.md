@@ -292,10 +292,15 @@ per staffer — **name · position · scheduled span · clock-in · clock-out ·
 **row colour-coded** and a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
 not in once past their start — the late flag persists all day), **🔴 LONG BREAK +Nm** (a break over the
 10-min limit, live while on it or after), **⚠ BREAK MISSED** (a scheduled break went > 15 min unused),
-**🟠 BREAK IN Nm** (a scheduled break is within 10 min), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**, **DONE**,
-**NOT IN YET**. It reads `GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only),
-which merges today's `shifts` with their `time_entries` + `time_entry_breaks` and the manager-set
-`shift_breaks` (for the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to
+**🟠 BREAK IN Nm · <time>** (a scheduled break is within 10 min — the staffer's whole **row also gently
+flashes** so they/anyone can see it's break time), **☕ DUE A BREAK** (a heuristic that works even with no
+break scheduled — a rest break is earned per ~4 worked hours, so anyone who's earned more than they've
+taken is flagged), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**, **DONE**, **NOT IN YET**. The **Breaks column**
+shows the **scheduled break start time(s)** as chips (both when there are two; the next one highlighted,
+past ones dimmed, with a ✓ of any taken), or the live "on break Nm" while someone's on one. It reads
+`GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only), which merges today's
+`shifts` with their `time_entries` + `time_entry_breaks` and the manager-set `shift_breaks` (for the
+break times, the 10-min flash, and the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to
 fill the screen, and when there are more staff than fit it **paginates and flips between pages every ~15 s**
 (a page indicator shows "Page 1 / 2"); it refreshes the data every ~8 s and holds a screen wake-lock. A
 **📺 Shift Board (TV)** link in the Management **Time Clock** tab opens it for that location. Thresholds
