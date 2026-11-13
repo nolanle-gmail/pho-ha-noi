@@ -303,8 +303,11 @@ past ones dimmed, with a ✓ of any taken), or the live "on break Nm" while some
 break times, the 10-min flash, and the upcoming/missed-break signals). It **fits the TV automatically** — rows grow to
 fill the screen, and when there are more staff than fit it **paginates and flips between pages every ~15 s**
 (a page indicator shows "Page 1 / 2"); it refreshes the data every ~8 s and holds a screen wake-lock. A
-**📺 Shift Board (TV)** link in the Management **Time Clock** tab opens it for that location. Thresholds
-(late grace, break limit, soon/missed windows) are env-tunable and default to the clock kiosk's.
+**📺 Shift Board** link is on **every location's card in the Locations list** (rolled out to all stores
+2026-11-12) and in each location's **Time Clock** tab — both open that store's board in a new tab (slug
+derived from the store name via `shiftBoardUrl()`, matched case/hyphen-insensitively by the server).
+Available for every active location, Central Kitchen and the warehouse included. Thresholds (late grace,
+break limit, soon/missed windows, due-after) are env-tunable and default to the clock kiosk's.
 
 **Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
 own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch

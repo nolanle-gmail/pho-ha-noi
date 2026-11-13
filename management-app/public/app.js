@@ -3169,6 +3169,7 @@ async function renderLocList() {
         </div>
         <div class="loc-card-actions">
           <button class="btn ghost sm" data-manage="${l.id}" data-type="${esc(l.type || 'restaurant')}">Manage →</button>
+          <a class="btn ghost sm" href="${shiftBoardUrl(l.name)}" target="_blank" rel="noopener" title="Full-screen TV board of today's staff + clock/break status — open on a break-room screen">📺 Shift Board</a>
           ${canAdd ? `<button class="btn ghost sm" data-editloc="${l.id}">✎ Edit</button>${l.is_active
             ? `<button class="btn ghost sm" data-hideloc="${l.id}" data-name="${esc(shortLoc(l.name))}">🙈 Hide</button>`
             : `<button class="btn sm" data-showloc="${l.id}" data-name="${esc(shortLoc(l.name))}">↩ Unhide</button>`}` : ''}
@@ -4503,7 +4504,7 @@ async function renderLocTimeClock() {
       <div class="week-nav"><button class="btn sm ghost" id="tcPrev">‹ Prev</button><button class="btn sm ghost" id="tcToday">Today</button><button class="btn sm ghost" id="tcNext">Next ›</button></div>
       <div class="week-label">${wd} <strong>${fmtDay(data.date)}</strong>, ${data.date.slice(0, 4)}</div>
       <div style="display:flex;gap:.4rem">
-        <a class="btn sm ghost" href="/shiftboard/${encodeURIComponent(String((loc.name || '')).replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || (loc.name || ''))}" target="_blank" rel="noopener" title="Full-screen TV board of today's scheduled staff + clock/break status">📺 Shift Board (TV)</a>
+        <a class="btn sm ghost" href="${shiftBoardUrl(loc.name)}" target="_blank" rel="noopener" title="Full-screen TV board of today's scheduled staff + clock/break status">📺 Shift Board (TV)</a>
         <a class="btn sm" href="/clock" target="_blank" rel="noopener">⏱ Open clock kiosk</a>
       </div>
     </div>
@@ -6027,6 +6028,11 @@ function renderReportModule() {
   ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
+// Public full-screen Shift Board TV URL for a location (slug derived from its name,
+// matched case/hyphen-insensitively by the server, like the Floor Board link).
+const shiftBoardUrl = (name) => '/shiftboard/' + encodeURIComponent(String(name || '')
+  .replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim()
+  .replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '') || (name || ''));
 function reportFilters(withDates) {
   const seesAll = ORG_ADMIN.includes(S.user.role);
   const loc = seesAll ? `<div class="field"><label>Location</label><select id="rfLoc"><option value="">All 10 locations</option>${S.locations.map(l => `<option value="${l.id}" ${String(reportFilter.loc) === String(l.id) ? 'selected' : ''}>${esc(shortLoc(l.name))}</option>`).join('')}</select></div>` : '';
