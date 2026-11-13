@@ -192,7 +192,7 @@ function rowHtml(s) {
   const flash = s.break_soon_min != null ? ' flash-soon' : '';
   const dim = s.status === 'out' ? ' dim' : '';
   const sched = (s.shift_blocks && s.shift_blocks.length)
-    ? s.shift_blocks.map(b => `${b.start}<small>–${b.end || '?'}</small>`).join('<br>')
+    ? s.shift_blocks.map(b => `${fmt12(b.start)}<small>–${b.end ? fmt12(b.end) : '?'}</small>`).join('<br>')
     : '<span class="ok" style="color:var(--muted)">—</span>';
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
