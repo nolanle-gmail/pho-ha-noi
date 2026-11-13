@@ -3500,8 +3500,8 @@ function jobColor(name) { const h = jobHue(name); return { bg: `hsl(${h} 55% 40%
 // unrecognised in an "Other" group last. Each group's keywords are matched (case-insensitive
 // substring) against a staffer's job title (or account role when no title is set); the FIRST
 // group that matches wins, so keep the order and keep the keywords specific. All cook titles
-// (Grill / Prep / Broth / Line / Pho Cook + Kitchen Assistant) fold into Line Cook; Cashier
-// sits under Service. HR is migrating staff onto these titles — a group with nobody shows.
+// (Grill / Prep / Broth / Line / Pho Cook) fold into Line Cook; Kitchen Assistant is its own
+// group; Cashier sits under Service. HR is migrating staff onto these titles — empty groups hide.
 const SCHED_GROUPS = [
   { name: 'Management',       keys: ['manager', 'general manager', 'assistant manager', 'owner'] },
   { name: 'Lead',             keys: ['shift lead', 'lead', 'leader'] },
@@ -3509,7 +3509,8 @@ const SCHED_GROUPS = [
   { name: 'Service',          keys: ['server', 'service', 'waiter', 'waitstaff', 'serve', 'cashier', 'register'] },
   { name: 'Bar',              keys: ['barista', 'bartender', 'backbar', 'bar'] },
   { name: 'Bus',              keys: ['busser', 'bus'] },
-  { name: 'Line Cook',        keys: ['line cook', 'pho cook', 'grill cook', 'prep cook', 'broth cook', 'kitchen assistant', 'cook', 'nuong', 'cuon', 'expo', 'pastry'] },
+  { name: 'Line Cook',        keys: ['line cook', 'pho cook', 'grill cook', 'prep cook', 'broth cook', 'cook', 'nuong', 'cuon', 'expo', 'pastry'] },
+  { name: 'Kitchen Assistant', keys: ['kitchen assistant', 'kitchen asst', 'kitchen aide', 'kitchen helper'] },
   { name: 'Food Runner',      keys: ['food runner', 'runner'] },
   { name: 'Dishwasher',       keys: ['dishwasher', 'dish'] },
   { name: 'Central Kitchen',  keys: ['central kitchen', 'central', 'commissary'] },

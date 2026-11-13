@@ -2197,11 +2197,12 @@ seven days):
   staffer falls into a **named group** from their **profile job title** (or their **account
   role** when no title is set), and a **labelled divider row** (e.g. **Line Cook · 8 people**)
   heads each group. Groups run in the house's own order — management pinned on top, then:
-  **Management → Lead → Host → Service → Bar → Bus → Line Cook → Food Runner →
-  Dishwasher → Central Kitchen → Driver → Helper Handy Man → Other**, alphabetical by name
-  within a group. Several job titles **fold into one group**: Host also takes **Front Desk**;
-  **Service** = Server + Cashier; **Line Cook** = Line / Pho / Grill / Prep / Broth Cook
-  (incl. Nuong / Cuon / Expo / Pastry) **+ Kitchen Assistant**; **Bar** = Barista / Bartender.
+  **Management → Lead → Host → Service → Bar → Bus → Line Cook → Kitchen Assistant →
+  Food Runner → Dishwasher → Central Kitchen → Driver → Helper Handy Man → Other**,
+  alphabetical by name within a group. Several job titles **fold into one group**: Host also
+  takes **Front Desk**; **Service** = Server + Cashier; **Line Cook** = Line / Pho / Grill /
+  Prep / Broth Cook (incl. Nuong / Cuon / Expo / Pastry); **Bar** = Barista / Bartender.
+  (**Kitchen Assistant** is its own group just after Line Cook.)
   Any title that matches no group lands in **Other** at the end (HR is migrating staff onto
   these titles). A group with **nobody in it is not shown**. The grouping uses the person's
   **stable job title** (not the per-shift job), so it works even on a brand-new **empty week**
