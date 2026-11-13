@@ -63,12 +63,13 @@ router.get('/board', (req, res) => {
     WHERE s.location_id=? AND s.shift_date=? AND s.kind='work'
     ORDER BY u.name, s.start_time`).all(loc.id, date);
 
-  // Today's time entries here, plus anyone still on the clock from an earlier day — the clock
-  // status for the scheduled staff above (unscheduled punches don't put anyone on the board).
+  // TODAY's time entries here only — the board always shows current-day information, so a stale
+  // punch left open from a previous day (someone who forgot to clock out) is NOT carried over and
+  // never shows up as today's clock-in. (Unscheduled punches don't put anyone on the board either.)
   const entries = db.prepare(`SELECT te.*, u.name
     FROM time_entries te JOIN users u ON u.id=te.user_id
-    WHERE te.location_id=? AND (te.work_date=? OR (te.clock_out IS NULL AND te.work_date < ?))
-    ORDER BY te.id`).all(loc.id, date, date);
+    WHERE te.location_id=? AND te.work_date=?
+    ORDER BY te.id`).all(loc.id, date);
 
   // Scheduled break times for a user today (manager-set breaks that trigger reminders).
   const schedBreaksStmt = db.prepare(`SELECT sb.start_time FROM shift_breaks sb
