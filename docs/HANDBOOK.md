@@ -1969,10 +1969,12 @@ an Options button** — and **never shows a phone number**. **Options → Notify
 action asks for an employee code before it fires** (so a passer-by can't tap one by accident); the code is
 validated against Management (`POST /api/wl-staff/validate`, service key — employee codes live there),
 requiring an **active host/floor-capable staffer at that location**, and the action is audited to that
-person's name. **Board joins skip the join confirmation text** (the guest watches the board) and make the
-**mobile number optional** — but **Notify still texts** the guest ("your table is ready, see the host")
-and stamps them paged (🔔) whenever they left a number, exactly like the Front Desk notify, so a guest who
-stepped away is still called back. Backed by `GET /api/public/board/:slug` and `POST /api/public/board-action`;
+person's name. **Board joins skip the join confirmation text** (the guest watches the board). The **mobile number field is
+no longer labeled "optional"** (2026-11-13) — it now carries the note *"Required to get a text when your
+table is ready"* so guests know a number is what lets staff text them, though a host can still add a walk-in
+without one (**Notify** then marks them ready and prompts staff to call them). **Notify texts** the guest
+("your table is ready, see the host") and stamps them paged (🔔) whenever they left a number, exactly like
+the Front Desk notify, so a guest who stepped away is still called back. Backed by `GET /api/public/board/:slug` and `POST /api/public/board-action`;
 board joins are exempt from the strict per-guest check-in cap (a busy host adds many from one tablet).
 **Which link is the board:** the board is now the **default** at every store's own waitlist link —
 **`/checkin/<slug>/`** and **`/checkin?loc=<id>`** (and the kept alias `/checkin/<slug>/board`). The
@@ -1981,7 +1983,9 @@ store named still restores a saved check-in or shows the location picker. Rollin
 nothing more than pointing its host-stand tablet at its own `/checkin/<slug>/`.
 **Tablet/iPad fit (2026-11-12):** on a tablet (≥760px) the board **locks to one screen** — the logo
 header is trimmed and the Join form + footer stay put while **only the "Who's waiting" queue scrolls**,
-so a busy night (12+ parties) never scrolls the whole page or pushes the Join form off the top. The
+so a busy night (12+ parties) never scrolls the whole page or pushes the Join form off the top. The two
+columns split **6:4 — the Join form takes 60%, the "Who's waiting" queue 40%** (2026-11-13), giving the
+host a roomier form. The
 **Options popup is a centered action sheet** (not an inline dropdown), so a bottom-row menu can't be
 clipped at the screen edge or inside the scrolling list, and the buttons are larger touch targets. On
 phones the board keeps normal full-page scrolling.
