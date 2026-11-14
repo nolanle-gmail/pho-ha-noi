@@ -215,8 +215,9 @@ function renderBoard() {
         <input id="bName" class="k-input" placeholder="e.g. Kim" autocomplete="off" />
         <label class="k-label">Party size</label>
         <div class="k-stepper"><button type="button" id="bMinus">−</button><span id="bSize">${K.size}</span><button type="button" id="bPlus">+</button></div>
-        <label class="k-label">Mobile number <span class="k-opt">(optional)</span></label>
+        <label class="k-label">Mobile number</label>
         <input id="bPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="off" />
+        <div class="k-opt" style="margin:-.15rem 0 .25rem">Required to get a text when your table is ready.</div>
         <div class="k-err" id="bErr"></div>
         <button class="k-btn" id="bJoin">Join the waitlist</button>
         <div class="k-ok" id="bOk"></div>
