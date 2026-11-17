@@ -217,7 +217,7 @@ function renderBoard() {
         <div class="k-stepper"><button type="button" id="bMinus">−</button><span id="bSize">${K.size}</span><button type="button" id="bPlus">+</button></div>
         <label class="k-label">Mobile number</label>
         <input id="bPhone" class="k-input" inputmode="tel" placeholder="(408) 555-0100" autocomplete="off" />
-        <div class="k-opt" style="margin:-.15rem 0 .25rem">Required to get a text when your table is ready.</div>
+        <div class="k-opt" style="margin:-.15rem 0 .25rem">Required — we’ll text you when your table is ready.</div>
         <div class="k-err" id="bErr"></div>
         <button class="k-btn" id="bJoin">Join the waitlist</button>
         <div class="k-ok" id="bOk"></div>
@@ -239,7 +239,8 @@ async function boardJoin() {
   const name = $('bName').value.trim();
   if (!name) { err.textContent = 'Please enter the guest’s name.'; return; }
   const phone = $('bPhone').value.trim();
-  if (phone && (phone.match(/\d/g) || []).length < 10) { err.textContent = 'That mobile number doesn’t look right — leave it blank or fix it.'; return; }
+  if (!phone) { err.textContent = 'Please enter a mobile number so we can text when the table is ready.'; return; }
+  if ((phone.match(/\d/g) || []).length < 10) { err.textContent = 'That mobile number doesn’t look right — please check it.'; return; }
   $('bJoin').disabled = true;
   try {
     await api('/checkin', { method: 'POST', body: JSON.stringify({ location_id: K.loc, guest_name: name, party_size: K.size, phone: phone || null, board: true }) });
