@@ -14,7 +14,7 @@ const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 
 // Message attachments — images, videos, and general files (docs/PDF/etc.) — stored as bytes.
-const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG } = require('../lib/attachments');
+const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG, serveBytes, signMediaTicket, verifyMediaTicket } = require('../lib/attachments');
 
 // Resolve the acting user from a service key (+ ?as=email) or a query JWT.
 // EventSource can't send headers, so the live stream authenticates this way.
@@ -74,6 +74,18 @@ router.get('/stream', (req, res) => {
   });
   const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch { /* closed */ } }, 25000);
   req.on('close', () => { clearInterval(hb); unsub(); unsubAlert(); unsubAck(); unsubChat(); unsubTaskComment(); unsubRxn(); });
+});
+
+// Inline-media streaming via a short-lived ticket (so an <img>/<video> src works
+// without an Authorization header, and the browser can range-stream the file).
+// Registered BEFORE the auth middleware — the ticket itself authorizes exactly
+// one attachment. No ticket → fall through to the normal authenticated path.
+router.get('/:id/attachment/:aid', (req, res, next) => {
+  if (!req.query.tk) return next();
+  if (!verifyMediaTicket(req.query.tk, 'msg', req.params.aid)) return res.status(403).json({ error: 'Invalid or expired media link.' });
+  const a = db.prepare(`SELECT id, kind, mime, bytes, filename FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, req.params.id);
+  if (!a) return res.status(404).json({ error: 'No such attachment.' });
+  return serveBytes(req, res, a);
 });
 
 // Auth: a normal Management JWT, OR the Staff-app service key with ?as=<email>
@@ -383,21 +395,27 @@ router.get('/:id/attachments', (req, res) => {
   res.json({ id: m.id, count: attachments.length, attachments });
 });
 
-// Stream one attachment's bytes. Any participant.
+// Stream one attachment's bytes. Any participant. (Immutable cache + ETag/304 +
+// range support live in serveBytes.)
 router.get('/:id/attachment/:aid', (req, res) => {
   const m = canSeeMessage(req.user.id, req.params.id);
   if (m === null) return res.status(404).json({ error: 'Message not found.' });
   if (!m) return res.status(403).json({ error: 'Not part of this conversation.' });
-  const a = db.prepare(`SELECT kind, mime, bytes, filename FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
+  const a = db.prepare(`SELECT id, kind, mime, bytes, filename FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
   if (!a) return res.status(404).json({ error: 'No such attachment.' });
-  const buf = Buffer.from(a.bytes);
-  res.setHeader('Content-Type', a.mime);
-  res.setHeader('Content-Length', buf.length);
-  res.setHeader('Cache-Control', 'private, max-age=300');
-  // Documents download (with their name); images/videos render inline.
-  const dispo = a.kind === 'file' ? 'attachment' : 'inline';
-  res.setHeader('Content-Disposition', `${dispo}${a.filename ? `; filename="${a.filename.replace(/[\r\n"]/g, '')}"` : ''}`);
-  res.end(buf);
+  return serveBytes(req, res, a);
+});
+
+// Mint a short-lived streaming ticket for one attachment (participant only), so
+// the client can point a <video>/<img> src straight at it and let the browser
+// range-stream instead of downloading the whole blob first.
+router.get('/:id/attachment/:aid/ticket', (req, res) => {
+  const m = canSeeMessage(req.user.id, req.params.id);
+  if (m === null) return res.status(404).json({ error: 'Message not found.' });
+  if (!m) return res.status(403).json({ error: 'Not part of this conversation.' });
+  const a = db.prepare(`SELECT id FROM message_attachments WHERE id=? AND message_id=?`).get(req.params.aid, m.id);
+  if (!a) return res.status(404).json({ error: 'No such attachment.' });
+  res.json({ ticket: signMediaTicket('msg', a.id), ttl: 900 });
 });
 
 // Who may delete a message or its attachments: its sender, or a manager (moderation).

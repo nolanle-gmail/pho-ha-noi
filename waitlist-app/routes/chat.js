@@ -5,10 +5,36 @@ const express = require('express');
 const { verifyToken } = require('../lib/auth');
 
 const router = express.Router();
-router.use(verifyToken);
 
 const MGMT_URL = (process.env.MGMT_URL || 'http://localhost:4001').replace(/\/$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+
+const { Readable } = require('stream');
+const RELAY_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'cache-control', 'content-disposition'];
+// Stream an attachment straight from Management, relaying its caching/range headers
+// and forwarding the browser's Range / If-None-Match — same as the messaging proxy.
+async function relayFromMgmt(req, res, url) {
+  const headers = { 'X-Service-Key': KEY };
+  if (req.headers.range) headers.Range = req.headers.range;
+  if (req.headers['if-none-match']) headers['If-None-Match'] = req.headers['if-none-match'];
+  let r;
+  try { r = await fetch(url, { headers }); } catch { return res.status(502).json({ error: 'Attachment is unavailable.' }); }
+  if (r.status >= 400) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
+  RELAY_HEADERS.forEach((h) => { const v = r.headers.get(h); if (v) res.setHeader(h, v); });
+  res.status(r.status);
+  if (r.status === 304 || !r.body || req.method === 'HEAD') return res.end();
+  Readable.fromWeb(r.body).pipe(res);
+}
+
+// Inline-media streaming via a short-lived ticket (no Authorization header). Runs
+// BEFORE auth — Management validates the ticket. No ticket → fall through below.
+router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res, next) => {
+  if (!req.query.tk) return next();
+  const url = `${MGMT_URL}/api/chat/groups/${encodeURIComponent(req.params.id)}/messages/${encodeURIComponent(req.params.mid)}/attachment/${encodeURIComponent(req.params.aid)}?tk=${encodeURIComponent(req.query.tk)}`;
+  return relayFromMgmt(req, res, url);
+});
+
+router.use(verifyToken);
 
 async function fwd(req, res, method, path, body) {
   const email = (req.user.email || '').toLowerCase();
@@ -50,16 +76,15 @@ router.post('/groups/:id/messages/:mid/attachment', express.raw({ type: () => tr
     res.status(r.status).json(d);
   } catch { res.status(502).json({ error: 'Attachment upload is unavailable.' }); }
 });
-router.get('/groups/:id/messages/:mid/attachment/:aid', async (req, res) => {
+// Mint a streaming ticket for one chat attachment (authed; Management checks access).
+router.get('/groups/:id/messages/:mid/attachment/:aid/ticket', (req, res) => fwd(req, res, 'GET', `/groups/${encodeURIComponent(req.params.id)}/messages/${encodeURIComponent(req.params.mid)}/attachment/${encodeURIComponent(req.params.aid)}/ticket`));
+
+// Download / inline one chat attachment's bytes (authed path). Streams from
+// Management and relays caching + range headers.
+router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res) => {
   const email = (req.user.email || '').toLowerCase();
   if (!email) return res.status(400).json({ error: 'No chat identity for this account.' });
-  try {
-    const r = await fetch(chatUrl(email, `/groups/${encodeURIComponent(req.params.id)}/messages/${encodeURIComponent(req.params.mid)}/attachment/${encodeURIComponent(req.params.aid)}`), { headers: { 'X-Service-Key': KEY } });
-    if (!r.ok) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
-    res.setHeader('Cache-Control', 'private, max-age=300');
-    res.send(Buffer.from(await r.arrayBuffer()));
-  } catch { res.status(502).json({ error: 'Attachment is unavailable.' }); }
+  return relayFromMgmt(req, res, chatUrl(email, `/groups/${encodeURIComponent(req.params.id)}/messages/${encodeURIComponent(req.params.mid)}/attachment/${encodeURIComponent(req.params.aid)}`));
 });
 router.post('/groups/:id/members', (req, res) => fwd(req, res, 'POST', `/groups/${encodeURIComponent(req.params.id)}/members`, req.body));
 router.delete('/groups/:id/members/:uid', (req, res) => fwd(req, res, 'DELETE', `/groups/${encodeURIComponent(req.params.id)}/members/${encodeURIComponent(req.params.uid)}`));

@@ -6,10 +6,40 @@ const express = require('express');
 const { verifyToken } = require('../lib/auth');
 
 const router = express.Router();
+
+// Inline-media streaming via a short-lived ticket (no Authorization header, so an
+// <img>/<video> src works and the browser can range-stream). Runs BEFORE auth —
+// Management validates the ticket. No ticket → fall through to the authed path.
+router.get('/:id/attachment/:aid', (req, res, next) => {
+  if (!req.query.tk) return next();
+  const url = `${MGMT_URL}/api/messages/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}?tk=${encodeURIComponent(req.query.tk)}`;
+  return relayFromMgmt(req, res, url);
+});
+
 router.use(verifyToken);
 
 const MGMT_URL = (process.env.MGMT_URL || 'http://localhost:4001').replace(/\/$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
+
+const { Readable } = require('stream');
+const RELAY_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'cache-control', 'content-disposition'];
+// Stream an attachment straight from Management, relaying its caching/range
+// headers (immutable cache, ETag, Accept-Ranges) and forwarding the browser's
+// Range / If-None-Match. This replaces the old buffer-the-whole-file-then-resend
+// proxy, so the Staff app gets the same instant reopen + video streaming without
+// this server holding the entire file in memory.
+async function relayFromMgmt(req, res, url) {
+  const headers = { 'X-Service-Key': KEY };
+  if (req.headers.range) headers.Range = req.headers.range;
+  if (req.headers['if-none-match']) headers['If-None-Match'] = req.headers['if-none-match'];
+  let r;
+  try { r = await fetch(url, { headers }); } catch { return res.status(502).json({ error: 'Attachment is unavailable.' }); }
+  if (r.status >= 400) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
+  RELAY_HEADERS.forEach((h) => { const v = r.headers.get(h); if (v) res.setHeader(h, v); });
+  res.status(r.status);
+  if (r.status === 304 || !r.body || req.method === 'HEAD') return res.end();
+  Readable.fromWeb(r.body).pipe(res);
+}
 
 async function fwd(req, res, method, path, body) {
   const email = (req.user.email || '').toLowerCase();
@@ -67,16 +97,15 @@ router.post('/:id/attachment', express.raw({ type: () => true, limit: MAX_VID })
 router.delete('/:id', (req, res) => fwd(req, res, 'DELETE', `/${encodeURIComponent(req.params.id)}`));
 router.delete('/:id/attachment/:aid', (req, res) => fwd(req, res, 'DELETE', `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}`));
 
-router.get('/:id/attachment/:aid', async (req, res) => {
+// Mint a streaming ticket for one attachment (authed; Management checks access).
+router.get('/:id/attachment/:aid/ticket', (req, res) => fwd(req, res, 'GET', `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}/ticket`));
+
+// Download / inline one attachment's bytes (authed path — images via fetch, file
+// downloads). Streams from Management and relays caching + range headers.
+router.get('/:id/attachment/:aid', (req, res) => {
   const email = (req.user.email || '').toLowerCase();
   if (!email) return res.status(400).json({ error: 'No messaging identity for this account.' });
-  try {
-    const r = await fetch(asUrl(email, `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}`), { headers: { 'X-Service-Key': KEY } });
-    if (!r.ok) { const d = await r.json().catch(() => ({})); return res.status(r.status).json(d); }
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'application/octet-stream');
-    res.setHeader('Cache-Control', 'private, max-age=300');
-    res.send(Buffer.from(await r.arrayBuffer()));
-  } catch { res.status(502).json({ error: 'Attachment is unavailable.' }); }
+  return relayFromMgmt(req, res, asUrl(email, `/${encodeURIComponent(req.params.id)}/attachment/${encodeURIComponent(req.params.aid)}`));
 });
 
 module.exports = router;

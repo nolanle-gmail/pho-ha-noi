@@ -15,9 +15,24 @@ const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const MAX_BODY = 4000;
 // Attachments — images, videos and files (docs/PDF/etc.) — same rules as message attachments.
-const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG } = require('../lib/attachments');
+const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG, serveBytes, signMediaTicket, verifyMediaTicket } = require('../lib/attachments');
 const AUDIT = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager']; // may read/list any group — ORG_ADMIN_ONLY (future: drop 'hr')
 const CAN_DELETE = ['owner', 'ceo', 'president', 'admin', 'hr'];              // may deactivate a group — ORG_ADMIN_ONLY (future: drop 'hr')
+
+// Inline-media streaming via a short-lived ticket (so an <img>/<video> src works
+// without an Authorization header, and the browser can range-stream). Registered
+// BEFORE the auth middleware — the ticket authorizes exactly one attachment. No
+// ticket → fall through to the normal membership-checked path.
+router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res, next) => {
+  if (!req.query.tk) return next();
+  if (!verifyMediaTicket(req.query.tk, 'chat', req.params.aid)) return res.status(403).json({ error: 'Invalid or expired media link.' });
+  const att = db.prepare(`
+    SELECT a.id, a.kind, a.mime, a.bytes, a.filename
+    FROM chat_message_attachments a JOIN chat_messages cm ON cm.id=a.chat_message_id
+    WHERE a.id=? AND a.chat_message_id=? AND cm.group_id=?`).get(req.params.aid, req.params.mid, req.params.id);
+  if (!att) return res.status(404).json({ error: 'No such attachment.' });
+  return serveBytes(req, res, att);
+});
 
 // Auth: a Management JWT, OR the Staff-app service key with ?as=<email>.
 router.use((req, res, next) => {
@@ -226,19 +241,23 @@ router.get('/groups/:id/messages/:mid/attachments', (req, res) => {
   res.json({ id: a.cm.id, count: attachments.length, attachments });
 });
 
-// Stream one chat attachment's bytes. Member or audit.
+// Stream one chat attachment's bytes. Member or audit. (Immutable cache + ETag/304
+// + range support live in serveBytes.)
 router.get('/groups/:id/messages/:mid/attachment/:aid', (req, res) => {
   const a = chatMsgAccess(req);
   if (a.err) return res.status(a.err).json({ error: a.msg });
-  const att = db.prepare(`SELECT kind, mime, bytes, filename FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
+  const att = db.prepare(`SELECT id, kind, mime, bytes, filename FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
   if (!att) return res.status(404).json({ error: 'No such attachment.' });
-  const buf = Buffer.from(att.bytes);
-  res.setHeader('Content-Type', att.mime);
-  res.setHeader('Content-Length', buf.length);
-  res.setHeader('Cache-Control', 'private, max-age=300');
-  const dispo = att.kind === 'file' ? 'attachment' : 'inline';
-  res.setHeader('Content-Disposition', `${dispo}${att.filename ? `; filename="${att.filename.replace(/[\r\n"]/g, '')}"` : ''}`);
-  res.end(buf);
+  return serveBytes(req, res, att);
+});
+
+// Mint a short-lived streaming ticket for one chat attachment (member/audit only).
+router.get('/groups/:id/messages/:mid/attachment/:aid/ticket', (req, res) => {
+  const a = chatMsgAccess(req);
+  if (a.err) return res.status(a.err).json({ error: a.msg });
+  const att = db.prepare(`SELECT id FROM chat_message_attachments WHERE id=? AND chat_message_id=?`).get(req.params.aid, a.cm.id);
+  if (!att) return res.status(404).json({ error: 'No such attachment.' });
+  res.json({ ticket: signMediaTicket('chat', att.id), ttl: 900 });
 });
 
 // Add members to a group (creator or leadership).

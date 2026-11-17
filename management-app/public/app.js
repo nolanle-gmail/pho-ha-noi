@@ -6949,7 +6949,9 @@ async function loadMsgAttachments(base, el, opts) {
   try { d = await api(`${base}/attachments`); } catch { return; }
   if (!d.attachments.length) { el.remove(); return; }
   el.innerHTML = '';
-  for (const a of d.attachments) {
+  // Build each attachment's slot in order first (synchronously), then fill them
+  // in parallel — a message with several photos no longer downloads one-at-a-time.
+  await Promise.all(d.attachments.map(async (a) => {
     const wrap = document.createElement('div'); wrap.className = 'msg-att';
     el.appendChild(wrap);
     if (opts.canDelete) {
@@ -6962,21 +6964,30 @@ async function loadMsgAttachments(base, el, opts) {
       card.innerHTML = `<span class="af-ic">${fileIcon(a.mime, a.filename)}</span><span class="af-meta"><span class="af-name">${esc(a.filename || 'File')}</span><span class="af-size">${fmtBytes(a.byte_size)}</span></span><span class="af-dl">⬇</span>`;
       card.onclick = (e) => { e.preventDefault(); downloadAttachment(base, a); };
       wrap.appendChild(card);
-      continue;
+      return;
     }
+    if (a.kind === 'video') {
+      // Stream via a short-lived ticket so the browser range-fetches the video
+      // instead of downloading the whole file before it can start playing.
+      try {
+        const { ticket } = await api(`${base}/attachment/${a.id}/ticket`);
+        const vid = document.createElement('video');
+        vid.src = `/api${base}/attachment/${a.id}?tk=${encodeURIComponent(ticket)}`;
+        vid.controls = true; vid.preload = 'metadata'; vid.playsInline = true; vid.className = 'msg-att-video';
+        wrap.appendChild(vid);
+      } catch { /* leave the slot empty if the ticket can't be minted */ }
+      return;
+    }
+    // image — fetch once (now served with a 1-year immutable cache, so reopening
+    // the thread is instant) and show inline; click to zoom.
     try {
       const res = await fetch(`/api${base}/attachment/${a.id}`, { headers: S.token ? { Authorization: 'Bearer ' + S.token } : {} });
-      if (!res.ok) continue;
+      if (!res.ok) return;
       const url = URL.createObjectURL(await res.blob()); _msgAttUrls.push(url);
-      if (a.kind === 'video') {
-        const vid = document.createElement('video'); vid.src = url; vid.controls = true; vid.preload = 'metadata'; vid.className = 'msg-att-video';
-        wrap.appendChild(vid);
-      } else {
-        const img = document.createElement('img'); img.src = url; img.className = 'msg-att-img'; img.alt = a.filename || 'Attachment'; img.onclick = () => pgLightbox(url);
-        wrap.appendChild(img);
-      }
+      const img = document.createElement('img'); img.src = url; img.className = 'msg-att-img'; img.alt = a.filename || 'Attachment'; img.onclick = () => pgLightbox(url);
+      wrap.appendChild(img);
     } catch { /* one attachment failing shouldn't break the rest */ }
-  }
+  }));
 }
 // Delete a whole message from the thread (sender or a manager).
 async function deleteMessage(messageId, threadCount) {
