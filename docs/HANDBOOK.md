@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 13, 2026_
+_Last updated: November 17, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2560,10 +2560,25 @@ waiting; it updates in real time as messages or chat arrive.
 files** — PDF, Word, Excel, PowerPoint, CSV/TXT, ZIP, and the like (`lib/attachments.js`
 classifies by MIME, with a safe-extension fallback; **executables, scripts and inline-web
 files such as .exe/.js/.html/.svg are refused**). Stored as bytes in `message_attachments`
-(images ≤ 10 MB, videos & files ≤ 25 MB, 10 per message). Images show as tap-to-zoom
+(images ≤ 25 MB, videos & files ≤ 100 MB, 10 per message). Images show as tap-to-zoom
 thumbnails and videos as inline players; a **file** shows as a **download card** (type icon +
 name + size) served with `Content-Disposition: attachment`. Only the sender can attach; every
 participant can view. An attachment-only message auto-captions (e.g. "📷 Photo", "📎 report.pdf").
+
+**Fast delivery (2026-11-17).** Attachment bytes never change once posted, so they're served
+with a **one-year immutable cache + an ETag** — reopening a thread shows them straight from the
+device's cache instead of re-downloading (it used to re-fetch everything after 5 minutes).
+**Videos stream**: the player range-requests the file (HTTP 206 / `Accept-Ranges`) and starts on
+the first frames instead of waiting for the whole clip to download, using a short-lived,
+single-attachment **streaming ticket** so the `<video>` can load the file directly (a plain
+media `src` can't send the login header). A message's attachments now **load in parallel** rather
+than one-at-a-time. On the **Staff app** these go through its thin proxy to Management, which now
+**streams** the bytes and passes the caching/range headers straight through — previously it
+buffered each whole file in memory, re-fetched on every open, and capped caching at 5 minutes,
+which was the main reason staff saw slow opens. Shared serving lives in `lib/attachments.js`
+(`serveBytes` + the ticket helpers). Still on the list: image **thumbnails** — today the full-size
+photo loads inline, so the cache makes reopening instant but the first open of a photo-heavy
+thread is still heavy.
 
 **Read receipts.** On your **Sent** list and under each of your own messages in a thread, a
 **✓ / ✓✓ Read by `<n>` of `<m>`** line shows how many recipients have opened it. **Tap it**
