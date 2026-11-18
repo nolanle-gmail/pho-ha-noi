@@ -624,6 +624,9 @@ re-sign of a changed policy (the previous signed PDF stays on file). State lives
 (policy, version, `lang`, full name, `signed_at`, document link). Endpoints `GET /timeclock/my-hours/ack`
 (status + all-language text), `POST /timeclock/my-hours/ack` (`{full_name, agree, lang}` → files the PDF),
 `GET /timeclock/my-hours/ack/document` (the staffer's own signed PDF). Both the console and the Staff PWA.
+**Who's signed:** **Reports → Acknowledgments** lists every active staff member with their status
+(signed / not signed / old version), the date & language they signed, filterable by location and status,
+with CSV/Excel export (`GET /reports/hours-ack`).
 
 **Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
 `time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
