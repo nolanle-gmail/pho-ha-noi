@@ -712,6 +712,13 @@ const check = (name, ok, detail = '') => {
     const soDay = (resp) => (resp.days || []).find(x => x.date === bToday) || {};
     let soResp = await soGet();
     check('My Hours marks a completed, not-signed-off day as pending', soDay(soResp).review_status === 'pending' && (soResp.signoff || {}).pending >= 1, JSON.stringify({ rs: soDay(soResp).review_status, pending: (soResp.signoff || {}).pending }));
+    // The one-time Worked-Hours Acknowledgment gates the daily confirm: it must be signed first.
+    const hcGate = await fetch(base + `/api/timeclock/my-hours/confirm?as=${encodeURIComponent(soStaff.email)}`, { method: 'POST', headers: HK, body: JSON.stringify({ date: bToday }) });
+    check('confirm is gated until the acknowledgment is signed (409 needs_ack)', hcGate.status === 409 && (await hcGate.json().catch(() => ({}))).needs_ack === true, 'status=' + hcGate.status);
+    const ackSign = await fetch(base + `/api/timeclock/my-hours/ack?as=${encodeURIComponent(soStaff.email)}`, { method: 'POST', headers: HK, body: JSON.stringify({ full_name: 'ZZ Smoke Staff', agree: true }) });
+    const ackSignJson = await ackSign.json().catch(() => ({}));
+    check('staff signs the one-time acknowledgment (PDF filed in documents)', ackSign.status === 200 && ackSignJson.document_id > 0, 'status=' + ackSign.status);
+    check('signed acknowledgment is a PDF in the staff document folder', _bdb.prepare("SELECT mime FROM staff_documents WHERE id=?").get(ackSignJson.document_id || 0)?.mime === 'application/pdf');
     let hc = await fetch(base + `/api/timeclock/my-hours/confirm?as=${encodeURIComponent(soStaff.email)}`, { method: 'POST', headers: HK, body: JSON.stringify({ date: bToday }) });
     check('staff confirms a day’s worked hours', hc.status === 200 && _bdb.prepare("SELECT hours_confirmed FROM time_entries WHERE id=?").get(soEntryId).hours_confirmed === 1, 'status=' + hc.status);
     soResp = await soGet();

@@ -17,6 +17,7 @@ const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
 const { normSlug } = require('../lib/slug');
 const { emitAlert } = require('../lib/events');
 const { sendSms, smsEnabled } = require('../lib/sms');
+const { POLICY: ACK_POLICY, VERSION: ACK_VERSION, normLang, ackContent, renderAckPdf, langName } = require('../lib/acknowledgments');
 
 const router = express.Router();
 const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
@@ -83,6 +84,10 @@ router.post('/my-hours/confirm', (req, res) => {
   if (!u) return res.status(401).json({ error: 'Authentication required' });
   const date = validDate(req.body && req.body.date);
   if (!date) return res.status(400).json({ error: 'A valid date is required.' });
+  // One-time gate: the staffer must have e-signed the current Worked-Hours
+  // Acknowledgment before any daily confirm goes through.
+  const signed = db.prepare(`SELECT 1 FROM staff_acknowledgments WHERE user_id=? AND policy=? AND version=? LIMIT 1`).get(u.id, ACK_POLICY, ACK_VERSION);
+  if (!signed) return res.status(409).json({ error: 'Please read and sign the one-time Worked-Hours Acknowledgment before confirming your hours.', needs_ack: true });
   const entries = db.prepare(`SELECT id FROM time_entries WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL`).all(u.id, date);
   if (!entries.length) return res.status(404).json({ error: 'No completed hours to confirm for that day.' });
   db.prepare(`UPDATE time_entries SET hours_confirmed=1, hours_confirmed_at=datetime('now'), hours_disputed=0, hours_disputed_at=NULL
@@ -108,6 +113,91 @@ router.post('/my-hours/dispute', (req, res) => {
   const body = `${u.name} flagged their worked hours for ${date} as incorrect (clocked ${fmtDurMin(worked)}${sched ? ` vs ${fmtDurMin(sched)} scheduled` : ''}).${note ? ` Note: “${note}”` : ''} Please review and correct them on the Time Clock / Timesheet.`;
   for (const lid of [...new Set(entries.map(e => e.location_id))]) notifyLeaders(lid, u.id, subject, body);
   res.json({ success: true, date, status: 'disputed' });
+});
+
+// ── One-time Worked-Hours Acknowledgment (typed-name e-signature) ─────────────
+// Staff read the policy and sign it once; the signed PDF is filed in their
+// document folder and the daily My Hours confirm step unlocks.
+const ackLatest = (userId) => db.prepare(
+  `SELECT id, version, full_name, lang, signed_at, document_id FROM staff_acknowledgments
+   WHERE user_id=? AND policy=? ORDER BY id DESC LIMIT 1`).get(userId, ACK_POLICY);
+
+function signedLabel(iso) {
+  try { return new Intl.DateTimeFormat('en-US', { timeZone: DEFAULT_TZ, dateStyle: 'long', timeStyle: 'short' }).format(new Date(iso)) + ` (${DEFAULT_TZ})`; }
+  catch { return iso; }
+}
+
+// Status + the policy text (all languages) to read. `signed` is for the CURRENT version.
+router.get('/my-hours/ack', (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const latest = ackLatest(u.id);
+  const signedCurrent = !!(latest && latest.version === ACK_VERSION);
+  res.json({
+    content: ackContent(),
+    version: ACK_VERSION,
+    signed: signedCurrent,
+    signed_at: latest ? latest.signed_at : null,
+    signed_name: latest ? latest.full_name : null,
+    signed_lang: latest ? latest.lang : null,
+    signed_version: latest ? latest.version : null,
+    has_document: !!(latest && latest.document_id),
+  });
+});
+
+// Sign it. Idempotent for the current version (re-POST returns the existing one).
+router.post('/my-hours/ack', async (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const agree = req.body && (req.body.agree === true || req.body.agree === 'true' || req.body.agree === 1);
+  const fullName = String((req.body && req.body.full_name) || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const lang = normLang(req.body && req.body.lang);
+  if (!agree) return res.status(400).json({ error: 'Please tick the box to confirm you have read and agree.' });
+  if (fullName.length < 2 || !/\p{L}/u.test(fullName)) return res.status(400).json({ error: 'Please type your full name as your signature.' });
+
+  const existing = db.prepare(`SELECT id, signed_at, document_id FROM staff_acknowledgments WHERE user_id=? AND policy=? AND version=? ORDER BY id DESC LIMIT 1`)
+    .get(u.id, ACK_POLICY, ACK_VERSION);
+  if (existing) return res.json({ success: true, already: true, signed_at: existing.signed_at, document_id: existing.document_id });
+
+  const prof = db.prepare(`SELECT employee_code FROM staff_profiles WHERE user_id=?`).get(u.id) || {};
+  const usr = db.prepare(`SELECT name, email FROM users WHERE id=?`).get(u.id) || {};
+  const nowIso = new Date().toISOString();
+  const label = signedLabel(nowIso);
+  const ip = String((req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '').slice(0, 60);
+  const ua = String(req.headers['user-agent'] || '').slice(0, 300);
+
+  // Record the signing event first (so the PDF can carry its id), then file the PDF.
+  const ins = db.prepare(`INSERT INTO staff_acknowledgments (user_id, policy, version, full_name, lang, signed_at, ip, user_agent) VALUES (?,?,?,?,?,?,?,?)`)
+    .run(u.id, ACK_POLICY, ACK_VERSION, fullName, lang, nowIso, ip, ua);
+  const ackId = Number(ins.lastInsertRowid);
+  let pdf;
+  try { pdf = await renderAckPdf({ fullName, employeeName: usr.name || u.name, employeeRef: prof.employee_code || usr.email || '', signedAtLabel: label, ip, userAgent: ua, ackId, lang }); }
+  catch (e) { db.prepare(`DELETE FROM staff_acknowledgments WHERE id=?`).run(ackId); return res.status(500).json({ error: 'Could not generate your signed form — please try again.' }); }
+  const filename = `Worked-Hours Acknowledgment (${lang}, signed ${nowIso.slice(0, 10)}).pdf`;
+  const note = `Worked-Hours Review & Acknowledgment v${ACK_VERSION} (${langName(lang)}) — e-signed ${label}`;
+  const docInfo = db.prepare(`INSERT INTO staff_documents (user_id, filename, mime, byte_size, note, bytes, uploaded_by) VALUES (?,?,?,?,?,?,?)`)
+    .run(u.id, filename, 'application/pdf', pdf.length, note, pdf, u.id);
+  const documentId = Number(docInfo.lastInsertRowid);
+  db.prepare(`UPDATE staff_acknowledgments SET document_id=? WHERE id=?`).run(documentId, ackId);
+  try { auditLog(req, 'hours_ack_signed', 'user', u.id, { ack_id: ackId, document_id: documentId, version: ACK_VERSION, lang }); } catch { /* best-effort */ }
+  res.json({ success: true, signed_at: nowIso, document_id: documentId, lang });
+});
+
+// Stream the staffer's own most-recent signed acknowledgment PDF (self-view; the
+// staff_documents folder itself stays manager-gated).
+router.get('/my-hours/ack/document', (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const latest = ackLatest(u.id);
+  if (!latest || !latest.document_id) return res.status(404).json({ error: 'No signed acknowledgment on file.' });
+  const doc = db.prepare(`SELECT filename, mime, bytes FROM staff_documents WHERE id=? AND user_id=?`).get(latest.document_id, u.id);
+  if (!doc) return res.status(404).json({ error: 'No signed acknowledgment on file.' });
+  const buf = Buffer.from(doc.bytes);
+  res.setHeader('Content-Type', doc.mime || 'application/pdf');
+  res.setHeader('Content-Length', buf.length);
+  res.setHeader('Content-Disposition', `inline; filename="${(doc.filename || 'acknowledgment.pdf').replace(/[^\w.\-]+/g, '_')}"`);
+  res.setHeader('Cache-Control', 'private, max-age=60');
+  res.end(buf);
 });
 
 // ── Public per-location clock kiosk (/clock/<slug>) — no login ────────────────

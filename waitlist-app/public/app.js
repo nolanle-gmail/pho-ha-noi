@@ -1010,6 +1010,9 @@ async function renderMyHours() {
   const v = $('view'); v.innerHTML = '<div class="empty">Loading…</div>';
   let d;
   try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { v.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  // One-time worked-hours acknowledgment status (gates the daily Confirm below).
+  try { S._hoursAck = await api('/timeclock/my-hours/ack'); } catch { S._hoursAck = null; }
+  const ack = S._hoursAck, needsAck = !!(ack && !ack.signed);
   const t = d.totals;
   const pill = (k, l) => `<button class="navbtn ${S.hoursKind === k ? 'active' : ''}" data-hk="${k}">${l}</button>`;
   // End-of-day sign-off per completed day: status + Confirm / Report-issue controls.
@@ -1042,14 +1045,22 @@ async function renderMyHours() {
       ${t.vacation_hours ? `<div class="stat"><div class="label">PTO</div><div class="value">${t.vacation_hours}h</div></div>` : ''}
       ${t.leave_hours ? `<div class="stat"><div class="label">Unpaid Time Off</div><div class="value">${t.leave_hours}h <span class="muted" style="font-size:.7rem">unpaid</span></div></div>` : ''}
     </div>
+    ${needsAck ? `<div style="margin:.2rem 0 .8rem;padding:.7rem .9rem;border-radius:10px;background:var(--gold-soft);color:#92400e;display:flex;gap:.6rem;align-items:center;justify-content:space-between;flex-wrap:wrap"><span style="font-weight:700">✍️ One-time step: read &amp; sign the <b>Worked-Hours Acknowledgment</b> before you can confirm your hours.</span><button class="btn" data-ack-open>Read &amp; sign</button></div>`
+      : (ack ? `<p class="sub" style="color:var(--ok);margin:.1rem 0 .6rem">✓ You signed the Worked-Hours Acknowledgment${ack.signed_at ? ` on ${esc(new Date(ack.signed_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. <a href="#" data-ack-view>View your signed form</a></p>` : '')}
     ${pending ? `<div style="margin:.2rem 0 .8rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft);color:#92400e;font-weight:700">⏱️ Please review &amp; confirm your worked hours — ${pending} day${pending === 1 ? '' : 's'} need${pending === 1 ? 's' : ''} your sign-off. Tap <b>Confirm</b> on each day, or <b>Report issue</b> if anything’s wrong.</div>` : ''}
     ${d.approved ? `<p class="sub" style="color:var(--ok)">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
     <div class="hist"><table><thead><tr><th>Day</th><th>Scheduled</th><th>Worked</th><th>Notes</th><th>Review</th></tr></thead><tbody>${dayRows || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1.5rem">No clocked hours this period.</td></tr>'}</tbody></table></div>`;
   v.querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHours(); });
   v.querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNav(+b.dataset.hnav));
+  const ackOpenBtn = v.querySelector('[data-ack-open]');
+  if (ackOpenBtn) ackOpenBtn.onclick = () => openHoursAckModal(S._hoursAck, renderMyHours);
+  const ackViewLink = v.querySelector('[data-ack-view]');
+  if (ackViewLink) ackViewLink.onclick = (e) => { e.preventDefault(); viewMySignedAck(); };
   v.querySelectorAll('[data-confirm-day]').forEach(b => b.onclick = async () => {
+    // Must sign the one-time acknowledgment before the first confirm.
+    if (S._hoursAck && !S._hoursAck.signed) { openHoursAckModal(S._hoursAck, renderMyHours); return; }
     try { await api('/timeclock/my-hours/confirm', { method: 'POST', body: JSON.stringify({ date: b.dataset.confirmDay }) }); toast('Hours confirmed ✓'); renderMyHours(); }
-    catch (e) { toast(e.message, true); }
+    catch (e) { if (/acknowledg/i.test(e.message)) openHoursAckModal(S._hoursAck, renderMyHours); else toast(e.message, true); }
   });
   v.querySelectorAll('[data-dispute-day]').forEach(b => b.onclick = async () => {
     const note = prompt(`What looks wrong with your hours for ${b.dataset.disputeDay}? (optional)\nYour manager / shift lead will review and correct it.`);
@@ -1057,6 +1068,66 @@ async function renderMyHours() {
     try { await api('/timeclock/my-hours/dispute', { method: 'POST', body: JSON.stringify({ date: b.dataset.disputeDay, note }) }); toast('Sent to your manager to review'); renderMyHours(); }
     catch (e) { toast(e.message, true); }
   });
+}
+
+// One-time Worked-Hours Acknowledgment: pick a language, read, type name, tick box,
+// sign. The signed PDF (in that language) is filed in the staffer's documents and
+// the daily Confirm unlocks.
+function openHoursAckModal(ack, onSigned) {
+  const C = ack && ack.content;
+  if (!C || !C.text) { toast('The acknowledgment is unavailable right now — please try again.', true); return; }
+  const host = $('modalHost');
+  const nav = (navigator.language || '').slice(0, 2).toLowerCase();
+  let lang = (C.languages || []).some(l => l.code === nav) ? nav : (C.default || 'en');
+  const langBtns = (C.languages || []).map(l => `<button type="button" class="btn ghost" data-lang="${l.code}" style="padding:.25rem .5rem;font-size:.85rem">${esc(l.label)}</button>`).join('');
+  host.innerHTML = `<div class="modal-bg"><div class="modal">
+      <div style="display:flex;justify-content:space-between;gap:.5rem;align-items:center;flex-wrap:wrap"><h3 id="ackTitle" style="margin:0"></h3><div style="display:flex;gap:.3rem">${langBtns}</div></div>
+      <div class="err" id="mErr"></div>
+      <div id="ackBody" style="max-height:44vh;overflow:auto;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:.75rem .9rem;margin:.4rem 0 .7rem"></div>
+      <label id="ackNameLabel" style="display:block;font-weight:700;margin:.1rem 0 .25rem"></label>
+      <input id="ackName" type="text" autocomplete="name" value="${esc((S.user && S.user.name) || '')}" style="width:100%" />
+      <label style="display:flex;gap:.55rem;align-items:flex-start;margin:.7rem 0 .2rem"><input type="checkbox" id="ackAgree" style="margin-top:.25rem;width:1.1rem;height:1.1rem" /><span id="ackCheckLabel"></span></label>
+      <div class="actions"><button class="btn ghost" id="ackCancel"></button><button class="btn" id="ackSign" disabled></button></div>
+    </div></div>`;
+  const close = () => host.innerHTML = '';
+  const name = $('ackName'), chk = $('ackAgree'), btn = $('ackSign');
+  const sync = () => { btn.disabled = !(chk.checked && name.value.trim().length >= 2); };
+  const applyLang = (l) => {
+    const t = C.text[l]; if (!t) return; lang = l;
+    $('ackTitle').textContent = t.title;
+    $('ackBody').innerHTML = `<p style="margin:.1rem 0 .6rem">${esc(t.intro)}</p>`
+      + `<ol style="margin:.1rem 0 .6rem;padding-left:1.2rem;display:flex;flex-direction:column;gap:.45rem">${(t.points || []).map(p => `<li>${esc(p)}</li>`).join('')}</ol>`
+      + `<p style="margin:.4rem 0 .15rem;font-weight:700">${esc(t.agreementHeading)}</p><p style="margin:0">${esc(t.agreement)}</p>`;
+    $('ackNameLabel').textContent = t.ui.nameLabel;
+    name.placeholder = t.ui.namePlaceholder;
+    $('ackCheckLabel').textContent = t.checkbox;
+    $('ackCancel').textContent = t.ui.notNow;
+    $('ackSign').textContent = t.ui.sign;
+    host.querySelectorAll('[data-lang]').forEach(b => b.classList.toggle('active', b.dataset.lang === l));
+  };
+  host.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => applyLang(b.dataset.lang));
+  name.oninput = sync; chk.onchange = sync;
+  $('ackCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      await api('/timeclock/my-hours/ack', { method: 'POST', body: JSON.stringify({ full_name: name.value.trim(), agree: chk.checked, lang }) });
+      close(); toast('Signed ✓ — thank you'); if (onSigned) onSigned();
+    } catch (e) { $('mErr').textContent = e.message; sync(); }
+  };
+  applyLang(lang); sync();
+}
+
+// Open the staffer's own signed acknowledgment PDF (auth-fetch → blob).
+async function viewMySignedAck() {
+  try {
+    const res = await fetch('/api/timeclock/my-hours/ack/document', { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!res.ok) throw new Error('Could not open your signed form.');
+    const url = URL.createObjectURL(await res.blob());
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast(e.message, true); }
 }
 
 // ── My Schedule: the staff member's own shifts (set by managers), by period ───

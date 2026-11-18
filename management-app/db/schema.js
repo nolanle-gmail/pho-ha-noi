@@ -1008,6 +1008,26 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS idx_staff_docs ON staff_documents(user_id, id);
   `);
 
+  // One-time policy acknowledgments a staffer e-signs (typed name + checkbox).
+  // Today: the Worked-Hours Review & Acknowledgment that must be signed once
+  // before the daily My Hours confirm step unlocks. A row = a signing event; the
+  // rendered PDF is also filed in staff_documents (document_id links to it).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS staff_acknowledgments (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      policy      TEXT NOT NULL DEFAULT 'worked_hours',
+      version     TEXT NOT NULL,
+      full_name   TEXT NOT NULL,            -- typed legal name as signed
+      lang        TEXT NOT NULL DEFAULT 'en', -- language the form was read & signed in
+      signed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      ip          TEXT,
+      user_agent  TEXT,
+      document_id INTEGER REFERENCES staff_documents(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_staff_ack ON staff_acknowledgments(user_id, policy, version);
+  `);
+
   // ── Toast POS integration (read-only) ──────────────────────────────────────
   // Maps each of our locations to a Toast restaurant GUID, and records every data
   // pull so a sync can resume and be audited. The Toast API client itself is
@@ -1314,6 +1334,8 @@ function migrate() {
     `ALTER TABLE time_entries ADD COLUMN overrun_decided_at TEXT`,
     // Floor alert: staff mark a task done (not just acknowledged) — stamps when.
     `ALTER TABLE floor_alert_acks ADD COLUMN completed_at TEXT`,
+    // Language a worked-hours acknowledgment was read & signed in (en/es/vi).
+    `ALTER TABLE staff_acknowledgments ADD COLUMN lang TEXT NOT NULL DEFAULT 'en'`,
     // Auto clock-out for staff who work past their scheduled end (per location):
     // grace minutes past the end before the system clocks them out, and an on/off.
     `ALTER TABLE locations ADD COLUMN clock_out_grace_min INTEGER NOT NULL DEFAULT 30`,
