@@ -608,6 +608,23 @@ to anyone who finished a day without signing off — a prior day right away, tod
 (push), not SMS, since it's a routine daily confirmation. Endpoints `POST /timeclock/my-hours/{confirm,dispute}`
 (a staff JWT, or the Staff app via service key + `?as=`).
 
+**One-time Worked-Hours Acknowledgment (2026-11-17).** Before a staffer's **first** daily **Confirm**, they
+read and **e-sign a one-time acknowledgment** (typed full name + an "I have read and agree" checkbox) that
+explains the daily review step and that confirming a day acknowledges the hours they worked. Until it's
+signed, **My Hours** shows a "Read & sign" banner and `POST /my-hours/confirm` returns **409 `needs_ack`**;
+**Report issue is never blocked** (wrong hours can still be flagged). After signing once it never asks again
+— the banner becomes "✓ You signed … · View your signed form." Available in **English, Spanish and
+Vietnamese** (a language switcher in the dialog; it auto-picks the device language); the whole form —
+policy, labels, checkbox, buttons — switches live. On signing, the form is rendered to a **PDF in the
+language signed** and filed in the staffer's **document folder** (Staff → Documents) for review / audit,
+alongside a durable record (typed name, language, date/time in Pacific, IP/device, acknowledgment ID).
+The PDF embeds a subset Unicode font (DejaVu Sans, bundled) so Vietnamese/Spanish render correctly;
+`pdf-lib` + `@pdf-lib/fontkit` are the only new deps (pure JS). Bump the policy **version** to require a
+re-sign of a changed policy (the previous signed PDF stays on file). State lives in `staff_acknowledgments`
+(policy, version, `lang`, full name, `signed_at`, document link). Endpoints `GET /timeclock/my-hours/ack`
+(status + all-language text), `POST /timeclock/my-hours/ack` (`{full_name, agree, lang}` → files the PDF),
+`GET /timeclock/my-hours/ack/document` (the staffer's own signed PDF). Both the console and the Staff PWA.
+
 **Payroll timesheet report** (Reports → Timesheets). Reads clocked hours straight from
 `time_entries` (completed shifts only — `worked_minutes` set), grouped per staff member,
 filterable by **location or all locations** + a date range. A **Run report** button
