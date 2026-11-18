@@ -213,8 +213,10 @@ router.post('/board-action', async (req, res) => {
 
   if (action === 'notify') {
     const canText = !!(w.phone && w.sms_consent);
-    const short = String(loc.name || '').replace('Pho Ha Noi — ', '');
-    const body = `Hi ${String(w.guest_name || '').trim()}, your table at ${short} is ready! Please see the host to be seated.`;
+    // Keep the full branded name ("Pho Ha Noi — San Jose"); gsm7() in lib/sms normalizes the dash so
+    // the guest's text reads "Pho Ha Noi San Jose", not just the city.
+    const locLabel = String(loc.name || 'Pho Ha Noi');
+    const body = `Hi ${String(w.guest_name || '').trim()}, your table at ${locLabel} is ready! Please see the host to be seated.`;
     // Stamp notified_at (same as the Front Desk notify) so the 🔔 shows on the board and the guest
     // isn't paged twice; then text them if they left a number (a guest who stepped away still gets it).
     db.prepare(`UPDATE waitlist SET notified_at=datetime('now') WHERE id=?`).run(w.id);
