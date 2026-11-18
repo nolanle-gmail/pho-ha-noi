@@ -6084,7 +6084,7 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['waitlist', 'Waitlist']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -6096,7 +6096,7 @@ function renderReportTabs() {
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, waitlist: renderRepWaitlist }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 // Public full-screen Shift Board TV URL for a location (slug derived from its name,
@@ -6378,6 +6378,68 @@ function exportBreakCompliance(d, locName, kind) {
     downloadBlob(html, fname, 'application/vnd.ms-excel');
   }
   toast(`Exported ${d.incidents.length} incident(s) · ${kind.toUpperCase()}`);
+}
+
+// ── Worked-Hours Acknowledgment: who has / hasn't e-signed the one-time form ──
+const ACK_LANG_LABEL = { en: 'English', es: 'Español', vi: 'Tiếng Việt' };
+async function renderRepAck() {
+  const d = await api('/reports/hours-ack' + reportQuery(false));
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  if (!S.ackFilter) S.ackFilter = d.unsigned + d.outdated ? 'pending' : 'all';
+  const pct = d.total ? Math.round(d.signed / d.total * 100) : 0;
+  const statusChip = (s) => s === 'signed' ? '<span class="badge green">✓ Signed</span>' : s === 'outdated' ? '<span class="badge gold">Old version</span>' : '<span class="badge red">Not signed</span>';
+  const pending = d.unsigned + d.outdated;
+  const filt = (arr) => S.ackFilter === 'all' ? arr : S.ackFilter === 'signed' ? arr.filter(x => x.status === 'signed') : arr.filter(x => x.status !== 'signed');
+  const shown = filt(d.staff);
+  $('view').innerHTML = `${reportFilters(false)}
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="akRun">▶ Run report</button>
+      <button class="btn ghost" id="akCsv" ${d.total ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="akXls" ${d.total ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · policy v${esc(d.version)}</span>
+    </div>
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Who has e-signed the one-time <strong>Worked-Hours Acknowledgment</strong>. Staff who haven't signed are blocked from confirming their hours until they do. “Old version” means they signed an earlier policy and should re-sign.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Signed</div><div class="value" style="color:var(--ok,#16a34a)">${d.signed}</div></div>
+      <div class="card"><div class="label">Not signed</div><div class="value ${d.unsigned ? 'warn' : ''}">${d.unsigned}</div></div>
+      ${d.outdated ? `<div class="card"><div class="label">Old version</div><div class="value warn">${d.outdated}</div></div>` : ''}
+      <div class="card"><div class="label">Coverage</div><div class="value">${pct}%</div></div>
+    </div>
+    <div style="display:flex;gap:.35rem;margin:.2rem 0 .6rem;flex-wrap:wrap">
+      ${[['pending', `Still to sign (${pending})`], ['signed', `Signed (${d.signed})`], ['all', `All staff (${d.total})`]].map(([f, l]) => `<button class="btn sm ${S.ackFilter === f ? '' : 'ghost'}" data-akf="${f}">${esc(l)}</button>`).join('')}
+    </div>
+    <div class="section"><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Location</th><th>Status</th><th>Signed on</th><th>Language</th></tr></thead><tbody>
+      ${shown.length ? shown.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td>${statusChip(s.status)}</td><td>${s.signed_at ? esc(new Date(s.signed_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })) : '—'}</td><td>${s.lang ? esc(ACK_LANG_LABEL[s.lang] || s.lang) : '—'}</td></tr>`).join('') : `<tr><td colspan="7" class="empty">${S.ackFilter === 'pending' ? 'Everyone has signed the current version. 🎉' : 'No staff match this filter.'}</td></tr>`}
+    </tbody></table></div></div>`;
+  wireReportFilters(false);
+  $('akRun').onclick = renderRepAck;
+  $('akCsv').onclick = () => exportHoursAck(d, locName, 'csv');
+  $('akXls').onclick = () => exportHoursAck(d, locName, 'xls');
+  $('view').querySelectorAll('[data-akf]').forEach(b => b.onclick = () => { S.ackFilter = b.dataset.akf; renderRepAck(); });
+}
+
+// CSV / Excel export of the full acknowledgment roster (all staff, every status).
+function exportHoursAck(d, locName, kind) {
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Status', 'Signed on', 'Language', 'Signed version'];
+  const statusText = { signed: 'Signed', outdated: 'Old version', unsigned: 'Not signed' };
+  const rows = d.staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', statusText[s.status] || s.status,
+    s.signed_at ? new Date(s.signed_at).toLocaleString() : '', s.lang ? (ACK_LANG_LABEL[s.lang] || s.lang) : '', s.signed_version || '']);
+  const base = `worked-hours-acknowledgment_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_v${d.version}`;
+  const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
+  const title = `Phở Hà Nội — Worked-Hours Acknowledgment · ${locName} · policy v${d.version}`;
+  const summary = `${d.signed} of ${d.total} signed (${d.total ? Math.round(d.signed / d.total * 100) : 0}%); ${d.unsigned} not signed${d.outdated ? `, ${d.outdated} on an old version` : ''}.`;
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [summary], [], cols, ...rows];
+    downloadBlob('﻿' + block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr) => '<tr>' + arr.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+    const tbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${rows.map(bodyRow).join('')}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>${escHtml(title)}</h3><p>${escHtml(summary)}</p>${tbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${d.staff.length} staff · ${kind.toUpperCase()}`);
 }
 
 // Waitlist history — every guest who was ever on the Front Desk waitlist, with phone

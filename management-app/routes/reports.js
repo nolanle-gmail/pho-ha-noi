@@ -6,6 +6,7 @@ const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/au
 const { localTime, DEFAULT_TZ } = require('../lib/tz');
 const { auditLog } = require('../lib/audit');
 const gsheets = require('../lib/gsheets');
+const { VERSION: ACK_VERSION } = require('../lib/acknowledgments');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -317,6 +318,38 @@ router.get('/break-compliance', requireRole(ROLES.REPORTS), (req, res) => {
     staff_affected: by_staff.length,
     by_staff, incidents,
   });
+});
+
+// ── Worked-Hours Acknowledgment status (who has / hasn't signed) ─────────────
+// Current-state report (no date range): every active staff member and whether
+// they've e-signed the CURRENT version of the one-time acknowledgment.
+router.get('/hours-ack', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req);
+  const conds = ['u.is_active=1'], args = [];
+  if (locId) { conds.push('u.location_id=?'); args.push(locId); }
+  const rows = db.prepare(`
+    SELECT u.id user_id, u.name, u.role, u.location_id, l.name location,
+           sp.employee_code, sp.job_title,
+           a.version signed_version, a.lang, a.signed_at, a.document_id
+    FROM users u
+    LEFT JOIN locations l ON l.id=u.location_id
+    LEFT JOIN staff_profiles sp ON sp.user_id=u.id
+    LEFT JOIN staff_acknowledgments a ON a.id=(
+      SELECT z.id FROM staff_acknowledgments z WHERE z.user_id=u.id AND z.policy='worked_hours' ORDER BY z.id DESC LIMIT 1)
+    WHERE ${conds.join(' AND ')}
+    ORDER BY u.name COLLATE NOCASE`).all(...args);
+  const staff = rows.map(r => ({
+    user_id: r.user_id, name: r.name, role: r.role,
+    employee_code: r.employee_code || null, job_title: r.job_title || null,
+    location: r.location || null, location_id: r.location_id || null,
+    status: r.signed_version === ACK_VERSION ? 'signed' : (r.signed_version ? 'outdated' : 'unsigned'),
+    signed_at: r.signed_at || null, lang: r.lang || null, signed_version: r.signed_version || null,
+    has_document: !!r.document_id,
+  }));
+  const signed = staff.filter(s => s.status === 'signed').length;
+  const unsigned = staff.filter(s => s.status === 'unsigned').length;
+  const outdated = staff.filter(s => s.status === 'outdated').length;
+  res.json({ version: ACK_VERSION, location_id: locId ? Number(locId) : null, total: staff.length, signed, unsigned, outdated, staff });
 });
 
 module.exports = router;
