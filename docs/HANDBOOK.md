@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 17, 2026_
+_Last updated: November 20, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2329,6 +2329,14 @@ seven days):
     location, in the same group order as the rows).
   - A **Clear** button resets the filters, and a totals chip on the right reads
     **"Showing *N* of *M* · *X* hrs · $*Y*"** for the staff currently shown.
+- **One location at a time (no double-booking)** — a staff member can't be in two places
+  at once. Adding or editing a **work shift** is refused if it **overlaps the same person's
+  work shift at a different location on the same day** — the shift dialog shows e.g.
+  *"already scheduled at Milpitas from 13:00 to 17:00 that day — they can't be at two
+  locations at the same time."* This applies across stores (someone who works at more than
+  one location), compares only shifts that have concrete start/end times, and handles
+  overnight spans. **Split shifts** at the **same** location and **non-overlapping** shifts
+  at different locations are unaffected; **leave** doesn't block a shift elsewhere.
 - **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,
   so a steady weekly roster doesn't have to be re-entered by hand. Pick any of the last
   **8 weeks** to copy from (defaults to the **previous week**); it clones every **work
@@ -2336,9 +2344,10 @@ seven days):
   roster, and you can edit any shift afterward. **Leave** (sick / vacation) is
   date-specific and is **not** carried over. If the target week already has work shifts,
   it asks first — tick **"Replace shifts already in this week"** to overwrite them
-  (otherwise the copy is refused so nothing is duplicated). Any scheduler — manager /
-  GM / owner / anyone with the **`manage`** cap (e.g. Shift Lead) — can use it on a
-  location they can edit.
+  (otherwise the copy is refused so nothing is duplicated). A copied shift that would
+  **double-book** someone already working another location at that time is **skipped**, and
+  the toast says how many. Any scheduler — manager / GM / owner / anyone with the
+  **`manage`** cap (e.g. Shift Lead) — can use it on a location they can edit.
 - **⟳ Auto-copy weekly** — for a location whose roster is the same week to week, a
   scheduler can turn on **"Auto-copy this schedule to next week, every week"** (a toggle
   under the Schedule tab, stored on the location as `auto_roll_schedule`; **off by
