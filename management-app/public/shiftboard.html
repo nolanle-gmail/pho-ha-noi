@@ -37,7 +37,7 @@
   header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:800; font-size:1.15rem; padding:.28rem .56rem; cursor:pointer; }
 
   main{ flex:1 1 auto; display:flex; flex-direction:column; min-height:0; padding:.5rem .7rem .3rem; }
-  .thead,.trow{ display:grid; grid-template-columns:2.2fr 1.1fr .9fr .9fr 1.25fr 1.9fr; align-items:center; gap:.5rem; }
+  .thead,.trow{ display:grid; grid-template-columns:2.6fr 1fr .85fr .85fr 1.15fr 1.75fr; align-items:center; gap:.5rem; }
   .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
     text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
   .thead .num,.trow .num{ text-align:center; }
@@ -48,7 +48,7 @@
   .trow.sev-amber{ background:var(--amber-bg); border-left-color:var(--amber); }
   .trow.sev-blue{ background:var(--blue-bg); border-left-color:var(--blue); }
   .trow.dim{ opacity:.62; }
-  .nm{ font-weight:800; font-size:calc(var(--fs) * 1.12); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nm{ font-weight:800; font-size:calc(var(--fs) * 1.04); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .job{ color:var(--muted); font-weight:700; font-size:calc(var(--fs) * .72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sched{ font-weight:700; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
   .sched small{ color:var(--muted); font-weight:700; }
@@ -118,7 +118,7 @@ const shortLoc = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s
 const SLUG = decodeURIComponent((location.pathname.match(/^\/shiftboard\/(.+?)\/?$/i) || [, ''])[1] || '').trim();
 
 let dataTimer = null, pageTimer = null, lastData = null, curPage = 0, perPage = 1, pages = 1, NOWMIN = 0;
-const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 56, MAX_ROW = 150;
+const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 52, MAX_ROW = 104;
 const fmt12 = (t) => { const [h, m] = String(t).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}${h < 12 ? 'a' : 'p'}`; };
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 
@@ -257,7 +257,7 @@ function layout() {
   if (curPage >= pages) curPage = 0;
   const rowH = Math.max(MIN_ROW, Math.min(MAX_ROW, Math.floor(bodyH / perPage)));
   document.documentElement.style.setProperty('--rowh', rowH + 'px');
-  document.documentElement.style.setProperty('--fs', Math.max(0.95, Math.min(1.9, rowH / 44)).toFixed(3) + 'rem');
+  document.documentElement.style.setProperty('--fs', Math.max(0.9, Math.min(1.4, rowH / 52)).toFixed(3) + 'rem');
   renderPage();
 }
 
