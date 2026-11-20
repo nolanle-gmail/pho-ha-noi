@@ -3928,7 +3928,7 @@ function copyWeekModal(toWeek, location) {
       }
       if (!res.ok) throw new Error(data.error || res.statusText);
       close();
-      toast(`Copied ${data.copied} shift${data.copied === 1 ? '' : 's'}${data.cleared ? ` (replaced ${data.cleared})` : ''}.`);
+      toast(`Copied ${data.copied} shift${data.copied === 1 ? '' : 's'}${data.cleared ? ` (replaced ${data.cleared})` : ''}${data.skipped ? ` · skipped ${data.skipped} already working another location` : ''}.`);
       renderLocSchedule();
     } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
   };

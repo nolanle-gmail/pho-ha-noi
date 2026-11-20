@@ -828,6 +828,29 @@ function setShiftBreaks(shiftId, userId, shiftDate, breaks, shiftStart, shiftEnd
   }
 }
 
+// A staff member can't be in two places at once: a WORK shift must not overlap the
+// same person's WORK shift at a DIFFERENT location on the same day. Only shifts with
+// concrete start/end times are compared (a timeless placeholder can't be checked).
+// Returns an error string to block on, or null when there's no conflict.
+function crossLocationConflict(userId, locId, date, start, end) {
+  const valid = (t) => /^\d{2}:\d{2}$/.test(String(t || ''));
+  if (!valid(start) || !valid(end)) return null;
+  let s0 = toMin(start), e0 = toMin(end); if (e0 <= s0) e0 += 1440;   // handle an overnight shift
+  const rows = db.prepare(`SELECT s.start_time, s.end_time, l.name AS loc_name
+    FROM shifts s JOIN locations l ON l.id = s.location_id
+    WHERE s.user_id=? AND s.shift_date=? AND s.kind='work' AND s.location_id<>?
+      AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL`).all(userId, date, locId);
+  for (const o of rows) {
+    if (!valid(o.start_time) || !valid(o.end_time)) continue;
+    let os = toMin(o.start_time), oe = toMin(o.end_time); if (oe <= os) oe += 1440;
+    if (s0 < oe && os < e0) {                                          // the two time ranges overlap
+      const where = String(o.loc_name || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || o.loc_name;
+      return `That staff member is already scheduled at ${where} from ${o.start_time} to ${o.end_time} that day — they can't be at two locations at the same time.`;
+    }
+  }
+  return null;
+}
+
 router.post('/shifts', requireRole(ROLES.MANAGE), (req, res) => {
   const p = prepareShift(req, res);
   if (!p) return;
@@ -835,6 +858,10 @@ router.post('/shifts', requireRole(ROLES.MANAGE), (req, res) => {
   // Leave stores its hours; a work shift keeps start/end. From–to leave keeps its span too.
   const start = isLeave && p.allDay ? null : (req.body.start_time || null);
   const end = isLeave && p.allDay ? null : (req.body.end_time || null);
+  if (!isLeave) {
+    const conflict = crossLocationConflict(p.userId, p.locId, req.body.shift_date, start, end);
+    if (conflict) return res.status(409).json({ error: conflict });
+  }
   const r = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?,?,?,?)`)
     .run(p.userId, p.locId, req.body.shift_date, start, end, req.body.notes || null, req.user.id, p.kind, p.allDay, p.leaveHours);
   setShiftJobs(Number(r.lastInsertRowid), p.jobIds);
@@ -854,6 +881,10 @@ router.put('/shifts/:id', requireRole(ROLES.MANAGE), (req, res) => {
   const end = isLeave && spec.allDay ? null : (req.body.end_time !== undefined ? (req.body.end_time || null) : shift.end_time);
   const date = req.body.shift_date !== undefined ? req.body.shift_date : shift.shift_date;
   const notes = req.body.notes !== undefined ? (req.body.notes || null) : shift.notes;
+  if (!isLeave) {
+    const conflict = crossLocationConflict(shift.user_id, shift.location_id, date, start, end);
+    if (conflict) return res.status(409).json({ error: conflict });
+  }
   db.prepare(`UPDATE shifts SET shift_date=?, start_time=?, end_time=?, notes=?, kind=?, all_day=?, leave_hours=?, updated_at=datetime('now') WHERE id=?`)
     .run(date, start, end, notes, spec.kind, spec.allDay, spec.leaveHours, shift.id);
   // Leave has no jobs or breaks; a work shift keeps them.
@@ -920,9 +951,11 @@ function copyWeek(locId, fromWeek, toWeek, { overwrite = false, createdBy = null
       db.prepare(`DELETE FROM shifts WHERE id=?`).run(e.id);
       cleared++;
     }
-    let copied = 0;
+    let copied = 0, skipped = 0;
     for (const s of src) {
       const nd = addDays(s.shift_date, offset);
+      // Don't copy a shift that would double-book someone already working another location then.
+      if (crossLocationConflict(s.user_id, locId, nd, s.start_time, s.end_time)) { skipped++; continue; }
       const r = insShift.run(s.user_id, locId, nd, s.start_time, s.end_time, s.notes, createdBy, 'work', 0, null);
       const nid = Number(r.lastInsertRowid);
       for (const j of jobsBy.all(s.id)) insJob.run(nid, j.job_id);
@@ -930,7 +963,7 @@ function copyWeek(locId, fromWeek, toWeek, { overwrite = false, createdBy = null
       copied++;
     }
     db.exec('COMMIT');
-    return { copied, cleared };
+    return { copied, cleared, skipped };
   } catch (e) { db.exec('ROLLBACK'); return { error: e.message || 'copy_failed' }; }
 }
 
@@ -950,7 +983,8 @@ router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
     message: `This week already has ${r.conflict} work shift${r.conflict === 1 ? '' : 's'}.` });
   if (r.error) return res.status(500).json({ error: 'Could not copy the week.' });
   auditLog(req, 'schedule_week_copy', 'location', locId, { from_week: fromWeek, to_week: toWeek, ...r });
-  res.json({ success: true, from_week: fromWeek, to_week: toWeek, ...r });
+  res.json({ success: true, from_week: fromWeek, to_week: toWeek, ...r,
+    message: r.skipped ? `Copied ${r.copied} shift${r.copied === 1 ? '' : 's'}; skipped ${r.skipped} that would double-book staff already working another location at that time.` : undefined });
 });
 
 // Per-location opt-in for the weekly auto-roll (manager / shift-lead, own store).
@@ -979,7 +1013,7 @@ function sweepWeeklyScheduleRoll() {
         const cur = weekStart(localDate(tz));       // week containing "today" at the store
         const next = addDays(cur, 7);
         const r = copyWeek(loc.id, cur, next, { overwrite: false, createdBy: null });
-        if (r.copied) console.log(`schedule auto-roll: ${loc.name} — copied ${r.copied} shifts into week ${next}`);
+        if (r.copied || r.skipped) console.log(`schedule auto-roll: ${loc.name} — copied ${r.copied} shifts into week ${next}${r.skipped ? `, skipped ${r.skipped} (double-booked elsewhere)` : ''}`);
       } catch (e) { console.error(`schedule auto-roll failed for location ${loc.id}:`, e.message); }
     }
   } catch (err) { console.error('schedule auto-roll sweep failed:', err.message); }
