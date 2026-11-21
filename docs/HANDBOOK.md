@@ -597,14 +597,26 @@ its CSV / Excel / Google-Sheets exports).
 **Attendance exceptions — one list across all locations (2026-11-21).** **Reports → Attendance**
 (`GET /reports/attendance-exceptions`, `REPORTS` cap, `scope()`-filtered — owner/admin/GM see every
 location, a location manager sees only their store) rolls up the punch & break incidents leaders review
-over a date range: **forgotten clock-outs** (an entry the system auto-closed at the scheduled end, or a
-manager closed — `overrun_decision` `auto` / `forced`), **forgotten clock-ins** (a manager had to punch
-them in — `opened_by` is someone other than the staffer), **late** clock-ins (`late_minutes` > 0),
-**missed breaks** (the `missed_breaks` table), and **long** over-the-limit breaks
-(`time_entry_breaks.over_limit_min` > 0). The page shows a KPI card per type, a **by-staff** table with a
-count of each, and a **filterable incident list** (chips per type) with **CSV / Excel** export. It
-overlaps the Breaks report on purpose — Breaks is the deep break-compliance view; Attendance is the
-single at-a-glance roll-up of every exception type.
+over a date range: **no-shows** (scheduled but never worked — see below), **forgotten clock-outs** (an
+entry the system auto-closed at the scheduled end, or a manager closed — `overrun_decision` `auto` /
+`forced`), **forgotten clock-ins** (a manager had to punch them in — `opened_by` is someone other than
+the staffer), **late** clock-ins (`late_minutes` > 0), **missed breaks** (the `missed_breaks` table), and
+**long** over-the-limit breaks (`time_entry_breaks.over_limit_min` > 0). The page shows a KPI card per
+type, a **by-staff** table with a count of each, and a **filterable incident list** (chips per type) with
+**CSV / Excel** export. It overlaps the Breaks report on purpose — Breaks is the deep break-compliance
+view; Attendance is the single at-a-glance roll-up of every exception type.
+
+**No-shows — a missed shift costs no hours (2026-11-21).** If someone is scheduled for a **work shift**
+but **never clocks in** for it, the timesheet already pays nothing (hours come only from
+`time_entries.worked_minutes`, and there's no entry). On top of that the system now **records the
+no-show** and **messages the location's managers/leads**. A sweep (`sweepNoShows` / `startNoShowSweep` in
+routes/timeclock.js, at boot + every 15 min) writes a durable **`no_shows`** row once a scheduled shift's
+window has **fully elapsed** (end + `NO_SHOW_GRACE_MIN`, default **30**) with **no clock-in that fell
+inside the shift** — so only a *completely* missed shift is flagged, never someone merely running late
+(that's the separate **late** signal). It is **per shift** (a split-shift worker can no-show one block and
+work the other), handles overnight shifts, and is **idempotent** (`UNIQUE(user, work_date, shift_id)`).
+No-shows surface as their own type on **Reports → Attendance** (KPI, by-staff column, filter chip,
+export).
 
 **End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
 the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
