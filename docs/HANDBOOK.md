@@ -289,9 +289,10 @@ break**. The point is peer-visible accountability: when everyone sees that a pun
 long, it tends not to repeat. URL `…/shiftboard/<slug>` (e.g. `/shiftboard/san-jose`, slug matched
 case/hyphen-insensitively); bare `/shiftboard` is a picker. Only people with a **scheduled shift here that
 day** appear (an unscheduled punch doesn't put anyone on the board). The page (`public/shiftboard.html`) is
-a row per staffer — **name · scheduled hours · clock-in · clock-out · breaks · status** — where the
-**scheduled hours show every block of a split shift** (e.g. `10:00a–2:00p` and `5:00p–8:00p`, both listed,
-not merged). **All times on the board are 12-hour** (e.g. `8:07a`, `10:00a–6:00p`, `12:00p`) — scheduled
+a row per staffer — **name · clock-in · clock-out · breaks · status** — with the staffer's **scheduled shift
+hours shown as a small line directly under their name** (there is no separate Scheduled column; 2026-11-21,
+owner request). Those hours **show every block of a split shift** (e.g. `10:00a–2:00p` and `5:00p–8:00p`, both
+listed, not merged). **All times on the board are 12-hour** (e.g. `8:07a`, `10:00a–6:00p`, `12:00p`) — scheduled
 hours, clock-in/out and break times alike (2026-11-13). Each row is
 **row colour-coded** and carries a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
 not in once past their start — the late flag persists all day; a late clock-in also shows **(N min late)**
