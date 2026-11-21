@@ -2697,6 +2697,7 @@ async function renderOverview() {
       <p>Enterprise Restaurant Management System · <span class="role-chip">${esc(roleLabel(S.user.role))}</span></p>
       ${msgHeroLink()}
     </div>
+    ${myCap('scheduled') ? '<div id="clockBanner" class="clock-banner"></div>' : ''}
     <div class="kpis">
       <div class="card"><div class="label">Locations</div><div class="value">${S.locations.length}</div></div>
       ${staffCount != null ? `<div class="card"><div class="label">Staff</div><div class="value">${staffCount}</div></div>` : ''}
@@ -2711,6 +2712,7 @@ async function renderOverview() {
       </div>
     </div>`;
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+  if (myCap('scheduled')) renderClockBanner();
   fillToastSales('toastSalesPanel');
 }
 
@@ -2860,6 +2862,7 @@ async function renderManagerDashboard() {
       <p>${esc(locName)} · <span class="role-chip">${esc(roleLabel(S.user.role))}</span> · ${WD[(new Date(today + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(today)}</p>
       ${msgHeroLink()}
     </div>
+    ${myCap('scheduled') ? '<div id="clockBanner" class="clock-banner"></div>' : ''}
     <div class="kpis">
       ${stat('Staff', rs.total, '', 'staff')}
       ${stat('On today', onToday.length, onToday.length ? 'ok' : '')}
@@ -2896,7 +2899,7 @@ async function renderManagerDashboard() {
           <td class="mono">${e.clock_in || '—'}</td>
           <td class="mono">${e.clock_out || '—'}</td>
           <td>${fmtDur(e.worked_minutes)}${e.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
-          <td>${e.status === 'in' ? '<span class="badge ok">🟢 On clock</span>' : `<span class="badge gray">Clocked out</span>${e.short ? ' <span class="badge out">⚠ short</span>' : ''}${e.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(e.overtime_minutes)} OT</span>` : ''}`}</td>
+          <td>${e.status === 'in' ? (e.on_break ? '<span class="badge low">☕ On break</span>' : '<span class="badge ok">🟢 On clock</span>') : `<span class="badge gray">Clocked out</span>${e.short ? ' <span class="badge out">⚠ short</span>' : ''}${e.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(e.overtime_minutes)} OT</span>` : ''}`}</td>
         </tr>`).join('') : '<tr><td colspan="5" class="empty">No clock-ins yet today.</td></tr>'}
         ${clock.not_in && clock.not_in.length ? `<tr><td colspan="5" style="color:var(--muted);font-size:.83rem;background:#fafafa">Scheduled, not clocked in: ${clock.not_in.slice(0, 8).map(n => esc(n.name)).join(', ')}${clock.not_in.length > 8 ? ` +${clock.not_in.length - 8} more` : ''}</td></tr>` : ''}
       </tbody></table></div>
@@ -2958,6 +2961,7 @@ async function renderManagerDashboard() {
   $('view').querySelectorAll('[data-equip]').forEach(b => b.onclick = () => openLocationDetail(loc, 'equipment'));
   $('view').querySelectorAll('[data-daytasks]').forEach(b => b.onclick = () => openLocationDetail(loc, 'daytasks'));
   $('view').querySelectorAll('[data-timeclock]').forEach(b => b.onclick = () => openLocationDetail(loc, 'timeclock'));
+  if (myCap('scheduled')) renderClockBanner();
   fillToastSales('toastSalesPanel');
 }
 
@@ -3089,6 +3093,34 @@ function leaveRequestModal() {
 }
 
 // ── Self-service landing (Server, Busser, Chef, Front Desk, …) ───────────────
+// Today's own clock status, shown at the top of a staffer's overview so they remember whether
+// they've already clocked in / out, are on a break, or have no shift today. Fills #clockBanner.
+async function renderClockBanner() {
+  const el = $('clockBanner'); if (!el) return;
+  let d; try { d = await api('/timeclock/my-today'); } catch { el.innerHTML = ''; el.className = 'clock-banner'; return; }
+  const loc = d.location ? ` at ${esc(shortLoc(d.location))}` : '';
+  let cls = 'info', msg = '';
+  if (d.state === 'in') {
+    cls = 'ok';
+    msg = `🟢 <strong>You’re clocked in</strong>${loc} since <strong>${esc(d.clock_in)}</strong> — ${fmtDur(d.worked_minutes)} so far. Remember to clock out at the kiosk when you leave.`;
+  } else if (d.state === 'on_break') {
+    cls = 'warn';
+    msg = `☕ <strong>You’re on a break</strong>${d.break_since ? ` since <strong>${esc(d.break_since)}</strong>` : ''} — clock back in at the kiosk when you return.`;
+  } else if (d.state === 'out') {
+    cls = 'done';
+    msg = `✅ <strong>You clocked out</strong>${loc} at <strong>${esc(d.clock_out)}</strong> — ${fmtDur(d.worked_minutes)} worked today.`;
+  } else if (d.state === 'not_in') {
+    const sh = d.shifts[0];
+    cls = 'warn';
+    msg = `🗓️ <strong>You haven’t clocked in yet today.</strong>${sh ? ` Today’s shift: <strong>${esc(to12h(sh.start))}–${esc(to12h(sh.end))}</strong>${d.shifts.length > 1 ? ` (+${d.shifts.length - 1} more)` : ''}. Clock in at the kiosk.` : ''}`;
+  } else {
+    cls = 'muted';
+    msg = `🌙 <strong>No shift scheduled for you today.</strong>`;
+  }
+  el.className = 'clock-banner ' + cls;
+  el.innerHTML = msg;
+}
+
 function renderSelfOverview() {
   const hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
@@ -3102,10 +3134,12 @@ function renderSelfOverview() {
       <h2>${greet}, ${esc(S.user.name.split(' ')[0])}</h2>
       <p>${esc(roleLabel(S.user.role))}${S.user.location_id ? ' · ' + esc(shortLoc((S.locations.find(l => String(l.id) === String(S.user.location_id)) || {}).name || '')) : ''}</p>
     </div>
+    <div id="clockBanner" class="clock-banner"></div>
     <div class="quick-grid">
       ${cards.map(([k, icon, label, desc]) => `<button class="quick-card lg" data-goto="${k}"><span class="q-icon">${icon}</span><span class="q-label">${label}</span><span class="q-desc">${esc(desc)}</span></button>`).join('')}
     </div>`;
   $('view').querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
+  renderClockBanner();
 }
 
 // ── Deliveries (Driver) — read-only Central-Kitchen fulfillment / manifests ──
@@ -4469,7 +4503,10 @@ async function renderLocTimeClock() {
   const missedOutBadge = (r) => r.auto_closed
     ? ` <span class="badge low" title="Forgot to clock out — the system auto-closed this at the scheduled end (${esc(r.clock_out || '')}). Adjust their hours if they actually worked later.">⏱ auto clock-out</span>`
     : r.forced_out ? ` <span class="badge low" title="Forgot to clock out — a manager closed this shift. Adjust their hours if they actually worked later.">⏱ closed by manager</span>` : '';
-  const statusChip = (r) => r.status === 'in' ? '<span class="badge ok">🟢 On clock</span>'
+  const statusChip = (r) => r.status === 'in'
+    ? (r.on_break
+        ? `<span class="badge low" title="On a break${r.break_since ? ` since ${esc(r.break_since)}` : ''} — not yet clocked back in">☕ On break${r.break_since ? ` since ${esc(r.break_since)}` : ''}</span>`
+        : '<span class="badge ok">🟢 On clock</span>')
     : `<span class="badge gray">Clocked out</span>${missedOutBadge(r)}${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
   const canEditTc = myCap('manage');
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
@@ -4514,6 +4551,7 @@ async function renderLocTimeClock() {
     </div>
     <div class="tc-summary">
       <span class="badge ok">${sm.on_clock} on the clock</span>
+      ${sm.on_break ? `<span class="badge low">☕ ${sm.on_break} on break</span>` : ''}
       <span class="badge gray">${sm.done} clocked out</span>
       <span class="badge ${sm.not_in ? 'low' : 'gray'}">${sm.not_in} not in</span>
       ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}

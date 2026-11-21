@@ -65,6 +65,48 @@ router.get('/my-hours', (req, res) => {
   res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
 });
 
+// My clock status for TODAY — a tiny summary the staff app shows so people remember whether
+// they've clocked in / out or have no shift today. Any staff member (JWT) or the Staff app
+// on their behalf (service key + ?as=email). Defined before the manager auth wall below.
+router.get('/my-today', (req, res) => {
+  const u = resolveMyUser(req);
+  if (!u) return res.status(401).json({ error: 'Authentication required' });
+  const homeTz = (db.prepare(`SELECT l.timezone FROM users usr JOIN locations l ON l.id=usr.location_id WHERE usr.id=?`).get(u.id) || {}).timezone || DEFAULT_TZ;
+  const today = localDate(homeTz);
+  // Today's entries at any location, plus any entry still open from a previous day (forgot to
+  // clock out / overnight) so "you're still clocked in" is never hidden.
+  const entries = db.prepare(`SELECT te.*, l.name AS loc_name, l.timezone AS tz
+      FROM time_entries te JOIN locations l ON l.id=te.location_id
+      WHERE te.user_id=? AND (te.work_date=? OR (te.clock_out IS NULL AND te.work_date < ?))
+      ORDER BY te.clock_in`).all(u.id, today, today);
+  const open = entries.find(e => !e.clock_out) || null;
+  const doneToday = entries.filter(e => e.clock_out && e.work_date === today)
+    .sort((a, b) => new Date(b.clock_out) - new Date(a.clock_out));
+  const lastDone = doneToday[0] || null;
+  const ob = open ? db.prepare(`SELECT break_out_at FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL ORDER BY id DESC LIMIT 1`).get(open.id) : null;
+  // Today's scheduled work shift(s), any location.
+  const shifts = db.prepare(`SELECT s.start_time, s.end_time, l.name AS loc_name
+      FROM shifts s JOIN locations l ON l.id=s.location_id
+      WHERE s.user_id=? AND s.shift_date=? AND s.kind='work' AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL
+      ORDER BY s.start_time`).all(u.id, today);
+  const tzFor = (e) => (e && e.tz) ? e.tz : homeTz;
+  let state;
+  if (open && ob) state = 'on_break';
+  else if (open) state = 'in';
+  else if (lastDone) state = 'out';
+  else if (shifts.length) state = 'not_in';
+  else state = 'no_schedule';
+  res.json({
+    today, state,
+    location: open ? open.loc_name : (lastDone ? lastDone.loc_name : (shifts[0] ? shifts[0].loc_name : null)),
+    clock_in: open ? localTime(tzFor(open), new Date(open.clock_in)) : null,
+    clock_out: lastDone ? localTime(tzFor(lastDone), new Date(lastDone.clock_out)) : null,
+    worked_minutes: open ? liveWorked(open) : (lastDone ? (lastDone.worked_minutes || 0) : 0),
+    break_since: ob ? localTime(tzFor(open), new Date(ob.break_out_at)) : null,
+    shifts: shifts.map(s => ({ start: s.start_time, end: s.end_time, location: s.loc_name })),
+  });
+});
+
 // Resolve the acting staff member for a self-service call — a JWT, or the Staff app
 // on their behalf (service key + ?as=email). Returns { id, name } or null.
 function resolveMyUser(req) {
@@ -893,11 +935,14 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   // Punch photos captured on the kiosk (best-effort), by entry + kind.
   const photoStmt = db.prepare(`SELECT kind, id FROM time_entry_photos WHERE entry_id=?`);
   const photosFor = (entryId) => { const o = { in: null, out: null }; for (const p of photoStmt.all(entryId)) o[p.kind] = p.id; return o; };
+  // Is a still-open entry currently on a break? (an open time_entry_breaks row — out, not yet back in.)
+  const openBreakStmt = db.prepare(`SELECT break_out_at FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL ORDER BY id DESC LIMIT 1`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
     const ph = photosFor(e.id);
+    const ob = e.clock_out ? null : openBreakStmt.get(e.id);
     // Their shift on the entry's OWN day (carryover entries look up their prior day).
     const rawSh = e.work_date === date ? shiftBy[e.user_id] : shiftFor.get(e.user_id, locId, e.work_date);
     const sh = rawSh && rawSh.start_time ? rawSh : null;
@@ -906,6 +951,8 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
       clock_in_hhmm: hhmm(e.clock_in), clock_out_hhmm: e.clock_out ? hhmm(e.clock_out) : null,
       status: e.clock_out ? 'out' : 'in',
+      on_break: ob ? 1 : 0,
+      break_since: ob ? localTime(tz, new Date(ob.break_out_at)) : null,
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
       short: e.short_confirmed ? 1 : 0,
@@ -935,6 +982,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
     location: loc, date, today, timezone: tz, entries: rows, not_in: notIn,
     summary: {
       on_clock: rows.filter(r => r.status === 'in').length,
+      on_break: rows.filter(r => r.on_break).length,
       done: rows.filter(r => r.status === 'out').length,
       not_in: notIn.length,
       short: rows.filter(r => r.short).length,

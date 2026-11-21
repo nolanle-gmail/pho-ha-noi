@@ -73,12 +73,9 @@
 
       <div class="panel" id="panel"></div>
 
-      <div id="actions" hidden>
-        <div class="row">
-          <button class="btn ok" id="clockIn">Clock In</button>
-          <button class="btn ghost" id="clockOut">Clock Out</button>
-        </div>
-      </div>
+      <!-- Action buttons are built per state in lookup(): one Clock In when they're not in,
+           or a simple Take break / Clock out choice when they're already on the clock. -->
+      <div id="actions" hidden></div>
     </div>
     <div class="hint" id="hint"></div>
   </div>
@@ -174,10 +171,30 @@ async function lookup(){
         : `You’re on break since ${escapeHtml(d.break_since)} — finish your ${d.break_min_min || 10}-minute break first. About ${d.break_min_left} more minute${d.break_min_left === 1 ? '' : 's'} before you can clock in.`)
     : d.clocked_in ? `You’ve been clocked in since ${escapeHtml(d.since)}.` : 'Ready when you are.';
   showPanel(d.on_break && !d.break_ready ? 'warn' : 'info', `<span class="big">${escapeHtml(d.greeting)}</span>${info}`);
-  $('actions').hidden = false;
-  $('clockIn').textContent = d.on_break ? 'Clock In (back from break)' : 'Clock In';
-  $('clockIn').disabled = !d.can_in;
-  $('clockOut').disabled = !d.can_out;
+  // Build the action buttons for THIS person's state — keep it to one obvious tap:
+  //  • on a break  → just Clock In (back from break), enabled once the break is done
+  //  • on the clock → the two things they might do: Take break  or  Clock out (end shift)
+  //  • not in yet  → a single Clock In
+  const act = $('actions');
+  if (d.on_break) {
+    act.innerHTML = `<button class="btn ok" id="aIn">Clock In (back from break)</button>`;
+    $('aIn').disabled = !d.can_in;
+    $('aIn').onclick = () => punch('in');
+  } else if (d.clocked_in) {
+    act.innerHTML = `<div class="row">
+        <button class="btn ghost" id="aBreak">🍴 Take break</button>
+        <button class="btn primary" id="aOut">🏁 Clock out</button>
+      </div>`;
+    $('aBreak').disabled = !d.can_out;
+    $('aOut').disabled = !d.can_out;
+    $('aBreak').onclick = () => punch('out', 'break');   // straight to break — no extra menu
+    $('aOut').onclick = () => punch('out', 'shift');     // straight to end-of-shift
+  } else {
+    act.innerHTML = `<button class="btn ok" id="aIn">Clock In</button>`;
+    $('aIn').disabled = !d.can_in;
+    $('aIn').onclick = () => punch('in');
+  }
+  act.hidden = false;
   resetSoon(30000); // idle reset
 }
 
@@ -238,8 +255,7 @@ async function start(){
   $('hint').textContent = 'Enter your 6-digit employee code to clock in or out.';
   $('go').onclick = lookup;
   $('code').addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
-  $('clockIn').onclick = () => punch('in');
-  $('clockOut').onclick = () => punch('out');
+  // Clock In / Take break / Clock out buttons are created per state inside lookup().
   $('code').focus();
 }
 start();
