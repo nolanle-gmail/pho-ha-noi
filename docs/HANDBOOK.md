@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 20, 2026_
+_Last updated: November 21, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2087,7 +2087,17 @@ manager or **shift lead** sets **⏲ Auto clock-out** — an on/off plus the **g
 past the scheduled end (default **30**, 0–240; stored on the location as `clock_out_grace_min` /
 `auto_clock_out`). The auto clock-out records the entry at the **scheduled end** (not the current
 time) and notifies the person and the leaders; it is **skipped** for anyone a lead **approved**
-to keep working or whose shift was **extended** with *Add hours*. Turning it off falls back to
+to keep working or whose shift was **extended** with *Add hours*.
+
+**Split shifts — each block clocked separately.** When someone works **two shifts in a day**
+(e.g. `10a–12p` then `1p–4p`), they **clock in and out for each shift**. Enforcement is now
+**per shift block**: a still-open punch is paired to the block it belongs to, and the sweep
+closes it at **that block's own end** + grace — so a forgotten first-shift punch closes at
+**~12:30p** (12p end + 30), recorded at **12p**, never counting the mid-day gap as worked, rather
+than waiting for the day's last end. If a staffer **clocks in for the next shift while the earlier,
+already-ended shift is still open** (they forgot to punch out), that earlier shift is **auto-closed
+at its scheduled end** so the new clock-in goes through, and the managers are messaged. Each block's
+auto-close still obeys the location's on/off + grace policy. Turning it off falls back to
 the reminder-only behavior (a lead closes overruns manually). Each store manager / shift lead
 sets their **own location's** policy.
 
