@@ -340,7 +340,31 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
         at: localTime(tz, now),
       });
     }
-    if (ctx.open) return res.status(409).json({ error: `You’re already clocked in (since ${localTime(tz, new Date(ctx.open.clock_in))}).` });
+    if (ctx.open) {
+      // Split shifts: if this punch is for a LATER shift block but an EARLIER block is
+      // still open (they forgot to clock out of it) and that earlier block has already
+      // ended, auto-close it at its scheduled end — never paying the gap — so they can
+      // clock in for the next shift. Otherwise it's a genuine "already clocked in".
+      const openInMin = localMinutesOfDay(tz, new Date(ctx.open.clock_in));
+      const nowMin = localMinutesOfDay(tz, now);
+      const openBlk = shiftBlockForPunch(staff.id, loc.id, date, openInMin);
+      const nowBlk = shiftBlockForPunch(staff.id, loc.id, date, nowMin);
+      const staleOver = openBlk && nowBlk && openBlk.sMin !== nowBlk.sMin
+        && openBlk.eMin != null && nowMin >= openBlk.eMin;
+      if (!staleOver) {
+        return res.status(409).json({ error: `You’re already clocked in (since ${localTime(tz, new Date(ctx.open.clock_in))}).` });
+      }
+      let workedToEnd = openBlk.eMin - openInMin; if (workedToEnd < 0) workedToEnd += 1440;
+      workedToEnd = Math.max(0, workedToEnd);
+      const priorOut = new Date(new Date(ctx.open.clock_in).getTime() + workedToEnd * 60000);
+      const rr = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
+        .run(priorOut.toISOString(), workedToEnd, ctx.open.id);
+      if (rr.changes) {
+        closeOpenBreaks(ctx.open.id, priorOut.toISOString());
+        notifyLeaders(loc.id, staff.id, 'Auto clock-out', `${staff.name} didn’t clock out of their earlier shift at ${locDisplay(loc.name)} (ended ${openBlk.eRaw}); the system closed it at its scheduled end when they clocked in for their next shift. Adjust their hours if they actually worked later.`);
+      }
+      ctx.open = null; // fall through and record a fresh clock-in for the next shift
+    }
     let reason = null, warn = null;
     if (ctx.here) {
       if (ctx.startHere) { const early = hhmmToMin(ctx.startHere) - localMinutesOfDay(tz, now); if (early > 30) { reason = 'early'; warn = `You’re clocking in more than 30 minutes before your ${ctx.startHere} shift. Clock in anyway?`; } }
@@ -399,12 +423,40 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
   return res.status(400).json({ error: 'Unknown action.' });
 });
 
-// Missed clock-out sweep. When a still-clocked-in staff member passes their
-// scheduled end (+ any manager-added extra), we first nudge them and the location
-// leaders (once). Then, once they're the location's grace window past that end and
-// no one approved the extra hours, the system auto-clocks them out at their
-// scheduled end — unless the location turned auto clock-out off (then it's just the
-// nudge and managers handle it from the Time Clock board).
+// Pair a punch (clock-in minute-of-day) to one of a staff member's WORK shift blocks
+// for the day at a location: the block that contains the punch, else the next upcoming
+// block, else the last block. Returns {sRaw,eRaw,sMin,eMin} or null when nothing is
+// scheduled with times. This is what makes split shifts (two blocks the same day, e.g.
+// 10a–12p then 1p–4p) enforce each block's OWN end separately, instead of the day's
+// latest end — so a forgotten first-shift clock-out closes at 12p, not 4p.
+function shiftBlockForPunch(userId, locationId, workDate, clockInMin) {
+  const blocks = db.prepare(
+    `SELECT start_time s, end_time e FROM shifts
+       WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'
+         AND start_time IS NOT NULL AND end_time IS NOT NULL`
+  ).all(userId, locationId, workDate)
+    .map(b => ({ sRaw: b.s, eRaw: b.e, sMin: hhmmToMin(b.s), eMin: hhmmToMin(b.e) }))
+    .filter(b => b.sMin != null && b.eMin != null)
+    .sort((a, b) => a.sMin - b.sMin);
+  if (!blocks.length) return null;
+  if (clockInMin == null) return blocks[blocks.length - 1];
+  // Block containing the punch (end<=start means the block crosses midnight).
+  const inside = blocks.find(b => {
+    const end = b.eMin <= b.sMin ? b.eMin + 1440 : b.eMin;
+    return clockInMin >= b.sMin && clockInMin <= end;
+  });
+  if (inside) return inside;
+  // Else the next block that starts at/after the punch, else the last block of the day.
+  return blocks.find(b => b.sMin >= clockInMin) || blocks[blocks.length - 1];
+}
+
+// Missed clock-out sweep. When a still-clocked-in staff member passes the end of the
+// shift block they're on (+ any manager-added extra), we first nudge them and the
+// location leaders (once). Then, once they're the location's grace window past that
+// block's end and no one approved the extra hours, the system auto-clocks them out at
+// that block's scheduled end — unless the location turned auto clock-out off (then it's
+// just the nudge and managers handle it from the Time Clock board). Each shift block is
+// enforced independently, so split shifts auto-close at the right time per block.
 function sweepMissedClockOuts() {
   try {
     const open = db.prepare(`SELECT te.id, te.user_id, te.location_id, te.work_date, te.clock_in,
@@ -414,7 +466,10 @@ function sweepMissedClockOuts() {
       WHERE te.clock_out IS NULL`).all();
     for (const e of open) {
       const tz = e.timezone || DEFAULT_TZ;
-      const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
+      // Enforce the END OF THE BLOCK THIS PUNCH BELONGS TO (not the day's latest end), so
+      // a forgotten clock-out on an earlier split-shift block closes at that block's end.
+      const blk = shiftBlockForPunch(e.user_id, e.location_id, e.work_date, localMinutesOfDay(tz, new Date(e.clock_in)));
+      const end = blk ? blk.eRaw : null;
       if (!end) continue; // no scheduled end → nothing to enforce
       const todayLocal = localDate(tz);
       const allowedEndMin = hhmmToMin(end) + (Number(e.extra) || 0);
