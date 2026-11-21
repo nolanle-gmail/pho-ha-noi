@@ -6089,7 +6089,7 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['conflicts', 'Conflicts'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['attendance', 'Attendance'], ['breaks', 'Breaks'], ['conflicts', 'Conflicts'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -6101,7 +6101,7 @@ function renderReportTabs() {
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, conflicts: renderRepConflicts, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, attendance: renderRepAttendance, breaks: renderRepBreaks, conflicts: renderRepConflicts, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 // Public full-screen Shift Board TV URL for a location (slug derived from its name,
@@ -6475,6 +6475,74 @@ function exportConflicts(d, locName, kind) {
     downloadBlob(html, fname, 'application/vnd.ms-excel');
   }
   toast(`Exported ${d.conflicts.length} conflict(s) · ${kind.toUpperCase()}`);
+}
+
+// ── Attendance exceptions: forgotten clock-outs/ins, lates, missed & long breaks ──
+const ATT_TYPES = [['forgot_out', 'Forgot clock-out', 'red'], ['forgot_in', 'Forgot clock-in', 'gold'], ['late', 'Late', 'blue'], ['missed_break', 'Missed break', 'red'], ['long_break', 'Long break', 'gold']];
+const ATT_LABEL = Object.fromEntries(ATT_TYPES.map(([k, l]) => [k, l]));
+const ATT_CHIPCLASS = Object.fromEntries(ATT_TYPES.map(([k, , c]) => [k, c]));
+async function renderRepAttendance() {
+  const d = await api('/reports/attendance-exceptions' + reportQuery(true));
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  if (!S.attType) S.attType = 'all';
+  const typeChip = (t) => `<span class="badge ${ATT_CHIPCLASS[t] || 'gray'}">${esc(ATT_LABEL[t] || t)}</span>`;
+  const shown = S.attType === 'all' ? d.incidents : d.incidents.filter(i => i.type === S.attType);
+  const T = d.totals;
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="atRun">▶ Run report</button>
+      <button class="btn ghost" id="atCsv" ${d.incidents.length ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="atXls" ${d.incidents.length ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
+    </div>
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Attendance exceptions for review across all locations: <strong>forgotten clock-outs</strong> (auto-closed at the scheduled end, or closed by a manager), <strong>forgotten clock-ins</strong> (a manager had to punch them in), <strong>late</strong> clock-ins, <strong>missed breaks</strong>, and <strong>long</strong> (over-the-limit) breaks.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Forgot clock-out</div><div class="value ${T.forgot_out ? 'warn' : ''}">${T.forgot_out}</div></div>
+      <div class="card"><div class="label">Forgot clock-in</div><div class="value ${T.forgot_in ? 'warn' : ''}">${T.forgot_in}</div></div>
+      <div class="card"><div class="label">Late</div><div class="value ${T.late ? 'warn' : ''}">${T.late}</div></div>
+      <div class="card"><div class="label">Missed break</div><div class="value ${T.missed_break ? 'warn' : ''}">${T.missed_break}</div></div>
+      <div class="card"><div class="label">Long break</div><div class="value ${T.long_break ? 'warn' : ''}">${T.long_break}</div></div>
+      <div class="card"><div class="label">Staff affected</div><div class="value">${d.staff_affected}</div></div>
+    </div>
+    <div class="section"><h3>By staff</h3>
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Location</th><th class="num">Forgot out</th><th class="num">Forgot in</th><th class="num">Late</th><th class="num">Missed brk</th><th class="num">Long brk</th><th class="num">Total</th></tr></thead><tbody>
+        ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num ${s.forgot_out ? 'warn' : ''}">${s.forgot_out || '—'}</td><td class="num ${s.forgot_in ? 'warn' : ''}">${s.forgot_in || '—'}</td><td class="num ${s.late ? 'warn' : ''}">${s.late || '—'}</td><td class="num ${s.missed_break ? 'warn' : ''}">${s.missed_break || '—'}</td><td class="num ${s.long_break ? 'warn' : ''}">${s.long_break || '—'}</td><td class="num"><strong>${s.total}</strong></td></tr>`).join('') : '<tr><td colspan="10" class="empty">No attendance exceptions in this range. 🎉</td></tr>'}
+      </tbody></table></div></div>
+    <div class="section"><h3>Every incident</h3>
+      <div style="display:flex;gap:.35rem;margin:.2rem 0 .6rem;flex-wrap:wrap">
+        ${[['all', `All (${T.all})`], ...ATT_TYPES.map(([k, l]) => [k, `${l} (${T[k]})`])].map(([f, l]) => `<button class="btn sm ${S.attType === f ? '' : 'ghost'}" data-atf="${f}">${esc(l)}</button>`).join('')}
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Staff</th><th>Location</th><th>Type</th><th class="num">Time</th><th>Detail</th></tr></thead><tbody>
+        ${shown.length ? shown.map(i => `<tr><td>${esc(i.work_date)}</td><td><strong>${esc(i.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(i.employee_code || '')}</span></td><td>${esc(shortLoc(i.location) || '—')}</td><td>${typeChip(i.type)}</td><td class="num">${esc(i.time || '—')}</td><td>${esc(i.detail)}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">No incidents match this filter.</td></tr>'}
+      </tbody></table></div></div>`;
+  wireReportFilters(true);
+  $('atRun').onclick = renderRepAttendance;
+  $('atCsv').onclick = () => exportAttendance(d, locName, 'csv');
+  $('atXls').onclick = () => exportAttendance(d, locName, 'xls');
+  $('view').querySelectorAll('[data-atf]').forEach(b => b.onclick = () => { S.attType = b.dataset.atf; renderRepAttendance(); });
+}
+
+// CSV / Excel export of every attendance incident in range (all types).
+function exportAttendance(d, locName, kind) {
+  const cols = ['Date', 'Staff', 'Employee code', 'Role', 'Location', 'Type', 'Time', 'Detail'];
+  const rows = d.incidents.map(i => [i.work_date, i.name, i.employee_code || '', roleLabel(i.role), shortLoc(i.location) || '', ATT_LABEL[i.type] || i.type, i.time || '', i.detail]);
+  const base = `attendance-exceptions_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
+  const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
+  const title = `Phở Hà Nội — Attendance exceptions · ${locName} · ${d.start} to ${d.end}`;
+  const T = d.totals;
+  const summary = `${T.all} incident(s): ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in, ${T.late} late, ${T.missed_break} missed break, ${T.long_break} long break; ${d.staff_affected} staff affected.`;
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [summary], [], cols, ...rows];
+    downloadBlob('﻿' + block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr) => '<tr>' + arr.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+    const tbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${rows.map(bodyRow).join('')}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>${escHtml(title)}</h3><p>${escHtml(summary)}</p>${tbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${d.incidents.length} incident(s) · ${kind.toUpperCase()}`);
 }
 
 // CSV / Excel export of the full acknowledgment roster (all staff, every status).

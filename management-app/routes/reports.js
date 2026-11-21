@@ -390,4 +390,71 @@ router.get('/schedule-conflicts', requireRole(ROLES.REPORTS), (req, res) => {
   res.json({ as_of: today, location_id: locId ? Number(locId) : null, total: conflicts.length, staff_count: new Set(conflicts.map(c => c.user_id)).size, conflicts });
 });
 
+// ── Attendance exceptions (all locations) ────────────────────────────────────
+// One list of the punch/break incidents leaders review for a date range, across
+// every location (a location manager sees only their store): forgotten clock-OUTS
+// (auto-closed at the scheduled end, or manager-closed), forgotten clock-INS (a
+// manager had to punch them in), LATE clock-ins, MISSED breaks, and LONG (over-limit)
+// breaks. Each incident row carries its type; totals + per-staff counts summarise them.
+router.get('/attendance-exceptions', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req); const { start, end } = dateRange(req);
+  const sel = `u.id user_id, u.name, u.employee_code, u.role, l.name location, l.id location_id, l.timezone`;
+  const teWhere = (extra) => {
+    const conds = ['te.work_date>=?', 'te.work_date<=?', ...extra], args = [start, end];
+    if (locId) { conds.push('te.location_id=?'); args.push(locId); }
+    return { sql: conds.join(' AND '), args };
+  };
+
+  const fo = teWhere([`te.overrun_decision IN ('auto','forced')`, 'te.clock_out IS NOT NULL']);
+  const forgotOut = db.prepare(`SELECT te.work_date, te.clock_out, te.overrun_decision, ${sel}
+    FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${fo.sql}`).all(...fo.args);
+
+  // A manager/lead punched them in (they didn't self-clock-in on the kiosk).
+  const fi = teWhere(['te.opened_by IS NOT NULL', 'te.opened_by<>te.user_id']);
+  const forgotIn = db.prepare(`SELECT te.work_date, te.clock_in, ${sel}
+    FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${fi.sql}`).all(...fi.args);
+
+  const la = teWhere(['COALESCE(te.late_minutes,0)>0']);
+  const lates = db.prepare(`SELECT te.work_date, te.clock_in, te.late_minutes, ${sel}
+    FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${la.sql}`).all(...la.args);
+
+  const mConds = ['mb.work_date>=?', 'mb.work_date<=?'], mArgs = [start, end];
+  if (locId) { mConds.push('mb.location_id=?'); mArgs.push(locId); }
+  const missed = db.prepare(`SELECT mb.work_date, mb.scheduled_time, u.id user_id, u.name, u.employee_code, u.role, l.name location, l.id location_id
+    FROM missed_breaks mb JOIN users u ON u.id=mb.user_id JOIN locations l ON l.id=mb.location_id
+    WHERE ${mConds.join(' AND ')}`).all(...mArgs);
+
+  const lConds = ['te.work_date>=?', 'te.work_date<=?', 'b.break_in_at IS NOT NULL', 'b.over_limit_min>0'], lArgs = [start, end];
+  if (locId) { lConds.push('te.location_id=?'); lArgs.push(locId); }
+  const long = db.prepare(`SELECT te.work_date, b.break_out_at, b.minutes, b.over_limit_min, ${sel}
+    FROM time_entry_breaks b JOIN time_entries te ON te.id=b.time_entry_id
+    JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${lConds.join(' AND ')}`).all(...lArgs);
+
+  const T = (tz, iso) => iso ? localTime(tz || DEFAULT_TZ, new Date(iso)) : null;
+  const byUser = new Map();
+  const bump = (r, key) => {
+    let u = byUser.get(r.user_id);
+    if (!u) { u = { user_id: r.user_id, name: r.name, employee_code: r.employee_code || null, role: r.role, location: r.location, forgot_out: 0, forgot_in: 0, late: 0, missed_break: 0, long_break: 0 }; byUser.set(r.user_id, u); }
+    u[key]++; return u;
+  };
+  const mk = (r, type, time, detail) => ({ work_date: r.work_date, type, user_id: r.user_id, name: r.name, employee_code: r.employee_code || null, role: r.role, location: r.location, location_id: r.location_id, time, detail });
+  const incidents = [];
+  for (const r of forgotOut) { bump(r, 'forgot_out'); const t = T(r.timezone, r.clock_out); incidents.push(mk(r, 'forgot_out', t, r.overrun_decision === 'forced' ? `Didn’t clock out — a manager closed the shift at ${t}` : `Didn’t clock out — auto-closed at the scheduled end (${t})`)); }
+  for (const r of forgotIn) { bump(r, 'forgot_in'); const t = T(r.timezone, r.clock_in); incidents.push(mk(r, 'forgot_in', t, `Didn’t clock in — a manager clocked them in at ${t}`)); }
+  for (const r of lates) { bump(r, 'late'); incidents.push(mk(r, 'late', T(r.timezone, r.clock_in), `Clocked in ${r.late_minutes} min late`)); }
+  for (const r of missed) { bump(r, 'missed_break'); incidents.push(mk(r, 'missed_break', r.scheduled_time || null, `Scheduled ${r.scheduled_time || ''} break not taken`.replace('  ', ' '))); }
+  for (const r of long) { bump(r, 'long_break'); incidents.push(mk(r, 'long_break', T(r.timezone, r.break_out_at), `${r.minutes} min break — ${r.over_limit_min} over the limit`)); }
+
+  incidents.sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name)));
+  const by_staff = [...byUser.values()].map(u => ({ ...u, total: u.forgot_out + u.forgot_in + u.late + u.missed_break + u.long_break }))
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+  const totals = { forgot_out: forgotOut.length, forgot_in: forgotIn.length, late: lates.length, missed_break: missed.length, long_break: long.length };
+  totals.all = totals.forgot_out + totals.forgot_in + totals.late + totals.missed_break + totals.long_break;
+  res.json({ start, end, location_id: locId ? Number(locId) : null, totals, staff_affected: by_staff.length, by_staff, incidents });
+});
+
 module.exports = router;
