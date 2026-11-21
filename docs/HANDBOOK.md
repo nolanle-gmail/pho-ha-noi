@@ -310,8 +310,14 @@ break times, the 10-min flash, and the upcoming/missed-break signals). The board
 information only** — all three queries are scoped to today (the store's timezone), and a punch left
 **open from a previous day** (someone who forgot to clock out) is **not** carried over, so it never shows
 up as today's clock-in; that staffer simply reads **NOT IN YET** until they punch in today (2026-11-13). It **fits the TV automatically** — rows grow to
-fill the screen, and when there are more staff than fit it **paginates and flips between pages every ~15 s**
-(a page indicator shows "Page 1 / 2"); it refreshes the data every ~8 s and holds a screen wake-lock. A
+fill the screen when there are few, and when there are more staff than fit in one vertical column it **lays
+them out side by side across up to 3 columns on ONE screen** (each column with its own header, a divider
+between), so **everyone is visible at once with no page-flipping** (2026-11-21, owner request — staff disliked
+the board cycling through pages). It uses the **fewest columns needed** so rows stay as large as possible
+(1 column when all fit, 2–3 when the roster is bigger); only in the rare case that even 3 columns can't hold
+the day's roster at a readable height does it fall back to **paging between 3-column pages every ~15 s** (a
+page indicator then shows "Page 1 / 2"). On a 1080p TV a single 3-column page holds ~50+ staff, more than any
+store's daily roster. It refreshes the data every ~8 s and holds a screen wake-lock. A
 **📺 Shift Board** link is on **every location's card in the Locations list** (rolled out to all stores
 2026-11-12) and in each location's **Time Clock** tab — both open that store's board in a new tab (slug
 derived from the store name via `shiftBoardUrl()`, matched case/hyphen-insensitively by the server).
