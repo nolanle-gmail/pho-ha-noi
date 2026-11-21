@@ -297,14 +297,14 @@ hours, clock-in/out and break times alike (2026-11-13). Each row is
 **row colour-coded** and carries a big status badge: **🔴 LATE Nm** (clocked in past start, or scheduled & still
 not in once past their start — the late flag persists all day; a late clock-in also shows **(N min late)**
 in red right under the clock-in time), **🔴 LONGER THAN 10-MIN BREAK** (a break over the 10-min limit, live
-while on it or after — the break's own time shows **(N min extra)** in the Breaks column), **⚠ BREAK
+while on it or after — the break's own time shows **(Nm ext)** in the Breaks column), **⚠ BREAK
 MISSED** (a scheduled break went > 15 min unused), **🟠 BREAK IN Nm · <time>** (a scheduled break is within
 10 min — the staffer's whole **row also gently flashes** so they/anyone can see it's break time), **☕ DUE A
 BREAK** (a heuristic that works even with no break scheduled — a rest break is earned per ~4 worked hours,
 so anyone who's earned more than they've taken is flagged), **🔵 ON BREAK Nm**, **✓ ON THE CLOCK**,
 **DONE**, **NOT IN YET**. The **Breaks column** shows, before a break, the **scheduled break start time(s)**
 as chips (both when there are two; next highlighted, past dimmed); once taken, **each break's actual time**
-with **(N min extra)** in red for any that ran long; and the live "on break <time> · Nm" while on one. It reads
+with **(Nm ext)** in red for any that ran long; and the live "on break <time> · Nm" while on one. It reads
 `GET /api/shiftboard/board?slug=` (`routes/shiftboard.js`, no auth, read-only), which merges today's
 `shifts` with their `time_entries` + `time_entry_breaks` and the manager-set `shift_breaks` (for the
 break times, the 10-min flash, and the upcoming/missed-break signals). The board shows **current-day
