@@ -226,11 +226,18 @@ function locationLeaders(locId) {
   if (!ids.length) ids = db.prepare(`SELECT id FROM users WHERE is_active=1 AND role IN ('owner','admin','general_manager')`).all().map(r => r.id);
   return ids;
 }
+// The central operations contact (Nha Le) gets a copy of every manager-facing alert — matching
+// the waitlist/distribution pattern. Looked up by name so it survives re-seeds / id changes.
+function centralContact() {
+  return db.prepare(`SELECT id FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get();
+}
+// In-app message to the location's leaders PLUS the central contact (Nha Le), deduped.
+// App message only for now — no SMS (owner's request 2026-11-21).
 function notifyLeaders(locId, staffId, subject, body) {
-  for (const lid of locationLeaders(locId)) if (String(lid) !== String(staffId)) {
+  const ids = new Set(locationLeaders(locId).map(String));
+  const central = centralContact(); if (central) ids.add(String(central.id));
+  for (const lid of ids) if (String(lid) !== String(staffId)) {
     try { notify(staffId, lid, subject, body); } catch { /* best effort */ }
-    // Also text the leader's phone (best-effort; log-only until a provider is set).
-    if (smsEnabled()) { try { const l = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (l && l.phone) sendSms(l.phone, `${subject}: ${body}`).catch(() => {}); } catch { /* */ } }
   }
 }
 // Resolve location + staff + today's schedule + any open entry for a kiosk request.
@@ -1593,10 +1600,10 @@ function sweepDayTaskVerifyReminders({ force = false, locationId = null } = {}) 
       const short = String(loc.name).replace(/^Pho Ha Noi — /, '');
       const subject = 'Verify today’s day tasks';
       const appBody = `${pending} of ${assigned} day task${assigned === 1 ? '' : 's'} assigned at ${short} today still need your verification. Please review and confirm them on the Day Tasks board.`;
-      const sms = verifyReminderSms(short, pending, assigned);
-      for (const lid of leaders) {
-        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }
-        if (smsEnabled()) { try { const u = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (u && u.phone) sendSms(u.phone, sms).catch(() => {}); } catch { /* */ } }
+      const recips = new Set(leaders.map(String));
+      const central = centralContact(); if (central) recips.add(String(central.id));
+      for (const lid of recips) {
+        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }   // app message only (no SMS)
       }
     }
   } catch (err) { console.error('verify-reminder sweep failed:', err.message); }
@@ -1651,10 +1658,10 @@ function sweepDayTaskMorningRecheck({ force = false, locationId = null } = {}) {
       const lines = advance.map(r => `• ${r.task_name} — ${r.staff_name}${r.shifts_today ? '' : ' (no shift today!)'}`).join('\n');
       const subject = 'Check today’s pre-assigned tasks';
       const appBody = `${n} task${n === 1 ? ' was' : 's were'} assigned in advance for ${short} today. Please confirm the assigned staff are working today and can complete them — reassign any whose person is out${noShift ? ` (${noShift} ${noShift === 1 ? 'has' : 'have'} no shift scheduled today)` : ''}:\n${lines}\nReview on the Day Tasks board.`;
-      const sms = morningRecheckSms(short, n, noShift);
-      for (const lid of leaders) {
-        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }
-        if (smsEnabled()) { try { const u = db.prepare(`SELECT phone FROM users WHERE id=?`).get(lid); if (u && u.phone) sendSms(u.phone, sms).catch(() => {}); } catch { /* */ } }
+      const recips = new Set(leaders.map(String));
+      const central = centralContact(); if (central) recips.add(String(central.id));
+      for (const lid of recips) {
+        try { if (sender) notify(sender, lid, subject, appBody); } catch { /* */ }   // app message only (no SMS)
       }
     }
   } catch (err) { console.error('morning-recheck sweep failed:', err.message); }
