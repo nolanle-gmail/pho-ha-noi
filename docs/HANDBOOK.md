@@ -594,6 +594,18 @@ break-reminder audit trail moves to a collapsible section below it. The **payrol
 gains **Long breaks** + **Missed breaks** count columns and a **Break issues** KPI (and they flow into
 its CSV / Excel / Google-Sheets exports).
 
+**Attendance exceptions — one list across all locations (2026-11-21).** **Reports → Attendance**
+(`GET /reports/attendance-exceptions`, `REPORTS` cap, `scope()`-filtered — owner/admin/GM see every
+location, a location manager sees only their store) rolls up the punch & break incidents leaders review
+over a date range: **forgotten clock-outs** (an entry the system auto-closed at the scheduled end, or a
+manager closed — `overrun_decision` `auto` / `forced`), **forgotten clock-ins** (a manager had to punch
+them in — `opened_by` is someone other than the staffer), **late** clock-ins (`late_minutes` > 0),
+**missed breaks** (the `missed_breaks` table), and **long** over-the-limit breaks
+(`time_entry_breaks.over_limit_min` > 0). The page shows a KPI card per type, a **by-staff** table with a
+count of each, and a **filterable incident list** (chips per type) with **CSV / Excel** export. It
+overlaps the Breaks report on purpose — Breaks is the deep break-compliance view; Attendance is the
+single at-a-glance roll-up of every exception type.
+
 **End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
 the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
 correct) or **Report issue** (flags it) — plus a banner counting days that still need sign-off. Reporting
