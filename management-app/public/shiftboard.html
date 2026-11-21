@@ -54,7 +54,8 @@
   .nm{ font-weight:800; font-size:calc(var(--fs) * 1.04); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .job{ color:var(--muted); font-weight:700; font-size:calc(var(--fs) * .72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sched{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
-  .sched small{ color:var(--muted); font-weight:500; }
+  .sched small{ color:var(--muted); font-weight:500; font-size:1em; }
+  .sched .sdot{ color:var(--muted); font-weight:500; margin:0 .3em; }
   .punch{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
   .punch.late{ color:var(--red); }
   .punch .ded{ color:var(--muted); font-weight:500; }
@@ -203,7 +204,7 @@ function rowHtml(s) {
     : s.on_break ? 'row-break' : '';
   const dim = s.status === 'out' ? ' dim' : '';
   const sched = (s.shift_blocks && s.shift_blocks.length)
-    ? s.shift_blocks.map(b => `${fmt12(b.start)}<small>–${b.end ? fmt12(b.end) : '?'}</small>`).join('<br>')
+    ? s.shift_blocks.map(b => `${fmt12(b.start)}<small>–${b.end ? fmt12(b.end) : '?'}</small>`).join('<span class="sdot">·</span>')
     : '<span class="ok" style="color:var(--muted)">—</span>';
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
