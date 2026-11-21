@@ -70,7 +70,7 @@
   .punch .ded{ color:var(--muted); font-weight:500; }
   .punch .sub{ display:block; font-size:calc(var(--fs) * .66); font-weight:600; }
   .brk{ font-weight:800; font-size:calc(var(--fs) * .72); text-align:center; white-space:nowrap; }
-  .brk .o,.brk-live .o{ color:var(--red); }
+  .brk .o,.brk-live .o{ color:var(--red); font-size:.8em; font-weight:800; }
   .brk .ok,.brk-live.ok{ color:var(--muted); font-weight:700; }
   .brk-live.o{ color:var(--red); }
   .bchips{ display:flex; gap:.3rem; flex-wrap:wrap; justify-content:center; align-items:center; }
@@ -179,16 +179,16 @@ function badgesFor(s, limit) {
 
 // Breaks cell. On break → the live timer next to the break's start time, with "(N min
 // extra)" if it's already run over. Once breaks are taken → show each break's TIME with
-// "(N min extra)" in red for any that ran long. Before any break → the scheduled break
+// "(Nm ext)" in red for any that ran long. Before any break → the scheduled break
 // TIME(S) as chips (next one amber, past dimmed, flashing row 10 min out).
 function breakCell(s) {
   if (s.on_break) {
-    const extra = s.break_over_now > 0 ? ` <span class="o">(${s.break_over_now} min extra)</span>` : '';
+    const extra = s.break_over_now > 0 ? ` <span class="o">(${s.break_over_now}m ext)</span>` : '';
     return `<span class="brk-live ${s.break_over_now > 0 ? 'o' : ''}">☕ ${s.break_start ? fmt12(s.break_start) + ' · ' : ''}${s.break_elapsed_min}m${extra}</span>`;
   }
   if (s.breaks && s.breaks.length) {
     return `<div class="bchips">${s.breaks.map(b =>
-      `<span class="bchip ${b.over > 0 ? 'over' : 'done'}">${fmt12(b.at)}${b.over > 0 ? ` <span class="o">(${b.over} min extra)</span>` : ''}</span>`).join('')}</div>`;
+      `<span class="bchip ${b.over > 0 ? 'over' : 'done'}">${fmt12(b.at)}${b.over > 0 ? ` <span class="o">(${b.over}m ext)</span>` : ''}</span>`).join('')}</div>`;
   }
   if (s.sched_breaks && s.sched_breaks.length) {
     const chips = s.sched_breaks.map(t => {
