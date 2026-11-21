@@ -3,7 +3,7 @@
 const express = require('express');
 const db = require('../db/database');
 const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
-const { localTime, DEFAULT_TZ } = require('../lib/tz');
+const { localTime, localDate, DEFAULT_TZ } = require('../lib/tz');
 const { auditLog } = require('../lib/audit');
 const gsheets = require('../lib/gsheets');
 const { VERSION: ACK_VERSION } = require('../lib/acknowledgments');
@@ -350,6 +350,44 @@ router.get('/hours-ack', requireRole(ROLES.REPORTS), (req, res) => {
   const unsigned = staff.filter(s => s.status === 'unsigned').length;
   const outdated = staff.filter(s => s.status === 'outdated').length;
   res.json({ version: ACK_VERSION, location_id: locId ? Number(locId) : null, total: staff.length, signed, unsigned, outdated, staff });
+});
+
+// ── Cross-location schedule conflicts (who's double-booked right now) ─────────
+// Read-only scan: staff with overlapping WORK shifts at DIFFERENT locations on the
+// same day, from today forward. Mirrors the scheduling guard in routes/schedule.js
+// so managers can find and clean up conflicts that predate that control.
+router.get('/schedule-conflicts', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req);
+  const today = localDate(DEFAULT_TZ);
+  const rows = db.prepare(`
+    SELECT s.user_id, u.name, u.role, sp.employee_code, s.shift_date,
+           s.location_id, l.name AS loc, s.start_time, s.end_time
+    FROM shifts s JOIN users u ON u.id=s.user_id JOIN locations l ON l.id=s.location_id
+    LEFT JOIN staff_profiles sp ON sp.user_id=u.id
+    WHERE s.kind='work' AND s.start_time IS NOT NULL AND s.end_time IS NOT NULL AND s.shift_date>=?
+    ORDER BY s.user_id, s.shift_date, s.start_time`).all(today);
+  const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  const byKey = new Map();
+  for (const r of rows) { const k = r.user_id + '|' + r.shift_date; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(r); }
+  const conflicts = [];
+  for (const arr of byKey.values()) {
+    for (let i = 0; i < arr.length; i++) for (let j = i + 1; j < arr.length; j++) {
+      const a = arr[i], b = arr[j];
+      if (a.location_id === b.location_id) continue;
+      let as = toMin(a.start_time), ae = toMin(a.end_time); if (ae <= as) ae += 1440;
+      let bs = toMin(b.start_time), be = toMin(b.end_time); if (be <= bs) be += 1440;
+      if (as < be && bs < ae) {
+        if (locId && String(a.location_id) !== String(locId) && String(b.location_id) !== String(locId)) continue;
+        conflicts.push({
+          user_id: a.user_id, name: a.name, role: a.role, employee_code: a.employee_code || null, date: a.shift_date,
+          a: { location: a.loc, location_id: a.location_id, start: a.start_time, end: a.end_time },
+          b: { location: b.loc, location_id: b.location_id, start: b.start_time, end: b.end_time },
+        });
+      }
+    }
+  }
+  conflicts.sort((x, y) => x.date.localeCompare(y.date) || x.name.localeCompare(y.name));
+  res.json({ as_of: today, location_id: locId ? Number(locId) : null, total: conflicts.length, staff_count: new Set(conflicts.map(c => c.user_id)).size, conflicts });
 });
 
 module.exports = router;

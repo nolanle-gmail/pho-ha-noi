@@ -6084,7 +6084,7 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['breaks', 'Breaks'], ['conflicts', 'Conflicts'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -6096,7 +6096,7 @@ function renderReportTabs() {
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, breaks: renderRepBreaks, conflicts: renderRepConflicts, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 // Public full-screen Shift Board TV URL for a location (slug derived from its name,
@@ -6416,6 +6416,60 @@ async function renderRepAck() {
   $('akCsv').onclick = () => exportHoursAck(d, locName, 'csv');
   $('akXls').onclick = () => exportHoursAck(d, locName, 'xls');
   $('view').querySelectorAll('[data-akf]').forEach(b => b.onclick = () => { S.ackFilter = b.dataset.akf; renderRepAck(); });
+}
+
+// ── Schedule conflicts: staff double-booked across locations (today forward) ──
+async function renderRepConflicts() {
+  const d = await api('/reports/schedule-conflicts' + reportQuery(false));
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  const fmtD = (iso) => { const dt = new Date(iso + 'T00:00:00'); return isNaN(dt) ? iso : dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
+  $('view').innerHTML = `${reportFilters(false)}
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="cfRun">▶ Run report</button>
+      <button class="btn ghost" id="cfCsv" ${d.total ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="cfXls" ${d.total ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · from ${esc(d.as_of)}</span>
+    </div>
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Staff scheduled at <strong>two locations at the same time</strong> (overlapping work shifts at different stores), today onward. New scheduling is already blocked from creating these — this lists any that were set before that control so you can fix them.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Conflicts</div><div class="value ${d.total ? 'warn' : ''}">${d.total}</div></div>
+      <div class="card"><div class="label">Staff affected</div><div class="value ${d.staff_count ? 'warn' : ''}">${d.staff_count}</div></div>
+    </div>
+    <div class="section"><div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Day</th><th>Location A</th><th>Location B</th></tr></thead><tbody>
+      ${d.conflicts.length ? d.conflicts.map(c => `<tr>
+        <td><strong>${esc(c.name)}</strong></td>
+        <td class="mono">${esc(c.employee_code || '—')}</td>
+        <td><span class="badge ${ROLE_CHIP[c.role] || 'gray'}">${esc(roleLabel(c.role))}</span></td>
+        <td>${esc(fmtD(c.date))}</td>
+        <td><strong>${esc(shortLoc(c.a.location))}</strong> <span class="mono">${esc(c.a.start)}–${esc(c.a.end)}</span></td>
+        <td><strong>${esc(shortLoc(c.b.location))}</strong> <span class="mono">${esc(c.b.start)}–${esc(c.b.end)}</span></td>
+      </tr>`).join('') : '<tr><td colspan="6" class="empty">No cross-location double-bookings. 🎉</td></tr>'}
+    </tbody></table></div></div>`;
+  wireReportFilters(false);
+  $('cfRun').onclick = renderRepConflicts;
+  $('cfCsv').onclick = () => exportConflicts(d, locName, 'csv');
+  $('cfXls').onclick = () => exportConflicts(d, locName, 'xls');
+}
+
+function exportConflicts(d, locName, kind) {
+  const cols = ['Staff', 'Employee code', 'Role', 'Date', 'Location A', 'A start', 'A end', 'Location B', 'B start', 'B end'];
+  const rows = d.conflicts.map(c => [c.name, c.employee_code || '', roleLabel(c.role), c.date, shortLoc(c.a.location), c.a.start, c.a.end, shortLoc(c.b.location), c.b.start, c.b.end]);
+  const base = `schedule-conflicts_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_from_${d.as_of}`;
+  const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
+  const title = `Phở Hà Nội — Cross-location schedule conflicts · ${locName} · from ${d.as_of}`;
+  const summary = `${d.total} conflict${d.total === 1 ? '' : 's'} across ${d.staff_count} staff.`;
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [summary], [], cols, ...rows];
+    downloadBlob('﻿' + block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr) => '<tr>' + arr.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+    const tbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${rows.map(bodyRow).join('')}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>${escHtml(title)}</h3><p>${escHtml(summary)}</p>${tbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${d.conflicts.length} conflict(s) · ${kind.toUpperCase()}`);
 }
 
 // CSV / Excel export of the full acknowledgment roster (all staff, every status).
