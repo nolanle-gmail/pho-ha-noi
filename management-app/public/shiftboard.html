@@ -37,7 +37,7 @@
   header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:800; font-size:1.15rem; padding:.28rem .56rem; cursor:pointer; }
 
   main{ flex:1 1 auto; display:flex; flex-direction:column; min-height:0; padding:.5rem .7rem .3rem; }
-  .thead,.trow{ display:grid; grid-template-columns:1.8fr 1.1fr 1fr 1fr 1.2fr 1.9fr; align-items:center; gap:.5rem; }
+  .thead,.trow{ display:grid; grid-template-columns:1.6fr 1.1fr 1fr 1fr 1.2fr 2fr; align-items:center; gap:.5rem; }
   .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
     text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
   .thead .num,.trow .num{ text-align:center; }
@@ -53,12 +53,12 @@
   .trow.dim{ opacity:.62; }
   .nm{ font-weight:800; font-size:calc(var(--fs) * 1.04); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .job{ color:var(--muted); font-weight:700; font-size:calc(var(--fs) * .72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sched{ font-weight:700; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
-  .sched small{ color:var(--muted); font-weight:700; }
-  .punch{ font-weight:800; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
+  .sched{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
+  .sched small{ color:var(--muted); font-weight:500; }
+  .punch{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
   .punch.late{ color:var(--red); }
-  .punch .ded{ color:var(--muted); font-weight:700; }
-  .punch .sub{ display:block; font-size:calc(var(--fs) * .66); font-weight:800; }
+  .punch .ded{ color:var(--muted); font-weight:500; }
+  .punch .sub{ display:block; font-size:calc(var(--fs) * .66); font-weight:600; }
   .brk{ font-weight:800; font-size:calc(var(--fs) * .92); text-align:center; white-space:nowrap; }
   .brk .o,.brk-live .o{ color:var(--red); }
   .brk .ok,.brk-live.ok{ color:var(--muted); font-weight:700; }
