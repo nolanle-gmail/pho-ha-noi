@@ -594,6 +594,52 @@ function sweepMissedBreaks() {
   } catch (err) { console.error('missed-break sweep failed:', err.message); }
 }
 
+// No-shows: a scheduled WORK shift the staffer never worked. Once the shift window has fully
+// elapsed (end + grace) and no clock-in fell within the shift, record a durable no_shows row and
+// message the location's leaders. Hours are never counted for it — there's simply no time_entry, so
+// the timesheet already pays nothing. Grace is measured past the shift END so we only ever flag a
+// shift that was COMPLETELY missed (no false alarms for someone merely running late — that's the
+// separate "late" signal). Idempotent via UNIQUE(user, date, shift_id).
+const NO_SHOW_GRACE_MIN = parseInt(process.env.NO_SHOW_GRACE_MIN || '', 10) || 30;
+const NO_SHOW_EARLY_MIN = parseInt(process.env.NO_SHOW_EARLY_MIN || '', 10) || 120;
+function sweepNoShows() {
+  try {
+    const now = new Date();
+    const shifts = db.prepare(`
+      SELECT s.id shift_id, s.user_id, s.location_id, s.shift_date, s.start_time, s.end_time,
+             u.name, l.timezone, l.name loc_name
+      FROM shifts s
+      JOIN users u ON u.id=s.user_id AND u.is_active=1
+      JOIN locations l ON l.id=s.location_id
+      WHERE s.kind='work' AND s.start_time IS NOT NULL AND s.start_time<>''
+        AND s.end_time IS NOT NULL AND s.end_time<>'' AND s.shift_date >= date('now','-2 days')`).all();
+    for (const s of shifts) {
+      const tz = s.timezone || DEFAULT_TZ;
+      const sMin = hhmmToMin(s.start_time), eRaw = hhmmToMin(s.end_time);
+      if (sMin == null || eRaw == null) continue;
+      const eMin = eRaw <= sMin ? eRaw + 1440 : eRaw;    // overnight shift crosses midnight
+      const todayLocal = localDate(tz);
+      if (s.shift_date > todayLocal) continue;           // future day — not due yet
+      const pastEnd = (s.shift_date < todayLocal ? 1440 : 0) + localMinutesOfDay(tz, now) - eMin;
+      if (pastEnd < NO_SHOW_GRACE_MIN) continue;         // shift window not fully over + grace yet
+      if (db.prepare(`SELECT 1 FROM no_shows WHERE user_id=? AND work_date=? AND shift_id=?`).get(s.user_id, s.shift_date, s.shift_id)) continue;
+      // Did any clock-in that day fall within this shift (from a bit early through the end)?
+      const entries = db.prepare(`SELECT clock_in FROM time_entries WHERE user_id=? AND location_id=? AND work_date=?`).all(s.user_id, s.location_id, s.shift_date);
+      const attended = entries.some(e => {
+        let ci = localMinutesOfDay(tz, new Date(e.clock_in));
+        if (eMin > 1440 && ci < sMin - NO_SHOW_EARLY_MIN) ci += 1440;   // overnight punch
+        return ci >= sMin - NO_SHOW_EARLY_MIN && ci <= eMin;
+      });
+      if (attended) continue;
+      const r = db.prepare(`INSERT OR IGNORE INTO no_shows (user_id, location_id, work_date, shift_id, start_time, end_time, scheduled_minutes) VALUES (?,?,?,?,?,?,?)`)
+        .run(s.user_id, s.location_id, s.shift_date, s.shift_id, s.start_time, s.end_time, eMin - sMin);
+      if (r.changes) {
+        notifyLeaders(s.location_id, s.user_id, 'No-show', `${s.name} did not show up for their ${s.start_time}–${s.end_time} shift at ${locDisplay(s.loc_name)} on ${s.shift_date}. No hours are counted for it — please follow up and adjust if needed.`);
+      }
+    }
+  } catch (err) { console.error('no-show sweep failed:', err.message); }
+}
+
 // Remind the assigned staff member ~5 minutes before a timed day task is due to START — a live in-app
 // alert AND a text to their phone. Fires once per task (guarded by task_assignments.reminded_at, which
 // is reset when the task's time or assignee changes). Only for today's timed, not-yet-done tasks.
@@ -1445,6 +1491,14 @@ module.exports.sweepMissedBreaks = sweepMissedBreaks;   // exported for tests/ma
 module.exports.startMissedBreakSweep = function startMissedBreakSweep() {
   sweepMissedBreaks();
   const t = setInterval(sweepMissedBreaks, 15 * 60 * 1000);
+  if (t.unref) t.unref();
+  return t;
+};
+module.exports.sweepNoShows = sweepNoShows;   // exported for tests/manual runs
+// Record no-shows once a scheduled shift's window is fully over: at startup, then every 15 min.
+module.exports.startNoShowSweep = function startNoShowSweep() {
+  sweepNoShows();
+  const t = setInterval(sweepNoShows, 15 * 60 * 1000);
   if (t.unref) t.unref();
   return t;
 };

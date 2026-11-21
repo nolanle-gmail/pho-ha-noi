@@ -6478,7 +6478,7 @@ function exportConflicts(d, locName, kind) {
 }
 
 // ── Attendance exceptions: forgotten clock-outs/ins, lates, missed & long breaks ──
-const ATT_TYPES = [['forgot_out', 'Forgot clock-out', 'red'], ['forgot_in', 'Forgot clock-in', 'gold'], ['late', 'Late', 'blue'], ['missed_break', 'Missed break', 'red'], ['long_break', 'Long break', 'gold']];
+const ATT_TYPES = [['no_show', 'No-show', 'red'], ['forgot_out', 'Forgot clock-out', 'gold'], ['forgot_in', 'Forgot clock-in', 'gold'], ['late', 'Late', 'blue'], ['missed_break', 'Missed break', 'red'], ['long_break', 'Long break', 'gold']];
 const ATT_LABEL = Object.fromEntries(ATT_TYPES.map(([k, l]) => [k, l]));
 const ATT_CHIPCLASS = Object.fromEntries(ATT_TYPES.map(([k, , c]) => [k, c]));
 async function renderRepAttendance() {
@@ -6495,8 +6495,9 @@ async function renderRepAttendance() {
       <button class="btn ghost" id="atXls" ${d.incidents.length ? '' : 'disabled'}>⬇ Excel</button>
       <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
     </div>
-    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Attendance exceptions for review across all locations: <strong>forgotten clock-outs</strong> (auto-closed at the scheduled end, or closed by a manager), <strong>forgotten clock-ins</strong> (a manager had to punch them in), <strong>late</strong> clock-ins, <strong>missed breaks</strong>, and <strong>long</strong> (over-the-limit) breaks.</p>
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Attendance exceptions for review across all locations: <strong>no-shows</strong> (scheduled but never clocked in — no hours counted), <strong>forgotten clock-outs</strong> (auto-closed at the scheduled end, or closed by a manager), <strong>forgotten clock-ins</strong> (a manager had to punch them in), <strong>late</strong> clock-ins, <strong>missed breaks</strong>, and <strong>long</strong> (over-the-limit) breaks.</p>
     <div class="kpis">
+      <div class="card"><div class="label">No-show</div><div class="value ${T.no_show ? 'warn' : ''}">${T.no_show}</div></div>
       <div class="card"><div class="label">Forgot clock-out</div><div class="value ${T.forgot_out ? 'warn' : ''}">${T.forgot_out}</div></div>
       <div class="card"><div class="label">Forgot clock-in</div><div class="value ${T.forgot_in ? 'warn' : ''}">${T.forgot_in}</div></div>
       <div class="card"><div class="label">Late</div><div class="value ${T.late ? 'warn' : ''}">${T.late}</div></div>
@@ -6505,8 +6506,8 @@ async function renderRepAttendance() {
       <div class="card"><div class="label">Staff affected</div><div class="value">${d.staff_affected}</div></div>
     </div>
     <div class="section"><h3>By staff</h3>
-      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Location</th><th class="num">Forgot out</th><th class="num">Forgot in</th><th class="num">Late</th><th class="num">Missed brk</th><th class="num">Long brk</th><th class="num">Total</th></tr></thead><tbody>
-        ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num ${s.forgot_out ? 'warn' : ''}">${s.forgot_out || '—'}</td><td class="num ${s.forgot_in ? 'warn' : ''}">${s.forgot_in || '—'}</td><td class="num ${s.late ? 'warn' : ''}">${s.late || '—'}</td><td class="num ${s.missed_break ? 'warn' : ''}">${s.missed_break || '—'}</td><td class="num ${s.long_break ? 'warn' : ''}">${s.long_break || '—'}</td><td class="num"><strong>${s.total}</strong></td></tr>`).join('') : '<tr><td colspan="10" class="empty">No attendance exceptions in this range. 🎉</td></tr>'}
+      <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Code</th><th>Role</th><th>Location</th><th class="num">No-show</th><th class="num">Forgot out</th><th class="num">Forgot in</th><th class="num">Late</th><th class="num">Missed brk</th><th class="num">Long brk</th><th class="num">Total</th></tr></thead><tbody>
+        ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num ${s.no_show ? 'warn' : ''}">${s.no_show || '—'}</td><td class="num ${s.forgot_out ? 'warn' : ''}">${s.forgot_out || '—'}</td><td class="num ${s.forgot_in ? 'warn' : ''}">${s.forgot_in || '—'}</td><td class="num ${s.late ? 'warn' : ''}">${s.late || '—'}</td><td class="num ${s.missed_break ? 'warn' : ''}">${s.missed_break || '—'}</td><td class="num ${s.long_break ? 'warn' : ''}">${s.long_break || '—'}</td><td class="num"><strong>${s.total}</strong></td></tr>`).join('') : '<tr><td colspan="11" class="empty">No attendance exceptions in this range. 🎉</td></tr>'}
       </tbody></table></div></div>
     <div class="section"><h3>Every incident</h3>
       <div style="display:flex;gap:.35rem;margin:.2rem 0 .6rem;flex-wrap:wrap">
@@ -6530,7 +6531,7 @@ function exportAttendance(d, locName, kind) {
   const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
   const title = `Phở Hà Nội — Attendance exceptions · ${locName} · ${d.start} to ${d.end}`;
   const T = d.totals;
-  const summary = `${T.all} incident(s): ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in, ${T.late} late, ${T.missed_break} missed break, ${T.long_break} long break; ${d.staff_affected} staff affected.`;
+  const summary = `${T.all} incident(s): ${T.no_show} no-show, ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in, ${T.late} late, ${T.missed_break} missed break, ${T.long_break} long break; ${d.staff_affected} staff affected.`;
   if (kind === 'csv') {
     const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     const block = [[title], [summary], [], cols, ...rows];

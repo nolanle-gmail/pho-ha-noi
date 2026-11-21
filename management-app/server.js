@@ -98,6 +98,8 @@ if (require.main === module) {
   try { require('./routes/timeclock').startBreakSweep(); } catch { /* optional */ }
   // Record missed scheduled breaks (for performance review) once each staffer's day is over.
   try { require('./routes/timeclock').startMissedBreakSweep(); } catch { /* optional */ }
+  // Record no-shows (scheduled shift never worked) once the shift window is over; message leaders.
+  try { require('./routes/timeclock').startNoShowSweep(); } catch { /* optional */ }
   // Break-return reminders: nudge staff to clock back in once a break runs over the limit.
   try { require('./routes/timeclock').startBreakReturnSweep(); } catch { /* optional */ }
   // Day-task start reminders (notification + SMS ~5 min before a timed task is due to start).

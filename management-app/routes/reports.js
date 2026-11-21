@@ -434,15 +434,23 @@ router.get('/attendance-exceptions', requireRole(ROLES.REPORTS), (req, res) => {
     JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
     WHERE ${lConds.join(' AND ')}`).all(...lArgs);
 
+  // No-shows: a scheduled shift the staffer never worked (the no_shows sweep records these).
+  const nsConds = ['ns.work_date>=?', 'ns.work_date<=?'], nsArgs = [start, end];
+  if (locId) { nsConds.push('ns.location_id=?'); nsArgs.push(locId); }
+  const noshow = db.prepare(`SELECT ns.work_date, ns.start_time, ns.end_time, u.id user_id, u.name, u.employee_code, u.role, l.name location, l.id location_id
+    FROM no_shows ns JOIN users u ON u.id=ns.user_id JOIN locations l ON l.id=ns.location_id
+    WHERE ${nsConds.join(' AND ')}`).all(...nsArgs);
+
   const T = (tz, iso) => iso ? localTime(tz || DEFAULT_TZ, new Date(iso)) : null;
   const byUser = new Map();
   const bump = (r, key) => {
     let u = byUser.get(r.user_id);
-    if (!u) { u = { user_id: r.user_id, name: r.name, employee_code: r.employee_code || null, role: r.role, location: r.location, forgot_out: 0, forgot_in: 0, late: 0, missed_break: 0, long_break: 0 }; byUser.set(r.user_id, u); }
+    if (!u) { u = { user_id: r.user_id, name: r.name, employee_code: r.employee_code || null, role: r.role, location: r.location, no_show: 0, forgot_out: 0, forgot_in: 0, late: 0, missed_break: 0, long_break: 0 }; byUser.set(r.user_id, u); }
     u[key]++; return u;
   };
   const mk = (r, type, time, detail) => ({ work_date: r.work_date, type, user_id: r.user_id, name: r.name, employee_code: r.employee_code || null, role: r.role, location: r.location, location_id: r.location_id, time, detail });
   const incidents = [];
+  for (const r of noshow) { bump(r, 'no_show'); incidents.push(mk(r, 'no_show', r.start_time || null, `No-show — scheduled ${r.start_time || ''}–${r.end_time || ''} shift, never clocked in`)); }
   for (const r of forgotOut) { bump(r, 'forgot_out'); const t = T(r.timezone, r.clock_out); incidents.push(mk(r, 'forgot_out', t, r.overrun_decision === 'forced' ? `Didn’t clock out — a manager closed the shift at ${t}` : `Didn’t clock out — auto-closed at the scheduled end (${t})`)); }
   for (const r of forgotIn) { bump(r, 'forgot_in'); const t = T(r.timezone, r.clock_in); incidents.push(mk(r, 'forgot_in', t, `Didn’t clock in — a manager clocked them in at ${t}`)); }
   for (const r of lates) { bump(r, 'late'); incidents.push(mk(r, 'late', T(r.timezone, r.clock_in), `Clocked in ${r.late_minutes} min late`)); }
@@ -450,10 +458,10 @@ router.get('/attendance-exceptions', requireRole(ROLES.REPORTS), (req, res) => {
   for (const r of long) { bump(r, 'long_break'); incidents.push(mk(r, 'long_break', T(r.timezone, r.break_out_at), `${r.minutes} min break — ${r.over_limit_min} over the limit`)); }
 
   incidents.sort((a, b) => (a.work_date < b.work_date ? 1 : a.work_date > b.work_date ? -1 : (a.location || '').localeCompare(b.location || '') || a.name.localeCompare(b.name)));
-  const by_staff = [...byUser.values()].map(u => ({ ...u, total: u.forgot_out + u.forgot_in + u.late + u.missed_break + u.long_break }))
+  const by_staff = [...byUser.values()].map(u => ({ ...u, total: u.no_show + u.forgot_out + u.forgot_in + u.late + u.missed_break + u.long_break }))
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-  const totals = { forgot_out: forgotOut.length, forgot_in: forgotIn.length, late: lates.length, missed_break: missed.length, long_break: long.length };
-  totals.all = totals.forgot_out + totals.forgot_in + totals.late + totals.missed_break + totals.long_break;
+  const totals = { no_show: noshow.length, forgot_out: forgotOut.length, forgot_in: forgotIn.length, late: lates.length, missed_break: missed.length, long_break: long.length };
+  totals.all = totals.no_show + totals.forgot_out + totals.forgot_in + totals.late + totals.missed_break + totals.long_break;
   res.json({ start, end, location_id: locId ? Number(locId) : null, totals, staff_affected: by_staff.length, by_staff, incidents });
 });
 

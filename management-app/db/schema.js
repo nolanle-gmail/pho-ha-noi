@@ -1644,6 +1644,23 @@ function migrate() {
       UNIQUE (user_id, work_date, shift_break_id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_missed_breaks ON missed_breaks(location_id, work_date)`,
+    // No-shows: a staffer scheduled for a WORK shift who never clocked in for it (and never
+    // clocked in anywhere that paired to that block). Recorded once the shift window has fully
+    // elapsed + a grace, so hours are never counted for it (there's no time_entry) and the
+    // manager is messaged. One row per scheduled shift (the UNIQUE guards the sweep's re-runs).
+    `CREATE TABLE IF NOT EXISTS no_shows (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id           INTEGER NOT NULL REFERENCES users(id),
+      location_id       INTEGER NOT NULL REFERENCES locations(id),
+      work_date         TEXT NOT NULL,                 -- ISO local date of the missed shift
+      shift_id          INTEGER,                        -- the scheduled shifts row that went unworked
+      start_time        TEXT,                           -- HH:MM scheduled start
+      end_time          TEXT,                           -- HH:MM scheduled end
+      scheduled_minutes INTEGER,                        -- the shift length (for reference; never paid)
+      detected_at       TEXT DEFAULT (datetime('now')),
+      UNIQUE (user_id, work_date, shift_id)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_no_shows ON no_shows(location_id, work_date)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
