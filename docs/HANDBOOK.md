@@ -2337,6 +2337,9 @@ seven days):
   one location), compares only shifts that have concrete start/end times, and handles
   overnight spans. **Split shifts** at the **same** location and **non-overlapping** shifts
   at different locations are unaffected; **leave** doesn't block a shift elsewhere.
+  To find any overlaps that predate this control, **Reports → Conflicts** lists every
+  staffer currently double-booked across stores (both locations + times, per day), from
+  today forward, with CSV/Excel export (`GET /reports/schedule-conflicts`).
 - **⧉ Copy a week** — fill the week on screen from an earlier one in a single confirm,
   so a steady weekly roster doesn't have to be re-entered by hand. Pick any of the last
   **8 weeks** to copy from (defaults to the **previous week**); it clones every **work
