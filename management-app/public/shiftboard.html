@@ -45,7 +45,7 @@
   .col + .col{ border-left:2px solid var(--line); }
   .board.cols-2 .trow,.board.cols-2 .thead{ padding-left:.45rem; padding-right:.45rem; }
   .board.cols-3 .trow,.board.cols-3 .thead{ padding-left:.35rem; padding-right:.35rem; }
-  .thead,.trow{ display:grid; grid-template-columns:1.6fr 1.1fr 1fr 1fr 1.2fr 2fr; align-items:center; gap:.5rem; }
+  .thead,.trow{ display:grid; grid-template-columns:2.1fr 1fr 1fr 1.3fr 2fr; align-items:center; gap:.5rem; }
   .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
     text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
   .thead .num,.trow .num{ text-align:center; }
@@ -59,11 +59,12 @@
   .trow.row-soon{ animation:flashAmber 1.25s ease-in-out infinite; }
   .trow.row-longbreak{ animation:flashRed 1.25s ease-in-out infinite; }
   .trow.dim{ opacity:.62; }
+  /* Staff cell: name on top, the scheduled shift hours as a small line underneath. */
+  .who{ min-width:0; display:flex; flex-direction:column; justify-content:center; gap:.08rem; }
   .nm{ font-weight:800; font-size:calc(var(--fs) * 1.04); line-height:1.05; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .job{ color:var(--muted); font-weight:700; font-size:calc(var(--fs) * .72); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .sched{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
-  .sched small{ color:var(--muted); font-weight:500; font-size:1em; }
-  .sched .sdot{ color:var(--muted); font-weight:500; margin:0 .3em; }
+  .when{ color:var(--muted); font-weight:600; font-size:calc(var(--fs) * .74); line-height:1.1;
+    font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .when .sdot{ margin:0 .3em; }
   .punch{ font-weight:500; font-size:var(--fs); font-variant-numeric:tabular-nums; text-align:center; white-space:nowrap; }
   .punch.late{ color:var(--red); }
   .punch .ded{ color:var(--muted); font-weight:500; }
@@ -212,16 +213,15 @@ function rowHtml(s) {
     : s.on_break ? 'row-break' : '';
   const dim = s.status === 'out' ? ' dim' : '';
   const sched = (s.shift_blocks && s.shift_blocks.length)
-    ? s.shift_blocks.map(b => `${fmt12(b.start)}<small>–${b.end ? fmt12(b.end) : '?'}</small>`).join('<span class="sdot">·</span>')
-    : '<span class="ok" style="color:var(--muted)">—</span>';
+    ? s.shift_blocks.map(b => `${fmt12(b.start)}–${b.end ? fmt12(b.end) : '?'}`).join('<span class="sdot">·</span>')
+    : '—';
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inCell = s.clock_in
     ? `<span class="${lateHere ? 'late' : ''}">${fmt12(s.clock_in)}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
     : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
   const outCell = s.clock_out ? fmt12(s.clock_out) : (s.status === 'out' ? '' : '<span class="ded">·</span>');
   return `<div class="trow ${stateClass}${dim}">
-    <div class="nm">${esc(s.name)}</div>
-    <div class="sched">${sched}</div>
+    <div class="who"><div class="nm">${esc(s.name)}</div><div class="when">${sched}</div></div>
     <div class="punch">${inCell}</div>
     <div class="punch">${outCell}</div>
     <div class="brk">${breakCell(s)}</div>
@@ -251,7 +251,7 @@ function renderChrome(d) {
 
 // One column's header row.
 function colHeader() {
-  return `<div class="thead"><div>Staff</div><div class="num">Scheduled</div><div class="num">In</div>`
+  return `<div class="thead"><div>Staff</div><div class="num">In</div>`
     + `<div class="num">Out</div><div class="num">Breaks</div><div>Status</div></div>`;
 }
 
