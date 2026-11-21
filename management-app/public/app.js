@@ -4465,8 +4465,12 @@ async function renderLocTimeClock() {
   } catch (e) { $('locBody').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const sm = data.summary;
+  // A forgotten clock-out: auto-closed at the scheduled end, or closed by a manager.
+  const missedOutBadge = (r) => r.auto_closed
+    ? ` <span class="badge low" title="Forgot to clock out — the system auto-closed this at the scheduled end (${esc(r.clock_out || '')}). Adjust their hours if they actually worked later.">⏱ auto clock-out</span>`
+    : r.forced_out ? ` <span class="badge low" title="Forgot to clock out — a manager closed this shift. Adjust their hours if they actually worked later.">⏱ closed by manager</span>` : '';
   const statusChip = (r) => r.status === 'in' ? '<span class="badge ok">🟢 On clock</span>'
-    : `<span class="badge gray">Clocked out</span>${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
+    : `<span class="badge gray">Clocked out</span>${missedOutBadge(r)}${r.short ? ' <span class="badge out">⚠ short</span>' : ''}${r.overtime_minutes > 0 ? ` <span class="badge blue">+${fmtDur(r.overtime_minutes)} OT</span>` : ''}`;
   const canEditTc = myCap('manage');
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
   // Colour chip for the role a person is scheduled as — same colours as the schedule.
@@ -4474,7 +4478,7 @@ async function renderLocTimeClock() {
   const entryRows = data.entries.map(r => `<tr${r.unscheduled || r.carryover ? ' class="tc-unscheduled"' : ''}>
     <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
     <td>${r.clock_in || '—'}${r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : ''}</td>
-    <td>${r.clock_out || '—'}${r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : ''}</td>
+    <td>${r.clock_out || '—'}${(r.auto_closed || r.forced_out) ? ` <span class="tc-autoout" title="${r.auto_closed ? 'Auto clock-out — the staffer didn’t punch out, so the system closed it at their scheduled end' : 'Closed by a manager — the staffer didn’t punch out'}">⏱</span>` : ''}${r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : ''}</td>
     <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
     <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');
@@ -4514,6 +4518,7 @@ async function renderLocTimeClock() {
       <span class="badge ${sm.not_in ? 'low' : 'gray'}">${sm.not_in} not in</span>
       ${sm.short ? `<span class="badge out">${sm.short} left early</span>` : ''}
       ${sm.overtime ? `<span class="badge blue">${sm.overtime} in overtime</span>` : ''}
+      ${sm.missed_out ? `<span class="badge low" title="Forgot to clock out — auto-closed at the scheduled end or closed by a manager. Review their hours.">⏱ ${sm.missed_out} forgot to clock out</span>` : ''}
     </div>
     ${policyBar}
     ${overrunCards}

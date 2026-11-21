@@ -734,7 +734,10 @@ router.get('/overruns', requireRole(ROLES.MANAGE), (req, res) => {
     WHERE te.location_id=? AND te.clock_out IS NULL ORDER BY te.clock_in`).all(locId);
   const rows = [];
   for (const e of open) {
-    const end = (db.prepare(`SELECT MAX(end_time) e FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(e.user_id, e.location_id, e.work_date) || {}).e;
+    // Per shift block (not the day's latest end) so a forgotten EARLIER split-shift
+    // shows as overdue at its own block's end, matching the auto clock-out.
+    const blk = shiftBlockForPunch(e.user_id, e.location_id, e.work_date, localMinutesOfDay(tz, new Date(e.clock_in)));
+    const end = blk ? blk.eRaw : null;
     if (!end) continue;
     const extra = Number(e.overrun_extra_min) || 0;
     const over = (e.work_date < today ? 1440 : 0) + (nowMin - hhmmToMin(end));
@@ -853,6 +856,11 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
       short: e.short_confirmed ? 1 : 0,
+      // A forgotten clock-out: the system auto-closed it at the scheduled end ('auto'),
+      // or a manager closed it from the board ('forced'). Either way the person didn't
+      // punch out — flag it so leaders can review/adjust their hours.
+      auto_closed: e.overrun_decision === 'auto' ? 1 : 0,
+      forced_out: e.overrun_decision === 'forced' ? 1 : 0,
       unscheduled: sh ? 0 : 1,
       shift_start: sh ? sh.start_time : null, shift_end: sh ? sh.end_time : null,
       work_date: e.work_date, carryover: e.work_date !== date ? 1 : 0,
@@ -878,6 +886,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       not_in: notIn.length,
       short: rows.filter(r => r.short).length,
       overtime: rows.filter(r => r.overtime_minutes > 0).length,
+      missed_out: rows.filter(r => r.auto_closed || r.forced_out).length,
     },
   });
 });
