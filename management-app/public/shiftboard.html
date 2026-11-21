@@ -37,6 +37,14 @@
   header button{ background:rgba(255,255,255,.16); color:#fff; border:none; border-radius:10px; font:inherit; font-weight:800; font-size:1.15rem; padding:.28rem .56rem; cursor:pointer; }
 
   main{ flex:1 1 auto; display:flex; flex-direction:column; min-height:0; padding:.5rem .7rem .3rem; }
+  /* Board = one or more columns side by side, so everyone fits on ONE screen (no page-flipping). */
+  .board{ flex:1 1 auto; display:flex; min-height:0; }
+  .col{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; min-height:0; padding:0 .55rem; }
+  .col:first-child{ padding-left:0; }
+  .col:last-child{ padding-right:0; }
+  .col + .col{ border-left:2px solid var(--line); }
+  .board.cols-2 .trow,.board.cols-2 .thead{ padding-left:.45rem; padding-right:.45rem; }
+  .board.cols-3 .trow,.board.cols-3 .thead{ padding-left:.35rem; padding-right:.35rem; }
   .thead,.trow{ display:grid; grid-template-columns:1.6fr 1.1fr 1fr 1fr 1.2fr 2fr; align-items:center; gap:.5rem; }
   .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
     text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
@@ -122,8 +130,8 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&a
 const shortLoc = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || n;
 const SLUG = decodeURIComponent((location.pathname.match(/^\/shiftboard\/(.+?)\/?$/i) || [, ''])[1] || '').trim();
 
-let dataTimer = null, pageTimer = null, lastData = null, curPage = 0, perPage = 1, pages = 1, NOWMIN = 0;
-const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 48, MAX_ROW = 92;
+let dataTimer = null, pageTimer = null, lastData = null, curPage = 0, pages = 1, NOWMIN = 0;
+const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 48, MAX_ROW = 92, MAX_COLS = 3;
 const fmt12 = (t) => { const [h, m] = String(t).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}${h < 12 ? 'a' : 'p'}`; };
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 
@@ -241,48 +249,60 @@ function renderChrome(d) {
   $('upd').textContent = 'updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 
-// Lay the current page out so rows fill the screen; paginate when they don't fit.
+// One column's header row.
+function colHeader() {
+  return `<div class="thead"><div>Staff</div><div class="num">Scheduled</div><div class="num">In</div>`
+    + `<div class="num">Out</div><div class="num">Breaks</div><div>Status</div></div>`;
+}
+
+// Lay staff out side by side across as many columns as it takes to show EVERYONE on one
+// screen — rows grow to fill when there are few, and pack into 2–3 columns when there are
+// many, instead of flipping through pages. (Pages remain only as a last resort when even
+// MAX_COLS columns can't hold everyone at a readable row height.)
 function layout() {
   const d = lastData; if (!d) return;
   const staff = d.staff || [];
-  if (!staff.length) {
-    $('main').innerHTML = '<div class="note"><h2>No one scheduled today</h2>Nobody is on the schedule for this location today.</div>';
-    pages = 1; return;
-  }
-  // Build the shell once so we can measure the rows area.
-  $('main').innerHTML = `<div class="thead">
-      <div>Staff</div><div class="num">Scheduled</div><div class="num">Clock In</div>
-      <div class="num">Clock Out</div><div class="num">Breaks</div><div>Status</div>
-    </div><div class="rows" id="rows"></div>
+  $('main').innerHTML = `<div class="board" id="board"></div>
     <footer><div class="foot-legend">
         <span><b style="color:var(--red)">●</b> Late / long break</span>
         <span><b style="color:var(--amber)">●</b> Heads-up</span>
         <span>Break limit <b>${(d.thresholds && d.thresholds.break_limit_min) || 10} min</b></span>
       </div><div class="pager" id="pager"></div></footer>`;
-  const rowsEl = $('rows');
-  const bodyH = rowsEl.clientHeight;
-  // How many rows fit at a readable minimum. If everyone fits, show them all on one
-  // page and let the rows grow to fill the screen (capped); otherwise paginate.
-  const maxFit = Math.max(1, Math.floor(bodyH / MIN_ROW));
-  perPage = staff.length <= maxFit ? staff.length : maxFit;
-  pages = Math.max(1, Math.ceil(staff.length / perPage));
+  const board = $('board');
+  if (!staff.length) {
+    board.innerHTML = '<div class="note"><h2>No one scheduled today</h2>Nobody is on the schedule for this location today.</div>';
+    pages = 1; const pg0 = $('pager'); if (pg0) pg0.textContent = ''; return;
+  }
+  // Measure the rows area of one full-height column (its header already subtracted).
+  board.className = 'board cols-1';
+  board.innerHTML = `<div class="col">${colHeader()}<div class="rows"></div></div>`;
+  const colRowsH = (board.querySelector('.rows') || board).clientHeight || board.clientHeight;
+  const fitPerCol = Math.max(1, Math.floor(colRowsH / MIN_ROW));
+  // Columns needed to show everyone at once (capped at MAX_COLS).
+  let cols = Math.min(MAX_COLS, Math.max(1, Math.ceil(staff.length / fitPerCol)));
+  const pageCap = cols * fitPerCol;
+  pages = Math.max(1, Math.ceil(staff.length / pageCap));
   if (curPage >= pages) curPage = 0;
-  const rowH = Math.max(MIN_ROW, Math.min(MAX_ROW, Math.floor(bodyH / perPage)));
+  const pageStaff = staff.slice(curPage * pageCap, curPage * pageCap + pageCap);
+  const perCol = Math.max(1, Math.ceil(pageStaff.length / cols));
+  cols = Math.max(1, Math.min(cols, Math.ceil(pageStaff.length / perCol)));  // no empty trailing columns
+  const rowH = Math.max(MIN_ROW, Math.min(MAX_ROW, Math.floor(colRowsH / perCol)));
   document.documentElement.style.setProperty('--rowh', rowH + 'px');
-  document.documentElement.style.setProperty('--fs', Math.max(0.82, Math.min(1.15, rowH / 56)).toFixed(3) + 'rem');
-  renderPage();
-}
-
-function renderPage() {
-  const d = lastData; if (!d) return;
-  const staff = d.staff || [];
-  const start = curPage * perPage;
-  const slice = staff.slice(start, start + perPage);
-  const rowsEl = $('rows'); if (rowsEl) rowsEl.innerHTML = slice.map(rowHtml).join('');
+  document.documentElement.style.setProperty('--fs', Math.max(0.78, Math.min(1.15, rowH / 56)).toFixed(3) + 'rem');
+  // Fill the columns, left to right, top to bottom (keeps the server's ordering readable).
+  board.className = 'board cols-' + cols;
+  board.innerHTML = '';
+  for (let c = 0; c < cols; c++) {
+    const slice = pageStaff.slice(c * perCol, c * perCol + perCol);
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.innerHTML = colHeader() + `<div class="rows">${slice.map(rowHtml).join('')}</div>`;
+    board.appendChild(col);
+  }
   const pager = $('pager');
   if (pager) pager.innerHTML = pages > 1
     ? `<span>Page ${curPage + 1} / ${pages}</span><span class="dots">${Array.from({ length: pages }, (_, i) => `<i class="${i === curPage ? 'on' : ''}"></i>`).join('')}</span>`
-    : `<span>${staff.length} staff</span>`;
+    : `<span>${staff.length} staff${cols > 1 ? ' · ' + cols + ' columns' : ''}</span>`;
 }
 
 function render(d) {
@@ -302,8 +322,9 @@ async function load() {
   dataTimer = setTimeout(load, REFRESH_SECONDS * 1000);   // constant refresh
 }
 
-// Flip between pages every PAGE_SECONDS (only matters when there's more than one).
-pageTimer = setInterval(() => { if (pages > 1) { curPage = (curPage + 1) % pages; renderPage(); } }, PAGE_SECONDS * 1000);
+// Flip between pages every PAGE_SECONDS (only matters in the rare case the day has more
+// staff than fit side by side across MAX_COLS columns at once).
+pageTimer = setInterval(() => { if (pages > 1) { curPage = (curPage + 1) % pages; layout(); } }, PAGE_SECONDS * 1000);
 
 let rT; window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(layout, 180); });
 (function boot() { keepAwake(); if (SLUG) load(); else pickStore(); })();
