@@ -2071,6 +2071,15 @@ The board is scoped to the day being viewed, but **anyone still clocked in from 
 &lt;date&gt;"** badge — so a currently-open entry never disappears at midnight and a leader can always
 see it and clock them out.
 
+**Forgotten clock-outs are flagged.** Once a shift is closed because the staffer never punched
+out — **auto-closed** at the scheduled end by the sweep, or **closed by a manager** from the board
+— the row is called out so it isn't mistaken for a normal clock-out: a **"⏱ auto clock-out"** (or
+**"⏱ closed by manager"**) badge in the Status cell, a **⏱** marker next to the clock-out time, and
+a **"N forgot to clock out"** chip in the day's summary. The recorded clock-out is the **scheduled
+end**, so leaders can review and **Adjust** the hours if the person actually worked later. (Backed
+by `time_entries.overrun_decision` = `auto` / `forced`; the board returns `auto_closed` /
+`forced_out` per entry + a `missed_out` summary count.)
+
 The board **auto-refreshes about every 20 seconds** while it's open (it pauses while a dialog is
 open and stops when you leave the tab), so a staffer's **clock-in / clock-out appears on the
 leaders' board on its own** — no manual reload needed.
