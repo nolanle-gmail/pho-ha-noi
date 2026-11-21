@@ -583,6 +583,24 @@ forced/auto/manager clock-out closes any open break. The payroll timesheet gains
 over-limit) column; **worked hours aren't reduced** today (a future option can subtract the over-limit
 minutes — already stored per break).
 
+**Kiosk, staff status banner & "on break" visibility (2026-11-21).** Three changes so staff remember
+where they stand and managers can see breaks at a glance:
+- **Simpler kiosk for anyone already on the clock.** After entering their code, a clocked-in staffer now
+  sees just **two buttons — 🍴 Take break or 🏁 Clock out** (one tap each, straight to the action, no
+  "break or end shift?" follow-up). Not clocked in → a single **Clock In**; on a break → **Clock In (back
+  from break)**.
+- **Clock-status banner on the staff app.** When a staffer opens their app, a banner at the top of the
+  Overview tells them today's status — **clocked in since \<time\>** (with hours so far), **on a break since
+  \<time\>**, **clocked out at \<time\>** (with hours worked), **scheduled but not clocked in** (showing
+  today's shift), or **no shift today** — so people who forget whether they already punched can see it on
+  login. Fed by a new self endpoint **`GET /timeclock/my-today`** (a JWT, or the Staff app on their behalf
+  via the service key); shown on the staff overview, the location-manager dashboard and the general
+  overview (anyone with a schedule).
+- **"On break" on the Time Clock board.** The board (`GET /timeclock/board`) now returns `on_break` /
+  `break_since` for each open entry, so the **Status** column reads **☕ On break since \<time\>** (not just
+  "On clock") while a staffer is on a break, with an **"N on break"** summary chip — and the same on the
+  manager dashboard's clock table.
+
 **Break compliance — missed & long breaks for performance review (2026-11-13).** Two kinds of break
 problem are now kept as a durable history managers can pull for reviews. **Over-limit breaks** were
 already persisted (`time_entry_breaks.over_limit_min` — minutes a break ran past the 10-min limit).
