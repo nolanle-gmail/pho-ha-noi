@@ -621,7 +621,8 @@ export).
 **End-of-day worked-hours sign-off (2026-10-23).** Everyone reviews and confirms their worked hours at
 the end of their day. **My Hours** shows a **Review** state per completed day — **Confirm** (signs it off
 correct) or **Report issue** (flags it) — plus a banner counting days that still need sign-off. Reporting
-an issue messages the location's **manager + shift lead** (`notifyLeaders`, app + SMS) with the
+an issue messages the location's **manager + shift lead** (and the central contact, Nha Le) via
+`notifyLeaders` (**in-app message, no SMS**) with the
 clocked-vs-scheduled totals and an optional note, so they review and correct it on the Time Clock /
 Timesheet. State lives on `time_entries` (`hours_confirmed` / `hours_disputed` + `_at`); a day split
 across locations signs off together. Three nudges so nobody forgets: **(1)** the kiosk **clock-out** (end
@@ -2138,9 +2139,13 @@ The staff-facing notices — the *"Don't forget to clock out"* nudge and the *"A
 clocked out"* notice — are sent **from a location leader** (a manager, or the owner/GM as a
 system sender), not from the staffer to themselves. The messaging layer drops self-messages, so
 sending them from a real leader is what makes them land in the staff member's inbox and push.
-Every leader alert here (missed / early / unscheduled clock-in, auto clock-out) goes to
+Every leader alert here (missed / early / unscheduled clock-in, auto clock-out, no-show, break
+escalation, worked-hours disputes, and the day-task verify / morning re-check reminders) goes to
 **everyone at the location with the `manage` cap — managers, assistant/kitchen managers AND shift
-leads**, not just the store manager.
+leads**, not just the store manager — **and a copy also goes to the central operations contact
+(Nha Le)**, so one person sees every store's issues. These manager alerts are **in-app messages
+only for now — no SMS** (owner's request, 2026-11-21; `notifyLeaders` CCs `centralContact()` and no
+longer texts). Staff-facing SMS reminders (e.g. break-return) are unchanged.
 
 **Unscheduled clock-in (a substitute).** Someone can clock in even with **no shift today** — e.g.
 covering for a sick coworker. They confirm the "not scheduled today" prompt, get clocked in, and
