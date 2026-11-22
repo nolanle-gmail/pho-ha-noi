@@ -1878,27 +1878,25 @@ const check = (name, ok, detail = '') => {
       ac.abort();
     }
 
-    // ── Waitlist watchdog: AUTO-mark-left rules (weekday 25 / weekend 30 / 30%-free fast path) ──
+    // ── Waitlist watchdog: AUTO-mark-left — SINGLE rule (≥35% tables free AND waited ≥60 min) ──
     {
       const wm = require('../lib/waitlistMonitor');
       const wdb = require('../db/database');
       const nhaW = wdb.prepare("SELECT id FROM users WHERE email='nhale.smoke@phn.test'").get();
       const mk = (id, mins, size) => ({ id, location_id: loc1, location_name: 'Pho Ha Noi — Smoke', guest_name: 'G' + id, party_size: size || 2, created_at: new Date(Date.now() - mins * 60000).toISOString() });
-      // No tables free (avail 0) → only the time thresholds apply.
-      const noAvail = () => 0, allAvail = () => 100;
-      const weekday = () => false, weekend = () => true;
-      // Weekday base: >25 leaves, 24 stays.
-      let d = wm.evaluateParties([mk(1, 26), mk(2, 24)], { availabilityFor: noAvail, weekendFor: weekday });
-      check('weekday: waited >25 min is auto-left, 24 stays', d.length === 1 && d[0].id === 1 && /weekday/.test(d[0].reason), JSON.stringify(d.map(x => [x.id, x.reason])));
-      // Weekend base: >30 leaves, 29 stays.
-      d = wm.evaluateParties([mk(3, 31), mk(4, 29)], { availabilityFor: noAvail, weekendFor: weekend });
-      check('weekend: waited >30 min is auto-left, 29 stays', d.length === 1 && d[0].id === 3 && /weekend/.test(d[0].reason), JSON.stringify(d.map(x => [x.id, x.reason])));
-      // Availability fast path, isolated on a WEEKEND at exactly 30 min (under the >30 weekend base):
-      // 30%+ free → left via availability; low availability → stays.
-      d = wm.evaluateParties([mk(5, 30)], { availabilityFor: allAvail, weekendFor: weekend });
-      check('30%+ tables free & waited ≥30 min is auto-left (fast path)', d.length === 1 && d[0].id === 5 && /tables free/.test(d[0].reason), JSON.stringify(d.map(x => [x.id, x.reason])));
-      d = wm.evaluateParties([mk(6, 30)], { availabilityFor: () => 20, weekendFor: weekend });
-      check('low availability at 30 min (under the weekend base) → stays', d.length === 0, JSON.stringify(d.map(x => [x.id, x.reason])));
+      const freeFloor = () => 100, busyFloor = () => 20, atThreshold = () => 35;
+      // ≥35% free AND waited ≥60 → left; 59 min stays (under the 60-min floor).
+      let d = wm.evaluateParties([mk(1, 60), mk(2, 59)], { availabilityFor: freeFloor });
+      check('≥35% free & waited ≥60 min is auto-left, 59 stays', d.length === 1 && d[0].id === 1 && /tables free/.test(d[0].reason), JSON.stringify(d.map(x => [x.id, x.reason])));
+      // Busy floor (<35% free) never auto-clears, however long the wait.
+      d = wm.evaluateParties([mk(3, 120)], { availabilityFor: busyFloor });
+      check('busy floor (<35% free) never auto-clears, even at 120 min', d.length === 0, JSON.stringify(d.map(x => [x.id, x.reason])));
+      // Exactly at the 35% boundary and 60 min → left (bounds are inclusive).
+      d = wm.evaluateParties([mk(4, 60)], { availabilityFor: atThreshold });
+      check('exactly 35% free & 60 min → left (inclusive bounds)', d.length === 1 && d[0].id === 4, JSON.stringify(d.map(x => [x.id, x.reason])));
+      // Just under the 35% free line → stays regardless of wait.
+      d = wm.evaluateParties([mk(5, 200)], { availabilityFor: () => 34 });
+      check('34% free (just under) → stays regardless of wait', d.length === 0, JSON.stringify(d.map(x => [x.id, x.reason])));
       // notifyNhaLe sends ONE app message (no SMS) about the cleared guests.
       const msgBefore = wdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Waitlist: guests auto-cleared'").get().c;
       const nres = wm.notifyNhaLe([{ id: 1, location_id: loc1, location_name: 'Pho Ha Noi — Smoke', guest_name: 'ZZ Gone', party_size: 3, waited: 40, reason: 'weekday — waited 40 min' }]);

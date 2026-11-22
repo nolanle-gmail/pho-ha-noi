@@ -345,13 +345,14 @@ waitlist board filters `status='waiting'`, so the guest drops off all of them; t
 **Waitlist watchdog — auto-mark-left (2026-10-27).** Guests often leave without staff clearing them, so a
 party can sit on the waitlist for hours. Management-app `lib/waitlistMonitor.js` (`startWaitlistMonitor`,
 booted in `server.js`) reads the live waitlist — `GET ${WAITLIST_URL}/api/wl-feed/active` over the shared
-service key — every **5 min** and **auto-marks a waiting party `left`** when they've clearly walked off:
-- **Weekday:** waited **more than 25 min** (`WAITLIST_LEAVE_WEEKDAY_MIN`). **Weekend (Sat/Sun):** **more
-  than 30 min** (`WAITLIST_LEAVE_WEEKEND_MIN`). Weekend is decided in the **location's own timezone**.
-- **Any day, availability fast path:** when the restaurant has **≥ 30 %** of its tables free
-  (`WAITLIST_LEAVE_AVAIL_PCT`) **and** the guest has waited **≥ 30 min** (`WAITLIST_LEAVE_AVAIL_WAIT_MIN`)
-  — plenty of seating is open but they're still waiting ⇒ they're gone. Availability comes from the same
-  live floor picture as the Floor Plan (`routes/floorplan.js` `buildFloorplan`, `summary.available/tables`).
+service key — every **5 min** and **auto-marks a waiting party `left`** on a **single rule (owner, 2026-11-22):**
+- when the restaurant has **≥ 35 %** of its tables free (`WAITLIST_LEAVE_AVAIL_PCT`) **and** the guest has
+  waited **≥ 60 min** (`WAITLIST_LEAVE_AVAIL_WAIT_MIN`) — plenty of seating is open yet they're still waiting
+  ⇒ they're gone. Availability comes from the same live floor picture as the Floor Plan
+  (`routes/floorplan.js` `buildFloorplan`, `summary.available/tables`). **Nobody is auto-cleared early, and
+  nobody is cleared while the floor is busy (< 35 % free).** The earlier weekday-25 / weekend-30 time-only
+  clears were **removed** on 2026-11-22. **Caveat:** a store with no floor-plan data reads 0 % free, so its
+  guests are never auto-cleared — staff clear them by hand.
 
 Removal is cross-app: the monitor calls the Waitlist app's new **`PUT /api/wl-feed/left/:id`** (service
 key), which flips a still-`waiting` row to `left`, logs `party_left` (reason + `by: Waitlist watchdog`)

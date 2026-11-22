@@ -1,32 +1,25 @@
 // Waitlist watchdog: guests often leave without staff clearing them, so a party can sit on the waitlist
 // for ages. Every few minutes this reads the live waitlist (from the Waitlist app over the shared service
-// key) and AUTO-MARKS a party 'left' when they've clearly walked off:
-//   • weekday: waited MORE THAN WEEKDAY_MIN (25 min)     • weekend: waited MORE THAN WEEKEND_MIN (30 min)
-//   • OR, any day, when the restaurant has at least AVAIL_PCT (30%) of its tables free AND they've waited
-//     AVAIL_WAIT_MIN (30 min) — plenty of seating is open but they're still waiting ⇒ they're gone.
-// It then sends Nha Le (the fulfilment contact) a single APP message listing who was cleared (no SMS).
+// key) and AUTO-MARKS a party 'left' when they've clearly walked off. SINGLE RULE (owner, 2026-11-22):
+//   • the restaurant has at least AVAIL_PCT (35%) of its tables free AND they've waited AVAIL_WAIT_MIN
+//     (60 min) — plenty of seating is open yet they're still waiting ⇒ they're gone.
+// Nobody is auto-cleared early, and nobody is cleared while the floor is busy (< 35% free). It then sends
+// Nha Le (the fulfilment contact) a single APP message listing who was cleared (no SMS).
+// NOTE: a party is only ever auto-cleared where live floor availability can be computed; a store with no
+// floor-plan data reads 0% free, so its guests are never auto-cleared — staff clear them by hand.
 const db = require('./../db/database');
 const { notify } = require('../routes/messages');
-const { DEFAULT_TZ } = require('../lib/tz');
 
 const WL_URL = (process.env.WAITLIST_URL || 'https://pho-ha-noi-waitlist.fly.dev').replace(/\/+$/, '');
 const KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
-const WEEKDAY_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKDAY_MIN || '', 10) || 25;
-const WEEKEND_MIN = parseInt(process.env.WAITLIST_LEAVE_WEEKEND_MIN || '', 10) || 30;
-const AVAIL_PCT = parseInt(process.env.WAITLIST_LEAVE_AVAIL_PCT || '', 10) || 30;
-const AVAIL_WAIT_MIN = parseInt(process.env.WAITLIST_LEAVE_AVAIL_WAIT_MIN || '', 10) || 30;
+const AVAIL_PCT = parseInt(process.env.WAITLIST_LEAVE_AVAIL_PCT || '', 10) || 35;
+const AVAIL_WAIT_MIN = parseInt(process.env.WAITLIST_LEAVE_AVAIL_WAIT_MIN || '', 10) || 60;
 
 function nhaLe() { return db.prepare(`SELECT id, name FROM users WHERE is_active=1 AND name LIKE 'Nha Le%' ORDER BY id LIMIT 1`).get(); }
 function sysSender() { const u = db.prepare(`SELECT id FROM users WHERE role IN ('owner','admin','ceo','president','hr') AND is_active=1 ORDER BY id LIMIT 1`).get(); return u && u.id; }
 const shortLoc = (s) => String(s || '').replace('Pho Ha Noi — ', '');
 const waitedMin = (createdAt, now) => Math.round((now - new Date(createdAt).getTime()) / 60000);
-const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 
-// Is it the weekend (Sat/Sun) at this location right now?
-function isWeekend(locId, now) {
-  try { const wd = new Intl.DateTimeFormat('en-US', { timeZone: locTz(locId), weekday: 'short' }).format(new Date(now)); return wd === 'Sat' || wd === 'Sun'; }
-  catch { return false; }
-}
 // Percentage of this location's tables that are free right now (0 when there's no floor data). Reuses
 // the same live floor picture as the Floor Plan / TV board; read-only (reconcile:false).
 function availabilityPct(locId) {
@@ -37,26 +30,23 @@ function availabilityPct(locId) {
   } catch { return 0; }
 }
 
-// Decide which waiting parties should be auto-marked 'left'. Pure given the injected helpers
-// (`weekendFor`/`availabilityFor`) so it's unit-testable without the Waitlist app or a floor plan.
+// Decide which waiting parties should be auto-marked 'left'. SINGLE RULE: at least AVAIL_PCT of the
+// floor is free AND they've waited at least AVAIL_WAIT_MIN. Pure given the injected `availabilityFor`
+// so it's unit-testable without the Waitlist app or a floor plan.
 // Returns [{ id, location_id, location_name, guest_name, party_size, waited, reason }].
 function evaluateParties(parties, opts = {}) {
   const now = opts.nowMs || Date.now();
-  const weekendFor = opts.weekendFor || ((locId) => isWeekend(locId, now));
   const availFor = opts.availabilityFor || availabilityPct;
-  const weekendCache = {}, availCache = {}, out = [];
+  const availCache = {}, out = [];
   for (const p of (parties || [])) {
     if (!p || !p.created_at) continue;
     const waited = waitedMin(p.created_at, now);
     const loc = p.location_id;
-    if (!(loc in weekendCache)) weekendCache[loc] = !!weekendFor(loc);
     if (!(loc in availCache)) availCache[loc] = availFor(loc);
-    const weekend = weekendCache[loc], avail = availCache[loc];
-    let reason = null;
-    if (avail >= AVAIL_PCT && waited >= AVAIL_WAIT_MIN) reason = `${avail}% tables free & waited ${waited} min`;
-    else if (weekend && waited > WEEKEND_MIN) reason = `weekend — waited ${waited} min`;
-    else if (!weekend && waited > WEEKDAY_MIN) reason = `weekday — waited ${waited} min`;
-    if (reason) out.push({ id: p.id, location_id: loc, location_name: p.location_name, guest_name: p.guest_name, party_size: p.party_size, waited, reason });
+    const avail = availCache[loc];
+    if (avail >= AVAIL_PCT && waited >= AVAIL_WAIT_MIN) {
+      out.push({ id: p.id, location_id: loc, location_name: p.location_name, guest_name: p.guest_name, party_size: p.party_size, waited, reason: `${avail}% tables free & waited ${waited} min` });
+    }
   }
   return out;
 }
@@ -107,4 +97,4 @@ function startWaitlistMonitor() {
   return t;
 }
 
-module.exports = { evaluateParties, notifyNhaLe, markLeft, sweepWaitlist, startWaitlistMonitor, WEEKDAY_MIN, WEEKEND_MIN, AVAIL_PCT, AVAIL_WAIT_MIN };
+module.exports = { evaluateParties, notifyNhaLe, markLeft, sweepWaitlist, startWaitlistMonitor, AVAIL_PCT, AVAIL_WAIT_MIN };
