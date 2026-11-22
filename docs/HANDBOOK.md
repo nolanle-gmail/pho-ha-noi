@@ -2169,9 +2169,11 @@ The board is **grouped by staffer** (2026-11-22): a person with more than one sh
 **one block under their name** (name shown once, with an **"N shifts"** badge) with **a line per
 shift**, instead of repeated name rows — so each staffer's day is easy to track. Columns are
 **Staff · Shift · Clocked in · Clocked out · Worked · Break · Status**, where **Shift** is the
-scheduled block that punch belongs to (e.g. `8:00a–12:00p`). The **Break** column tracks the break
-taken on each shift — the minutes (× count), **"+N over"** when it ran past the 10-minute limit, or
-the **live timer** while they're on a break now. "Not clocked in" staff likewise show a line per
+scheduled block that punch belongs to (e.g. `8:00a–12:00p`). **Punch times are tagged by kind** —
+clock-in `08:00(i)`, clock-out `12:00(o)`, break start `10:00(b)` (2026-11-22, same as the Shift
+Detail report). The **Break** column lists each break's **start time with (b)** (plus **"+N over"**
+when it ran past the 10-minute limit) and the **live timer** while they're on a break now. "Not
+clocked in" staff likewise show a line per
 scheduled shift block. Each person carries a **colour chip of their scheduled role** (the same
 colours as the schedule). (The manager dashboard's clock summary keeps the simpler **Clocked in /
 Clocked out** one-row-per-entry view.)
