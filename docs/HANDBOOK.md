@@ -645,7 +645,8 @@ hours** total), **one line per scheduled shift**. Each line pairs the staffer's 
 **missed-break** chip (a scheduled break never taken, from the `missed_breaks` table), and flags for
 **forgot clock-in / clock-out** and **NO-SHOW** (a past scheduled shift with no punch). **Punch times are
 tagged by kind** — clock-in `10:15(i)`, clock-out `1:00(o)`, break start `10:00(b)` — so each time reads at
-a glance. **Unscheduled** punches (no matching shift) show as their own rows. KPI cards total the
+a glance. A shift's **lateness is its FIRST clock-in** (a later re-punch to the same shift isn't counted as
+a fresh late, so an on-time/early arrival isn't mis-flagged because of a mid-shift re-punch). **Unscheduled** punches (no matching shift) show as their own rows. KPI cards total the
 scheduled/worked hours and each exception count (late, long break, missed break, no-show, forgot in/out);
 **CSV / Excel** export gives one row per shift (with break times + missed-break columns). (The Attendance
 report is the incident roll-up; Shift Detail is the full per-shift picture with hours.)
