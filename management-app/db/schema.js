@@ -1668,6 +1668,18 @@ function migrate() {
     // check is instant. Built once (one scan) then self-empty forever.
     `CREATE INDEX IF NOT EXISTS idx_toast_orders_paymin_pending ON toast_orders(guid)
        WHERE pay_minutes IS NULL AND opened_at IS NOT NULL AND paid_at IS NOT NULL`,
+    // PERF: time_entries had ZERO indexes, so every My Hours / signoff-window / per-user or
+    // per-location clock-board query full-SCANNED it. Harmless while small, but it grows by
+    // ~one row per staffer per shift per day (hundreds/day across 10 stores) and node:sqlite is
+    // synchronous — a growing scan on a polled endpoint (the clock board refreshes every 5 s)
+    // freezes the event loop for every staff request. These two composite indexes cover the hot
+    // predicates: (user_id, work_date) for My Hours / my-today / signoff-window / per-user board,
+    // and (location_id, work_date) for the per-location clock board + payroll timesheet.
+    `CREATE INDEX IF NOT EXISTS idx_time_entries_user_date ON time_entries(user_id, work_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_time_entries_loc_date ON time_entries(location_id, work_date)`,
+    // PERF: the Day Tasks board (polled every 10 s) and the assignment lookups filter
+    // task_assignments by (location_id, task_date); it had no index, so each poll scanned it.
+    `CREATE INDEX IF NOT EXISTS idx_task_assign_loc_date ON task_assignments(location_id, task_date)`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
