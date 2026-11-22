@@ -633,6 +633,17 @@ type, a **by-staff** table with a count of each, and a **filterable incident lis
 **CSV / Excel** export. It overlaps the Breaks report on purpose — Breaks is the deep break-compliance
 view; Attendance is the single at-a-glance roll-up of every exception type.
 
+**Shift Detail — a per-shift attendance report (2026-11-22).** **Reports → Shift Detail**
+(`GET /reports/shift-detail`, `REPORTS` cap, `scope()`-filtered, date range) is the Time Clock board
+spread across a date range: **grouped by staffer** (a card per person with their **scheduled vs worked
+hours** total), **one line per scheduled shift**. Each line pairs the staffer's punches to that shift
+(a `shiftBlockForPunch`-style match) and shows the shift's **scheduled** hours, **clock in / out**,
+**worked** hours, **late** minutes, **break** minutes with **"+N over"** for a long break, and flags for
+**forgot clock-in / clock-out** and **NO-SHOW** (a past scheduled shift with no punch). **Unscheduled**
+punches (no matching shift) show as their own rows. KPI cards total the scheduled/worked hours and each
+exception count; **CSV / Excel** export gives one row per shift. (The Attendance report is the incident
+roll-up; Shift Detail is the full per-shift picture with hours.)
+
 **No-shows — a missed shift costs no hours (2026-11-21).** If someone is scheduled for a **work shift**
 but **never clocks in** for it, the timesheet already pays nothing (hours come only from
 `time_entries.worked_minutes`, and there's no entry). On top of that the system now **records the
