@@ -549,7 +549,9 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
       if (b.entries.length) {
         const ein = b.entries.slice().sort((x, y) => new Date(x.clock_in) - new Date(y.clock_in));
         const worked = b.entries.reduce((a, e) => a + (e.worked_minutes || 0), 0);
-        const late = b.entries.reduce((a, e) => Math.max(a, e.late_minutes || 0), 0);
+        // Lateness is the FIRST clock-in to this shift — a later re-punch (e.g. clock out then back
+        // in during the shift) isn't a fresh "late", so don't take the max across punches.
+        const late = ein[0].late_minutes || 0;
         const longBreak = b.entries.reduce((a, e) => a + (e.long_break_min || 0), 0);
         const breakMin = b.entries.reduce((a, e) => a + (e.break_min || 0), 0);
         const forgotOut = b.entries.some(e => ['auto', 'forced'].includes(e.overrun_decision) && e.clock_out) ? 1 : 0;
