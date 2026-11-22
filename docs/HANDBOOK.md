@@ -672,7 +672,8 @@ clocked-vs-scheduled totals and an optional note, so they review and correct it 
 Timesheet. State lives on `time_entries` (`hours_confirmed` / `hours_disputed` + `_at`); a day split
 across locations signs off together. Three nudges so nobody forgets: **(1)** the kiosk **clock-out** (end
 of shift) prompts them to review today's hours; **(2)** the next **clock-in** reminds them of any prior
-**unsigned** day (doesn't block the punch); **(3)** `sweepHoursSignoffReminders` sends an in-app message
+**unsigned** day (it never blocks the punch — and this clock-in reminder is **off by default while staff
+are being trained on the app**, re-enable with `HOURS_SIGNOFF_REMINDER=1`); **(3)** `sweepHoursSignoffReminders` sends an in-app message
 to anyone who finished a day without signing off — a prior day right away, today's after the evening
 (`HOURS_SIGNOFF_EVENING_HOUR`, default 20), once per day (`hours_reminded_at`). Reminders are in-app
 (push), not SMS, since it's a routine daily confirmation. Endpoints `POST /timeclock/my-hours/{confirm,dispute}`
@@ -2122,12 +2123,14 @@ Entering a code shows a message panel:
 - valid → a time-of-day greeting ("**Good morning Nha Le, welcome to Pho Ha Noi
   Milpitas**") and **Clock In / Clock Out** buttons (only the applicable one is enabled).
 
-**Clock in** goes straight through when they're within 30 minutes of a shift here.
-Otherwise it warns and asks them to confirm — **not scheduled today**, **scheduled at
-another location**, or **more than 30 minutes early** — and on confirm it clocks them
-in and **messages the location's managers and shift leads** to review for the timesheet. **Clock out**
-says goodbye on time; **more than 30 minutes early** warns, and on confirm messages the
-manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
+**Clock in** goes straight through when they're on time (or up to **15 minutes early**).
+**Clocking in more than 15 minutes before the shift is a hard block** (2026-11-22) — the kiosk says
+"too early, you can clock in from \<time\>" and won't record it (the window is measured against the
+shift block they're arriving for; configurable via `EARLY_CLOCKIN_MAX_MIN`, default 15). Other
+off-schedule cases still **warn and ask to confirm** — **not scheduled today** or **scheduled at
+another location** — and on confirm it clocks them in and **messages the location's managers and shift
+leads** to review for the timesheet. **Clock out** says goodbye on time; **more than 30 minutes early**
+warns, and on confirm messages the manager. Punches write to the same `time_entries` the Time-Clock board and Timesheets
 read. A background sweep reminds a staff member (and messages their manager) when they're
 still clocked in **past their scheduled end**. Those overruns also appear on the
 **Time-Clock board** under "Still clocked in past their scheduled end," where a manager or
