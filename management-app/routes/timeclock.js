@@ -959,12 +959,17 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const photosFor = (entryId) => { const o = { in: null, out: null }; for (const p of photoStmt.all(entryId)) o[p.kind] = p.id; return o; };
   // Is a still-open entry currently on a break? (an open time_entry_breaks row — out, not yet back in.)
   const openBreakStmt = db.prepare(`SELECT break_out_at FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL ORDER BY id DESC LIMIT 1`);
+  // Completed breaks taken on this entry (minutes + over-limit + count), for the Break column.
+  const breakStmt = db.prepare(`SELECT COALESCE(SUM(minutes),0) AS min, COALESCE(SUM(over_limit_min),0) AS over_min, COUNT(*) AS cnt FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
     const ph = photosFor(e.id);
     const ob = e.clock_out ? null : openBreakStmt.get(e.id);
+    const br = breakStmt.get(e.id);
+    // The specific scheduled shift BLOCK this punch belongs to (so a split-shift day shows each shift).
+    const blk = shiftBlockForPunch(e.user_id, e.location_id, e.work_date, localMinutesOfDay(tz, new Date(e.clock_in)));
     // Their shift on the entry's OWN day (carryover entries look up their prior day).
     const rawSh = e.work_date === date ? shiftBy[e.user_id] : shiftFor.get(e.user_id, locId, e.work_date);
     const sh = rawSh && rawSh.start_time ? rawSh : null;
@@ -975,6 +980,9 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       status: e.clock_out ? 'out' : 'in',
       on_break: ob ? 1 : 0,
       break_since: ob ? localTime(tz, new Date(ob.break_out_at)) : null,
+      on_break_min: ob ? Math.max(0, Math.round((Date.now() - new Date(ob.break_out_at).getTime()) / 60000)) : 0,
+      break_min: br.min, break_over: br.over_min, breaks_count: br.cnt,
+      block_start: blk ? blk.sRaw : null, block_end: blk ? blk.eRaw : null,
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
       short: e.short_confirmed ? 1 : 0,
@@ -990,15 +998,22 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       photo_in: ph.in, photo_out: ph.out,
     };
   });
-  // Scheduled today but no punch yet → "not in".
-  const scheduled = db.prepare(`SELECT DISTINCT u.id, u.name, u.employee_code,
-      MIN(s.start_time) AS start_time, MAX(s.end_time) AS end_time
+  // Scheduled today but no punch yet → "not in". Keep each person's individual shift BLOCKS so a
+  // multi-shift day shows a line per shift here too (not just one merged span).
+  const schedRows = db.prepare(`SELECT u.id, u.name, u.employee_code, s.start_time, s.end_time
     FROM shifts s JOIN users u ON u.id=s.user_id
-    WHERE s.location_id=? AND s.shift_date=? AND s.kind='work' GROUP BY u.id ORDER BY u.name`).all(locId, date);
-  const notIn = scheduled.filter(s => !byUser[s.id]).map(s => ({
-    user_id: s.id, name: s.name, employee_code: s.employee_code,
-    scheduled_minutes: spanMin(s.start_time, s.end_time), start_time: s.start_time, end_time: s.end_time,
-    job: jobFor(s.id, date),
+    WHERE s.location_id=? AND s.shift_date=? AND s.kind='work' AND s.start_time IS NOT NULL
+    ORDER BY u.name, s.start_time`).all(locId, date);
+  const schedByUser = new Map();
+  for (const s of schedRows) {
+    if (!schedByUser.has(s.id)) schedByUser.set(s.id, { user_id: s.id, name: s.name, employee_code: s.employee_code, blocks: [] });
+    schedByUser.get(s.id).blocks.push({ start: s.start_time, end: s.end_time });
+  }
+  const notIn = [...schedByUser.values()].filter(s => !byUser[s.user_id]).map(s => ({
+    user_id: s.user_id, name: s.name, employee_code: s.employee_code, blocks: s.blocks,
+    scheduled_minutes: s.blocks.reduce((a, b) => a + spanMin(b.start, b.end), 0),
+    start_time: s.blocks[0].start, end_time: s.blocks[s.blocks.length - 1].end,
+    job: jobFor(s.user_id, date),
   }));
   res.json({
     location: loc, date, today, timezone: tz, entries: rows, not_in: notIn,

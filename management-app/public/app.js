@@ -4512,17 +4512,48 @@ async function renderLocTimeClock() {
   const editBtn = (r) => canEditTc ? ` <button class="btn sm ghost" data-tcedit="${r.id}">${r.unscheduled ? '➕ Assign hours' : 'Adjust'}</button>` : '';
   // Colour chip for the role a person is scheduled as — same colours as the schedule.
   const tcJob = (job) => job ? ` <span class="tc-job" style="background:${jobColor(job).bg};border-color:${jobColor(job).bd}" title="${esc(job)}">${esc(job)}</span>` : '';
-  const entryRows = data.entries.map(r => `<tr${r.unscheduled || r.carryover ? ' class="tc-unscheduled"' : ''}>
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ since ${fmtDay(r.work_date)}</span>` : ''}${r.unscheduled ? ' <span class="badge low" title="Clocked in without being scheduled today">⚠ no schedule</span>' : ''}</td>
-    <td>${r.clock_in || '—'}${r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : ''}</td>
-    <td>${r.clock_out || '—'}${(r.auto_closed || r.forced_out) ? ` <span class="tc-autoout" title="${r.auto_closed ? 'Auto clock-out — the staffer didn’t punch out, so the system closed it at their scheduled end' : 'Closed by a manager — the staffer didn’t punch out'}">⏱</span>` : ''}${r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : ''}</td>
-    <td>${r.scheduled_minutes ? fmtDur(r.scheduled_minutes) : '—'}</td>
+  // The scheduled shift block this punch belongs to (so each line says which shift it is).
+  const shiftCell = (r) => r.block_start
+    ? `<span class="mono" style="font-size:.85rem">${esc(to12h(r.block_start))}–${esc(to12h(r.block_end || r.block_start))}</span>`
+    : (r.unscheduled ? '<span class="badge low" title="Clocked in without a scheduled shift">⚠ unscheduled</span>' : '<span style="color:var(--muted)">—</span>');
+  // Break taken on this shift: minutes (× count), over-limit flag, or the live timer if on break now.
+  const breakCell = (r) => {
+    if (r.on_break) return `<span class="badge low" title="On a break now${r.break_min ? `; ${r.break_min} min earlier this shift` : ''}">☕ ${r.on_break_min || 0}m${r.break_min ? ` (+${r.break_min})` : ''}</span>`;
+    if (r.break_min > 0) return `<span title="${r.breaks_count} break${r.breaks_count === 1 ? '' : 's'} this shift">☕ ${r.break_min}m${r.breaks_count > 1 ? ` <span class="mono" style="color:var(--muted);font-size:.72rem">×${r.breaks_count}</span>` : ''}${r.break_over > 0 ? ` <span class="badge out" title="Over the 10-min limit">+${r.break_over} over</span>` : ''}</span>`;
+    return '<span style="color:var(--muted)">—</span>';
+  };
+  const photoIn = (r) => r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : '';
+  const photoOut = (r) => r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : '';
+  const autoFlag = (r) => (r.auto_closed || r.forced_out) ? ` <span class="tc-autoout" title="${r.auto_closed ? 'Auto clock-out — the staffer didn’t punch out, so the system closed it at their scheduled end' : 'Closed by a manager — the staffer didn’t punch out'}">⏱</span>` : '';
+  // Group entries by staffer → one block per person, a line per shift under their name.
+  const tcGroups = []; const _gm = new Map();
+  for (const r of data.entries) {
+    if (!_gm.has(r.user_id)) { const g = { user_id: r.user_id, name: r.name, code: r.employee_code, job: r.job, rows: [] }; _gm.set(r.user_id, g); tcGroups.push(g); }
+    _gm.get(r.user_id).rows.push(r);
+  }
+  for (const g of tcGroups) g.rows.sort((a, b) => (a.clock_in_hhmm || '').localeCompare(b.clock_in_hhmm || ''));
+  tcGroups.sort((a, b) => (a.rows[0].clock_in_hhmm || '').localeCompare(b.rows[0].clock_in_hhmm || ''));
+  const nameCell = (name, code, job, n, span) => `<td rowspan="${span}" class="tc-name"><strong>${esc(name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(code || '')}</span>${tcJob(job)}${n > 1 ? ` <span class="badge gray" title="${n} shifts today">${n} shifts</span>` : ''}</td>`;
+  const entryRows = tcGroups.map(g => {
+    const n = g.rows.length;
+    return g.rows.map((r, i) => `<tr class="tc-row${i === 0 ? ' tc-grp' : ''}${r.unscheduled || r.carryover ? ' tc-unscheduled' : ''}">
+    ${i === 0 ? nameCell(g.name, g.code, g.job, n, n) : ''}
+    <td>${shiftCell(r)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ ${fmtDay(r.work_date)}</span>` : ''}</td>
+    <td>${r.clock_in || '—'}${photoIn(r)}</td>
+    <td>${r.clock_out || '—'}${autoFlag(r)}${photoOut(r)}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
+    <td>${breakCell(r)}</td>
     <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');
-  const notInRows = data.not_in.map(r => `<tr class="task-unassigned">
-    <td><strong>${esc(r.name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(r.employee_code || '')}</span>${tcJob(r.job)}</td>
-    <td>—</td><td>—</td><td>${fmtDur(r.scheduled_minutes)}</td><td>—</td>
+  }).join('');
+  const notInRows = data.not_in.map(r => {
+    const blocks = (r.blocks && r.blocks.length) ? r.blocks : [{ start: r.start_time, end: r.end_time }];
+    const n = blocks.length;
+    return blocks.map((b, i) => `<tr class="task-unassigned tc-row${i === 0 ? ' tc-grp' : ''}">
+    ${i === 0 ? nameCell(r.name, r.employee_code, r.job, n, n) : ''}
+    <td><span class="mono" style="font-size:.85rem">${b.start ? esc(to12h(b.start)) + '–' + esc(to12h(b.end)) : '—'}</span></td>
+    <td>—</td><td>—</td><td>—</td><td>—</td>
     <td><span class="badge low">Not clocked in</span></td></tr>`).join('');
+  }).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
   const overruns = S.tcOverruns || [];
@@ -4561,8 +4592,8 @@ async function renderLocTimeClock() {
     ${policyBar}
     ${overrunCards}
     ${alertCards}
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Clocked in</th><th>Clocked out</th><th>Scheduled</th><th>Worked</th><th>Status</th></tr></thead><tbody>
-      ${(entryRows + notInRows) || '<tr><td colspan="6" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
+    <div class="table-wrap"><table class="tc-table"><thead><tr><th>Staff</th><th>Shift</th><th>Clocked in</th><th>Clocked out</th><th>Worked</th><th>Break</th><th>Status</th></tr></thead><tbody>
+      ${(entryRows + notInRows) || '<tr><td colspan="7" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff clock in/out on the tablet kiosk (⏱). A short clock-out raises an alert here for follow-up.</p>
     ${breakSection(S.tcBreaks)}
