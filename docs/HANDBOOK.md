@@ -594,8 +594,10 @@ where they stand and managers can see breaks at a glance:
   \<time\>**, **clocked out at \<time\>** (with hours worked), **scheduled but not clocked in** (showing
   today's shift), or **no shift today** — so people who forget whether they already punched can see it on
   login. Fed by a new self endpoint **`GET /timeclock/my-today`** (a JWT, or the Staff app on their behalf
-  via the service key); shown on the staff overview, the location-manager dashboard and the general
-  overview (anyone with a schedule).
+  via the service key); shown in the **Management console** on the staff overview, the location-manager
+  dashboard and the general overview (anyone with a schedule), and in the **Staff PWA** as a persistent
+  banner above the content (it proxies `/api/timeclock/my-today` to Management with the service key,
+  like My Hours; 2026-11-22).
 - **"On break" on the Time Clock board.** The board (`GET /timeclock/board`) now returns `on_break` /
   `break_since` for each open entry, so the **Status** column reads **☕ On break since \<time\>** (not just
   "On clock") while a staffer is on a break, with an **"N on break"** summary chip — and the same on the
