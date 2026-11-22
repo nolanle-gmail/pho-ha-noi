@@ -1661,6 +1661,13 @@ function migrate() {
       UNIQUE (user_id, work_date, shift_id)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_no_shows ON no_shows(location_id, work_date)`,
+    // PERF: the pay_minutes backfill repeatedly ran `COUNT(*) WHERE pay_minutes IS NULL`
+    // which full-scanned the 342k-row toast_orders table (~7.4 s on prod — a hard
+    // event-loop freeze every boot) because no index had pay_minutes as a usable prefix.
+    // This PARTIAL index holds only the not-yet-filled rows (≈0 once backfilled), so the
+    // check is instant. Built once (one scan) then self-empty forever.
+    `CREATE INDEX IF NOT EXISTS idx_toast_orders_paymin_pending ON toast_orders(guid)
+       WHERE pay_minutes IS NULL AND opened_at IS NOT NULL AND paid_at IS NOT NULL`,
   ]) { try { db.exec(stmt); } catch { /* column already exists */ } }
   // Backfill: existing distribution orders — and existing CK tasks/shifts — predate warehouses.
   try {
