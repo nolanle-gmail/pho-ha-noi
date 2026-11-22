@@ -258,6 +258,12 @@ const locBySlug = (slug) => db.prepare(`SELECT id, name, slug, timezone FROM loc
 function greetingWord(tz) { const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit' }).format(new Date())) % 24; return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; }
 const validCode = (c) => /^[A-Za-z0-9-]{4,20}$/.test(c);
 const hhmmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+// Max minutes a staffer may clock in BEFORE their shift start (a hard block past this).
+const EARLY_CLOCKIN_MAX_MIN = parseInt(process.env.EARLY_CLOCKIN_MAX_MIN || '', 10) || 15;
+const fmt12h = (m) => { m = ((m % 1440) + 1440) % 1440; const h = Math.floor(m / 60), mm = m % 60, ap = h < 12 ? 'a' : 'p', hh = (h % 12) || 12; return mm ? `${hh}:${String(mm).padStart(2, '0')}${ap}` : `${hh}${ap}`; };
+// Clock-in reminder to confirm unconfirmed prior-day hours. OFF for now (staff are being trained on
+// the app; clock-in is never blocked on it) — set HOURS_SIGNOFF_REMINDER=1 to turn the nudge back on.
+const REMIND_UNCONFIRMED_HOURS = /^(1|true|on|yes)$/i.test(process.env.HOURS_SIGNOFF_REMINDER || '');
 // The people who lead a location: any active staffer assigned there whose role
 // carries the 'manage' cap — managers, assistant/kitchen managers AND shift leads
 // (or any custom manage-capable role). Falls back to org leadership if a store has
@@ -419,9 +425,19 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
       }
       ctx.open = null; // fall through and record a fresh clock-in for the next shift
     }
+    // Hard block: no clocking in more than EARLY_CLOCKIN_MAX_MIN before the shift they're arriving for
+    // (the block that contains or next follows "now"). E.g. a 10:00 shift can't be clocked before 9:45.
+    if (ctx.here) {
+      const nMin = localMinutesOfDay(tz, now);
+      const tgt = shiftBlockForPunch(staff.id, loc.id, date, nMin);
+      if (tgt && tgt.sMin != null && tgt.sMin - nMin > EARLY_CLOCKIN_MAX_MIN) {
+        return res.status(409).json({ too_early: true, name: staff.name,
+          error: `Too early, ${staff.name} — your shift starts at ${fmt12h(tgt.sMin)}. You can clock in from ${fmt12h(tgt.sMin - EARLY_CLOCKIN_MAX_MIN)} (up to ${EARLY_CLOCKIN_MAX_MIN} minutes early).` });
+      }
+    }
     let reason = null, warn = null;
     if (ctx.here) {
-      if (ctx.startHere) { const early = hhmmToMin(ctx.startHere) - localMinutesOfDay(tz, now); if (early > 30) { reason = 'early'; warn = `You’re clocking in more than 30 minutes before your ${ctx.startHere} shift. Clock in anyway?`; } }
+      // Within the allowed window (≤ EARLY_CLOCKIN_MAX_MIN early, on time, or late) — nothing to confirm.
     } else if (ctx.elsewhere) { reason = 'wrong_location'; warn = `You’re scheduled at another location today, not ${locDisplay(loc.name)}. Clock in here anyway?`; }
     else if (ctx.isHome) { reason = 'no_schedule'; warn = `You aren’t scheduled to work today. Clock in anyway?`; }
     else { reason = 'no_schedule_wrong_location'; warn = `You aren’t scheduled to work today, and this isn’t your usual location. Clock in here anyway?`; }
@@ -435,9 +451,10 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
       const why = { early: 'more than 30 minutes early', wrong_location: 'at a location they’re not scheduled at today', no_schedule: 'without being scheduled today', no_schedule_wrong_location: 'without being scheduled today, and at an unusual location' }[reason];
       notifyLeaders(loc.id, staff.id, 'Clock-in to review', `${staff.name} clocked in at ${locDisplay(loc.name)} ${why} (${localTime(tz, now)}). Please review it for their timesheet.`);
     }
-    // Still-pending sign-off from an earlier day → remind them to review it (doesn't block clock-in).
-    const pend = db.prepare(`SELECT work_date FROM time_entries WHERE user_id=? AND clock_out IS NOT NULL
-      AND hours_confirmed=0 AND hours_disputed=0 AND work_date < ? ORDER BY work_date DESC`).all(staff.id, date);
+    // Still-pending sign-off from an earlier day → remind them to review it (never blocks clock-in).
+    // Suppressed during training (REMIND_UNCONFIRMED_HOURS off) so staff aren't nagged while they learn.
+    const pend = REMIND_UNCONFIRMED_HOURS ? db.prepare(`SELECT work_date FROM time_entries WHERE user_id=? AND clock_out IS NOT NULL
+      AND hours_confirmed=0 AND hours_disputed=0 AND work_date < ? ORDER BY work_date DESC`).all(staff.id, date) : [];
     const hoursPending = pend.length ? { date: pend[0].work_date, count: new Set(pend.map(p => p.work_date)).size } : null;
     return res.json({ success: true, action: 'in', message: `You’re clocked in — have a great shift, ${staff.name}!`,
       hours_review_pending: hoursPending,

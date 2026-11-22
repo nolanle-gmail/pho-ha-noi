@@ -1,6 +1,8 @@
 // End-to-end smoke test for the inventory API. Starts the app on a test port
 // and exercises the main flows. Run: node tests/smoke.js
 process.env.DB_PATH = process.env.DB_PATH || require('path').join(__dirname, '..', 'db', 'phohanoi_management.db');
+// Exercise the clock-in prior-hours reminder (off by default during staff training).
+process.env.HOURS_SIGNOFF_REMINDER = process.env.HOURS_SIGNOFF_REMINDER || '1';
 const app = require('../server');
 
 let pass = 0, fail = 0;
@@ -736,6 +738,8 @@ const check = (name, ok, detail = '') => {
     tmc2.sweepHoursSignoffReminders({ force: true });
     check('sign-off reminder sweep nudges once + stamps reminded_at', !!_bdb.prepare("SELECT hours_reminded_at FROM time_entries WHERE id=?").get(soEntryId).hours_reminded_at && _bdb.prepare("SELECT COUNT(*) c FROM messages WHERE subject='Confirm your worked hours'").get().c > remBefore);
     // Kiosk popups: clock-in flags a prior unsigned day; clock-out (end shift) prompts to review hours.
+    // Clear today's schedule for this staffer so the clock-in isn't rejected by the early-clock-in block.
+    _bdb.prepare("DELETE FROM shifts WHERE user_id=? AND shift_date=?").run(soStaff.id, bToday);
     _bdb.prepare("INSERT INTO time_entries (user_id, location_id, work_date, clock_in, clock_out, worked_minutes, scheduled_minutes) VALUES (?,?,?,?,?,?,480)")
       .run(soStaff.id, loc1, soYest, new Date(Date.now() - 26 * 3600000).toISOString(), new Date(Date.now() - 19 * 3600000).toISOString(), 420);
     const kin = await j(await fetch(base + `/api/timeclock/kiosk/${encodeURIComponent(bslug)}/punch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employee_code: soStaff.employee_code, action: 'in', confirm: true }) }));

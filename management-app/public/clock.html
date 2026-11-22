@@ -218,6 +218,8 @@ async function punch(action, kind){
   if (res.d && res.d.choose){ showClockOutChoice(); return; }   // break vs end-of-shift
   // Tried to clock in before the minimum break is over → tell them how long is left, keep them on break.
   if (res.d && res.d.break_wait){ $('actions').hidden = true; showPanel('warn', `<span class="big">⏳ Finish your break</span>${escapeHtml(res.d.message)}`); resetSoon(9000); return; }
+  // Clocking in too early (more than the allowed window before the shift) → tell them when they can.
+  if (res.d && res.d.too_early){ $('actions').hidden = true; showPanel('warn', `<span class="big">⏳ Too early to clock in</span>${escapeHtml(res.d.error)}`); resetSoon(10000); return; }
   if (res.d && res.d.confirm){
     if (!confirm(res.d.message)) return;   // staff must accept the warning
     res = await api(`/kiosk/${encodeURIComponent(slug)}/punch`, { method:'POST', body: JSON.stringify(Object.assign({}, body, { confirm: true })) });
