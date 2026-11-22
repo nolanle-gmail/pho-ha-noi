@@ -113,20 +113,40 @@ function timesheetReport(req) {
 
   const byUser = new Map(), byLoc = new Map();
   const locName = {};
+  // California daily OT (≤8h reg, 8–12h OT, >12h double-time) must be computed on each calendar
+  // DAY's TOTAL, not per punch — otherwise a split shift (two entries the same day) mis-splits OT.
+  // So first roll every entry up into per-(staff, work_date) days, then split each day once. The
+  // "Days" column then counts distinct calendar dates worked, not the number of punches.
+  const dayAgg = new Map();   // `${user_id}|${work_date}` -> { user_id, date, min, locMin:{} }
+  const umeta = new Map();    // user_id -> metadata + break totals over the whole range
   for (const r of rows) {
     if (r.location_id != null) locName[r.location_id] = r.location;
-    const sp = tsDaySplit(r.worked_minutes || 0);
-    const rate = r.hourly_rate || 0;
+    let um = umeta.get(r.user_id);
+    if (!um) { um = { name: r.name, role: r.role, employee_code: r.employee_code, rate: r.hourly_rate || 0, breakMin: 0, breakOver: 0, longBreaks: 0 }; umeta.set(r.user_id, um); }
+    um.breakMin += r.break_min || 0; um.breakOver += r.break_over || 0; um.longBreaks += r.long_breaks || 0;
+    const k = r.user_id + '|' + r.work_date;
+    let day = dayAgg.get(k);
+    if (!day) { day = { user_id: r.user_id, date: r.work_date, min: 0, locMin: {} }; dayAgg.set(k, day); }
+    day.min += r.worked_minutes || 0;
+    day.locMin[r.location_id] = (day.locMin[r.location_id] || 0) + (r.worked_minutes || 0);
+  }
+  for (const day of dayAgg.values()) {
+    const um = umeta.get(day.user_id);
+    const rate = um.rate || 0;
+    const sp = tsDaySplit(day.min);   // split this DAY's total once
     const dayGross = tsHrs(sp.reg) * rate + tsHrs(sp.ot) * rate * TS_OT_MULT + tsHrs(sp.dt) * rate * TS_DT_MULT;
-    let u = byUser.get(r.user_id);
-    if (!u) { u = { user_id: r.user_id, name: r.name, role: r.role, employee_code: r.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, breakMin: 0, breakOver: 0, longBreaks: 0, locMin: {} }; byUser.set(r.user_id, u); }
-    u.shifts++; u.min += r.worked_minutes; u.reg += sp.reg; u.ot += sp.ot; u.dt += sp.dt; u.gross += dayGross;
-    u.breakMin += r.break_min || 0; u.breakOver += r.break_over || 0; u.longBreaks += r.long_breaks || 0;
-    u.locMin[r.location_id] = (u.locMin[r.location_id] || 0) + r.worked_minutes;
-    // Per-location roll-up: each day's pay is attributed to the location it was worked at.
-    let L = byLoc.get(r.location_id);
-    if (!L) { L = { location_id: r.location_id, staff: new Set(), min: 0, ot: 0, dt: 0, gross: 0 }; byLoc.set(r.location_id, L); }
-    L.staff.add(r.user_id); L.min += r.worked_minutes; L.ot += sp.ot; L.dt += sp.dt; L.gross += dayGross;
+    let u = byUser.get(day.user_id);
+    if (!u) { u = { user_id: day.user_id, name: um.name, role: um.role, employee_code: um.employee_code, hourly_rate: rate, shifts: 0, min: 0, reg: 0, ot: 0, dt: 0, gross: 0, breakMin: um.breakMin, breakOver: um.breakOver, longBreaks: um.longBreaks, locMin: {} }; byUser.set(day.user_id, u); }
+    u.shifts++;   // one per distinct calendar day worked (shown as "Days")
+    u.min += day.min; u.reg += sp.reg; u.ot += sp.ot; u.dt += sp.dt; u.gross += dayGross;
+    for (const [lid, m] of Object.entries(day.locMin)) u.locMin[lid] = (u.locMin[lid] || 0) + m;
+    // Per-location roll-up: attribute the day's hours/OT/pay to the location where most of the day
+    // was worked (a day split across locations is rare; this keeps each day counted once).
+    let domLid = null, domMax = -1;
+    for (const [lid, m] of Object.entries(day.locMin)) if (m > domMax) { domMax = m; domLid = lid; }
+    let L = byLoc.get(domLid);
+    if (!L) { L = { location_id: domLid, staff: new Set(), min: 0, ot: 0, dt: 0, gross: 0 }; byLoc.set(domLid, L); }
+    L.staff.add(day.user_id); L.min += day.min; L.ot += sp.ot; L.dt += sp.dt; L.gross += dayGross;
   }
 
   const by_staff = [...byUser.values()].map(u => {
