@@ -2151,10 +2151,16 @@ The board **auto-refreshes about every 20 seconds** while it's open (it pauses w
 open and stops when you leave the tab), so a staffer's **clock-in / clock-out appears on the
 leaders' board on its own** — no manual reload needed.
 
-The board columns read **Clocked in** and **Clocked out**, and each person carries a **colour
-chip of their scheduled role** — the **same colours as the schedule** — so you can tell roles
-apart at a glance. (The same **Clocked in / Clocked out** wording is used on the manager
-dashboard's clock summary.)
+The board is **grouped by staffer** (2026-11-22): a person with more than one shift in the day is
+**one block under their name** (name shown once, with an **"N shifts"** badge) with **a line per
+shift**, instead of repeated name rows — so each staffer's day is easy to track. Columns are
+**Staff · Shift · Clocked in · Clocked out · Worked · Break · Status**, where **Shift** is the
+scheduled block that punch belongs to (e.g. `8:00a–12:00p`). The **Break** column tracks the break
+taken on each shift — the minutes (× count), **"+N over"** when it ran past the 10-minute limit, or
+the **live timer** while they're on a break now. "Not clocked in" staff likewise show a line per
+scheduled shift block. Each person carries a **colour chip of their scheduled role** (the same
+colours as the schedule). (The manager dashboard's clock summary keeps the simpler **Clocked in /
+Clocked out** one-row-per-entry view.)
 
 **Auto clock-out (per location).** So unapproved overtime doesn't pile up when someone forgets
 to punch out, the system can **automatically clock a staffer out at their scheduled end** once
