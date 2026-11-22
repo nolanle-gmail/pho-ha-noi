@@ -30,6 +30,12 @@ primary_region = "sjc"            # San Jose — closest to the Bay Area stores
   source = "phn_management_data"
   destination = "/data"
 
+# Dedicated CPU + 2 GB RAM. node:sqlite is synchronous and single-threaded, so a
+# shared (burstable) core gets throttled under background sweeps + concurrent staff
+# polls, causing intermittent "slow/unresponsive". A dedicated vCPU removes the
+# noisy-neighbour throttling; 2 GB gives the 2.4 GB DB more page cache. NOTE: keep
+# this in sync with the live machine — a `fly deploy` reconciles the machine TO this
+# block, so an out-of-date size here would silently shrink prod on the next deploy.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "performance-1x"
+  memory = "2048mb"

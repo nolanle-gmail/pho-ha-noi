@@ -17,6 +17,23 @@ app.use(cors());
 app.use(express.json({ limit: '1mb' }));   // 1mb headroom for kiosk punch photos (small JPEGs)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Slow-request logging. node:sqlite is synchronous, so a request that takes a long
+// time usually means a query (or a background sync) froze the single event-loop
+// thread — the signature of the "app is slow" reports. Log any request slower than
+// SLOW_REQ_MS (default 500 ms) with its method, path and duration so the cause is
+// visible in `fly logs` instead of invisible. Near-zero overhead; health checks are
+// excluded to keep the log clean.
+const SLOW_REQ_MS = parseInt(process.env.SLOW_REQ_MS || '', 10) || 500;
+app.use((req, res, next) => {
+  if (req.path === '/health') return next();
+  const t = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - t) / 1e6;
+    if (ms >= SLOW_REQ_MS) console.warn(`[slow] ${ms.toFixed(0)}ms ${res.statusCode} ${req.method} ${req.originalUrl.split('?')[0]}`);
+  });
+  next();
+});
+
 app.get('/health', (req, res) => res.json({ status: 'ok', app: 'Enterprise Restaurant Management System' }));
 // Per-location time-clock kiosk (staff clock in / out tablet, no login).
 // Each location has its own URL: /clock/<slug> (e.g. /clock/milpitas). The bare
@@ -128,6 +145,9 @@ if (require.main === module) {
   // Watch the live waitlist and alert Nha Le (app message + SMS, once per guest) when a party has
   // been waiting over 30 min — staff sometimes forget to clear guests who already left.
   try { require('./lib/waitlistMonitor').startWaitlistMonitor(); } catch { /* optional */ }
+  // Self-check watchdog: alert owner/admins before the DB volume fills or the VM runs low on RAM
+  // (the two silent app-killers). See lib/healthWatch.js.
+  try { require('./lib/healthWatch').startHealthWatch(); } catch { /* optional */ }
 }
 
 module.exports = app;

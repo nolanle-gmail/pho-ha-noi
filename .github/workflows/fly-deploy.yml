@@ -1,43 +1,29 @@
 name: Deploy to Fly
 
-# Auto-deploys each app to Fly.io when its files change on main (or on a manual
-# run). Each job first runs the smoke suite as a gate, then deploys — and skips
-# the deploy step gracefully until the FLY_API_TOKEN secret is configured, so it
-# won't fail red before you've set Fly up.
+# MANUAL, off-peak deploys. Pushing to main NO LONGER auto-deploys: each deploy fully
+# restarts the single Fly machine (~10-25s of refused connections — a staff-facing
+# outage), so deploying on every small push meant repeated outages during service.
+# CI smoke tests still run on every push (ci.yml); this workflow lands the batched,
+# reviewed changes when YOU choose a quiet window.
 #
-# Setup (once):
-#   1. Create each app + volume (see each app's DEPLOY.md).
-#   2. Create a deploy token that can reach both apps:
-#        fly tokens create org           # org-wide, simplest for two apps
-#      and add it to the repo:  Settings → Secrets and variables → Actions →
-#      New repository secret →  name: FLY_API_TOKEN
+# Deploy via the Actions tab → "Deploy to Fly" → Run workflow, or:
+#   gh workflow run "Deploy to Fly" -f app=management     # just the management app
+#   gh workflow run "Deploy to Fly" -f app=both           # both apps
+# Each job re-runs the smoke suite as a gate before deploying. Requires the
+# FLY_API_TOKEN repo secret (Settings → Secrets and variables → Actions).
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      app:
+        description: Which app to deploy
+        type: choice
+        default: both
+        options: [both, management, waitlist]
 
 jobs:
-  # Which app(s) changed in this push?
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      management: ${{ steps.filter.outputs.management }}
-      waitlist: ${{ steps.filter.outputs.waitlist }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            management:
-              - 'management-app/**'
-            waitlist:
-              - 'waitlist-app/**'
-
   management-app:
-    needs: changes
-    if: needs.changes.outputs.management == 'true' || github.event_name == 'workflow_dispatch'
+    if: ${{ inputs.app == 'both' || inputs.app == 'management' }}
     runs-on: ubuntu-latest
     concurrency:
       group: fly-management
@@ -65,11 +51,10 @@ jobs:
         run: flyctl deploy --remote-only
       - name: Skip (no FLY_API_TOKEN yet)
         if: env.FLY_API_TOKEN == ''
-        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable auto-deploy."
+        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable deploy."
 
   waitlist-app:
-    needs: changes
-    if: needs.changes.outputs.waitlist == 'true' || github.event_name == 'workflow_dispatch'
+    if: ${{ inputs.app == 'both' || inputs.app == 'waitlist' }}
     runs-on: ubuntu-latest
     concurrency:
       group: fly-waitlist
@@ -97,4 +82,4 @@ jobs:
         run: flyctl deploy --remote-only
       - name: Skip (no FLY_API_TOKEN yet)
         if: env.FLY_API_TOKEN == ''
-        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable auto-deploy."
+        run: echo "FLY_API_TOKEN not set — smoke passed, skipping deploy. Add the secret to enable deploy."
