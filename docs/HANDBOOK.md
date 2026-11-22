@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 21, 2026_
+_Last updated: November 22, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2133,7 +2133,17 @@ out — **auto-closed** at the scheduled end by the sweep, or **closed by a mana
 a **"N forgot to clock out"** chip in the day's summary. The recorded clock-out is the **scheduled
 end**, so leaders can review and **Adjust** the hours if the person actually worked later. (Backed
 by `time_entries.overrun_decision` = `auto` / `forced`; the board returns `auto_closed` /
-`forced_out` per entry + a `missed_out` summary count.)
+`forced_out` per entry + a `missed_out` summary count.) The "scheduled end" is the end of the shift
+block the punch belongs to, handling genuine overnight shifts (end past midnight). **An unscheduled
+or second *late* punch** (clocked in *after* the shift already ended, with no block that contains it)
+is **not** given a phantom end — it closes at the clock-in with **0 worked minutes**, flagged for a
+manager to review/add the real hours, instead of auto-closing to a ~20-hour overnight span (fixed
+2026-11-22).
+
+**One location at a time.** A staffer can't be on the clock at two stores at once: clocking in (at
+the kiosk or by a manager) is **blocked while they're still clocked in at another location** —
+"clock out there first." A stale open entry elsewhere is still cleaned up by the auto clock-out
+sweep or a manager (2026-11-22).
 
 The board **auto-refreshes about every 20 seconds** while it's open (it pauses while a dialog is
 open and stops when you leave the tab), so a staffer's **clock-in / clock-out appears on the
