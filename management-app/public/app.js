@@ -6158,7 +6158,7 @@ async function renderCosting() {
 }
 
 // ── Reports module (horizontal tabs) ───────────────────────────────────────
-const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['payments', 'Payments'], ['attendance', 'Attendance'], ['breaks', 'Breaks'], ['conflicts', 'Conflicts'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
+const REPORT_TABS = [['inventory', 'Items'], ['sales', 'Sales'], ['analytics', 'Analytics'], ['timesheets', 'Timesheets'], ['shiftdetail', 'Shift Detail'], ['payments', 'Payments'], ['attendance', 'Attendance'], ['breaks', 'Breaks'], ['conflicts', 'Conflicts'], ['hoursack', 'Acknowledgments'], ['waitlist', 'Waitlist']];
 const reportFilter = { loc: '', start: daysAgoISO(29), end: daysAgoISO(0) };
 function daysAgoISO(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -6170,7 +6170,7 @@ function renderReportTabs() {
 }
 function renderReportModule() {
   $('view').innerHTML = '<div class="empty">Loading…</div>';
-  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, payments: renderRepPayments, attendance: renderRepAttendance, breaks: renderRepBreaks, conflicts: renderRepConflicts, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
+  ({ inventory: renderRepItems, sales: renderRepSales, analytics: renderRepAnalytics, timesheets: renderRepTimesheets, shiftdetail: renderRepShiftDetail, payments: renderRepPayments, attendance: renderRepAttendance, breaks: renderRepBreaks, conflicts: renderRepConflicts, hoursack: renderRepAck, waitlist: renderRepWaitlist }[S.reportTab])();
 }
 const shortLoc = (s) => (s || '').replace('Pho Ha Noi — ', '');
 // Public full-screen Shift Board TV URL for a location (slug derived from its name,
@@ -6613,6 +6613,91 @@ function exportAttendance(d, locName, kind) {
     downloadBlob(html, fname, 'application/vnd.ms-excel');
   }
   toast(`Exported ${d.incidents.length} incident(s) · ${kind.toUpperCase()}`);
+}
+
+// ── Shift Detail report: per-shift attendance grouped by staff (like the Time Clock board,
+// across a date range) — scheduled vs worked hours, late, long break, forgot in/out, no-show.
+async function renderRepShiftDetail() {
+  let d; try { d = await api('/reports/shift-detail' + reportQuery(true)); }
+  catch (e) { $('view').innerHTML = `${reportFilters(true)}<div class="empty">${esc(e.message)}</div>`; wireReportFilters(true); return; }
+  const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
+  const T = d.totals;
+  const shiftLbl = (r) => r.block_start ? `<span class="mono" style="font-size:.85rem">${esc(to12h(r.block_start))}–${esc(to12h(r.block_end))}</span>` : '<span class="badge gray">unscheduled</span>';
+  const lateCell = (r) => r.late_min > 0 ? `<span style="color:var(--out);font-weight:600">${r.late_min}m late</span>` : '<span style="color:var(--muted)">—</span>';
+  const breakCell = (r) => r.break_min > 0 ? `☕ ${r.break_min}m${r.long_break_min > 0 ? ` <span style="color:var(--out);font-weight:600">(+${r.long_break_min} over)</span>` : ''}` : '<span style="color:var(--muted)">—</span>';
+  const flagBadges = (r) => [
+    r.no_show ? '<span class="badge red">No-show</span>' : '',
+    r.forgot_out ? '<span class="badge gold">Forgot clock-out</span>' : '',
+    r.forgot_in ? '<span class="badge gold">Forgot clock-in</span>' : '',
+    r.unscheduled ? '<span class="badge gray">Unscheduled</span>' : '',
+    r.open ? '<span class="badge ok">🟢 On clock</span>' : '',
+    r.status === 'scheduled' ? '<span class="badge gray">Upcoming</span>' : '',
+  ].filter(Boolean).join(' ') || '<span class="badge green">✓ OK</span>';
+  const staffCard = (u) => `<div class="section">
+    <div class="row-between" style="flex-wrap:wrap;gap:.4rem">
+      <h3 style="margin:0">${esc(u.name)} <span class="mono" style="color:var(--muted);font-size:.78rem">${esc(u.employee_code || '')}</span> <span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></h3>
+      <span class="sub" style="color:var(--muted);align-self:center">Scheduled <strong>${fmtDur(u.totals.scheduled_min)}</strong> · Worked <strong>${fmtDur(u.totals.worked_min)}</strong>${u.totals.no_show ? ` · <span class="badge red">${u.totals.no_show} no-show</span>` : ''}${u.totals.late ? ` · <span class="badge blue">${u.totals.late} late</span>` : ''}${u.totals.long_break ? ` · <span class="badge gold">${u.totals.long_break} long break</span>` : ''}${u.totals.forgot_out ? ` · <span class="badge gold">${u.totals.forgot_out} forgot out</span>` : ''}${u.totals.forgot_in ? ` · <span class="badge gold">${u.totals.forgot_in} forgot in</span>` : ''}</span>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Date</th><th>Shift</th><th class="num">Scheduled</th><th>Clock in</th><th>Clock out</th><th class="num">Worked</th><th>Late</th><th>Break</th><th>Status</th></tr></thead><tbody>
+      ${u.rows.map(r => `<tr class="${r.no_show ? 'tc-unscheduled' : ''}">
+        <td>${esc(fmtDay(r.date))}</td>
+        <td>${shiftLbl(r)}</td>
+        <td class="num">${r.scheduled_min ? fmtDur(r.scheduled_min) : '—'}</td>
+        <td>${esc(r.clock_in || '—')}</td>
+        <td>${r.clock_out ? esc(r.clock_out) : (r.no_show ? '' : '<span style="color:var(--muted)">—</span>')}</td>
+        <td class="num">${r.worked_min ? fmtDur(r.worked_min) : (r.no_show ? '<strong>0</strong>' : '—')}</td>
+        <td>${lateCell(r)}</td>
+        <td>${breakCell(r)}</td>
+        <td>${flagBadges(r)}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+  $('view').innerHTML = `${reportFilters(true)}
+    <div class="filters" style="align-items:flex-end">
+      <button class="btn" id="sdRun">▶ Run report</button>
+      <button class="btn ghost" id="sdCsv" ${d.staff.length ? '' : 'disabled'}>⬇ CSV</button>
+      <button class="btn ghost" id="sdXls" ${d.staff.length ? '' : 'disabled'}>⬇ Excel</button>
+      <span class="sub" style="color:var(--muted);align-self:center">${esc(locName)} · ${esc(d.start)} → ${esc(d.end)}</span>
+    </div>
+    <p class="sub" style="margin:.1rem 0 .7rem;color:var(--muted)">Per-shift detail grouped by staff — scheduled vs worked hours, <strong>late</strong>, <strong>long break</strong>, forgot clock-in / clock-out, and <strong>no-shows</strong> (scheduled but never clocked in). Unscheduled punches show too.</p>
+    <div class="kpis">
+      <div class="card"><div class="label">Scheduled hours</div><div class="value">${fmtDur(T.scheduled_min)}</div></div>
+      <div class="card"><div class="label">Worked hours</div><div class="value">${fmtDur(T.worked_min)}</div></div>
+      <div class="card"><div class="label">No-show</div><div class="value ${T.no_show ? 'bad' : ''}">${T.no_show}</div></div>
+      <div class="card"><div class="label">Late</div><div class="value ${T.late ? 'warn' : ''}">${T.late}</div></div>
+      <div class="card"><div class="label">Long break</div><div class="value ${T.long_break ? 'warn' : ''}">${T.long_break}</div></div>
+      <div class="card"><div class="label">Forgot clock-out</div><div class="value ${T.forgot_out ? 'warn' : ''}">${T.forgot_out}</div></div>
+      <div class="card"><div class="label">Forgot clock-in</div><div class="value ${T.forgot_in ? 'warn' : ''}">${T.forgot_in}</div></div>
+      <div class="card"><div class="label">Staff</div><div class="value">${T.staff}</div></div>
+    </div>
+    ${d.staff.length ? d.staff.map(staffCard).join('') : '<div class="empty">No scheduled shifts or punches in this range.</div>'}`;
+  wireReportFilters(true);
+  $('sdRun').onclick = renderRepShiftDetail;
+  $('sdCsv').onclick = () => exportShiftDetail(d, locName, 'csv');
+  $('sdXls').onclick = () => exportShiftDetail(d, locName, 'xls');
+}
+
+// CSV / Excel export of the shift-detail report (one row per shift).
+function exportShiftDetail(d, locName, kind) {
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Date', 'Shift start', 'Shift end', 'Scheduled hrs', 'Clock in', 'Clock out', 'Worked hrs', 'Late min', 'Break min', 'Long-break min', 'Forgot in', 'Forgot out', 'No-show', 'Unscheduled', 'Status'];
+  const h = (m) => m ? Math.round(m / 60 * 100) / 100 : 0;
+  const rows = [];
+  for (const u of d.staff) for (const r of u.rows) rows.push([u.name, u.employee_code || '', roleLabel(u.role), shortLoc(r.loc) || '', r.date, r.block_start || '', r.block_end || '', h(r.scheduled_min), r.clock_in || '', r.clock_out || '', h(r.worked_min), r.late_min || 0, r.break_min || 0, r.long_break_min || 0, r.forgot_in ? 'Y' : '', r.forgot_out ? 'Y' : '', r.no_show ? 'Y' : '', r.unscheduled ? 'Y' : '', r.status]);
+  const base = `shift-detail_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
+  const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
+  const title = `Phở Hà Nội — Shift detail · ${locName} · ${d.start} to ${d.end}`;
+  const T = d.totals;
+  const summary = `Scheduled ${h(T.scheduled_min)}h, Worked ${h(T.worked_min)}h · ${T.no_show} no-show, ${T.late} late, ${T.long_break} long break, ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in · ${T.staff} staff.`;
+  if (kind === 'csv') {
+    const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const block = [[title], [summary], [], cols, ...rows];
+    downloadBlob('﻿' + block.map(r => r.map(q).join(',')).join('\r\n'), fname, 'text/csv;charset=utf-8');
+  } else {
+    const headRow = (arr) => '<tr>' + arr.map(c => `<th style="background:#930B19;color:#fff;text-align:left">${escHtml(c)}</th>`).join('') + '</tr>';
+    const bodyRow = (arr) => '<tr>' + arr.map(c => `<td>${escHtml(c)}</td>`).join('') + '</tr>';
+    const tbl = `<table border="1"><thead>${headRow(cols)}</thead><tbody>${rows.map(bodyRow).join('')}</tbody></table>`;
+    const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"></head><body><h3>${escHtml(title)}</h3><p>${escHtml(summary)}</p>${tbl}</body></html>`;
+    downloadBlob(html, fname, 'application/vnd.ms-excel');
+  }
+  toast(`Exported ${rows.length} shift row(s) · ${kind.toUpperCase()}`);
 }
 
 // CSV / Excel export of the full acknowledgment roster (all staff, every status).

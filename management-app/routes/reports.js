@@ -485,4 +485,92 @@ router.get('/attendance-exceptions', requireRole(ROLES.REPORTS), (req, res) => {
   res.json({ start, end, location_id: locId ? Number(locId) : null, totals, staff_affected: by_staff.length, by_staff, incidents });
 });
 
+// ── Shift detail (a per-shift attendance report, grouped by staff) ────────────
+// Like the Time Clock board but across a date range: for every scheduled shift it pairs the
+// staffer's punches to that shift and shows scheduled vs worked hours, late, long break, forgot
+// clock-in / clock-out, and NO-SHOW (scheduled but never clocked in). Unscheduled punches show too.
+const sdHhmm = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(s || ''); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+const sdMinOfDay = (tz, d) => { const p = new Intl.DateTimeFormat('en-US', { timeZone: tz || DEFAULT_TZ, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(d); return (Number(p.find(x => x.type === 'hour').value) % 24) * 60 + Number(p.find(x => x.type === 'minute').value); };
+const sdBlockEnd = (b) => (b.eMin <= b.sMin ? b.eMin + 1440 : b.eMin);      // minutes, overnight-aware
+router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
+  const { locId } = scope(req); const { start, end } = dateRange(req);
+  const sConds = ["s.kind='work'", 's.start_time IS NOT NULL', 's.end_time IS NOT NULL', 's.shift_date>=?', 's.shift_date<=?'], sArgs = [start, end];
+  if (locId) { sConds.push('s.location_id=?'); sArgs.push(locId); }
+  const shifts = db.prepare(`SELECT s.id shift_id, s.user_id, u.name, u.employee_code, u.role, s.shift_date, s.start_time, s.end_time, s.location_id, l.name loc, l.timezone,
+      (SELECT j.name FROM shift_jobs sj JOIN jobs j ON j.id=sj.job_id WHERE sj.shift_id=s.id ORDER BY j.name LIMIT 1) job
+    FROM shifts s JOIN users u ON u.id=s.user_id JOIN locations l ON l.id=s.location_id
+    WHERE ${sConds.join(' AND ')}`).all(...sArgs);
+  const eConds = ['te.work_date>=?', 'te.work_date<=?'], eArgs = [start, end];
+  if (locId) { eConds.push('te.location_id=?'); eArgs.push(locId); }
+  const entries = db.prepare(`SELECT te.id, te.user_id, u.name, u.employee_code, u.role, te.work_date, te.clock_in, te.clock_out,
+      te.worked_minutes, te.scheduled_minutes, te.late_minutes, te.overrun_decision, te.opened_by, te.location_id, l.name loc, l.timezone,
+      (SELECT COALESCE(SUM(over_limit_min),0) FROM time_entry_breaks b WHERE b.time_entry_id=te.id AND b.break_in_at IS NOT NULL) long_break_min,
+      (SELECT COALESCE(SUM(minutes),0) FROM time_entry_breaks b WHERE b.time_entry_id=te.id AND b.break_in_at IS NOT NULL) break_min,
+      (SELECT COUNT(*) FROM time_entry_breaks b WHERE b.time_entry_id=te.id AND b.break_in_at IS NOT NULL) breaks_count
+    FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
+    WHERE ${eConds.join(' AND ')}`).all(...eArgs);
+
+  const blocksByUD = new Map(), entriesByUD = new Map(), umeta = new Map();
+  const metaOf = (o, job) => { if (!umeta.has(o.user_id)) umeta.set(o.user_id, { user_id: o.user_id, name: o.name, employee_code: o.employee_code || null, role: o.role, location: o.loc, job: job || null }); else if (job && !umeta.get(o.user_id).job) umeta.get(o.user_id).job = job; return umeta.get(o.user_id); };
+  for (const s of shifts) { metaOf(s, s.job); const k = s.user_id + '|' + s.shift_date; if (!blocksByUD.has(k)) blocksByUD.set(k, []); blocksByUD.get(k).push({ shift_id: s.shift_id, start: s.start_time, end: s.end_time, sMin: sdHhmm(s.start_time), eMin: sdHhmm(s.end_time), loc: s.loc, tz: s.timezone, entries: [] }); }
+  for (const e of entries) { metaOf(e); const k = e.user_id + '|' + e.work_date; if (!entriesByUD.has(k)) entriesByUD.set(k, []); entriesByUD.get(k).push(e); }
+  const pick = (blocks, ci) => { if (!blocks.length) return null; const inside = blocks.find(b => ci >= b.sMin && ci <= sdBlockEnd(b)); return inside || blocks.find(b => b.sMin >= ci) || blocks[blocks.length - 1]; };
+
+  const now = new Date();
+  const perUser = new Map();
+  const ensureU = (uid) => { if (!perUser.has(uid)) { const m = umeta.get(uid); perUser.set(uid, { ...m, rows: [], totals: { scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 } }); } return perUser.get(uid); };
+  for (const key of new Set([...blocksByUD.keys(), ...entriesByUD.keys()])) {
+    const [uidStr, date] = key.split('|'); const uid = +uidStr;
+    const blocks = blocksByUD.get(key) || [];
+    const es = entriesByUD.get(key) || [];
+    const U = ensureU(uid);
+    const used = new Set();
+    for (const e of es) { const b = pick(blocks, sdMinOfDay(e.timezone, new Date(e.clock_in))); if (b) { b.entries.push(e); used.add(e.id); } }
+    for (const b of blocks) {
+      const tz = b.tz || DEFAULT_TZ, schedMin = sdBlockEnd(b) - b.sMin;
+      U.totals.scheduled_min += schedMin; U.totals.shifts++;
+      if (b.entries.length) {
+        const ein = b.entries.slice().sort((x, y) => new Date(x.clock_in) - new Date(y.clock_in));
+        const worked = b.entries.reduce((a, e) => a + (e.worked_minutes || 0), 0);
+        const late = b.entries.reduce((a, e) => Math.max(a, e.late_minutes || 0), 0);
+        const longBreak = b.entries.reduce((a, e) => a + (e.long_break_min || 0), 0);
+        const breakMin = b.entries.reduce((a, e) => a + (e.break_min || 0), 0);
+        const forgotOut = b.entries.some(e => ['auto', 'forced'].includes(e.overrun_decision) && e.clock_out) ? 1 : 0;
+        const forgotIn = b.entries.some(e => e.opened_by != null && String(e.opened_by) !== String(uid)) ? 1 : 0;
+        const open = b.entries.some(e => !e.clock_out) ? 1 : 0;
+        const last = ein[ein.length - 1];
+        U.rows.push({ date, loc: b.loc, block_start: b.start, block_end: b.end, scheduled_min: schedMin,
+          clock_in: localTime(tz, new Date(ein[0].clock_in)), clock_out: last.clock_out ? localTime(tz, new Date(last.clock_out)) : null,
+          worked_min: worked, late_min: late, long_break_min: longBreak, break_min: breakMin,
+          forgot_in: forgotIn, forgot_out: forgotOut, no_show: 0, unscheduled: 0, open, status: open ? 'open' : 'worked' });
+        U.totals.worked_min += worked;
+        if (late > 0) U.totals.late++; if (longBreak > 0) U.totals.long_break++; if (forgotIn) U.totals.forgot_in++; if (forgotOut) U.totals.forgot_out++;
+      } else {
+        const todayLocal = localDate(tz);
+        const past = date < todayLocal || (date === todayLocal && sdMinOfDay(tz, now) > sdBlockEnd(b));
+        U.rows.push({ date, loc: b.loc, block_start: b.start, block_end: b.end, scheduled_min: schedMin,
+          clock_in: null, clock_out: null, worked_min: 0, late_min: 0, long_break_min: 0, break_min: 0,
+          forgot_in: 0, forgot_out: 0, no_show: past ? 1 : 0, unscheduled: 0, open: 0, status: past ? 'no_show' : 'scheduled' });
+        if (past) U.totals.no_show++;
+      }
+    }
+    for (const e of es) {
+      if (used.has(e.id)) continue;
+      const tz = e.timezone || DEFAULT_TZ;
+      const forgotOut = ['auto', 'forced'].includes(e.overrun_decision) && e.clock_out ? 1 : 0;
+      const forgotIn = e.opened_by != null && String(e.opened_by) !== String(uid) ? 1 : 0;
+      U.rows.push({ date, loc: e.loc, block_start: null, block_end: null, scheduled_min: 0,
+        clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
+        worked_min: e.worked_minutes || 0, late_min: e.late_minutes || 0, long_break_min: e.long_break_min || 0, break_min: e.break_min || 0,
+        forgot_in: forgotIn, forgot_out: forgotOut, no_show: 0, unscheduled: 1, open: e.clock_out ? 0 : 1, status: 'unscheduled' });
+      U.totals.worked_min += e.worked_minutes || 0; U.totals.shifts++;
+      if ((e.late_minutes || 0) > 0) U.totals.late++; if ((e.long_break_min || 0) > 0) U.totals.long_break++; if (forgotIn) U.totals.forgot_in++; if (forgotOut) U.totals.forgot_out++;
+    }
+  }
+  const staff = [...perUser.values()].map(u => ({ ...u, rows: u.rows.sort((a, b) => a.date.localeCompare(b.date) || String(a.block_start || '~').localeCompare(String(b.block_start || '~'))) })).sort((a, b) => a.name.localeCompare(b.name));
+  const T = { staff: staff.length, scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 };
+  for (const u of staff) for (const k of Object.keys(T)) if (k !== 'staff') T[k] += u.totals[k];
+  res.json({ start, end, location_id: locId ? Number(locId) : null, totals: T, staff });
+});
+
 module.exports = router;
