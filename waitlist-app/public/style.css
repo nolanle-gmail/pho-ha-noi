@@ -15,6 +15,16 @@ input:not([type="checkbox"]):not([type="radio"]):focus, select:focus { outline: 
 .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, var(--red-dark), var(--red)); padding: 1rem; }
 .login-card { background: #fff; border-radius: 18px; padding: 2.25rem; width: 100%; max-width: 360px; box-shadow: 0 24px 60px rgba(0,0,0,.35); text-align: center; }
 .app-copyright { text-align: center; font-size: .72rem; color: var(--muted); padding: .9rem .5rem 1.1rem; }
+/* Staff clock-status banner above the content (clocked in / out / on break / no shift today). */
+.clockbanner-wrap { padding-bottom: 0; }
+.clock-banner { margin: 0; padding: .8rem 1rem; border-radius: 12px; font-size: .96rem; line-height: 1.4;
+  border: 1px solid var(--line); border-left: 5px solid var(--muted); background: var(--surface); color: var(--ink); }
+.clock-banner strong { color: inherit; }
+.clock-banner.ok { background: var(--ok-bg); border-color: var(--ok); color: #14532d; }
+.clock-banner.warn { background: var(--warn-bg); border-color: var(--warn); color: #92400e; }
+.clock-banner.done { background: #e7eefc; border-color: #2b5bd7; color: #1b3a86; }
+.clock-banner.muted { background: var(--bg); border-color: var(--muted); color: var(--muted); }
+.clock-banner.info { background: #e7eefc; border-color: #2b5bd7; color: #1b3a86; }
 /* My Schedule */
 .sched-list { display: flex; flex-direction: column; gap: .5rem; }
 .sched-day { display: flex; gap: .8rem; padding: .6rem .8rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, #fff); }

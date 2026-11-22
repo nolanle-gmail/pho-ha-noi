@@ -23,6 +23,19 @@ router.get('/my-hours', async (req, res) => {
   }
 });
 
+// Today's own clock status (clocked in / out / on break / scheduled-not-in / no shift) for the
+// app's home banner — proxied to Management acting as the signed-in staff member.
+router.get('/my-today', async (req, res) => {
+  const email = (req.user.email || '').toLowerCase();
+  if (!email) return res.status(400).json({ error: 'No timesheet identity for this account.' });
+  try {
+    const r = await fetch(`${MGMT_URL}/api/timeclock/my-today?as=${encodeURIComponent(email)}`, { headers: { 'X-Service-Key': KEY } });
+    res.status(r.status).json(await r.json().catch(() => ({})));
+  } catch {
+    res.status(502).json({ error: 'Status is temporarily unavailable.' });
+  }
+});
+
 // End-of-day sign-off: confirm a day's hours, or report an issue (which messages the manager).
 // Both forward to Management acting as the signed-in staff member.
 for (const action of ['confirm', 'dispute']) {

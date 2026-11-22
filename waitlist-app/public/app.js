@@ -184,6 +184,8 @@ async function boot() {
   ab.onclick = openAlertComposer;
   checkPendingAlerts();
   showInstallBanner();   // offer "add to home screen" once signed in (if not already installed)
+  renderClockBanner();   // today's own clock status banner above the content
+  if (!window._clockBannerT) window._clockBannerT = setInterval(renderClockBanner, 60000);
   // Keep this device's push subscription fresh when notifications are already on.
   if (pushSupported() && Notification.permission === 'granted') subscribePush().catch(() => { /* offline */ });
   // Backstop refresh for the live boards. The SSE stream (setupStaffStream) already pushes a
@@ -342,6 +344,40 @@ function render() {
   if (S.view === 'alerts') return renderAlerts();
   if (S.view === 'settings') return renderSettings();
   return renderBoard();
+}
+
+// Today's own clock status, shown as a persistent banner above the content (it's a sibling of
+// #view, so it survives view switches) so staff remember whether they've clocked in / out, are
+// on a break, or have no shift today. Proxied to Management's /timeclock/my-today.
+async function renderClockBanner() {
+  const el = $('clockBanner'); if (!el) return;
+  const wrap = $('clockBannerWrap');
+  const hide = () => { el.innerHTML = ''; el.className = 'clock-banner'; if (wrap) wrap.style.display = 'none'; };
+  let d; try { d = await api('/timeclock/my-today'); } catch { hide(); return; }
+  const shortName = (n) => String(n || '').replace(/^Ph[oở]\s*H[aà]\s*N[oộ]i\s*[—–-]\s*/i, '').trim() || n;
+  const t12 = (hhmm) => { if (!hhmm) return ''; const [H, M] = String(hhmm).split(':').map(Number); if (isNaN(H)) return hhmm; const ap = H < 12 ? 'am' : 'pm'; const h = (H % 12) || 12; return M ? `${h}:${String(M).padStart(2, '0')}${ap}` : `${h}${ap}`; };
+  const loc = d.location ? ` at ${esc(shortName(d.location))}` : '';
+  let cls = 'info', msg = '';
+  if (d.state === 'in') {
+    cls = 'ok';
+    msg = `🟢 <strong>You’re clocked in</strong>${loc} since <strong>${esc(d.clock_in)}</strong> — ${fmtHrs(d.worked_minutes)} so far. Remember to clock out at the kiosk when you leave.`;
+  } else if (d.state === 'on_break') {
+    cls = 'warn';
+    msg = `☕ <strong>You’re on a break</strong>${d.break_since ? ` since <strong>${esc(d.break_since)}</strong>` : ''} — clock back in at the kiosk when you return.`;
+  } else if (d.state === 'out') {
+    cls = 'done';
+    msg = `✅ <strong>You clocked out</strong>${loc} at <strong>${esc(d.clock_out)}</strong> — ${fmtHrs(d.worked_minutes)} worked today.`;
+  } else if (d.state === 'not_in') {
+    const sh = (d.shifts || [])[0];
+    cls = 'warn';
+    msg = `🗓️ <strong>You haven’t clocked in yet today.</strong>${sh ? ` Today’s shift: <strong>${esc(t12(sh.start))}–${esc(t12(sh.end))}</strong>${d.shifts.length > 1 ? ` (+${d.shifts.length - 1} more)` : ''}. Clock in at the kiosk.` : ''}`;
+  } else {
+    cls = 'muted';
+    msg = `🌙 <strong>No shift scheduled for you today.</strong>`;
+  }
+  el.className = 'clock-banner ' + cls;
+  el.innerHTML = msg;
+  if (wrap) wrap.style.display = '';
 }
 
 // ── Messages: team inbox + compose, proxied to the shared Management directory ─
