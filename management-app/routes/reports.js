@@ -509,6 +509,19 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
       (SELECT COUNT(*) FROM time_entry_breaks b WHERE b.time_entry_id=te.id AND b.break_in_at IS NOT NULL) breaks_count
     FROM time_entries te JOIN users u ON u.id=te.user_id JOIN locations l ON l.id=te.location_id
     WHERE ${eConds.join(' AND ')}`).all(...eArgs);
+  // Individual break punches (start time + over-limit) per entry, for the break-time display.
+  const brkRows = db.prepare(`SELECT b.time_entry_id, b.break_out_at, COALESCE(b.over_limit_min,0) over_min
+    FROM time_entry_breaks b JOIN time_entries te ON te.id=b.time_entry_id
+    WHERE te.work_date>=? AND te.work_date<=? ${locId ? 'AND te.location_id=?' : ''} AND b.break_in_at IS NOT NULL
+    ORDER BY b.break_out_at`).all(...(locId ? [start, end, locId] : [start, end]));
+  const breaksByEntry = new Map();
+  for (const b of brkRows) { if (!breaksByEntry.has(b.time_entry_id)) breaksByEntry.set(b.time_entry_id, []); breaksByEntry.get(b.time_entry_id).push(b); }
+  // Missed scheduled breaks (the durable record) per (user, date) → attach to its shift via shift_id.
+  const mbRows = db.prepare(`SELECT mb.user_id, mb.work_date, mb.scheduled_time, sb.shift_id
+    FROM missed_breaks mb LEFT JOIN shift_breaks sb ON sb.id=mb.shift_break_id
+    WHERE mb.work_date>=? AND mb.work_date<=? ${locId ? 'AND mb.location_id=?' : ''}`).all(...(locId ? [start, end, locId] : [start, end]));
+  const missedByUD = new Map();
+  for (const m of mbRows) { const k = m.user_id + '|' + m.work_date; if (!missedByUD.has(k)) missedByUD.set(k, []); missedByUD.get(k).push(m); }
 
   const blocksByUD = new Map(), entriesByUD = new Map(), umeta = new Map();
   const metaOf = (o, job) => { if (!umeta.has(o.user_id)) umeta.set(o.user_id, { user_id: o.user_id, name: o.name, employee_code: o.employee_code || null, role: o.role, location: o.loc, job: job || null }); else if (job && !umeta.get(o.user_id).job) umeta.get(o.user_id).job = job; return umeta.get(o.user_id); };
@@ -518,12 +531,16 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
 
   const now = new Date();
   const perUser = new Map();
-  const ensureU = (uid) => { if (!perUser.has(uid)) { const m = umeta.get(uid); perUser.set(uid, { ...m, rows: [], totals: { scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 } }); } return perUser.get(uid); };
+  const ensureU = (uid) => { if (!perUser.has(uid)) { const m = umeta.get(uid); perUser.set(uid, { ...m, rows: [], totals: { scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, missed_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 } }); } return perUser.get(uid); };
+  const breakTimesOf = (block, tz) => { const out = []; for (const e of block.entries) for (const bk of (breaksByEntry.get(e.id) || [])) out.push({ time: localTime(tz, new Date(bk.break_out_at)), over: bk.over_min || 0 }); return out; };
   for (const key of new Set([...blocksByUD.keys(), ...entriesByUD.keys()])) {
     const [uidStr, date] = key.split('|'); const uid = +uidStr;
     const blocks = blocksByUD.get(key) || [];
     const es = entriesByUD.get(key) || [];
+    const missed = missedByUD.get(key) || [];     // missed scheduled breaks for this (user, date)
+    const missedForShift = (sid) => missed.filter(m => String(m.shift_id) === String(sid)).length;
     const U = ensureU(uid);
+    U.totals.missed_break += missed.length;
     const used = new Set();
     for (const e of es) { const b = pick(blocks, sdMinOfDay(e.timezone, new Date(e.clock_in))); if (b) { b.entries.push(e); used.add(e.id); } }
     for (const b of blocks) {
@@ -541,7 +558,7 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
         const last = ein[ein.length - 1];
         U.rows.push({ date, loc: b.loc, block_start: b.start, block_end: b.end, scheduled_min: schedMin,
           clock_in: localTime(tz, new Date(ein[0].clock_in)), clock_out: last.clock_out ? localTime(tz, new Date(last.clock_out)) : null,
-          worked_min: worked, late_min: late, long_break_min: longBreak, break_min: breakMin,
+          worked_min: worked, late_min: late, long_break_min: longBreak, break_min: breakMin, break_times: breakTimesOf(b, tz), missed_break: missedForShift(b.shift_id),
           forgot_in: forgotIn, forgot_out: forgotOut, no_show: 0, unscheduled: 0, open, status: open ? 'open' : 'worked' });
         U.totals.worked_min += worked;
         if (late > 0) U.totals.late++; if (longBreak > 0) U.totals.long_break++; if (forgotIn) U.totals.forgot_in++; if (forgotOut) U.totals.forgot_out++;
@@ -549,7 +566,7 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
         const todayLocal = localDate(tz);
         const past = date < todayLocal || (date === todayLocal && sdMinOfDay(tz, now) > sdBlockEnd(b));
         U.rows.push({ date, loc: b.loc, block_start: b.start, block_end: b.end, scheduled_min: schedMin,
-          clock_in: null, clock_out: null, worked_min: 0, late_min: 0, long_break_min: 0, break_min: 0,
+          clock_in: null, clock_out: null, worked_min: 0, late_min: 0, long_break_min: 0, break_min: 0, break_times: [], missed_break: missedForShift(b.shift_id),
           forgot_in: 0, forgot_out: 0, no_show: past ? 1 : 0, unscheduled: 0, open: 0, status: past ? 'no_show' : 'scheduled' });
         if (past) U.totals.no_show++;
       }
@@ -562,14 +579,15 @@ router.get('/shift-detail', requireRole(ROLES.REPORTS), (req, res) => {
       U.rows.push({ date, loc: e.loc, block_start: null, block_end: null, scheduled_min: 0,
         clock_in: localTime(tz, new Date(e.clock_in)), clock_out: e.clock_out ? localTime(tz, new Date(e.clock_out)) : null,
         worked_min: e.worked_minutes || 0, late_min: e.late_minutes || 0, long_break_min: e.long_break_min || 0, break_min: e.break_min || 0,
+        break_times: (breaksByEntry.get(e.id) || []).map(bk => ({ time: localTime(tz, new Date(bk.break_out_at)), over: bk.over_min || 0 })), missed_break: 0,
         forgot_in: forgotIn, forgot_out: forgotOut, no_show: 0, unscheduled: 1, open: e.clock_out ? 0 : 1, status: 'unscheduled' });
       U.totals.worked_min += e.worked_minutes || 0; U.totals.shifts++;
       if ((e.late_minutes || 0) > 0) U.totals.late++; if ((e.long_break_min || 0) > 0) U.totals.long_break++; if (forgotIn) U.totals.forgot_in++; if (forgotOut) U.totals.forgot_out++;
     }
   }
   const staff = [...perUser.values()].map(u => ({ ...u, rows: u.rows.sort((a, b) => a.date.localeCompare(b.date) || String(a.block_start || '~').localeCompare(String(b.block_start || '~'))) })).sort((a, b) => a.name.localeCompare(b.name));
-  const T = { staff: staff.length, scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 };
-  for (const u of staff) for (const k of Object.keys(T)) if (k !== 'staff') T[k] += u.totals[k];
+  const T = { staff: staff.length, scheduled_min: 0, worked_min: 0, late: 0, long_break: 0, missed_break: 0, forgot_in: 0, forgot_out: 0, no_show: 0, shifts: 0 };
+  for (const u of staff) for (const k of Object.keys(T)) if (k !== 'staff') T[k] += (u.totals[k] || 0);
   res.json({ start, end, location_id: locId ? Number(locId) : null, totals: T, staff });
 });
 

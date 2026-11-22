@@ -6622,9 +6622,19 @@ async function renderRepShiftDetail() {
   catch (e) { $('view').innerHTML = `${reportFilters(true)}<div class="empty">${esc(e.message)}</div>`; wireReportFilters(true); return; }
   const locName = reportFilter.loc ? (shortLoc((S.locations.find(l => String(l.id) === String(reportFilter.loc)) || {}).name) || 'Selected location') : 'All locations';
   const T = d.totals;
+  const dash = '<span style="color:var(--muted)">—</span>';
+  // A punch time with its kind tag: (i) clock-in, (o) clock-out, (b) break.
+  const tTag = (t, k) => `${esc(t)}<span style="color:var(--muted);font-size:.82em">(${k})</span>`;
   const shiftLbl = (r) => r.block_start ? `<span class="mono" style="font-size:.85rem">${esc(to12h(r.block_start))}–${esc(to12h(r.block_end))}</span>` : '<span class="badge gray">unscheduled</span>';
-  const lateCell = (r) => r.late_min > 0 ? `<span style="color:var(--out);font-weight:600">${r.late_min}m late</span>` : '<span style="color:var(--muted)">—</span>';
-  const breakCell = (r) => r.break_min > 0 ? `☕ ${r.break_min}m${r.long_break_min > 0 ? ` <span style="color:var(--out);font-weight:600">(+${r.long_break_min} over)</span>` : ''}` : '<span style="color:var(--muted)">—</span>';
+  const lateCell = (r) => r.late_min > 0 ? `<span style="color:var(--out);font-weight:600">${r.late_min}m late</span>` : dash;
+  const inCell = (r) => r.clock_in ? tTag(r.clock_in, 'i') : dash;
+  const outCell = (r) => r.clock_out ? tTag(r.clock_out, 'o') : (r.no_show ? '' : dash);
+  // Break column: each break's start time with (b) + "+N over", plus a chip for any missed break.
+  const breakCell = (r) => {
+    const parts = (r.break_times || []).map(b => `${tTag(b.time, 'b')}${b.over > 0 ? ` <span style="color:var(--out);font-weight:600">+${b.over} over</span>` : ''}`);
+    if (r.missed_break > 0) parts.push(`<span class="badge gold" title="Scheduled break(s) not taken">⚠ ${r.missed_break} missed</span>`);
+    return parts.length ? parts.join(' · ') : dash;
+  };
   const flagBadges = (r) => [
     r.no_show ? '<span class="badge red">No-show</span>' : '',
     r.forgot_out ? '<span class="badge gold">Forgot clock-out</span>' : '',
@@ -6636,15 +6646,15 @@ async function renderRepShiftDetail() {
   const staffCard = (u) => `<div class="section">
     <div class="row-between" style="flex-wrap:wrap;gap:.4rem">
       <h3 style="margin:0">${esc(u.name)} <span class="mono" style="color:var(--muted);font-size:.78rem">${esc(u.employee_code || '')}</span> <span class="badge ${ROLE_CHIP[u.role] || 'gray'}">${esc(roleLabel(u.role))}</span></h3>
-      <span class="sub" style="color:var(--muted);align-self:center">Scheduled <strong>${fmtDur(u.totals.scheduled_min)}</strong> · Worked <strong>${fmtDur(u.totals.worked_min)}</strong>${u.totals.no_show ? ` · <span class="badge red">${u.totals.no_show} no-show</span>` : ''}${u.totals.late ? ` · <span class="badge blue">${u.totals.late} late</span>` : ''}${u.totals.long_break ? ` · <span class="badge gold">${u.totals.long_break} long break</span>` : ''}${u.totals.forgot_out ? ` · <span class="badge gold">${u.totals.forgot_out} forgot out</span>` : ''}${u.totals.forgot_in ? ` · <span class="badge gold">${u.totals.forgot_in} forgot in</span>` : ''}</span>
+      <span class="sub" style="color:var(--muted);align-self:center">Scheduled <strong>${fmtDur(u.totals.scheduled_min)}</strong> · Worked <strong>${fmtDur(u.totals.worked_min)}</strong>${u.totals.no_show ? ` · <span class="badge red">${u.totals.no_show} no-show</span>` : ''}${u.totals.late ? ` · <span class="badge blue">${u.totals.late} late</span>` : ''}${u.totals.long_break ? ` · <span class="badge gold">${u.totals.long_break} long break</span>` : ''}${u.totals.missed_break ? ` · <span class="badge gold">${u.totals.missed_break} missed break</span>` : ''}${u.totals.forgot_out ? ` · <span class="badge gold">${u.totals.forgot_out} forgot out</span>` : ''}${u.totals.forgot_in ? ` · <span class="badge gold">${u.totals.forgot_in} forgot in</span>` : ''}</span>
     </div>
     <div class="table-wrap"><table><thead><tr><th>Date</th><th>Shift</th><th class="num">Scheduled</th><th>Clock in</th><th>Clock out</th><th class="num">Worked</th><th>Late</th><th>Break</th><th>Status</th></tr></thead><tbody>
       ${u.rows.map(r => `<tr class="${r.no_show ? 'tc-unscheduled' : ''}">
         <td>${esc(fmtDay(r.date))}</td>
         <td>${shiftLbl(r)}</td>
         <td class="num">${r.scheduled_min ? fmtDur(r.scheduled_min) : '—'}</td>
-        <td>${esc(r.clock_in || '—')}</td>
-        <td>${r.clock_out ? esc(r.clock_out) : (r.no_show ? '' : '<span style="color:var(--muted)">—</span>')}</td>
+        <td>${inCell(r)}</td>
+        <td>${outCell(r)}</td>
         <td class="num">${r.worked_min ? fmtDur(r.worked_min) : (r.no_show ? '<strong>0</strong>' : '—')}</td>
         <td>${lateCell(r)}</td>
         <td>${breakCell(r)}</td>
@@ -6664,6 +6674,7 @@ async function renderRepShiftDetail() {
       <div class="card"><div class="label">No-show</div><div class="value ${T.no_show ? 'bad' : ''}">${T.no_show}</div></div>
       <div class="card"><div class="label">Late</div><div class="value ${T.late ? 'warn' : ''}">${T.late}</div></div>
       <div class="card"><div class="label">Long break</div><div class="value ${T.long_break ? 'warn' : ''}">${T.long_break}</div></div>
+      <div class="card"><div class="label">Missed break</div><div class="value ${T.missed_break ? 'warn' : ''}">${T.missed_break}</div></div>
       <div class="card"><div class="label">Forgot clock-out</div><div class="value ${T.forgot_out ? 'warn' : ''}">${T.forgot_out}</div></div>
       <div class="card"><div class="label">Forgot clock-in</div><div class="value ${T.forgot_in ? 'warn' : ''}">${T.forgot_in}</div></div>
       <div class="card"><div class="label">Staff</div><div class="value">${T.staff}</div></div>
@@ -6677,15 +6688,15 @@ async function renderRepShiftDetail() {
 
 // CSV / Excel export of the shift-detail report (one row per shift).
 function exportShiftDetail(d, locName, kind) {
-  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Date', 'Shift start', 'Shift end', 'Scheduled hrs', 'Clock in', 'Clock out', 'Worked hrs', 'Late min', 'Break min', 'Long-break min', 'Forgot in', 'Forgot out', 'No-show', 'Unscheduled', 'Status'];
+  const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Date', 'Shift start', 'Shift end', 'Scheduled hrs', 'Clock in', 'Clock out', 'Worked hrs', 'Late min', 'Break times', 'Break min', 'Long-break min', 'Missed breaks', 'Forgot in', 'Forgot out', 'No-show', 'Unscheduled', 'Status'];
   const h = (m) => m ? Math.round(m / 60 * 100) / 100 : 0;
   const rows = [];
-  for (const u of d.staff) for (const r of u.rows) rows.push([u.name, u.employee_code || '', roleLabel(u.role), shortLoc(r.loc) || '', r.date, r.block_start || '', r.block_end || '', h(r.scheduled_min), r.clock_in || '', r.clock_out || '', h(r.worked_min), r.late_min || 0, r.break_min || 0, r.long_break_min || 0, r.forgot_in ? 'Y' : '', r.forgot_out ? 'Y' : '', r.no_show ? 'Y' : '', r.unscheduled ? 'Y' : '', r.status]);
+  for (const u of d.staff) for (const r of u.rows) rows.push([u.name, u.employee_code || '', roleLabel(u.role), shortLoc(r.loc) || '', r.date, r.block_start || '', r.block_end || '', h(r.scheduled_min), r.clock_in || '', r.clock_out || '', h(r.worked_min), r.late_min || 0, (r.break_times || []).map(b => b.time).join('; '), r.break_min || 0, r.long_break_min || 0, r.missed_break || 0, r.forgot_in ? 'Y' : '', r.forgot_out ? 'Y' : '', r.no_show ? 'Y' : '', r.unscheduled ? 'Y' : '', r.status]);
   const base = `shift-detail_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
   const fname = kind === 'xls' ? `${base}.xls` : `${base}.csv`;
   const title = `Phở Hà Nội — Shift detail · ${locName} · ${d.start} to ${d.end}`;
   const T = d.totals;
-  const summary = `Scheduled ${h(T.scheduled_min)}h, Worked ${h(T.worked_min)}h · ${T.no_show} no-show, ${T.late} late, ${T.long_break} long break, ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in · ${T.staff} staff.`;
+  const summary = `Scheduled ${h(T.scheduled_min)}h, Worked ${h(T.worked_min)}h · ${T.no_show} no-show, ${T.late} late, ${T.long_break} long break, ${T.missed_break} missed break, ${T.forgot_out} forgot clock-out, ${T.forgot_in} forgot clock-in · ${T.staff} staff.`;
   if (kind === 'csv') {
     const q = (v) => { const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     const block = [[title], [summary], [], cols, ...rows];
