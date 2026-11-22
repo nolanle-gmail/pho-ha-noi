@@ -4516,11 +4516,13 @@ async function renderLocTimeClock() {
   const shiftCell = (r) => r.block_start
     ? `<span class="mono" style="font-size:.85rem">${esc(to12h(r.block_start))}–${esc(to12h(r.block_end || r.block_start))}</span>`
     : (r.unscheduled ? '<span class="badge low" title="Clocked in without a scheduled shift">⚠ unscheduled</span>' : '<span style="color:var(--muted)">—</span>');
-  // Break taken on this shift: minutes (× count), over-limit flag, or the live timer if on break now.
+  // A punch time with its kind tag: (i) clock-in, (o) clock-out, (b) break start.
+  const tcTag = (t, k) => `${esc(t)}<span style="color:var(--muted);font-size:.82em">(${k})</span>`;
+  // Break column: each break's start time with (b) + "+N over", plus the live timer while on break now.
   const breakCell = (r) => {
-    if (r.on_break) return `<span class="badge low" title="On a break now${r.break_min ? `; ${r.break_min} min earlier this shift` : ''}">☕ ${r.on_break_min || 0}m${r.break_min ? ` (+${r.break_min})` : ''}</span>`;
-    if (r.break_min > 0) return `<span title="${r.breaks_count} break${r.breaks_count === 1 ? '' : 's'} this shift">☕ ${r.break_min}m${r.breaks_count > 1 ? ` <span class="mono" style="color:var(--muted);font-size:.72rem">×${r.breaks_count}</span>` : ''}${r.break_over > 0 ? ` <span class="badge out" title="Over the 10-min limit">+${r.break_over} over</span>` : ''}</span>`;
-    return '<span style="color:var(--muted)">—</span>';
+    const parts = (r.break_times || []).map(b => `${tcTag(b.time, 'b')}${b.over > 0 ? ` <span style="color:var(--out);font-weight:600">+${b.over} over</span>` : ''}`);
+    if (r.on_break) parts.push(`<span class="badge low" title="On a break now">☕ on break ${r.on_break_min || 0}m</span>`);
+    return parts.length ? parts.join(' · ') : '<span style="color:var(--muted)">—</span>';
   };
   const photoIn = (r) => r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : '';
   const photoOut = (r) => r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : '';
@@ -4539,8 +4541,8 @@ async function renderLocTimeClock() {
     return g.rows.map((r, i) => `<tr class="tc-row${i === 0 ? ' tc-grp' : ''}${r.unscheduled || r.carryover ? ' tc-unscheduled' : ''}">
     ${i === 0 ? nameCell(g.name, g.code, g.job, n, n) : ''}
     <td>${shiftCell(r)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ ${fmtDay(r.work_date)}</span>` : ''}</td>
-    <td>${r.clock_in || '—'}${photoIn(r)}</td>
-    <td>${r.clock_out || '—'}${autoFlag(r)}${photoOut(r)}</td>
+    <td>${r.clock_in ? tcTag(r.clock_in, 'i') : '—'}${photoIn(r)}</td>
+    <td>${r.clock_out ? tcTag(r.clock_out, 'o') : '—'}${autoFlag(r)}${photoOut(r)}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
     <td>${breakCell(r)}</td>
     <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');

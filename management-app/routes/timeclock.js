@@ -961,6 +961,8 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const openBreakStmt = db.prepare(`SELECT break_out_at FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NULL ORDER BY id DESC LIMIT 1`);
   // Completed breaks taken on this entry (minutes + over-limit + count), for the Break column.
   const breakStmt = db.prepare(`SELECT COALESCE(SUM(minutes),0) AS min, COALESCE(SUM(over_limit_min),0) AS over_min, COUNT(*) AS cnt FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL`);
+  // Each completed break's start time + over-limit, so the board can show break TIMES with "(b)".
+  const breakTimesStmt = db.prepare(`SELECT break_out_at, COALESCE(over_limit_min,0) AS over_min FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL ORDER BY break_out_at`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
@@ -982,6 +984,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       break_since: ob ? localTime(tz, new Date(ob.break_out_at)) : null,
       on_break_min: ob ? Math.max(0, Math.round((Date.now() - new Date(ob.break_out_at).getTime()) / 60000)) : 0,
       break_min: br.min, break_over: br.over_min, breaks_count: br.cnt,
+      break_times: breakTimesStmt.all(e.id).map(b => ({ time: localTime(tz, new Date(b.break_out_at)), over: b.over_min })),
       block_start: blk ? blk.sRaw : null, block_end: blk ? blk.eRaw : null,
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
