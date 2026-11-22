@@ -1,5 +1,5 @@
 // Pho Ha Noi Management System — SPA
-const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'biweekly', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
+const S = { token: null, user: null, locations: [], loc: null, section: 'overview', tab: 'dashboard', menuTab: 'menu', staffTab: 'directory', reportTab: 'inventory', msgTab: 'inbox', unread: 0, msgThread: null, msgArchived: false, hoursKind: 'daily', hoursAnchor: null, perfDays: 90, locView: 'list', locDetailId: null, locTab: 'details', ckTab: 'overview', schedWeek: null, mySchedWeek: null, dayTaskDate: null };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Display a stored 10-digit login phone as (xxx) xxx-xxxx; pass anything else through.
@@ -425,6 +425,9 @@ function showSection(section) {
   if (isCentral) { renderCkTabs(); renderCentral(); return; }
   if (isWarehouse) { renderWhTabs(); renderWarehouse(); return; }
   if (section === 'locations') { S.locView = 'list'; S.locDetailId = null; renderLocationsSection(); return; }
+  // My Hours opens fresh each visit: start at today and let the view auto-pick (Daily, widening
+  // to Weekly / Bi-weekly only if older days still need the staffer's sign-off).
+  if (section === 'myhours') { S._hoursAuto = true; S.hoursAnchor = null; S.hoursKind = 'daily'; renderMyHoursMgmt(); return; }
   const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, distribution: renderDistribution, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
@@ -4857,6 +4860,20 @@ async function renderMyHoursMgmt() {
   if (!S.hoursAnchor) S.hoursAnchor = fmtLocalIso(new Date());
   let d;
   try { d = await api(`/timeclock/my-hours?kind=${S.hoursKind}&anchor=${S.hoursAnchor}`); } catch (e) { $('view').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  // Smart default on first open: start Daily, but widen to Weekly / Bi-weekly when older days still
+  // need sign-off, so nothing outstanding stays hidden. Periods are calendar-aligned, so when we
+  // widen we also anchor to the oldest unconfirmed day — that guarantees the backlog is in view
+  // (today is one "Next ›" away). Once the staffer picks a view, we respect it.
+  if (S._hoursAuto) {
+    const w = d.signoff_window || { pending: 0, span_days: 0, oldest: null };
+    const want = w.pending <= 1 ? 'daily' : (w.span_days <= 7 ? 'weekly' : 'biweekly');
+    S._hoursAuto = false;
+    if (want !== S.hoursKind || (want !== 'daily' && w.oldest && w.oldest !== S.hoursAnchor)) {
+      S.hoursKind = want;
+      if (want !== 'daily' && w.oldest) S.hoursAnchor = w.oldest;
+      return renderMyHoursMgmt();
+    }
+  }
   // One-time worked-hours acknowledgment status (gates the daily Confirm below).
   try { S._hoursAck = await api('/timeclock/my-hours/ack'); } catch { S._hoursAck = null; }
   const ack = S._hoursAck, needsAck = !!(ack && !ack.signed);
@@ -4870,15 +4887,25 @@ async function renderMyHoursMgmt() {
     if (x.review_status === 'disputed') return `<span class="badge out">⚠ Reported to manager</span> ${confirmBtn}`;
     return `${confirmBtn} ${reportBtn}`;
   };
+  // Each day lists its individual shift(s) — clock in → clock out, location, worked, any late — so a
+  // split shift or a second job that day shows as separate lines under the date.
+  const shiftLines = (x) => {
+    const es = x.entries || [];
+    if (!es.length) return '';
+    return `<div style="margin-top:.25rem;display:flex;flex-direction:column;gap:.15rem">${es.map(e => `<div class="mono" style="font-size:.72rem;color:var(--muted)">${esc(e.clock_in || '?')}–${esc(e.clock_out || '?')}${e.location ? ` · ${esc(shortLoc(e.location))}` : ''}${e.worked_min ? ` <span style="opacity:.85">(${fmtDur(e.worked_min)})</span>` : ''}${e.late_min > 0 ? ` <span style="color:var(--warn,#b45309)">⏰${fmtDur(e.late_min)}</span>` : ''}${e.disputed ? ' <span style="color:var(--danger,#dc2626)">⚠</span>' : (e.confirmed ? ' <span style="color:var(--ok,#16a34a)">✓</span>' : '')}</div>`).join('')}</div>`;
+  };
   const rows = (d.days || []).map(x => {
     const flags = [
       x.late_min > 0 ? `<span class="badge low">⏰ ${fmtDur(x.late_min)} late</span>` : '',
       x.ot_min > 0 ? `<span class="badge blue">+${fmtDur(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : (x.ot_status === 'pending' || x.ot_status === 'escalated') ? ' ⏳' : ''}</span>` : '',
       x.short_min > 0 ? `<span class="badge out">${fmtDur(x.short_min)} short</span>` : '',
     ].filter(Boolean).join(' ');
-    return `<tr><td>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
+    const nShifts = (x.entries || []).length;
+    return `<tr><td><div>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}${nShifts > 1 ? ` <span class="badge" style="font-size:.6rem">${nShifts} shifts</span>` : ''}</div>${shiftLines(x)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
   }).join('');
   const pending = d.signoff && d.signoff.pending || 0;
+  const backlog = (d.signoff_window && d.signoff_window.pending) || 0;   // across the last ~30 days
+  const moreOutside = Math.max(0, backlog - pending);                     // pending days not in this period
   $('view').innerHTML = `
     <div class="overview-hero"><h2>My Hours</h2><p>Your clocked hours, overtime and any late starts.</p></div>
     <div class="row-between" style="margin:.2rem 0 .6rem;flex-wrap:wrap;gap:.5rem">
@@ -4893,7 +4920,8 @@ async function renderMyHoursMgmt() {
     </div>
     ${needsAck ? `<div style="margin:.2rem 0 .6rem;padding:.7rem .9rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);display:flex;gap:.6rem;align-items:center;justify-content:space-between;flex-wrap:wrap"><span style="font-weight:600">✍️ One-time step: please read &amp; sign the <b>Worked-Hours Acknowledgment</b> before you can confirm your hours.</span><button class="btn sm" data-ack-open>Read &amp; sign</button></div>`
       : (ack ? `<p class="sub" style="margin:.1rem 0 .5rem;color:var(--ok,#16a34a)">✓ You signed the Worked-Hours Acknowledgment${ack.signed_at ? ` on ${esc(new Date(ack.signed_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))}` : ''}. <a href="#" data-ack-view>View your signed form</a></p>` : '')}
-    ${pending ? `<div style="margin:.2rem 0 .6rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);font-weight:600">⏱️ Please review &amp; confirm your worked hours — ${pending} day${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} your sign-off. Check each day and tap <b>Confirm</b>, or <b>Report issue</b> if anything’s wrong.</div>` : ''}
+    ${pending ? `<div style="margin:.2rem 0 .6rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);font-weight:600">⏱️ Please review &amp; confirm your worked hours — ${pending} day${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} your sign-off. Check each day and tap <b>Confirm</b>, or <b>Report issue</b> if anything’s wrong.${moreOutside ? ` <span style="font-weight:500">(${moreOutside} more outside this period — use <b>‹ Prev</b> / <b>Next ›</b> to review them.)</span>` : ''}</div>`
+      : (moreOutside ? `<div style="margin:.2rem 0 .6rem;padding:.6rem .8rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);font-weight:600">⏱️ You have ${moreOutside} day${moreOutside === 1 ? '' : 's'} in other periods still needing sign-off — use <b>‹ Prev</b> / <b>Next ›</b> to find and confirm them.</div>` : '')}
     ${d.approved ? `<p class="sub" style="color:var(--ok,#16a34a);font-weight:600">✓ Total approved${d.approved_by ? ` by ${esc(d.approved_by)}` : ''}</p>` : ''}
     <div class="section" style="margin-top:.8rem"><div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Scheduled</th><th class="num">Worked</th><th>Notes</th><th>Review</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">No clocked hours this period.</td></tr>'}</tbody></table></div></div>`;
   $('view').querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHoursMgmt(); });

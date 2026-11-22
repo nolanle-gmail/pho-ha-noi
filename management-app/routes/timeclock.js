@@ -62,7 +62,7 @@ router.get('/my-hours', (req, res) => {
   const kind = ['daily', 'weekly', 'biweekly', 'monthly'].includes(req.query.kind) ? req.query.kind : 'biweekly';
   const tz = DEFAULT_TZ, today = localDate(tz);
   const range = periodRange(kind, validDate(req.query.anchor) || today);
-  res.json(Object.assign({ user: { id: u.id, name: u.name }, today }, myHoursData(u.id, range.start, range.end, kind)));
+  res.json(Object.assign({ user: { id: u.id, name: u.name }, today, signoff_window: signoffSummary(u.id, today) }, myHoursData(u.id, range.start, range.end, kind)));
 });
 
 // My clock status for TODAY — a tiny summary the staff app shows so people remember whether
@@ -1196,10 +1196,24 @@ const FULL_DAY_HOURS = 8; // an "all day" leave entry counts as a standard workd
 // One person's own hours for a period, across whatever location(s) they worked.
 function myHoursData(userId, start, end, kind) {
   const byDate = {};
-  for (const r of db.prepare(`SELECT work_date, worked_minutes, late_minutes, hours_confirmed, hours_disputed FROM time_entries WHERE user_id=? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL`).all(userId, start, end)) {
-    const d = byDate[r.work_date] || (byDate[r.work_date] = { worked: 0, late: 0, n: 0, conf: 0, disp: 0 });
+  for (const r of db.prepare(`SELECT te.work_date, te.clock_in, te.clock_out, te.worked_minutes, te.late_minutes,
+      te.hours_confirmed, te.hours_disputed, l.name AS loc_name, l.timezone AS tz
+    FROM time_entries te JOIN locations l ON l.id=te.location_id
+    WHERE te.user_id=? AND te.work_date BETWEEN ? AND ? AND te.clock_out IS NOT NULL
+    ORDER BY te.clock_in`).all(userId, start, end)) {
+    const d = byDate[r.work_date] || (byDate[r.work_date] = { worked: 0, late: 0, n: 0, conf: 0, disp: 0, items: [] });
     d.worked += r.worked_minutes || 0; d.late = Math.max(d.late, r.late_minutes || 0);
     d.n++; if (r.hours_confirmed) d.conf++; if (r.hours_disputed) d.disp++;
+    const tz = r.tz || DEFAULT_TZ;
+    d.items.push({
+      location: r.loc_name,
+      clock_in: r.clock_in ? localTime(tz, new Date(r.clock_in)) : null,
+      clock_out: r.clock_out ? localTime(tz, new Date(r.clock_out)) : null,
+      worked_min: r.worked_minutes || 0,
+      late_min: r.late_minutes || 0,
+      confirmed: !!r.hours_confirmed,
+      disputed: !!r.hours_disputed,
+    });
   }
   const schedByDate = {};
   for (const s of db.prepare(`SELECT shift_date, start_time, end_time FROM shifts WHERE user_id=? AND shift_date BETWEEN ? AND ? AND kind='work'`).all(userId, start, end)) {
@@ -1228,7 +1242,7 @@ function myHoursData(userId, start, end, kind) {
     const otStatus = sp.ot <= 0 && sp.dt <= 0 ? 'none' : (a && a.approved ? 'approved' : (a && a.rejected ? 'rejected' : (a && a.escalated ? 'escalated' : 'pending')));
     const reviewStatus = d.disp > 0 ? 'disputed' : (d.n > 0 && d.conf === d.n ? 'confirmed' : 'pending');
     if (reviewStatus === 'pending') signoffPending++;
-    return { date, scheduled_min: sched, worked_min: d.worked, effective_min: eff, adjusted: adj != null, late_min: d.late, short_min: shortM, ot_min: sp.ot, dt_min: sp.dt, ot_status: otStatus, review_status: reviewStatus };
+    return { date, scheduled_min: sched, worked_min: d.worked, effective_min: eff, adjusted: adj != null, late_min: d.late, short_min: shortM, ot_min: sp.ot, dt_min: sp.dt, ot_status: otStatus, review_status: reviewStatus, entries: d.items };
   });
   return {
     kind, start, end, days,
@@ -1237,6 +1251,27 @@ function myHoursData(userId, start, end, kind) {
     signoff: { pending: signoffPending },
     rules: { ot_after_h: OT_AFTER_MIN / 60, ot_mult: OT_MULT, late_grace_min: LATE_GRACE_MIN },
   };
+}
+
+// Unconfirmed worked-days across a lookback window (independent of the selected period) so the
+// My Hours page can open on the right view: Daily when nothing/one day is outstanding, else widen
+// to Weekly or Bi-weekly to surface everything that still needs the staffer's sign-off.
+function signoffSummary(userId, today, lookbackDays = 30) {
+  const d = new Date(today + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - lookbackDays);
+  const start = d.toISOString().slice(0, 10);
+  const byDate = {};
+  for (const r of db.prepare(`SELECT work_date, hours_confirmed, hours_disputed FROM time_entries
+      WHERE user_id=? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL`).all(userId, start, today)) {
+    const x = byDate[r.work_date] || (byDate[r.work_date] = { n: 0, conf: 0, disp: 0 });
+    x.n++; if (r.hours_confirmed) x.conf++; if (r.hours_disputed) x.disp++;
+  }
+  const pendingDates = Object.entries(byDate)
+    .filter(([, x]) => x.disp === 0 && x.conf < x.n)   // still needs sign-off
+    .map(([date]) => date).sort();
+  const oldest = pendingDates[0] || null;
+  let span_days = 0;
+  if (oldest) span_days = Math.round((Date.parse(today) - Date.parse(oldest)) / 86400000) + 1;
+  return { pending: pendingDates.length, oldest, span_days, lookback_days: lookbackDays };
 }
 
 router.get('/payroll', requireRole(ROLES.MANAGE), (req, res) => {

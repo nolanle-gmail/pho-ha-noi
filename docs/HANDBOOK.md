@@ -679,6 +679,20 @@ to anyone who finished a day without signing off — a prior day right away, tod
 (push), not SMS, since it's a routine daily confirmation. Endpoints `POST /timeclock/my-hours/{confirm,dispute}`
 (a staff JWT, or the Staff app via service key + `?as=`).
 
+**My Hours — per-shift lines + smart default view (2026-11-22).** Each day row now lists its
+**individual shift(s)** underneath the date — clock-in → clock-out, location, worked time, and any
+late minutes — so a **split shift** (or a second job that day) shows as separate lines with a
+"**N shifts**" badge, instead of one lumped total. My Hours also **opens on Daily** (not Bi-weekly)
+and **auto-widens** only when older days still need sign-off: on first open it reads a
+`signoff_window` summary (unconfirmed worked-days over the last ~30 days, from `GET /timeclock/my-hours`)
+and picks **Daily** (≤1 outstanding), **Weekly** (more, within a week), or **Bi-weekly** (older) —
+anchoring the widened view to the **oldest unconfirmed day** so the backlog is actually in view
+(periods are calendar-aligned, so widening the kind alone wouldn't guarantee it). A banner tells the
+staffer how many unconfirmed days sit **outside** the current period and to use ‹ Prev / Next ›. Once
+they tap a period pill the app respects that choice. Backend: `myHoursData` returns an `entries[]`
+array per day (`clock_in`, `clock_out`, `location`, `worked_min`, `late_min`, `confirmed`, `disputed`)
+plus a top-level `signoff_window { pending, oldest, span_days }`.
+
 **One-time Worked-Hours Acknowledgment (2026-11-17).** Before a staffer's **first** daily **Confirm**, they
 read and **e-sign a one-time acknowledgment** (typed full name + an "I have read and agree" checkbox) that
 explains the daily review step and that confirming a day acknowledges the hours they worked. Until it's

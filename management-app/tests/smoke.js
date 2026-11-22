@@ -1699,6 +1699,8 @@ const check = (name, ok, detail = '') => {
     const tsEmail = tdb.prepare(`SELECT email FROM users WHERE id=?`).get(tsUser.id).email;
     const mh = await j(await fetch(base + `/api/timeclock/my-hours?as=${encodeURIComponent(tsEmail)}&kind=daily&anchor=${TD}`, { headers: { 'X-Service-Key': 'dev-floorplan-key' } }));
     check('my-hours self-view returns the day (rounded 8h)', mh.days && mh.days.length === 1 && mh.days[0].effective_min === 480, JSON.stringify(mh.days && mh.days[0]));
+    check('my-hours day lists per-shift entries (clock in/out)', Array.isArray(mh.days[0].entries) && mh.days[0].entries.length >= 1 && typeof mh.days[0].entries[0].clock_in === 'string', JSON.stringify(mh.days[0].entries));
+    check('my-hours returns a signoff_window summary for the smart default', mh.signoff_window && typeof mh.signoff_window.pending === 'number' && 'oldest' in mh.signoff_window && typeof mh.signoff_window.span_days === 'number', JSON.stringify(mh.signoff_window));
     r = await fetch(base + '/api/timeclock/my-hours');
     check('my-hours needs auth (401)', r.status === 401, 'status=' + r.status);
     const perf = await j(await fetch(base + `/api/timeclock/performance?location_id=${tsLoc}&start=${TD}&end=${TD}`, { headers: H(mgr.token) }));
