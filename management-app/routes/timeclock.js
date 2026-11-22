@@ -389,6 +389,12 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
         at: localTime(tz, now),
       });
     }
+    // Already clocked in at a DIFFERENT location → clock out there first (you can't be on the
+    // clock at two stores at once). A stale entry elsewhere is cleaned up by the auto clock-out
+    // sweep or a manager.
+    const openElsewhere = db.prepare(`SELECT l.name AS loc_name FROM time_entries te JOIN locations l ON l.id=te.location_id
+      WHERE te.user_id=? AND te.clock_out IS NULL AND te.location_id<>? ORDER BY te.id DESC LIMIT 1`).get(staff.id, loc.id);
+    if (openElsewhere) return res.status(409).json({ error: `You’re still clocked in at ${locDisplay(openElsewhere.loc_name)}. Please clock out there before clocking in here.` });
     if (ctx.open) {
       // Split shifts: if this punch is for a LATER shift block but an EARLIER block is
       // still open (they forgot to clock out of it) and that earlier block has already
@@ -403,8 +409,7 @@ router.post('/kiosk/:slug/punch', kioskThrottle, (req, res) => {
       if (!staleOver) {
         return res.status(409).json({ error: `You’re already clocked in (since ${localTime(tz, new Date(ctx.open.clock_in))}).` });
       }
-      let workedToEnd = openBlk.eMin - openInMin; if (workedToEnd < 0) workedToEnd += 1440;
-      workedToEnd = Math.max(0, workedToEnd);
+      const workedToEnd = workedToScheduledEnd(openBlk, openInMin);
       const priorOut = new Date(new Date(ctx.open.clock_in).getTime() + workedToEnd * 60000);
       const rr = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
         .run(priorOut.toISOString(), workedToEnd, ctx.open.id);
@@ -499,6 +504,22 @@ function shiftBlockForPunch(userId, locationId, workDate, clockInMin) {
   return blocks.find(b => b.sMin >= clockInMin) || blocks[blocks.length - 1];
 }
 
+// Minutes from a clock-in (its minute-of-day) to the SCHEDULED END of the block it belongs to,
+// for an auto clock-out. Handles a genuine overnight shift (ends after midnight) but deliberately
+// NOT a punch that landed AFTER a daytime block ended — an unscheduled / second late punch. For
+// that it returns 0, so the auto clock-out never invents a ~20-hour overnight phantom for someone
+// who clocked in after their shift and forgot to punch out (a manager reviews/adjusts instead).
+function workedToScheduledEnd(blk, clockInMin, extraMin = 0) {
+  if (!blk || blk.eMin == null || blk.sMin == null) return 0;
+  let m = blk.eMin + (Number(extraMin) || 0) - clockInMin;
+  if (m < 0) {
+    const overnight = blk.eMin <= blk.sMin;                 // block end is on the next day
+    if (overnight && clockInMin >= blk.sMin) m += 1440;     // genuine overnight shift the punch sits in
+    else return 0;                                          // unscheduled / late punch — no phantom
+  }
+  return Math.max(0, m);
+}
+
 // Missed clock-out sweep. When a still-clocked-in staff member passes the end of the
 // shift block they're on (+ any manager-added extra), we first nudge them and the
 // location leaders (once). Then, once they're the location's grace window past that
@@ -537,9 +558,7 @@ function sweepMissedClockOuts() {
       // 2) Auto clock-out once past the grace window, unless a lead approved keep-working.
       if (e.auto_out && e.decision !== 'approved' && overBy >= Number(e.grace)) {
         const clockIn = new Date(e.clock_in);
-        let workedToEnd = allowedEndMin - localMinutesOfDay(tz, clockIn);
-        if (workedToEnd < 0) workedToEnd += 1440;
-        workedToEnd = Math.max(0, workedToEnd);
+        const workedToEnd = workedToScheduledEnd(blk, localMinutesOfDay(tz, clockIn), e.extra);
         const clockOut = new Date(clockIn.getTime() + workedToEnd * 60000);
         const r = db.prepare(`UPDATE time_entries SET clock_out=?, worked_minutes=?, overrun_decision='auto', overrun_decided_at=datetime('now') WHERE id=? AND clock_out IS NULL`)
           .run(clockOut.toISOString(), workedToEnd, e.id);
@@ -782,6 +801,9 @@ router.post('/punch', requireRole(ROLES.MANAGE), (req, res) => {
 
   if (action === 'in') {
     if (open) return res.status(409).json({ error: `${staff.name} is already clocked in (since ${localTime(tz, new Date(open.clock_in))}).` });
+    const openElse = db.prepare(`SELECT l.name AS loc_name FROM time_entries te JOIN locations l ON l.id=te.location_id
+      WHERE te.user_id=? AND te.clock_out IS NULL AND te.location_id<>? ORDER BY te.id DESC LIMIT 1`).get(staff.id, locId);
+    if (openElse) return res.status(409).json({ error: `${staff.name} is still clocked in at ${locDisplay(openElse.loc_name)} — clock them out there first.` });
     const sched = scheduledMinutes(staff.id, locId, date);
     const now = new Date();
     const late = lateMinutesFor(staff.id, locId, date, tz, now);
