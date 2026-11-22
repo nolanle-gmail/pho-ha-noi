@@ -764,13 +764,16 @@ function localMinutesOfDay(tz, d) {
   const p = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(d);
   return (Number(p.find(x => x.type === 'hour').value) % 24) * 60 + Number(p.find(x => x.type === 'minute').value);
 }
-const earliestShiftStart = (userId, locId, date) =>
-  (db.prepare(`SELECT MIN(start_time) s FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).get(userId, locId, date) || {}).s || null;
 function lateMinutesFor(userId, locId, date, tz, clockIn) {
-  const start = earliestShiftStart(userId, locId, date);
-  if (!start) return 0;
-  const [sh, sm] = start.split(':').map(Number);
-  const late = localMinutesOfDay(tz, clockIn) - (sh * 60 + sm);
+  const ci = localMinutesOfDay(tz, clockIn);
+  // Measure lateness against the start of the shift BLOCK this punch belongs to — NOT the day's
+  // earliest start. Otherwise a split/double-shift worker who clocks into their 2nd (e.g. evening)
+  // shift on time is wrongly flagged hours late versus their morning start.
+  const blk = shiftBlockForPunch(userId, locId, date, ci);
+  if (!blk || blk.sMin == null) return 0;
+  const blkEnd = blk.eMin <= blk.sMin ? blk.eMin + 1440 : blk.eMin;
+  if (ci > blkEnd) return 0;                 // punch after the block ended → unscheduled, not "late"
+  const late = ci - blk.sMin;
   return late > LATE_GRACE_MIN ? late : 0;
 }
 

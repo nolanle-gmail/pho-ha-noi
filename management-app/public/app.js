@@ -6644,6 +6644,7 @@ async function renderRepShiftDetail() {
     r.unscheduled ? '<span class="badge gray">Unscheduled</span>' : '',
     r.open ? '<span class="badge ok">🟢 On clock</span>' : '',
     r.status === 'scheduled' ? '<span class="badge gray">Upcoming</span>' : '',
+    r.late_min > 0 ? '<span class="badge blue">⏰ Late</span>' : '',
   ].filter(Boolean).join(' ') || '<span class="badge green">✓ OK</span>';
   const staffCard = (u) => `<div class="section">
     <div class="row-between" style="flex-wrap:wrap;gap:.4rem">
