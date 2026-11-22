@@ -564,7 +564,10 @@ field is cleared** — the next person in line never sees the previous staffer's
 is held in memory just long enough for the actual Clock In / Out punch, then wiped on reset.
 
 A `time_entries` row is one work day: clock-in snapshots the scheduled span,
-clock-out fills worked minutes and any `late_minutes`. Overtime needs a manager's
+clock-out fills worked minutes and any `late_minutes`. **Lateness is measured against the start of the
+shift BLOCK the punch belongs to** (via `shiftBlockForPunch`), not the day's earliest start — so a
+split/double-shift worker who clocks into their later (evening) shift on time isn't wrongly flagged hours
+late versus their morning start (fixed 2026-11-22). Overtime needs a manager's
 `ot_approvals` sign-off (which can be escalated to Owner / GM / Admin); managers can
 `time_adjustments` (rounding) and finally `timesheet_approvals` a whole period.
 
