@@ -694,6 +694,13 @@ they tap a period pill the app respects that choice. Backend: `myHoursData` retu
 array per day (`clock_in`, `clock_out`, `location`, `worked_min`, `late_min`, `confirmed`, `disputed`)
 plus a top-level `signoff_window { pending, oldest, span_days }`.
 
+**My Hours — Double-time box + shift-detail popup (2026-11-23).** The KPI row now always shows a
+**Double-time** box (not just Overtime), so double-time hours appear when a staffer has any. And each
+day row has a **"🔍 View shift & break details"** link that opens a popup listing, for every shift that
+day: location, **clock-in → clock-out**, worked time, any late, and **each break's start/end, length and
+over-limit minutes** — so a staffer can review the full picture (including breaks) before confirming the
+day's hours. The `entries[]` each now carry a `breaks[]` array (`out`, `in`, `minutes`, `over`).
+
 **One-time Worked-Hours Acknowledgment (2026-11-17).** Before a staffer's **first** daily **Confirm**, they
 read and **e-sign a one-time acknowledgment** (typed full name + an "I have read and agree" checkbox) that
 explains the daily review step and that confirming a day acknowledges the hours they worked. Until it's
