@@ -6,6 +6,7 @@ const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/au
 const { auditLog } = require('../lib/audit');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
 const { sendSms, smsEnabled } = require('../lib/sms');
+const { localDate, DEFAULT_TZ } = require('../lib/tz');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -203,6 +204,19 @@ router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(u.id);
   db.prepare(`UPDATE users SET ${fields.join(',')} WHERE id=?`).run(...vals);
+  // Deactivating a staffer cancels their UPCOMING schedule — an inactive person must not keep
+  // showing on the team schedule. Only shifts dated today-or-later are removed (past shifts stay as
+  // history; payroll reads time_entries, not the schedule). Children are cleared first (FK-safe).
+  if (req.body.is_active !== undefined && !req.body.is_active) {
+    const tz = (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(u.location_id) || {}).timezone || DEFAULT_TZ;
+    const today = localDate(tz);
+    const future = db.prepare(`SELECT id FROM shifts WHERE user_id=? AND shift_date >= ?`).all(u.id, today);
+    if (future.length) {
+      for (const s of future) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(s.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(s.id); }
+      db.prepare(`DELETE FROM shifts WHERE user_id=? AND shift_date >= ?`).run(u.id, today);
+      auditLog(req, 'staff_deactivate_shifts_cleared', 'user', u.id, { removed: future.length, from: today });
+    }
+  }
   // Record a login-phone change so the previous number stays linked to this person
   // for audit / tracking (all the staffer's history is keyed by their stable user_id).
   if (phoneChangedFrom !== null) {

@@ -314,8 +314,18 @@ const check = (name, ok, detail = '') => {
     const relog = await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '5105550001', password: 'ResetPass123!' }) }));
     check('login by phone with reset password', !!relog.token);
 
-    r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
-    check('deactivate staff', r.status === 200);
+    // Deactivating a staffer cancels their UPCOMING shifts (past shifts stay for history).
+    { const sadb = require('../db/database');
+      const fut = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+      const past = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+      sadb.prepare("INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,kind) VALUES (?,?,?,?,?, 'work')").run(newStaff.id, loc1, fut, '10:00', '14:00');
+      sadb.prepare("INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,kind) VALUES (?,?,?,?,?, 'work')").run(newStaff.id, loc1, past, '10:00', '14:00');
+      r = await fetch(base + `/api/staff/${newStaff.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ is_active: false }) });
+      check('deactivate staff', r.status === 200);
+      const futLeft = sadb.prepare("SELECT COUNT(*) c FROM shifts WHERE user_id=? AND shift_date>=?").get(newStaff.id, fut).c;
+      const pastLeft = sadb.prepare("SELECT COUNT(*) c FROM shifts WHERE user_id=? AND shift_date=?").get(newStaff.id, past).c;
+      check('deactivation removes upcoming shifts, keeps past ones', futLeft === 0 && pastLeft === 1, JSON.stringify({ futLeft, pastLeft }));
+    }
     r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: '5105550001', password: 'ResetPass123!' }) });
     check('deactivated account cannot log in (401)', r.status === 401, 'status=' + r.status);
 
