@@ -743,8 +743,12 @@ payroll export's `daySplit`): regular ≤ 8h/day, **OT 1.5×** for 8–12h, **do
 beyond 12h. It is computed on each **calendar day's total** worked minutes: every clocked
 entry is first rolled up per (staffer, `work_date`), then that day's total is split once —
 so a **split shift** (two entries the same day) is treated as one day, not two (fixed
-2026-11-21; it used to split each punch separately, mis-stating OT). The **OT hrs** column
-combines OT+DT hours; gross pay applies the correct multipliers. The **Days** column counts
+2026-11-21; it used to split each punch separately, mis-stating OT). **OT and double-time are
+shown in SEPARATE columns** (**OT hrs** = the 8–12h band only, **DT hrs** = hours past 12), each
+with its own KPI — so a 13h day reads **8 reg / 4 OT / 1 DT**, not 5 OT (fixed 2026-11-22; the OT
+column used to bundle the double-time hours). Gross pay applies the correct multiplier to each band.
+The same OT/DT split shows under **My Hours** (per-day **+Nh OT / +Nh DT** flags and a Double-time
+total). The **Days** column counts
 **distinct calendar dates worked**, not the number of punches. Each day's hours/OT/pay are
 attributed to the location where most of that day was worked, so a staffer who covers two
 stores contributes to each store's total (their row shows their primary store). Gross pay is
