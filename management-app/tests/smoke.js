@@ -638,6 +638,37 @@ const check = (name, ok, detail = '') => {
     r = await punch({ location_id: loc1, employee_code: 'PHN-0014', password: 'Employee123!', action: 'in' }, emp.token);
     check('non-manager cannot open a station / punch (403)', r.status === 403, 'status=' + r.status);
 
+    // ── Manual time entry for a scheduled staffer who never clocked in (board "Not clocked in") ──
+    { const _mdb = require('../db/database');
+      const ni = _mdb.prepare("SELECT id FROM users WHERE location_id=? AND is_active=1 AND id<>? AND role<>'owner' ORDER BY id LIMIT 1").get(loc1, emp.user.id);
+      // Clean slate for today: FK-safe purge of any time entry (breaks + alerts first), then shifts.
+      for (const te of _mdb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date=?").all(ni.id, today)) {
+        _mdb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(te.id);
+        try { _mdb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(te.id); } catch {}
+        _mdb.prepare("DELETE FROM time_entries WHERE id=?").run(te.id);
+      }
+      _mdb.prepare("DELETE FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?").run(ni.id, loc1, today);
+      _mdb.prepare("INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,kind) VALUES (?,?,?,?,?, 'work')").run(ni.id, loc1, today, '10:00', '14:00');
+      let bd = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+      check('scheduled, no punch → shows in board not_in', bd.not_in.some(x => x.user_id === ni.id), JSON.stringify(bd.not_in.map(x => x.user_id)));
+      r = await fetch(base + '/api/timeclock/entry', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: ni.id, work_date: today, clock_in: '10:05', clock_out: '14:00' }) });
+      const cr = await j(r);
+      check('manager creates a manual entry for a not-clocked-in staffer', r.status === 200 && cr.success === true && !!cr.id, JSON.stringify(cr));
+      bd = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+      check('manual entry moves them from not_in → a real entry', bd.entries.some(e => e.user_id === ni.id && e.status === 'out') && !bd.not_in.some(x => x.user_id === ni.id), JSON.stringify({ inEntries: bd.entries.some(e => e.user_id === ni.id), stillNotIn: bd.not_in.some(x => x.user_id === ni.id) }));
+      r = await fetch(base + '/api/timeclock/entry', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: ni.id, work_date: today, clock_in: '10:05', clock_out: '14:00' }) });
+      check('duplicate manual entry rejected (409 → use Adjust)', r.status === 409, 'status=' + r.status);
+      r = await fetch(base + '/api/timeclock/entry', { method: 'POST', headers: H(emp.token), body: JSON.stringify({ location_id: loc1, user_id: ni.id, work_date: today, clock_in: '10:05' }) });
+      check('non-manager cannot create a manual entry (403)', r.status === 403, 'status=' + r.status);
+      // Clean up so this staffer's today state doesn't collide with later tests that may reuse them.
+      for (const te of _mdb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date=?").all(ni.id, today)) {
+        _mdb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(te.id);
+        try { _mdb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(te.id); } catch {}
+        _mdb.prepare("DELETE FROM time_entries WHERE id=?").run(te.id);
+      }
+      _mdb.prepare("DELETE FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?").run(ni.id, loc1, today);
+    }
+
     // ── Break clock-out / clock-in (kiosk): break vs end-shift, 10-min over-limit, reminder sweep ──
     const _bdb = require('../db/database');
     let bslug = (_bdb.prepare("SELECT slug FROM locations WHERE id=?").get(loc1) || {}).slug;

@@ -4484,6 +4484,34 @@ function tcEntryModal(r) {
   };
 }
 
+// Manually enter hours for a scheduled staffer who never clocked in (forgot / didn't know how).
+// Creates a brand-new time entry for the board's date — prefilled with their scheduled shift so a
+// "worked exactly as scheduled" case is one tap. rec = { user_id, name, start, end } (24h HH:MM).
+function tcNewEntryModal(rec) {
+  const host = $('modalHost');
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Enter hours — ${esc(rec.name)}</h3>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .6rem">They were scheduled${rec.start ? ` <strong>${esc(to12h(rec.start))}–${esc(to12h(rec.end || rec.start))}</strong>` : ''} but never clocked in. Enter the clock-in / clock-out they actually worked — this records their hours for ${esc(fmtDay(S.tcDate))}.</p>
+    <div class="err" id="mErr"></div>
+    <div class="form-grid">
+      <label>Clock-in<input id="ncIn" type="time" value="${esc(rec.start || '')}" /></label>
+      <label>Clock-out <span style="color:var(--muted);font-weight:400">(leave blank if still working)</span><input id="ncOut" type="time" value="${esc(rec.end || '')}" /></label>
+    </div>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save hours</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  $('mOk').onclick = async () => {
+    const ci = $('ncIn').value, co = $('ncOut').value;
+    if (!ci) { $('mErr').textContent = 'Enter at least a clock-in time.'; return; }
+    $('mOk').disabled = true;
+    try {
+      await api('/timeclock/entry', { method: 'POST', body: JSON.stringify({ location_id: S.locDetailId, user_id: rec.user_id, work_date: S.tcDate, clock_in: ci, clock_out: co || null }) });
+      close(); toast('Hours entered — staff notified.'); renderLocTimeClock();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
+}
+
 async function renderLocTimeClock() {
   clearTimeout(S._tcTimer);   // reset the auto-refresh timer on every (re)render
   const canManage = ORG_ADMIN.includes(S.user.role) || (['manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role));
@@ -4553,11 +4581,14 @@ async function renderLocTimeClock() {
   const notInRows = data.not_in.map(r => {
     const blocks = (r.blocks && r.blocks.length) ? r.blocks : [{ start: r.start_time, end: r.end_time }];
     const n = blocks.length;
+    // One "Enter hours" button per person (they were scheduled but never clocked in) — a manager can
+    // manually record their clock in/out. Prefilled with their scheduled span (first start → last end).
+    const enterBtn = canEditTc ? ` <button class="btn sm" data-tcnew="${r.user_id}" data-name="${esc(r.name)}" data-start="${esc(blocks[0].start || '')}" data-end="${esc(blocks[n - 1].end || '')}" title="They were scheduled but didn't clock in — enter their actual hours">➕ Enter hours</button>` : '';
     return blocks.map((b, i) => `<tr class="task-unassigned tc-row${i === 0 ? ' tc-grp' : ''}">
     ${i === 0 ? nameCell(r.name, r.employee_code, r.job, n, n) : ''}
     <td><span class="mono" style="font-size:.85rem">${b.start ? esc(to12h(b.start)) + '–' + esc(to12h(b.end)) : '—'}</span></td>
     <td>—</td><td>—</td><td>—</td><td>—</td>
-    <td><span class="badge low">Not clocked in</span></td></tr>`).join('');
+    <td><span class="badge low">Not clocked in</span>${i === 0 ? enterBtn : ''}</td></tr>`).join('');
   }).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
@@ -4615,6 +4646,9 @@ async function renderLocTimeClock() {
   $('locBody').querySelectorAll('[data-tcedit]').forEach(b => b.onclick = () => {
     const r = data.entries.find(x => String(x.id) === String(b.dataset.tcedit));
     if (r) tcEntryModal(r);
+  });
+  $('locBody').querySelectorAll('[data-tcnew]').forEach(b => b.onclick = () => {
+    tcNewEntryModal({ user_id: parseInt(b.dataset.tcnew, 10), name: b.dataset.name, start: b.dataset.start || '', end: b.dataset.end || '' });
   });
   $('locBody').querySelectorAll('[data-tcout]').forEach(b => b.onclick = () => {
     const r = data.entries.find(x => String(x.id) === String(b.dataset.tcout));

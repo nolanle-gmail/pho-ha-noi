@@ -1156,6 +1156,46 @@ router.put('/entry/:id', requireRole(ROLES.MANAGE), (req, res) => {
   res.json({ success: true });
 });
 
+// Manually CREATE a time entry for a scheduled staffer who never clocked in (forgot, or didn't
+// know how). A manager / shift-lead enters their clock-in (and usually clock-out) and it lands on
+// the board + timesheet exactly like a punched entry — so people who "Not clocked in" on the board
+// can still be given their hours. Guard: if they already have an entry that day, Adjust it instead.
+router.post('/entry', requireRole(ROLES.MANAGE), (req, res) => {
+  const b = req.body || {};
+  const locId = parseInt(b.location_id, 10);
+  const userId = parseInt(b.user_id, 10);
+  const date = validDate(b.work_date);
+  if (!locId || !userId || !date) return res.status(400).json({ error: 'location_id, user_id and work_date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  const staff = db.prepare(`SELECT id, name FROM users WHERE id=? AND is_active=1`).get(userId);
+  if (!staff) return res.status(404).json({ error: 'Staff member not found.' });
+  const hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const inHHMM = String(b.clock_in || '').slice(0, 5);
+  if (!hhmmRe.test(inHHMM)) return res.status(400).json({ error: 'Clock-in must be HH:MM (24-hour).' });
+  const hasOut = b.clock_out !== undefined && b.clock_out !== null && b.clock_out !== '';
+  const outHHMM = hasOut ? String(b.clock_out).slice(0, 5) : null;
+  if (hasOut && !hhmmRe.test(outHHMM)) return res.status(400).json({ error: 'Clock-out must be HH:MM (24-hour).' });
+  // Never create a duplicate — if they already have an entry that day, the manager should Adjust it.
+  const existing = db.prepare(`SELECT id FROM time_entries WHERE user_id=? AND location_id=? AND work_date=?`).get(userId, locId, date);
+  if (existing) return res.status(409).json({ error: 'This staffer already has a time entry for this day — use Adjust on it instead.' });
+  const tz = locTz(locId);
+  const clockInD = localWallToInstant(tz, date, inHHMM);
+  let clockOutISO = null, worked = null;
+  if (hasOut) {
+    let outD = localWallToInstant(tz, date, outHHMM);
+    if (outD.getTime() <= clockInD.getTime()) outD = new Date(outD.getTime() + 86400000); // crossed midnight
+    clockOutISO = outD.toISOString();
+    worked = Math.max(0, Math.round((outD.getTime() - clockInD.getTime()) / 60000));
+  }
+  const sched = scheduledMinutes(userId, locId, date);
+  const late = lateMinutesFor(userId, locId, date, tz, clockInD);
+  const info = db.prepare(`INSERT INTO time_entries (user_id, location_id, work_date, clock_in, clock_out, scheduled_minutes, worked_minutes, late_minutes, opened_by)
+    VALUES (?,?,?,?,?,?,?,?,?)`).run(userId, locId, date, clockInD.toISOString(), clockOutISO, sched, worked, late, req.user.id);
+  auditLog(req, 'time_entry_create', 'user', userId, { time_entry_id: Number(info.lastInsertRowid), location_id: locId, work_date: date, clock_in: inHHMM, clock_out: outHHMM });
+  try { notify(req.user.id, userId, 'Hours entered for you', `You weren’t clocked in for ${date} at your store, so a manager entered your clock in/out. Check My Hours and let them know if anything’s off.`); } catch { /* */ }
+  res.json({ success: true, id: Number(info.lastInsertRowid) });
+});
+
 // ── Payroll / overtime export for a pay period ───────────────────────────────
 // Overtime is derived from clocked hours per California's daily rule:
 //   regular ≤ 8h/day, overtime (1.5×) for 8–12h/day, double-time (2×) beyond 12h/day.
