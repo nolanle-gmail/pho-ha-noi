@@ -983,6 +983,9 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   const breakStmt = db.prepare(`SELECT COALESCE(SUM(minutes),0) AS min, COALESCE(SUM(over_limit_min),0) AS over_min, COUNT(*) AS cnt FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL`);
   // Each completed break's start time + over-limit, so the board can show break TIMES with "(b)".
   const breakTimesStmt = db.prepare(`SELECT break_out_at, COALESCE(over_limit_min,0) AS over_min FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL ORDER BY break_out_at`);
+  // Scheduled breaks on the person's shift(s) that day (so the Adjust modal can show + manage them).
+  const schedBreaksStmt = db.prepare(`SELECT sb.id, sb.start_time, sb.end_time FROM shift_breaks sb
+    JOIN shifts s ON s.id=sb.shift_id WHERE s.user_id=? AND s.location_id=? AND s.shift_date=? AND s.kind='work' ORDER BY sb.start_time`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
@@ -1005,6 +1008,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       on_break_min: ob ? Math.max(0, Math.round((Date.now() - new Date(ob.break_out_at).getTime()) / 60000)) : 0,
       break_min: br.min, break_over: br.over_min, breaks_count: br.cnt,
       break_times: breakTimesStmt.all(e.id).map(b => ({ time: localTime(tz, new Date(b.break_out_at)), over: b.over_min })),
+      sched_breaks: schedBreaksStmt.all(e.user_id, locId, e.work_date).map(b => ({ id: b.id, start: b.start_time, end: b.end_time })),
       block_start: blk ? blk.sRaw : null, block_end: blk ? blk.eRaw : null,
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
@@ -1194,6 +1198,47 @@ router.post('/entry', requireRole(ROLES.MANAGE), (req, res) => {
   auditLog(req, 'time_entry_create', 'user', userId, { time_entry_id: Number(info.lastInsertRowid), location_id: locId, work_date: date, clock_in: inHHMM, clock_out: outHHMM });
   try { notify(req.user.id, userId, 'Hours entered for you', `You weren’t clocked in for ${date} at your store, so a manager entered your clock in/out. Check My Hours and let them know if anything’s off.`); } catch { /* */ }
   res.json({ success: true, id: Number(info.lastInsertRowid) });
+});
+
+// Add a scheduled break to a staffer's shift for a day (manager / shift-lead). Managers sometimes
+// forget to set a break when building the schedule and need to add it on the working day; this drops
+// a 10-minute break onto the shift block that contains the given time, so the break reminder fires
+// and it counts for break-compliance like any scheduled break. Used from the Time Clock Adjust modal.
+const BREAK_LEN_MIN = 10;
+router.post('/break', requireRole(ROLES.MANAGE), (req, res) => {
+  const b = req.body || {};
+  const locId = parseInt(b.location_id, 10);
+  const userId = parseInt(b.user_id, 10);
+  const date = validDate(b.work_date);
+  const start = String(b.start_time || '').slice(0, 5);
+  if (!locId || !userId || !date) return res.status(400).json({ error: 'location_id, user_id and work_date are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'Not your location.' });
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start)) return res.status(400).json({ error: 'Break time must be HH:MM (24-hour).' });
+  const staff = db.prepare(`SELECT id, name FROM users WHERE id=?`).get(userId);
+  if (!staff) return res.status(404).json({ error: 'Staff member not found.' });
+  // Find the work shift block that contains the break (with room for the 10-minute break to fit).
+  const shifts = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work' AND start_time IS NOT NULL AND end_time IS NOT NULL ORDER BY start_time`).all(userId, locId, date);
+  if (!shifts.length) return res.status(409).json({ error: 'This staffer has no scheduled shift that day to add a break to.' });
+  const bm = hhmmToMin(start);
+  const fits = shifts.find(s => { const sm = hhmmToMin(s.start_time); let em = hhmmToMin(s.end_time); if (em <= sm) em += 1440; let x = bm; if (x < sm) x += 1440; return x >= sm && x + BREAK_LEN_MIN <= em; });
+  if (!fits) return res.status(400).json({ error: 'That time is outside the staffer’s scheduled shift(s) — pick a time inside a shift, leaving room for a 10-minute break.' });
+  if (db.prepare(`SELECT 1 FROM shift_breaks WHERE shift_id=? AND start_time=?`).get(fits.id, start)) return res.status(409).json({ error: 'A break is already scheduled at that time.' });
+  const em = (bm + BREAK_LEN_MIN) % 1440;
+  const endStr = `${String(em / 60 | 0).padStart(2, '0')}:${String(em % 60).padStart(2, '0')}`;
+  const info = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,NULL)`).run(fits.id, start, endStr);
+  auditLog(req, 'shift_break_add', 'user', userId, { location_id: locId, work_date: date, start_time: start });
+  try { notify(req.user.id, userId, 'A break was added to your shift', `A manager added a ${fmt12h(bm)} break to your shift today. You’ll get a reminder when it’s time — clock out for your break, then clock back in.`); } catch { /* */ }
+  res.json({ success: true, id: Number(info.lastInsertRowid), start_time: start, end_time: endStr });
+});
+
+// Remove a scheduled break (manager / shift-lead) — e.g. one added by mistake.
+router.delete('/break/:id', requireRole(ROLES.MANAGE), (req, res) => {
+  const row = db.prepare(`SELECT sb.id, sb.start_time, s.location_id, s.user_id, s.shift_date FROM shift_breaks sb JOIN shifts s ON s.id=sb.shift_id WHERE sb.id=?`).get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Break not found.' });
+  if (!ownsLocation(req, row.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  db.prepare(`DELETE FROM shift_breaks WHERE id=?`).run(row.id);
+  auditLog(req, 'shift_break_remove', 'user', row.user_id, { location_id: row.location_id, work_date: row.shift_date, start_time: row.start_time });
+  res.json({ success: true });
 });
 
 // ── Payroll / overtime export for a pay period ───────────────────────────────

@@ -669,6 +669,24 @@ const check = (name, ok, detail = '') => {
       _mdb.prepare("DELETE FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?").run(ni.id, loc1, today);
     }
 
+    // ── Manager adds/removes a scheduled break from the Time Clock Adjust modal ──
+    // Employee One has a 09:00–17:00 shift today; add a 12:00 break, see it on the board, remove it.
+    r = await fetch(base + '/api/timeclock/break', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: emp.user.id, work_date: today, start_time: '12:00' }) });
+    const brk = await j(r);
+    check('manager adds a scheduled break (10-min)', r.status === 200 && !!brk.id && brk.start_time === '12:00' && brk.end_time === '12:10', JSON.stringify(brk));
+    let bd2 = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+    check('board entry now carries the scheduled break', bd2.entries.some(e => e.user_id === emp.user.id && (e.sched_breaks || []).some(b => b.start === '12:00')), JSON.stringify((bd2.entries.find(e => e.user_id === emp.user.id) || {}).sched_breaks));
+    r = await fetch(base + '/api/timeclock/break', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: emp.user.id, work_date: today, start_time: '12:00' }) });
+    check('duplicate break at same time rejected (409)', r.status === 409, 'status=' + r.status);
+    r = await fetch(base + '/api/timeclock/break', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: emp.user.id, work_date: today, start_time: '23:30' }) });
+    check('break outside the shift window rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/timeclock/break', { method: 'POST', headers: H(emp.token), body: JSON.stringify({ location_id: loc1, user_id: emp.user.id, work_date: today, start_time: '13:00' }) });
+    check('non-manager cannot add a break (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + `/api/timeclock/break/${brk.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    check('manager removes a scheduled break', r.status === 200, await r.text());
+    bd2 = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+    check('removed break no longer on the board entry', !bd2.entries.some(e => e.user_id === emp.user.id && (e.sched_breaks || []).some(b => b.start === '12:00')), 'ok');
+
     // ── Break clock-out / clock-in (kiosk): break vs end-shift, 10-min over-limit, reminder sweep ──
     const _bdb = require('../db/database');
     let bslug = (_bdb.prepare("SELECT slug FROM locations WHERE id=?").get(loc1) || {}).slug;

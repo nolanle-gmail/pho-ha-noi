@@ -4464,11 +4464,44 @@ function tcEntryModal(r) {
       <label>Clock-in<input id="tcIn" type="time" value="${esc(r.clock_in_hhmm || '')}" /></label>
       <label>Clock-out <span style="color:var(--muted);font-weight:400">${r.status === 'in' ? '(still on the clock)' : ''}</span><input id="tcOut" type="time" value="${esc(r.clock_out_hhmm || '')}" /></label>
     </div>
-    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save</button></div>
+    ${!unsched ? `<div style="margin:.6rem 0 .25rem"><strong>Breaks</strong> <span style="color:var(--muted);font-weight:400;font-size:.85rem">— scheduled 10-min breaks; staff get a reminder when it's time</span></div>
+    <div id="tcBreaks" style="display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.4rem"></div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
+      <label style="flex:0 0 auto;margin:0">Add a break at<input id="tcBrkTime" type="time" /></label>
+      <button class="btn sm" id="tcBrkAdd" type="button">➕ Add break</button>
+    </div>` : ''}
+    <div class="actions" style="margin-top:.7rem"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save</button></div>
   </div></div>`;
+  let breaksDirty = false;
   const close = () => host.innerHTML = '';
-  $('mCancel').onclick = close;
-  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+  const dismiss = () => { close(); if (breaksDirty) renderLocTimeClock(); };
+  $('mCancel').onclick = dismiss;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) dismiss(); };
+  // Scheduled-break management (add a forgotten break mid-shift / remove a mistaken one).
+  if (!unsched) {
+    const breaksList = (r.sched_breaks || []).slice();
+    const renderBreaks = () => {
+      const bx = $('tcBreaks');
+      bx.innerHTML = breaksList.length
+        ? breaksList.map(b => `<span class="badge gray" style="display:inline-flex;align-items:center;gap:.3rem;font-size:.82rem">☕ ${esc(to12h(b.start))}<button data-brkdel="${b.id}" title="Remove this break" style="border:none;background:none;cursor:pointer;color:var(--out);font-weight:700;padding:0 .15rem;line-height:1">×</button></span>`).join('')
+        : '<span style="color:var(--muted);font-size:.85rem">No breaks scheduled yet.</span>';
+      bx.querySelectorAll('[data-brkdel]').forEach(x => x.onclick = async () => {
+        try { await api('/timeclock/break/' + x.dataset.brkdel, { method: 'DELETE' }); const i = breaksList.findIndex(b => String(b.id) === String(x.dataset.brkdel)); if (i >= 0) breaksList.splice(i, 1); breaksDirty = true; renderBreaks(); toast('Break removed.'); }
+        catch (e) { $('mErr').textContent = e.message; }
+      });
+    };
+    renderBreaks();
+    $('tcBrkAdd').onclick = async () => {
+      const t = $('tcBrkTime').value; $('mErr').textContent = '';
+      if (!t) { $('mErr').textContent = 'Pick a time for the break.'; return; }
+      try {
+        const res = await api('/timeclock/break', { method: 'POST', body: JSON.stringify({ location_id: S.locDetailId, user_id: r.user_id, work_date: r.work_date || S.tcDate, start_time: t }) });
+        breaksList.push({ id: res.id, start: res.start_time, end: res.end_time });
+        breaksList.sort((a, b) => a.start.localeCompare(b.start));
+        $('tcBrkTime').value = ''; breaksDirty = true; renderBreaks(); toast('Break added — staff notified.');
+      } catch (e) { $('mErr').textContent = e.message; }
+    };
+  }
   $('mOk').onclick = async () => {
     const st = $('tcStart').value, en = $('tcEnd').value, ci = $('tcIn').value, co = $('tcOut').value;
     const payload = {};
