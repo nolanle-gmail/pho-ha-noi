@@ -2261,6 +2261,15 @@ day — use **Adjust** on it instead). This is the complement to **Assign hours*
 is for someone who clocked in **unscheduled**, *Enter hours* is for someone **scheduled** who never
 clocked in.
 
+**Add a break from the Adjust modal (2026-11-22).** A manager who forgot to set a staffer's break
+when building the schedule can add it on the working day: the Time Clock **Adjust** modal has a
+**Breaks** section — existing scheduled breaks show as removable chips, and **Add a break at `<time>`**
+drops a **10-minute** break onto the shift block that contains that time. The staffer then gets the
+usual **break reminder** at that time and it counts for **break-compliance** like any scheduled break;
+they're notified it was added. Backed by `POST /api/timeclock/break` (400 if the time is outside their
+shift, 409 on a duplicate time or if they have no shift that day) and `DELETE /api/timeclock/break/:id`
+to remove one added by mistake. The board returns each entry's `sched_breaks` so the modal can list them.
+
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
 they acknowledge it like any floor alert. The lead time is **per location** — set the
