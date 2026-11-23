@@ -1354,7 +1354,9 @@ const FULL_DAY_HOURS = 8; // an "all day" leave entry counts as a standard workd
 // One person's own hours for a period, across whatever location(s) they worked.
 function myHoursData(userId, start, end, kind) {
   const byDate = {};
-  for (const r of db.prepare(`SELECT te.work_date, te.clock_in, te.clock_out, te.worked_minutes, te.late_minutes,
+  // Completed breaks on an entry, so the My Hours day-detail popup can show each shift's break times.
+  const myBreaksStmt = db.prepare(`SELECT break_out_at, break_in_at, minutes, COALESCE(over_limit_min,0) AS over FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL ORDER BY break_out_at`);
+  for (const r of db.prepare(`SELECT te.id, te.work_date, te.clock_in, te.clock_out, te.worked_minutes, te.late_minutes,
       te.hours_confirmed, te.hours_disputed, l.name AS loc_name, l.timezone AS tz
     FROM time_entries te JOIN locations l ON l.id=te.location_id
     WHERE te.user_id=? AND te.work_date BETWEEN ? AND ? AND te.clock_out IS NOT NULL
@@ -1371,6 +1373,7 @@ function myHoursData(userId, start, end, kind) {
       late_min: r.late_minutes || 0,
       confirmed: !!r.hours_confirmed,
       disputed: !!r.hours_disputed,
+      breaks: myBreaksStmt.all(r.id).map(b => ({ out: localTime(tz, new Date(b.break_out_at)), in: localTime(tz, new Date(b.break_in_at)), minutes: b.minutes, over: b.over })),
     });
   }
   const schedByDate = {};

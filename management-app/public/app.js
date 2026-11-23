@@ -5016,7 +5016,8 @@ async function renderMyHoursMgmt() {
       x.short_min > 0 ? `<span class="badge out">${fmtDur(x.short_min)} short</span>` : '',
     ].filter(Boolean).join(' ');
     const nShifts = (x.entries || []).length;
-    return `<tr><td><div>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}${nShifts > 1 ? ` <span class="badge" style="font-size:.6rem">${nShifts} shifts</span>` : ''}</div>${shiftLines(x)}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
+    const detailLink = nShifts ? `<div style="margin-top:.2rem"><a href="#" data-daydetail="${x.date}" style="font-size:.72rem">🔍 View shift &amp; break details</a></div>` : '';
+    return `<tr><td><div>${WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7]} ${fmtDay(x.date)}${nShifts > 1 ? ` <span class="badge" style="font-size:.6rem">${nShifts} shifts</span>` : ''}</div>${shiftLines(x)}${detailLink}</td><td class="num">${x.scheduled_min ? fmtDur(x.scheduled_min) : '—'}</td><td class="num"><strong>${fmtDur(x.effective_min)}</strong>${x.adjusted ? ' <span class="mono" style="color:var(--muted)">adj</span>' : ''}</td><td>${flags || '—'}</td><td>${reviewCell(x)}</td></tr>`;
   }).join('');
   const pending = d.signoff && d.signoff.pending || 0;
   const backlog = (d.signoff_window && d.signoff_window.pending) || 0;   // across the last ~30 days
@@ -5031,7 +5032,7 @@ async function renderMyHoursMgmt() {
       <div class="card"><div class="label">Scheduled</div><div class="value">${t.scheduled_hours}h</div></div>
       <div class="card"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
       <div class="card"><div class="label" title="Hours in the 8–12h/day band, paid 1.5×">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
-      ${(t.dt_hours || t.dt_pending_hours) ? `<div class="card"><div class="label" title="Hours past 12/day, paid 2×">Double-time</div><div class="value">${t.dt_hours || 0}h${t.dt_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.dt_pending_hours}?</span>` : ''}</div></div>` : ''}
+      <div class="card"><div class="label" title="Hours past 12/day, paid 2×">Double-time</div><div class="value">${t.dt_hours || 0}h${t.dt_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.dt_pending_hours}?</span>` : ''}</div></div>
       <div class="card"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
     </div>
     ${needsAck ? `<div style="margin:.2rem 0 .6rem;padding:.7rem .9rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);display:flex;gap:.6rem;align-items:center;justify-content:space-between;flex-wrap:wrap"><span style="font-weight:600">✍️ One-time step: please read &amp; sign the <b>Worked-Hours Acknowledgment</b> before you can confirm your hours.</span><button class="btn sm" data-ack-open>Read &amp; sign</button></div>`
@@ -5042,6 +5043,7 @@ async function renderMyHoursMgmt() {
     <div class="section" style="margin-top:.8rem"><div class="table-wrap"><table><thead><tr><th>Day</th><th class="num">Scheduled</th><th class="num">Worked</th><th>Notes</th><th>Review</th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="empty">No clocked hours this period.</td></tr>'}</tbody></table></div></div>`;
   $('view').querySelectorAll('[data-hk]').forEach(b => b.onclick = () => { S.hoursKind = b.dataset.hk; renderMyHoursMgmt(); });
   $('view').querySelectorAll('[data-hnav]').forEach(b => b.onclick = () => hoursNavMgmt(+b.dataset.hnav));
+  $('view').querySelectorAll('[data-daydetail]').forEach(a => a.onclick = (e) => { e.preventDefault(); const day = (d.days || []).find(x => x.date === a.dataset.daydetail); if (day) myHoursDayDetail(day); });
   const ackOpenBtn = $('view').querySelector('[data-ack-open]');
   if (ackOpenBtn) ackOpenBtn.onclick = () => openHoursAckModal(S._hoursAck, renderMyHoursMgmt);
   const ackViewLink = $('view').querySelector('[data-ack-view]');
@@ -5058,6 +5060,32 @@ async function renderMyHoursMgmt() {
     try { await api('/timeclock/my-hours/dispute', { method: 'POST', body: JSON.stringify({ date: b.dataset.disputeDay, note }) }); toast('Sent to your manager to review'); renderMyHoursMgmt(); }
     catch (e) { toast(e.message, true); }
   });
+}
+
+// My Hours — per-day shift detail popup: each shift's clock-in / clock-out and the breaks taken,
+// so a staffer can review the full picture before confirming the day's worked hours.
+function myHoursDayDetail(x) {
+  const host = $('modalHost');
+  const wd = WD[(new Date(x.date + 'T00:00:00').getDay() + 6) % 7];
+  const es = x.entries || [];
+  const blocks = es.length ? es.map((e, i) => {
+    const breaks = (e.breaks || []).length
+      ? `<div style="margin-top:.4rem;display:flex;flex-wrap:wrap;gap:.3rem;align-items:center"><span class="sub" style="color:var(--muted);font-size:.8rem">Breaks:</span>${e.breaks.map(b => `<span class="badge gray" style="font-size:.8rem">☕ ${esc(b.out)}–${esc(b.in)} <span style="opacity:.8">(${fmtDur(b.minutes)}${b.over > 0 ? `, ${b.over}m over` : ''})</span></span>`).join('')}</div>`
+      : `<div style="margin-top:.4rem" class="sub"><span style="color:var(--muted);font-size:.8rem">No breaks recorded.</span></div>`;
+    return `<div style="border:1px solid var(--line,#e5e5e5);border-radius:10px;padding:.65rem .85rem;margin-bottom:.5rem">
+      <div style="font-weight:600">Shift ${i + 1}${es.length > 1 ? ` of ${es.length}` : ''}${e.location ? ` · ${esc(shortLoc(e.location))}` : ''}${e.disputed ? ' <span class="badge out" style="font-size:.6rem">reported</span>' : (e.confirmed ? ' <span class="badge ok" style="font-size:.6rem">confirmed</span>' : '')}</div>
+      <div class="mono" style="margin-top:.25rem;font-size:.85rem">⏱ Clock in <strong>${esc(e.clock_in || '—')}</strong> &nbsp;→&nbsp; Clock out <strong>${esc(e.clock_out || '—')}</strong>${e.worked_min ? ` &nbsp;·&nbsp; worked ${fmtDur(e.worked_min)}` : ''}${e.late_min > 0 ? ` &nbsp;·&nbsp; <span style="color:var(--warn,#b45309)">⏰ ${fmtDur(e.late_min)} late</span>` : ''}</div>
+      ${breaks}
+    </div>`;
+  }).join('') : '<p class="sub" style="color:var(--muted)">No shifts recorded this day.</p>';
+  host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:520px"><h3 style="margin:0 0 .2rem">${wd} ${esc(fmtDay(x.date))} — shift details</h3>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem;font-size:.85rem">Your clock-in / clock-out and breaks for each shift that day. Worked <strong>${fmtDur(x.effective_min)}</strong>${x.scheduled_min ? ` of ${fmtDur(x.scheduled_min)} scheduled` : ''}${x.ot_min > 0 ? ` · ${fmtDur(x.ot_min)} OT` : ''}${x.dt_min > 0 ? ` · ${fmtDur(x.dt_min)} DT` : ''}. Breaks are paid and don't reduce your hours.</p>
+    ${blocks}
+    <div class="actions" style="margin-top:.6rem"><button class="btn" id="mddClose">Close</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mddClose').onclick = close;
+  host.querySelector('.modal-bg').onclick = (ev) => { if (ev.target.classList.contains('modal-bg')) close(); };
 }
 
 // The one-time Worked-Hours Acknowledgment: pick a language, read the policy, type
