@@ -1331,7 +1331,7 @@ function myHoursData(userId, start, end, kind) {
   });
   return {
     kind, start, end, days,
-    totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), late_days: lateDays, late_minutes: lateMin, short_days: shortDays, sick_hours: round2(leave.sick), vacation_hours: round2(leave.vacation), leave_hours: round2(leave.leave) },
+    totals: { scheduled_hours: h(Object.values(schedByDate).reduce((t, m) => t + m, 0)), total_hours: h(totalMin), regular_hours: h(reg), ot_hours: h(otAppr), ot_pending_hours: h(otPend), dt_hours: h(dtAppr), dt_pending_hours: h(dtPend), late_days: lateDays, late_minutes: lateMin, short_days: shortDays, sick_hours: round2(leave.sick), vacation_hours: round2(leave.vacation), leave_hours: round2(leave.leave) },
     approved: tsAppr ? 1 : 0, approved_by: tsAppr ? (userName(tsAppr.approved_by) || null) : null,
     signoff: { pending: signoffPending },
     rules: { ot_after_h: OT_AFTER_MIN / 60, ot_mult: OT_MULT, late_grace_min: LATE_GRACE_MIN },

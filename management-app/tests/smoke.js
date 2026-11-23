@@ -821,6 +821,20 @@ const check = (name, ok, detail = '') => {
     check('gross excludes unapproved OT (regular only)', !!sup0 && sup0.gross_pay === Math.round(16 * sup0.rate * 100) / 100, JSON.stringify({ gross: sup0.gross_pay, rate: sup0.rate }));
     const supDays = pr.ot_days.filter(d => d.name === supName);
     check('OT occurrences are listed for approval', supDays.length === 2 && supDays.every(d => d.approved === 0), JSON.stringify(supDays.map(d => d.work_date)));
+    // Reports → Timesheets must split the SAME days right: OT = 8–12h band only, DT = past 12h, kept
+    // SEPARATE (a 13h day → 4 OT + 1 DT, NOT 5 OT bundled). Fixture total: 16 reg / 6 OT / 1 DT.
+    const tsRep = await j(await fetch(base + `/api/reports/timesheets?${range}`, { headers: H(mgr.token) }));
+    const tsRsup = (tsRep.by_staff || []).find(s => s.name === supName);
+    check('timesheet report splits OT/DT correctly (13h → 4 OT + 1 DT, not 5 OT)', !!tsRsup && tsRsup.reg_hours === 16 && tsRsup.ot_hours === 6 && tsRsup.dt_hours === 1, JSON.stringify(tsRsup && { reg: tsRsup.reg_hours, ot: tsRsup.ot_hours, dt: tsRsup.dt_hours }));
+    check('report totals carry OT and DT separately', tsRep.total_ot_hours >= 6 && tsRep.total_dt_hours >= 1, JSON.stringify({ ot: tsRep.total_ot_hours, dt: tsRep.total_dt_hours }));
+    // My Hours (self-view) must also surface double-time for a >12h day.
+    const supU = _bdb.prepare("SELECT id, email FROM users WHERE name=? LIMIT 1").get(supName);
+    const bigDay = supU && _bdb.prepare("SELECT work_date FROM time_entries WHERE user_id=? AND worked_minutes>720 ORDER BY work_date DESC LIMIT 1").get(supU.id);
+    if (supU && supU.email && bigDay) {
+      const mh = await j(await fetch(base + `/api/timeclock/my-hours?as=${encodeURIComponent(supU.email)}&kind=daily&anchor=${bigDay.work_date}`, { headers: { 'X-Service-Key': 'dev-floorplan-key' } }));
+      const bd = (mh.days || []).find(x => x.date === bigDay.work_date);
+      check('My Hours shows the 13h day as 4 OT + 1 DT with dt_pending_hours', !!bd && bd.ot_min === 240 && bd.dt_min === 60 && mh.totals.dt_pending_hours === 1, JSON.stringify({ day: bd && { ot: bd.ot_min, dt: bd.dt_min }, dtp: mh.totals && mh.totals.dt_pending_hours }));
+    }
     // Approval requires a note.
     r = await fetch(base + '/api/timeclock/ot-approval', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: supDays[0].user_id, work_date: supDays[0].work_date, approved: true }) });
     check('OT approval requires a note (400)', r.status === 400, 'status=' + r.status);

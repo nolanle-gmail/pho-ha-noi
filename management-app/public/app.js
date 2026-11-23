@@ -4965,6 +4965,7 @@ async function renderMyHoursMgmt() {
     const flags = [
       x.late_min > 0 ? `<span class="badge low">⏰ ${fmtDur(x.late_min)} late</span>` : '',
       x.ot_min > 0 ? `<span class="badge blue">+${fmtDur(x.ot_min)} OT${x.ot_status === 'approved' ? ' ✓' : (x.ot_status === 'pending' || x.ot_status === 'escalated') ? ' ⏳' : ''}</span>` : '',
+      x.dt_min > 0 ? `<span class="badge out" title="Double-time — hours past 12 that day, paid 2×">+${fmtDur(x.dt_min)} DT</span>` : '',
       x.short_min > 0 ? `<span class="badge out">${fmtDur(x.short_min)} short</span>` : '',
     ].filter(Boolean).join(' ');
     const nShifts = (x.entries || []).length;
@@ -4982,7 +4983,8 @@ async function renderMyHoursMgmt() {
     <div class="kpis">
       <div class="card"><div class="label">Scheduled</div><div class="value">${t.scheduled_hours}h</div></div>
       <div class="card"><div class="label">Worked</div><div class="value">${t.total_hours}h</div></div>
-      <div class="card"><div class="label">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
+      <div class="card"><div class="label" title="Hours in the 8–12h/day band, paid 1.5×">Overtime</div><div class="value">${t.ot_hours}h${t.ot_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.ot_pending_hours}?</span>` : ''}</div></div>
+      ${(t.dt_hours || t.dt_pending_hours) ? `<div class="card"><div class="label" title="Hours past 12/day, paid 2×">Double-time</div><div class="value">${t.dt_hours || 0}h${t.dt_pending_hours ? ` <span class="mono" style="color:var(--muted);font-size:.7rem">+${t.dt_pending_hours}?</span>` : ''}</div></div>` : ''}
       <div class="card"><div class="label">Late days</div><div class="value ${t.late_days ? 'warn' : ''}">${t.late_days}</div></div>
     </div>
     ${needsAck ? `<div style="margin:.2rem 0 .6rem;padding:.7rem .9rem;border-radius:10px;background:var(--gold-soft,#fef3c7);color:var(--gold-strong,#92400e);display:flex;gap:.6rem;align-items:center;justify-content:space-between;flex-wrap:wrap"><span style="font-weight:600">✍️ One-time step: please read &amp; sign the <b>Worked-Hours Acknowledgment</b> before you can confirm your hours.</span><button class="btn sm" data-ack-open>Read &amp; sign</button></div>`
@@ -6370,20 +6372,21 @@ async function renderRepTimesheets() {
       : '<p class="sub" style="color:var(--muted);margin:.1rem 0 .4rem;font-size:.78rem">📊 <strong>Google Sheets:</strong> click <strong>⬇ Google Sheets</strong>, then in Google Sheets open <strong>File → Import → Upload</strong> and drop the downloaded file (choose “Replace spreadsheet” or “Insert new sheet”).</p>') : ''}
     <div class="kpis">
       <div class="card"><div class="label">Total hours</div><div class="value">${numf(d.total_hours)}</div></div>
-      <div class="card"><div class="label">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
+      <div class="card"><div class="label" title="Hours in the 8–12h/day band, paid 1.5×">Overtime hrs</div><div class="value ${d.total_ot_hours ? 'warn' : ''}">${numf(d.total_ot_hours)}</div></div>
+      <div class="card"><div class="label" title="Hours past 12/day, paid 2×">Double-time hrs</div><div class="value ${d.total_dt_hours ? 'warn' : ''}">${numf(d.total_dt_hours || 0)}</div></div>
       <div class="card"><div class="label">Gross pay</div><div class="value">${money(d.total_labor_cost)}</div></div>
       <div class="card"><div class="label">Staff</div><div class="value">${d.headcount}</div></div>
       <div class="card"><div class="label" title="Scheduled breaks not taken + breaks over 10 min">Break issues</div><div class="value ${(d.total_missed_breaks || d.total_long_breaks) ? 'warn' : ''}">${(d.total_missed_breaks || 0)} missed · ${(d.total_long_breaks || 0)} long</div></div>
     </div>
-    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num" title="Total break minutes (not deducted from hours)">Break min</th><th class="num" title="Scheduled breaks the staffer never took">Missed</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
-      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num ${s.break_over_minutes ? 'warn' : ''}">${s.break_minutes ? s.break_minutes + (s.break_over_minutes ? ` (${s.break_over_minutes} over)` : '') : '—'}</td><td class="num ${s.missed_breaks ? 'warn' : ''}">${s.missed_breaks || '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="11" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
+    <div class="table-wrap"><table><thead><tr><th>Staff</th><th>Emp code</th><th>Role</th><th>Location</th><th class="num">Days</th><th class="num">Hours</th><th class="num" title="8–12h/day band, 1.5×">OT hrs</th><th class="num" title="Past 12h/day, 2×">DT hrs</th><th class="num" title="Total break minutes (not deducted from hours)">Break min</th><th class="num" title="Scheduled breaks the staffer never took">Missed</th><th class="num">Rate</th><th class="num">Gross pay</th></tr></thead><tbody>
+      ${d.by_staff.length ? d.by_staff.map(s => `<tr><td><strong>${esc(s.name)}</strong> <button class="btn sm ghost" data-tsphoto="${s.user_id}" data-name="${esc(s.name)}" title="Punch photos">📷</button></td><td class="mono">${esc(s.employee_code || '—')}</td><td><span class="badge ${ROLE_CHIP[s.role] || 'gray'}">${esc(roleLabel(s.role))}</span></td><td>${esc(shortLoc(s.location) || '—')}</td><td class="num">${s.shifts}</td><td class="num">${numf(s.hours)}</td><td class="num ${s.ot_hours ? 'warn' : ''}">${s.ot_hours ? numf(s.ot_hours) : '—'}</td><td class="num ${s.dt_hours ? 'warn' : ''}">${s.dt_hours ? numf(s.dt_hours) : '—'}</td><td class="num ${s.break_over_minutes ? 'warn' : ''}">${s.break_minutes ? s.break_minutes + (s.break_over_minutes ? ` (${s.break_over_minutes} over)` : '') : '—'}</td><td class="num ${s.missed_breaks ? 'warn' : ''}">${s.missed_breaks || '—'}</td><td class="num">${money(s.hourly_rate)}/hr</td><td class="num">${money(s.labor_cost)}</td></tr>`).join('') : '<tr><td colspan="12" class="empty">No clocked hours in this range. Pick a location and dates, then Run report.</td></tr>'}
     </tbody></table></div>
     ${showByLoc ? `<div class="section"><h3>Gross pay by location</h3>
-      <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Staff</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">Gross pay</th></tr></thead><tbody>
-        ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location) || '—')}</td><td class="num">${l.headcount}</td><td class="num">${numf(l.hours)}</td><td class="num ${l.ot_hours ? 'warn' : ''}">${l.ot_hours ? numf(l.ot_hours) : '—'}</td><td class="num"><strong>${money(l.labor_cost)}</strong></td></tr>`).join('')}
-        <tr style="border-top:2px solid var(--line)"><td><strong>All locations</strong></td><td class="num"><strong>${d.headcount}</strong></td><td class="num"><strong>${numf(d.total_hours)}</strong></td><td class="num"><strong>${numf(d.total_ot_hours)}</strong></td><td class="num"><strong>${money(d.total_labor_cost)}</strong></td></tr>
+      <div class="table-wrap"><table><thead><tr><th>Location</th><th class="num">Staff</th><th class="num">Hours</th><th class="num">OT hrs</th><th class="num">DT hrs</th><th class="num">Gross pay</th></tr></thead><tbody>
+        ${d.by_location.map(l => `<tr><td>${esc(shortLoc(l.location) || '—')}</td><td class="num">${l.headcount}</td><td class="num">${numf(l.hours)}</td><td class="num ${l.ot_hours ? 'warn' : ''}">${l.ot_hours ? numf(l.ot_hours) : '—'}</td><td class="num ${l.dt_hours ? 'warn' : ''}">${l.dt_hours ? numf(l.dt_hours) : '—'}</td><td class="num"><strong>${money(l.labor_cost)}</strong></td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--line)"><td><strong>All locations</strong></td><td class="num"><strong>${d.headcount}</strong></td><td class="num"><strong>${numf(d.total_hours)}</strong></td><td class="num"><strong>${numf(d.total_ot_hours)}</strong></td><td class="num"><strong>${numf(d.total_dt_hours || 0)}</strong></td><td class="num"><strong>${money(d.total_labor_cost)}</strong></td></tr>
       </tbody></table></div></div>` : ''}
-    <p class="sub" style="margin-top:.8rem;color:var(--muted)">Overtime uses California daily rules: over ${d.ot_rule ? d.ot_rule.ot_after_h : 8}h/day paid at ${d.ot_rule ? d.ot_rule.ot_mult : 1.5}×, over ${d.ot_rule ? d.ot_rule.dt_after_h : 12}h/day at ${d.ot_rule ? d.ot_rule.dt_mult : 2}× (double-time is included in OT hours &amp; gross). Gross pay is 0 where a staffer’s hourly rate isn’t set. Completed shifts only.</p>`;
+    <p class="sub" style="margin-top:.8rem;color:var(--muted)">California daily rule, per calendar day: first ${d.ot_rule ? d.ot_rule.ot_after_h : 8}h = regular, the ${d.ot_rule ? d.ot_rule.ot_after_h : 8}–${d.ot_rule ? d.ot_rule.dt_after_h : 12}h band = <strong>OT</strong> at ${d.ot_rule ? d.ot_rule.ot_mult : 1.5}×, hours past ${d.ot_rule ? d.ot_rule.dt_after_h : 12} = <strong>DT</strong> at ${d.ot_rule ? d.ot_rule.dt_mult : 2}×. OT and DT are shown separately; gross pay applies each multiplier. Gross is 0 where a staffer’s hourly rate isn’t set. Completed shifts only.</p>`;
   wireReportFilters(true);
   $('tsRun').onclick = renderRepTimesheets;
   $('tsCsv').onclick = () => exportTimesheets(d, locName, 'csv');
@@ -6433,14 +6436,14 @@ async function openStaffPunchPhotos(userId, name, start, end) {
 function exportTimesheets(d, locName, kind) {
   const cols = ['Staff', 'Employee code', 'Role', 'Location', 'Days', 'Total hours', 'Regular hrs', 'OT hrs', 'Double-time hrs', 'Break min', 'Break over-limit min', 'Long breaks', 'Missed breaks', 'Hourly rate', 'Gross pay'];
   const staffRows = d.by_staff.map(s => [s.name, s.employee_code || '', roleLabel(s.role), shortLoc(s.location) || '', s.shifts, s.hours, s.reg_hours, s.ot_hours, s.dt_hours, s.break_minutes || 0, s.break_over_minutes || 0, s.long_breaks || 0, s.missed_breaks || 0, s.hourly_rate, s.labor_cost]);
-  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, '', d.total_break_minutes || 0, d.total_break_over_minutes || 0, d.total_long_breaks || 0, d.total_missed_breaks || 0, '', d.total_labor_cost];
-  const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'Gross pay'];
-  const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.labor_cost]);
-  const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_labor_cost];
+  const staffTotal = ['TOTAL', '', '', '', '', d.total_hours, '', d.total_ot_hours, d.total_dt_hours || 0, d.total_break_minutes || 0, d.total_break_over_minutes || 0, d.total_long_breaks || 0, d.total_missed_breaks || 0, '', d.total_labor_cost];
+  const locCols = ['Location', 'Staff', 'Hours', 'OT hrs', 'DT hrs', 'Gross pay'];
+  const locRows = (d.by_location || []).map(l => [shortLoc(l.location) || '—', l.headcount, l.hours, l.ot_hours, l.dt_hours || 0, l.labor_cost]);
+  const locTotal = ['All locations', d.headcount, d.total_hours, d.total_ot_hours, d.total_dt_hours || 0, d.total_labor_cost];
   const base = `timesheet_${(locName || 'all').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}_${d.start}_to_${d.end}`;
   const fname = kind === 'xls' ? `${base}.xls` : kind === 'gsheet' ? `${base}_google-sheets.csv` : `${base}.csv`;
   const title = `Phở Hà Nội — Timesheet · ${locName} · ${d.start} to ${d.end}`;
-  const note = 'OT: California daily — over 8h/day at 1.5×, over 12h/day at 2× (double-time included in OT hrs & gross).';
+  const note = 'California daily rule per day: first 8h regular, 8–12h = OT at 1.5×, past 12h = double-time at 2×. OT hrs and Double-time hrs are separate; gross applies each multiplier.';
   // CSV and Google Sheets share the same clean, UTF-8, no-BOM CSV — a BOM can leave a stray
   // character in the first cell on Google Sheets import, so we deliberately omit it.
   if (kind === 'csv' || kind === 'gsheet') {

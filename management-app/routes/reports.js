@@ -157,7 +157,9 @@ function timesheetReport(req) {
       user_id: u.user_id, name: u.name, role: u.role, employee_code: u.employee_code,
       location: locName[plId] || null, location_id: plId != null ? Number(plId) : null,
       shifts: u.shifts, hours: tsHrs(u.min), reg_hours: tsHrs(u.reg),
-      ot_hours: tsHrs(u.ot + u.dt), dt_hours: tsHrs(u.dt),
+      // California daily rule: OT = the 8–12h band (1.5×), DT = hours past 12 (2×). Kept SEPARATE
+      // so each column is right — a >12h day must not add its double-time hours into the OT column.
+      ot_hours: tsHrs(u.ot), dt_hours: tsHrs(u.dt),
       break_minutes: u.breakMin, break_over_minutes: u.breakOver,   // total break min in range + minutes over the per-break limit (not deducted from hours yet)
       long_breaks: u.longBreaks, missed_breaks: missedByUser[u.user_id] || 0,   // break-compliance counts (for performance review)
       hourly_rate: u.hourly_rate, labor_cost: Math.round(u.gross * 100) / 100,
@@ -166,15 +168,15 @@ function timesheetReport(req) {
 
   const by_location = [...byLoc.values()].map(L => ({
     location: locName[L.location_id] || '—', location_id: L.location_id != null ? Number(L.location_id) : null,
-    headcount: L.staff.size, hours: tsHrs(L.min), ot_hours: tsHrs(L.ot + L.dt),
+    headcount: L.staff.size, hours: tsHrs(L.min), ot_hours: tsHrs(L.ot), dt_hours: tsHrs(L.dt),
     labor_cost: Math.round(L.gross * 100) / 100,
   })).sort((a, b) => b.labor_cost - a.labor_cost);
 
-  const tot = by_staff.reduce((a, r) => ({ hours: a.hours + r.hours, ot: a.ot + r.ot_hours, labor: a.labor + r.labor_cost }), { hours: 0, ot: 0, labor: 0 });
+  const tot = by_staff.reduce((a, r) => ({ hours: a.hours + r.hours, ot: a.ot + r.ot_hours, dt: a.dt + r.dt_hours, labor: a.labor + r.labor_cost }), { hours: 0, ot: 0, dt: 0, labor: 0 });
   return {
     start, end, location_id: locId ? Number(locId) : null,
     ot_rule: { ot_after_h: 8, dt_after_h: 12, ot_mult: TS_OT_MULT, dt_mult: TS_DT_MULT },
-    total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100,
+    total_hours: Math.round(tot.hours * 100) / 100, total_ot_hours: Math.round(tot.ot * 100) / 100, total_dt_hours: Math.round(tot.dt * 100) / 100,
     total_break_minutes: by_staff.reduce((a, r) => a + (r.break_minutes || 0), 0),
     total_break_over_minutes: by_staff.reduce((a, r) => a + (r.break_over_minutes || 0), 0),
     total_long_breaks: by_staff.reduce((a, r) => a + (r.long_breaks || 0), 0),
