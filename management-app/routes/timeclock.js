@@ -1140,14 +1140,27 @@ router.put('/entry/:id', requireRole(ROLES.MANAGE), (req, res) => {
   db.exec('BEGIN');
   try {
     if (hasHours) {
-      const old = db.prepare(`SELECT id FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(e.user_id, e.location_id, e.work_date);
-      for (const s of old) { db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(s.id); db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(s.id); db.prepare(`DELETE FROM shifts WHERE id=?`).run(s.id); }
-      db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?, 'work',0,NULL)`)
-        .run(e.user_id, e.location_id, e.work_date, start, end, 'Assigned from time clock', req.user.id);
-      // Apply the assigned schedule to that day's entries and let the auto clock-out
-      // re-evaluate against the new end (clear any prior overrun decision/nudge).
+      // Adjust the ONE shift block this punch belongs to — never collapse a split shift into one, and
+      // keep its job (role). Only when the person has NO scheduled shift (an unscheduled clock-in) do we
+      // create one. (Previously this deleted EVERY work shift that day and made a single job-less shift,
+      // which wrecked split shifts + dropped the role.)
+      const dayShifts = db.prepare(`SELECT id, start_time, end_time FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'`).all(e.user_id, e.location_id, e.work_date);
+      const ciMin = localMinutesOfDay(tz, new Date(clockInISO));
+      const blk = shiftBlockForPunch(e.user_id, e.location_id, e.work_date, ciMin);
+      const target = (blk && dayShifts.find(s => s.start_time === blk.sRaw && s.end_time === blk.eRaw)) || null;
+      if (target) {
+        db.prepare(`UPDATE shifts SET start_time=?, end_time=?, updated_at=datetime('now') WHERE id=?`).run(start, end, target.id);   // keep shift_jobs + shift_breaks
+      } else {
+        const sid = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?, 'work',0,NULL)`)
+          .run(e.user_id, e.location_id, e.work_date, start, end, 'Assigned from time clock', req.user.id).lastInsertRowid;
+        // Inherit a role from another of the day's shifts, so a newly-assigned block isn't job-less.
+        const jobRow = dayShifts.length ? db.prepare(`SELECT sj.job_id FROM shift_jobs sj JOIN shifts s ON s.id=sj.shift_id WHERE s.user_id=? AND s.location_id=? AND s.shift_date=? AND s.kind='work' LIMIT 1`).get(e.user_id, e.location_id, e.work_date) : null;
+        if (jobRow) db.prepare(`INSERT INTO shift_jobs (shift_id, job_id) VALUES (?,?)`).run(Number(sid), jobRow.job_id);
+      }
+      // Re-apply the day's scheduled minutes to its entries + let the auto clock-out re-evaluate.
+      const schedMin = scheduledMinutes(e.user_id, e.location_id, e.work_date);
       db.prepare(`UPDATE time_entries SET scheduled_minutes=?, overrun_notified=0, overrun_extra_min=0, overrun_decision=NULL, overrun_decided_by=NULL, overrun_decided_at=NULL WHERE user_id=? AND location_id=? AND work_date=?`)
-        .run(spanMin(start, end), e.user_id, e.location_id, e.work_date);
+        .run(schedMin, e.user_id, e.location_id, e.work_date);
     }
     const worked = clockOutISO ? Math.max(0, Math.round((new Date(clockOutISO).getTime() - new Date(clockInISO).getTime()) / 60000)) : null;
     db.prepare(`UPDATE time_entries SET clock_in=?, clock_out=?, worked_minutes=? WHERE id=?`).run(clockInISO, clockOutISO, worked, e.id);

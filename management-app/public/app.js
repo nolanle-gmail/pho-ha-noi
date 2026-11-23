@@ -4546,13 +4546,16 @@ function tcEntryModal(r) {
       } catch (er) { $('mErr').textContent = er.message; }
     };
   }
+  // Prefilled originals — only send a field when the manager actually CHANGED it, so a routine Save
+  // (fixing a clock time, or after adding a break) never rewrites the day's schedule.
+  const origStart = r.shift_start || '', origEnd = r.shift_end || '', origIn = r.clock_in_hhmm || '', origOut = r.clock_out_hhmm || '';
   $('mOk').onclick = async () => {
     const st = $('tcStart').value, en = $('tcEnd').value, ci = $('tcIn').value, co = $('tcOut').value;
     const payload = {};
-    if (st || en) { payload.start_time = st; payload.end_time = en; }
-    if (ci) payload.clock_in = ci;
-    if (co) payload.clock_out = co;
-    if (!Object.keys(payload).length) { $('mErr').textContent = 'Set the hours or a clock time.'; return; }
+    if ((st !== origStart || en !== origEnd) && (st || en)) { payload.start_time = st; payload.end_time = en; }
+    if (ci && ci !== origIn) payload.clock_in = ci;
+    if (co !== origOut) payload.clock_out = co;   // allow clearing an open-ended out, and changing it
+    if (!Object.keys(payload).length) { close(); if (breaksDirty) renderLocTimeClock(); return; }   // nothing changed → just close (breaks saved separately)
     $('mOk').disabled = true;
     try {
       await api('/timeclock/entry/' + r.id, { method: 'PUT', body: JSON.stringify(payload) });

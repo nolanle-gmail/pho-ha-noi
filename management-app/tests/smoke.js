@@ -723,6 +723,28 @@ const check = (name, ok, detail = '') => {
       _tdb.prepare("DELETE FROM time_entries WHERE id=?").run(eid);
     }
 
+    // ── Adjusting an entry's scheduled hours must NOT collapse a split shift or drop the job ──
+    { const _adb = require('../db/database');
+      const sp = _adb.prepare("SELECT id FROM users WHERE location_id=? AND is_active=1 AND id<>? AND role<>'owner' ORDER BY id DESC LIMIT 1").get(loc1, emp.user.id);
+      for (const te of _adb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date=?").all(sp.id, today)) { _adb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(te.id); try { _adb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(te.id); } catch {} _adb.prepare("DELETE FROM time_entries WHERE id=?").run(te.id); }
+      for (const s of _adb.prepare("SELECT id FROM shifts WHERE user_id=? AND location_id=? AND shift_date=?").all(sp.id, loc1, today)) { _adb.prepare("DELETE FROM shift_jobs WHERE shift_id=?").run(s.id); _adb.prepare("DELETE FROM shift_breaks WHERE shift_id=?").run(s.id); _adb.prepare("DELETE FROM shifts WHERE id=?").run(s.id); }
+      const jobId = (_adb.prepare("SELECT id FROM jobs WHERE name='Server' AND is_active=1 LIMIT 1").get() || _adb.prepare("SELECT id FROM jobs WHERE is_active=1 LIMIT 1").get()).id;
+      const s1 = Number(_adb.prepare("INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,kind) VALUES (?,?,?,?,?, 'work')").run(sp.id, loc1, today, '09:00', '13:00').lastInsertRowid);
+      const s2 = Number(_adb.prepare("INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,kind) VALUES (?,?,?,?,?, 'work')").run(sp.id, loc1, today, '17:00', '21:00').lastInsertRowid);
+      _adb.prepare("INSERT INTO shift_jobs (shift_id, job_id) VALUES (?,?)").run(s1, jobId);
+      _adb.prepare("INSERT INTO shift_jobs (shift_id, job_id) VALUES (?,?)").run(s2, jobId);
+      // Entry clocked into block 1 (09:05–13:00 PST = 17:05–21:00Z).
+      const eid2 = Number(_adb.prepare("INSERT INTO time_entries (user_id,location_id,work_date,clock_in,clock_out,scheduled_minutes,worked_minutes,opened_by) VALUES (?,?,?,?,?,?,?,?)").run(sp.id, loc1, today, `${today}T17:05:00.000Z`, `${today}T21:00:00.000Z`, 240, 235, mgr.user.id).lastInsertRowid);
+      r = await fetch(base + `/api/timeclock/entry/${eid2}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ start_time: '09:00', end_time: '13:30' }) });
+      check('adjust entry hours succeeds', r.status === 200, await r.text());
+      const after = _adb.prepare("SELECT id, start_time, end_time, (SELECT COUNT(*) FROM shift_jobs sj WHERE sj.shift_id=shifts.id) nj FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work' ORDER BY start_time").all(sp.id, loc1, today);
+      check('adjust keeps the split shift (2 blocks) + job, changes only block 1', after.length === 2 && after[0].start_time === '09:00' && after[0].end_time === '13:30' && after[0].nj === 1 && after[1].start_time === '17:00' && after[1].end_time === '21:00' && after[1].nj === 1, JSON.stringify(after));
+      _adb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(eid2);
+      try { _adb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(eid2); } catch {}
+      _adb.prepare("DELETE FROM time_entries WHERE id=?").run(eid2);
+      for (const s of after) { _adb.prepare("DELETE FROM shift_jobs WHERE shift_id=?").run(s.id); _adb.prepare("DELETE FROM shifts WHERE id=?").run(s.id); }
+    }
+
     // ── Break clock-out / clock-in (kiosk): break vs end-shift, 10-min over-limit, reminder sweep ──
     const _bdb = require('../db/database');
     let bslug = (_bdb.prepare("SELECT slug FROM locations WHERE id=?").get(loc1) || {}).slug;
