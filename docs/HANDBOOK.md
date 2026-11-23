@@ -2249,6 +2249,18 @@ assigned the normal **30-min grace auto clock-out** takes over at the assigned e
 (including the location's shift lead) → assign hours + correct punch times → auto clock-out at the
 assigned end — using throwaway accounts, no real staff contacted.
 
+**Enter hours for a scheduled staffer who never clocked in (2026-11-22).** A person who was
+scheduled but forgot — or didn't know how — to clock in shows on the **Time Clock** board as
+**Not clocked in**, and now carries a **➕ Enter hours** button (manager / shift-lead only). It opens
+a small form **prefilled with their scheduled shift**; the manager enters the clock-in / clock-out
+they actually worked and saves. That **creates a real time entry** for the day (scheduled, late and
+worked minutes computed exactly like a punched entry), so the person moves from "Not clocked in" to a
+normal row with the usual **Adjust** option, and the day flows into their timesheet and payroll. The
+staffer is notified. Backed by `POST /api/timeclock/entry` (409 if they already have an entry that
+day — use **Adjust** on it instead). This is the complement to **Assign hours** above: *Assign hours*
+is for someone who clocked in **unscheduled**, *Enter hours* is for someone **scheduled** who never
+clocked in.
+
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
 they acknowledge it like any floor alert. The lead time is **per location** — set the
