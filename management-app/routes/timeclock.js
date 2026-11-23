@@ -986,6 +986,9 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   // Scheduled breaks on the person's shift(s) that day (so the Adjust modal can show + manage them).
   const schedBreaksStmt = db.prepare(`SELECT sb.id, sb.start_time, sb.end_time FROM shift_breaks sb
     JOIN shifts s ON s.id=sb.shift_id WHERE s.user_id=? AND s.location_id=? AND s.shift_date=? AND s.kind='work' ORDER BY sb.start_time`);
+  // Completed ACTUAL breaks on this entry (time_entry_breaks) with their times, so the Adjust modal can
+  // edit them / a manager can add a break the staffer took but forgot to punch.
+  const takenBreaksStmt = db.prepare(`SELECT id, break_out_at, break_in_at, minutes, COALESCE(over_limit_min,0) AS over_min FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL ORDER BY break_out_at`);
   const byUser = {};
   const rows = entries.map(e => {
     const worked = liveWorked(e);
@@ -1009,6 +1012,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
       break_min: br.min, break_over: br.over_min, breaks_count: br.cnt,
       break_times: breakTimesStmt.all(e.id).map(b => ({ time: localTime(tz, new Date(b.break_out_at)), over: b.over_min })),
       sched_breaks: schedBreaksStmt.all(e.user_id, locId, e.work_date).map(b => ({ id: b.id, start: b.start_time, end: b.end_time })),
+      taken_breaks: takenBreaksStmt.all(e.id).map(b => ({ id: b.id, start: hhmm(b.break_out_at), end: hhmm(b.break_in_at), minutes: b.minutes, over_min: b.over_min })),
       block_start: blk ? blk.sRaw : null, block_end: blk ? blk.eRaw : null,
       scheduled_minutes: e.scheduled_minutes, worked_minutes: worked,
       overtime_minutes: Math.max(0, worked - (e.scheduled_minutes || 0)),
@@ -1238,6 +1242,62 @@ router.delete('/break/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (!ownsLocation(req, row.location_id)) return res.status(403).json({ error: 'Not your location.' });
   db.prepare(`DELETE FROM shift_breaks WHERE id=?`).run(row.id);
   auditLog(req, 'shift_break_remove', 'user', row.user_id, { location_id: row.location_id, work_date: row.shift_date, start_time: row.start_time });
+  res.json({ success: true });
+});
+
+// ── ACTUAL breaks taken (time_entry_breaks) on one time entry ─────────────────────────────────────
+// A manager records (or edits) a break a staffer actually took but forgot to punch — clock out for
+// break / clock back in. Recorded for the board + break-compliance so it isn't flagged as a MISSED
+// break; worked hours are NOT changed (breaks are paid under the current policy, same as a punched
+// break). Distinct from the SCHEDULED-break endpoints above (shift_breaks). Used from the Adjust modal.
+const toHHMM = (tz, iso) => { const m = localMinutesOfDay(tz, new Date(iso)); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
+function computeBreakTimes(entry, tz, startHHMM, endHHMM) {
+  const hhmmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!hhmmRe.test(startHHMM) || !hhmmRe.test(endHHMM)) return { error: 'Break start and end must both be HH:MM (24-hour).' };
+  const outD = localWallToInstant(tz, entry.work_date, startHHMM);
+  let inD = localWallToInstant(tz, entry.work_date, endHHMM);
+  if (inD.getTime() <= outD.getTime()) inD = new Date(inD.getTime() + 86400000);   // crossed midnight
+  const minutes = Math.round((inD.getTime() - outD.getTime()) / 60000);
+  if (minutes <= 0) return { error: 'Break end must be after the start.' };
+  if (minutes > 12 * 60) return { error: 'That break is longer than 12 hours — check the times.' };
+  if (outD.getTime() < new Date(entry.clock_in).getTime()) return { error: 'The break starts before they clocked in.' };
+  if (entry.clock_out && inD.getTime() > new Date(entry.clock_out).getTime()) return { error: 'The break ends after they clocked out.' };
+  return { break_out_at: outD.toISOString(), break_in_at: inD.toISOString(), minutes, over_limit_min: Math.max(0, minutes - BREAK_LIMIT_MIN) };
+}
+router.post('/entry/:id/break', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const tz = locTz(e.location_id);
+  const c = computeBreakTimes(e, tz, String((req.body || {}).start || '').slice(0, 5), String((req.body || {}).end || '').slice(0, 5));
+  if (c.error) return res.status(400).json({ error: c.error });
+  const info = db.prepare(`INSERT INTO time_entry_breaks (time_entry_id, user_id, location_id, break_out_at, break_in_at, minutes, over_limit_min) VALUES (?,?,?,?,?,?,?)`)
+    .run(e.id, e.user_id, e.location_id, c.break_out_at, c.break_in_at, c.minutes, c.over_limit_min);
+  auditLog(req, 'break_record_add', 'user', e.user_id, { time_entry_id: e.id, start: toHHMM(tz, c.break_out_at), end: toHHMM(tz, c.break_in_at), minutes: c.minutes });
+  try { notify(req.user.id, e.user_id, 'A break was recorded on your hours', `A manager recorded a ${c.minutes}-minute break on your ${e.work_date} shift (you didn’t punch out for it). Your worked hours are unchanged.`); } catch { /* */ }
+  res.json({ success: true, id: Number(info.lastInsertRowid), start: toHHMM(tz, c.break_out_at), end: toHHMM(tz, c.break_in_at), minutes: c.minutes, over_min: c.over_limit_min });
+});
+router.put('/entry/:id/break/:bid', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT * FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const b = db.prepare(`SELECT id FROM time_entry_breaks WHERE id=? AND time_entry_id=?`).get(req.params.bid, e.id);
+  if (!b) return res.status(404).json({ error: 'Break not found on this entry.' });
+  const tz = locTz(e.location_id);
+  const c = computeBreakTimes(e, tz, String((req.body || {}).start || '').slice(0, 5), String((req.body || {}).end || '').slice(0, 5));
+  if (c.error) return res.status(400).json({ error: c.error });
+  db.prepare(`UPDATE time_entry_breaks SET break_out_at=?, break_in_at=?, minutes=?, over_limit_min=? WHERE id=?`).run(c.break_out_at, c.break_in_at, c.minutes, c.over_limit_min, b.id);
+  auditLog(req, 'break_record_edit', 'user', e.user_id, { time_entry_id: e.id, break_id: b.id, minutes: c.minutes });
+  res.json({ success: true, id: b.id, start: toHHMM(tz, c.break_out_at), end: toHHMM(tz, c.break_in_at), minutes: c.minutes, over_min: c.over_limit_min });
+});
+router.delete('/entry/:id/break/:bid', requireRole(ROLES.MANAGE), (req, res) => {
+  const e = db.prepare(`SELECT id, location_id, user_id FROM time_entries WHERE id=?`).get(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Time entry not found.' });
+  if (!ownsLocation(req, e.location_id)) return res.status(403).json({ error: 'Not your location.' });
+  const b = db.prepare(`SELECT id FROM time_entry_breaks WHERE id=? AND time_entry_id=?`).get(req.params.bid, e.id);
+  if (!b) return res.status(404).json({ error: 'Break not found on this entry.' });
+  db.prepare(`DELETE FROM time_entry_breaks WHERE id=?`).run(b.id);
+  auditLog(req, 'break_record_remove', 'user', e.user_id, { time_entry_id: e.id, break_id: b.id });
   res.json({ success: true });
 });
 

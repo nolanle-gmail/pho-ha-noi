@@ -687,6 +687,42 @@ const check = (name, ok, detail = '') => {
     bd2 = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
     check('removed break no longer on the board entry', !bd2.entries.some(e => e.user_id === emp.user.id && (e.sched_breaks || []).some(b => b.start === '12:00')), 'ok');
 
+    // ── Manager records/edits an ACTUAL break a staffer took but forgot to punch (time_entry_breaks) ──
+    { const _tdb = require('../db/database');
+      const tk = _tdb.prepare("SELECT id FROM users WHERE location_id=? AND is_active=1 AND id<>? AND role<>'owner' ORDER BY id LIMIT 1").get(loc1, emp.user.id);
+      for (const te of _tdb.prepare("SELECT id FROM time_entries WHERE user_id=? AND work_date=?").all(tk.id, today)) {
+        _tdb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(te.id);
+        try { _tdb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(te.id); } catch {}
+        _tdb.prepare("DELETE FROM time_entries WHERE id=?").run(te.id);
+      }
+      // A clocked-out entry spanning ~10:00–15:00 local (18:00–23:00Z in PST) so a midday break fits.
+      const tkEntry = _tdb.prepare("INSERT INTO time_entries (user_id,location_id,work_date,clock_in,clock_out,scheduled_minutes,worked_minutes,opened_by) VALUES (?,?,?,?,?,?,?,?)")
+        .run(tk.id, loc1, today, `${today}T18:00:00.000Z`, `${today}T23:00:00.000Z`, 300, 300, mgr.user.id).lastInsertRowid;
+      const eid = Number(tkEntry);
+      r = await fetch(base + `/api/timeclock/entry/${eid}/break`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ start: '12:00', end: '12:30' }) });
+      const tb = await j(r);
+      check('manager records an actual break (30m → 20 over)', r.status === 200 && tb.start === '12:00' && tb.end === '12:30' && tb.minutes === 30 && tb.over_min === 20, JSON.stringify(tb));
+      let tbd = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+      check('board entry carries the taken break', (((tbd.entries.find(e => e.id === eid) || {}).taken_breaks) || []).some(b => b.start === '12:00' && b.end === '12:30'), JSON.stringify((tbd.entries.find(e => e.id === eid) || {}).taken_breaks));
+      r = await fetch(base + `/api/timeclock/entry/${eid}/break/${tb.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ start: '12:00', end: '12:15' }) });
+      const tbe = await j(r);
+      check('manager edits the break (now 15m → 5 over)', r.status === 200 && tbe.minutes === 15 && tbe.over_min === 5, JSON.stringify(tbe));
+      r = await fetch(base + `/api/timeclock/entry/${eid}/break`, { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ start: '16:00', end: '16:10' }) });
+      check('break outside the clock window rejected (400)', r.status === 400, 'status=' + r.status);
+      r = await fetch(base + `/api/timeclock/entry/${eid}/break`, { method: 'POST', headers: H(emp.token), body: JSON.stringify({ start: '13:00', end: '13:10' }) });
+      check('non-manager cannot record a break (403)', r.status === 403, 'status=' + r.status);
+      r = await fetch(base + `/api/timeclock/entry/${eid}/break/${tb.id}`, { method: 'DELETE', headers: H(mgr.token) });
+      check('manager removes the taken break', r.status === 200, await r.text());
+      tbd = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+      check('removed taken break gone from the board entry', !(((tbd.entries.find(e => e.id === eid) || {}).taken_breaks) || []).length, 'ok');
+      // Worked hours unchanged by the break (paid policy).
+      check('recording a break did NOT change worked minutes', (tbd.entries.find(e => e.id === eid) || {}).worked_minutes === 300, JSON.stringify((tbd.entries.find(e => e.id === eid) || {}).worked_minutes));
+      // cleanup
+      _tdb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(eid);
+      try { _tdb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(eid); } catch {}
+      _tdb.prepare("DELETE FROM time_entries WHERE id=?").run(eid);
+    }
+
     // ── Break clock-out / clock-in (kiosk): break vs end-shift, 10-min over-limit, reminder sweep ──
     const _bdb = require('../db/database');
     let bslug = (_bdb.prepare("SELECT slug FROM locations WHERE id=?").get(loc1) || {}).slug;

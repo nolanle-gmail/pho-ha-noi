@@ -4464,13 +4464,20 @@ function tcEntryModal(r) {
       <label>Clock-in<input id="tcIn" type="time" value="${esc(r.clock_in_hhmm || '')}" /></label>
       <label>Clock-out <span style="color:var(--muted);font-weight:400">${r.status === 'in' ? '(still on the clock)' : ''}</span><input id="tcOut" type="time" value="${esc(r.clock_out_hhmm || '')}" /></label>
     </div>
-    ${!unsched ? `<div style="margin:.6rem 0 .25rem"><strong>Breaks</strong> <span style="color:var(--muted);font-weight:400;font-size:.85rem">— scheduled 10-min breaks; staff get a reminder when it's time</span></div>
+    ${!unsched ? `<div style="margin:.6rem 0 .25rem"><strong>Scheduled breaks</strong> <span style="color:var(--muted);font-weight:400;font-size:.85rem">— planned 10-min breaks; staff get a reminder when it's time</span></div>
     <div id="tcBreaks" style="display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.4rem"></div>
     <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
       <label style="flex:0 0 auto;margin:0">Add a break at<input id="tcBrkTime" type="time" /></label>
       <button class="btn sm" id="tcBrkAdd" type="button">➕ Add break</button>
     </div>` : ''}
-    <div class="actions" style="margin-top:.7rem"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save</button></div>
+    <div style="margin:.8rem 0 .25rem"><strong>Breaks taken</strong> <span style="color:var(--muted);font-weight:400;font-size:.85rem">— record or correct an actual break they took but forgot to punch (doesn't change worked hours)</span></div>
+    <div id="tcTaken" style="margin-bottom:.35rem"></div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
+      <label style="margin:0">Break start<input id="tkStart" type="time" /></label>
+      <label style="margin:0">Break end<input id="tkEnd" type="time" /></label>
+      <button class="btn sm" id="tkAdd" type="button">➕ Add break taken</button>
+    </div>
+    <div class="actions" style="margin-top:.8rem"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Save</button></div>
   </div></div>`;
   let breaksDirty = false;
   const close = () => host.innerHTML = '';
@@ -4500,6 +4507,43 @@ function tcEntryModal(r) {
         breaksList.sort((a, b) => a.start.localeCompare(b.start));
         $('tcBrkTime').value = ''; breaksDirty = true; renderBreaks(); toast('Break added — staff notified.');
       } catch (e) { $('mErr').textContent = e.message; }
+    };
+  }
+  // Actual-break management (record / correct / remove a break the staffer took but forgot to punch).
+  {
+    const takenList = (r.taken_breaks || []).slice();
+    const renderTaken = () => {
+      const tx = $('tcTaken'); if (!tx) return;
+      tx.innerHTML = takenList.length
+        ? takenList.map(b => `<div class="tk-row" style="display:flex;gap:.3rem;align-items:center;flex-wrap:wrap;margin:.2rem 0">
+            <input type="time" class="tk-s" value="${esc(b.start)}" style="width:7.5rem" /><span style="color:var(--muted)">–</span><input type="time" class="tk-e" value="${esc(b.end)}" style="width:7.5rem" />
+            <span style="color:var(--muted);font-size:.82rem">${b.minutes}m${b.over_min > 0 ? ` <span style="color:var(--out)">(${b.over_min} over)</span>` : ''}</span>
+            <button class="btn sm ghost" data-tksave="${b.id}" type="button">Save</button><button data-tkdel="${b.id}" title="Remove this break" style="border:none;background:none;cursor:pointer;color:var(--out);font-weight:700;padding:0 .2rem;line-height:1">×</button></div>`).join('')
+        : '<span style="color:var(--muted);font-size:.85rem">No breaks recorded.</span>';
+      tx.querySelectorAll('[data-tksave]').forEach(btn => btn.onclick = async () => {
+        const row = btn.closest('.tk-row'); const s = row.querySelector('.tk-s').value, en = row.querySelector('.tk-e').value; $('mErr').textContent = '';
+        if (!s || !en) { $('mErr').textContent = 'Set both the break start and end.'; return; }
+        try {
+          const res = await api(`/timeclock/entry/${r.id}/break/${btn.dataset.tksave}`, { method: 'PUT', body: JSON.stringify({ start: s, end: en }) });
+          const it = takenList.find(b => String(b.id) === String(btn.dataset.tksave)); if (it) { it.start = res.start; it.end = res.end; it.minutes = res.minutes; it.over_min = res.over_min; }
+          breaksDirty = true; renderTaken(); toast('Break updated.');
+        } catch (er) { $('mErr').textContent = er.message; }
+      });
+      tx.querySelectorAll('[data-tkdel]').forEach(x => x.onclick = async () => {
+        try { await api(`/timeclock/entry/${r.id}/break/${x.dataset.tkdel}`, { method: 'DELETE' }); const i = takenList.findIndex(b => String(b.id) === String(x.dataset.tkdel)); if (i >= 0) takenList.splice(i, 1); breaksDirty = true; renderTaken(); toast('Break removed.'); }
+        catch (er) { $('mErr').textContent = er.message; }
+      });
+    };
+    renderTaken();
+    $('tkAdd').onclick = async () => {
+      const s = $('tkStart').value, en = $('tkEnd').value; $('mErr').textContent = '';
+      if (!s || !en) { $('mErr').textContent = 'Set both the break start and end.'; return; }
+      try {
+        const res = await api(`/timeclock/entry/${r.id}/break`, { method: 'POST', body: JSON.stringify({ start: s, end: en }) });
+        takenList.push({ id: res.id, start: res.start, end: res.end, minutes: res.minutes, over_min: res.over_min });
+        takenList.sort((a, b) => a.start.localeCompare(b.start));
+        $('tkStart').value = ''; $('tkEnd').value = ''; breaksDirty = true; renderTaken(); toast('Break recorded — staff notified.');
+      } catch (er) { $('mErr').textContent = er.message; }
     };
   }
   $('mOk').onclick = async () => {
