@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 22, 2026_
+_Last updated: November 23, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2273,6 +2273,16 @@ usual **break reminder** at that time and it counts for **break-compliance** lik
 they're notified it was added. Backed by `POST /api/timeclock/break` (400 if the time is outside their
 shift, 409 on a duplicate time or if they have no shift that day) and `DELETE /api/timeclock/break/:id`
 to remove one added by mistake. The board returns each entry's `sched_breaks` so the modal can list them.
+
+**Record an actual break taken (2026-11-22).** Staff sometimes take a break but forget to punch out
+for break / clock back in, so it's never recorded (and shows as a *missed* break). The Adjust modal's
+**Breaks taken** section lets a manager **enter a break's start + end** (or edit / remove an existing
+one) — it's saved to `time_entry_breaks` with the minutes and over-limit computed like a punched break,
+so it shows on the board and counts for break-compliance. Per policy the break stays **paid**, so
+**worked hours are not changed** (same as a normally-punched break). This is separate from *Scheduled
+breaks* above: scheduled = the plan (drives reminders); *Breaks taken* = what actually happened. Backed
+by `POST /api/timeclock/entry/:id/break` (400 if the break falls outside the clock-in/out window),
+`PUT …/break/:bid` and `DELETE …/break/:bid`; the board returns each entry's `taken_breaks`.
 
 **Break reminders.** A background sweep pops a live alert to a staff member **a set number of
 minutes before each scheduled break** ("your break is at 9:10 — take it in about 10 minutes");
