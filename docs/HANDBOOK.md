@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 23, 2026_
+_Last updated: November 24, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -2232,6 +2232,15 @@ auto-close still obeys the location's on/off + grace policy. Turning it off fall
 the reminder-only behavior (a lead closes overruns manually). Each store manager / shift lead
 sets their **own location's** policy.
 
+**Both shifts always stay visible on the board.** On the **Time Clock** board a split-shift day shows
+**one row per shift under the staffer's name** (with a *"N shifts"* badge). Each shift the person has
+**punched** shows as its own line (clock-in/out, worked, break), and each shift they **haven't punched
+yet** shows as a **"Not clocked in"** line with its own **➕ Enter hours** — *even after they've clocked
+into the other shift*. So someone who punches only their **evening** shift still shows their **morning**
+shift on the board (previously the unpunched shift disappeared once any shift was punched, making a
+two-shift day look like one). The manager can then enter the missed shift's hours, or leave it for the
+no-show sweep.
+
 The staff-facing notices — the *"Don't forget to clock out"* nudge and the *"Automatically
 clocked out"* notice — are sent **from a location leader** (a manager, or the owner/GM as a
 system sender), not from the staffer to themselves. The messaging layer drops self-messages, so
@@ -2267,10 +2276,12 @@ a small form **prefilled with their scheduled shift**; the manager enters the cl
 they actually worked and saves. That **creates a real time entry** for the day (scheduled, late and
 worked minutes computed exactly like a punched entry), so the person moves from "Not clocked in" to a
 normal row with the usual **Adjust** option, and the day flows into their timesheet and payroll. The
-staffer is notified. Backed by `POST /api/timeclock/entry` (409 if they already have an entry that
-day — use **Adjust** on it instead). This is the complement to **Assign hours** above: *Assign hours*
-is for someone who clocked in **unscheduled**, *Enter hours* is for someone **scheduled** who never
-clocked in.
+staffer is notified. Backed by `POST /api/timeclock/entry`. A split-shift day can hold **more than one
+entry** (one per shift block), so a second entry is allowed as long as it **doesn't overlap** one they
+already have — this lets a manager record a **missed morning shift** for someone who punched their
+evening shift; an entry that overlaps an existing one is rejected (use **Adjust** on that one instead).
+This is the complement to **Assign hours** above: *Assign hours* is for someone who clocked in
+**unscheduled**, *Enter hours* is for someone **scheduled** who never clocked in.
 
 **Add a break from the Adjust modal (2026-11-22).** A manager who forgot to set a staffer's break
 when building the schedule can add it on the working day: the Time Clock **Adjust** modal has a
