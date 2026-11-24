@@ -4638,37 +4638,48 @@ async function renderLocTimeClock() {
   const photoIn = (r) => r.photo_in ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_in}" title="View clock-in photo">📷</button>` : '';
   const photoOut = (r) => r.photo_out ? ` <button class="btn sm ghost tc-photo" data-punchphoto="${r.photo_out}" title="View clock-out photo">📷</button>` : '';
   const autoFlag = (r) => (r.auto_closed || r.forced_out) ? ` <span class="tc-autoout" title="${r.auto_closed ? 'Auto clock-out — the staffer didn’t punch out, so the system closed it at their scheduled end' : 'Closed by a manager — the staffer didn’t punch out'}">⏱</span>` : '';
-  // Group entries by staffer → one block per person, a line per shift under their name.
-  const tcGroups = []; const _gm = new Map();
-  for (const r of data.entries) {
-    if (!_gm.has(r.user_id)) { const g = { user_id: r.user_id, name: r.name, code: r.employee_code, job: r.job, rows: [] }; _gm.set(r.user_id, g); tcGroups.push(g); }
-    _gm.get(r.user_id).rows.push(r);
-  }
-  for (const g of tcGroups) g.rows.sort((a, b) => (a.clock_in_hhmm || '').localeCompare(b.clock_in_hhmm || ''));
-  tcGroups.sort((a, b) => (a.rows[0].clock_in_hhmm || '').localeCompare(b.rows[0].clock_in_hhmm || ''));
   const nameCell = (name, code, job, n, span) => `<td rowspan="${span}" class="tc-name"><strong>${esc(name)}</strong> <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(code || '')}</span>${tcJob(job)}${n > 1 ? ` <span class="badge gray" title="${n} shifts today">${n} shifts</span>` : ''}</td>`;
-  const entryRows = tcGroups.map(g => {
-    const n = g.rows.length;
-    return g.rows.map((r, i) => `<tr class="tc-row${i === 0 ? ' tc-grp' : ''}${r.unscheduled || r.carryover ? ' tc-unscheduled' : ''}">
-    ${i === 0 ? nameCell(g.name, g.code, g.job, n, n) : ''}
+  // One group per staffer, holding ALL their shift lines for the day together: a line for each punched
+  // entry, PLUS a line for each scheduled block they haven't punched. So a split shift always shows both
+  // shifts — even once they've clocked into one of them (the other stays visible as "Not clocked in").
+  const _people = new Map();
+  const ensurePerson = (uid, name, code, job) => {
+    if (!_people.has(uid)) _people.set(uid, { user_id: uid, name, code, job, lines: [] });
+    const g = _people.get(uid); if (job && !g.job) g.job = job; return g;
+  };
+  for (const r of data.entries) ensurePerson(r.user_id, r.name, r.employee_code, r.job).lines.push({ kind: 'entry', r, sort: r.block_start || r.clock_in_hhmm || '99:99' });
+  for (const r of data.not_in) {
+    const blocks = (r.blocks && r.blocks.length) ? r.blocks : [{ start: r.start_time, end: r.end_time }];
+    const g = ensurePerson(r.user_id, r.name, r.employee_code, r.job);
+    for (const b of blocks) g.lines.push({ kind: 'notin', person: r, block: b, sort: b.start || '99:99' });
+  }
+  const people = [..._people.values()];
+  for (const g of people) g.lines.sort((a, b) => a.sort.localeCompare(b.sort));
+  people.sort((a, b) => ((a.lines[0] && a.lines[0].sort) || '').localeCompare((b.lines[0] && b.lines[0].sort) || ''));
+  // "Enter hours" per unpunched block — a manager records the staffer's actual clock in/out for THAT shift.
+  const enterBtnFor = (person, b) => canEditTc ? ` <button class="btn sm" data-tcnew="${person.user_id}" data-name="${esc(person.name)}" data-start="${esc(b.start || '')}" data-end="${esc(b.end || '')}" title="Scheduled but not clocked in — enter their actual hours for this shift">➕ Enter hours</button>` : '';
+  const bodyRows = people.map(g => {
+    const n = g.lines.length;
+    return g.lines.map((ln, i) => {
+      const nameTd = i === 0 ? nameCell(g.name, g.code, g.job, n, n) : '';
+      if (ln.kind === 'entry') {
+        const r = ln.r;
+        return `<tr class="tc-row${i === 0 ? ' tc-grp' : ''}${r.unscheduled || r.carryover ? ' tc-unscheduled' : ''}">
+    ${nameTd}
     <td>${shiftCell(r)}${r.carryover ? ` <span class="badge out" title="Still on the clock since a previous day — clock them out">⏱ ${fmtDay(r.work_date)}</span>` : ''}</td>
     <td>${r.clock_in ? tcTag(r.clock_in, 'i') : '—'}${photoIn(r)}</td>
     <td>${r.clock_out ? tcTag(r.clock_out, 'o') : '—'}${autoFlag(r)}${photoOut(r)}</td>
     <td>${fmtDur(r.worked_minutes)}${r.status === 'in' ? ' <span style="color:var(--muted)">so far</span>' : ''}</td>
     <td>${breakCell(r)}</td>
-    <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`).join('');
-  }).join('');
-  const notInRows = data.not_in.map(r => {
-    const blocks = (r.blocks && r.blocks.length) ? r.blocks : [{ start: r.start_time, end: r.end_time }];
-    const n = blocks.length;
-    // One "Enter hours" button per person (they were scheduled but never clocked in) — a manager can
-    // manually record their clock in/out. Prefilled with their scheduled span (first start → last end).
-    const enterBtn = canEditTc ? ` <button class="btn sm" data-tcnew="${r.user_id}" data-name="${esc(r.name)}" data-start="${esc(blocks[0].start || '')}" data-end="${esc(blocks[n - 1].end || '')}" title="They were scheduled but didn't clock in — enter their actual hours">➕ Enter hours</button>` : '';
-    return blocks.map((b, i) => `<tr class="task-unassigned tc-row${i === 0 ? ' tc-grp' : ''}">
-    ${i === 0 ? nameCell(r.name, r.employee_code, r.job, n, n) : ''}
+    <td>${statusChip(r)}${r.status === 'in' && canEditTc ? ` <button class="btn sm" data-tcout="${r.id}" title="Clock this person out — for when they forgot">Clock out</button>` : ''}${editBtn(r)}</td></tr>`;
+      }
+      const b = ln.block;
+      return `<tr class="task-unassigned tc-row${i === 0 ? ' tc-grp' : ''}">
+    ${nameTd}
     <td><span class="mono" style="font-size:.85rem">${b.start ? esc(to12h(b.start)) + '–' + esc(to12h(b.end)) : '—'}</span></td>
     <td>—</td><td>—</td><td>—</td><td>—</td>
-    <td><span class="badge low">Not clocked in</span>${i === 0 ? enterBtn : ''}</td></tr>`).join('');
+    <td><span class="badge low">Not clocked in</span>${enterBtnFor(ln.person, b)}</td></tr>`;
+    }).join('');
   }).join('');
   const alertCards = alerts.alerts.length ? `<div class="tc-alerts">${alerts.alerts.map(a => `
     <div class="tc-alert"><span>⚠ ${esc(a.message)}</span><button class="btn sm ghost" data-resolve="${a.id}">Resolve</button></div>`).join('')}</div>` : '';
@@ -4709,7 +4720,7 @@ async function renderLocTimeClock() {
     ${overrunCards}
     ${alertCards}
     <div class="table-wrap"><table class="tc-table"><thead><tr><th>Staff</th><th>Shift</th><th>Clocked in</th><th>Clocked out</th><th>Worked</th><th>Break</th><th>Status</th></tr></thead><tbody>
-      ${(entryRows + notInRows) || '<tr><td colspan="7" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
+      ${bodyRows || '<tr><td colspan="7" class="empty">No one scheduled or clocked in for this day.</td></tr>'}
     </tbody></table></div>
     <p class="sub" style="color:var(--muted);margin-top:.7rem;font-size:.8rem">Staff clock in/out on the tablet kiosk (⏱). A short clock-out raises an alert here for follow-up.</p>
     ${breakSection(S.tcBreaks)}

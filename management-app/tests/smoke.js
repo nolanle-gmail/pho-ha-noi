@@ -739,6 +739,20 @@ const check = (name, ok, detail = '') => {
       check('adjust entry hours succeeds', r.status === 200, await r.text());
       const after = _adb.prepare("SELECT id, start_time, end_time, (SELECT COUNT(*) FROM shift_jobs sj WHERE sj.shift_id=shifts.id) nj FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work' ORDER BY start_time").all(sp.id, loc1, today);
       check('adjust keeps the split shift (2 blocks) + job, changes only block 1', after.length === 2 && after[0].start_time === '09:00' && after[0].end_time === '13:30' && after[0].nj === 1 && after[1].start_time === '17:00' && after[1].end_time === '21:00' && after[1].nj === 1, JSON.stringify(after));
+      // Split shift, ONE block punched (eid2 is the 09:00 block): the board keeps the OTHER (17:00) block
+      // visible as "not clocked in" — it must not vanish just because they punched the first shift.
+      { const bd = await j(await fetch(base + `/api/timeclock/board?location_id=${loc1}&date=${today}`, { headers: H(mgr.token) }));
+        const niSp = bd.not_in.find(x => x.user_id === sp.id);
+        check('split shift: punched block in entries, UNPUNCHED block still shows in not_in', bd.entries.some(e => e.user_id === sp.id) && !!niSp && niSp.blocks.some(b => b.start === '17:00') && !niSp.blocks.some(b => b.start === '09:00'), JSON.stringify({ inEntries: bd.entries.some(e => e.user_id === sp.id), ni: niSp && niSp.blocks }));
+      }
+      // A manager can record the MISSED second (evening) shift — a non-overlapping 2nd entry is allowed.
+      r = await fetch(base + '/api/timeclock/entry', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: sp.id, work_date: today, clock_in: '17:00', clock_out: '21:00' }) });
+      const sp2 = await j(r);
+      check('non-overlapping 2nd entry allowed (record the missed evening shift)', r.status === 200 && sp2.success === true && !!sp2.id, JSON.stringify(sp2));
+      // But a new entry OVERLAPPING an existing one is still rejected (Adjust that entry instead).
+      r = await fetch(base + '/api/timeclock/entry', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, user_id: sp.id, work_date: today, clock_in: '10:00', clock_out: '12:00' }) });
+      check('overlapping manual entry still rejected (409)', r.status === 409, 'status=' + r.status);
+      if (sp2 && sp2.id) { _adb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(sp2.id); try { _adb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(sp2.id); } catch {} _adb.prepare("DELETE FROM time_entries WHERE id=?").run(sp2.id); }
       _adb.prepare("DELETE FROM time_entry_breaks WHERE time_entry_id=?").run(eid2);
       try { _adb.prepare("DELETE FROM staff_alerts WHERE time_entry_id=?").run(eid2); } catch {}
       _adb.prepare("DELETE FROM time_entries WHERE id=?").run(eid2);

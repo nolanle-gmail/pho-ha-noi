@@ -990,6 +990,7 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
   // edit them / a manager can add a break the staffer took but forgot to punch.
   const takenBreaksStmt = db.prepare(`SELECT id, break_out_at, break_in_at, minutes, COALESCE(over_limit_min,0) AS over_min FROM time_entry_breaks WHERE time_entry_id=? AND break_in_at IS NOT NULL ORDER BY break_out_at`);
   const byUser = {};
+  const punchedStarts = {}; // user_id -> Set of scheduled block-start HH:MM they've already punched today
   const rows = entries.map(e => {
     const worked = liveWorked(e);
     byUser[e.user_id] = true;
@@ -998,6 +999,9 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
     const br = breakStmt.get(e.id);
     // The specific scheduled shift BLOCK this punch belongs to (so a split-shift day shows each shift).
     const blk = shiftBlockForPunch(e.user_id, e.location_id, e.work_date, localMinutesOfDay(tz, new Date(e.clock_in)));
+    // Remember which scheduled block this same-day punch covers, so the block isn't ALSO listed as
+    // "not clocked in" below — while any OTHER block of theirs that day still is (split-shift visibility).
+    if (e.work_date === date && blk) (punchedStarts[e.user_id] || (punchedStarts[e.user_id] = new Set())).add(blk.sRaw);
     // Their shift on the entry's OWN day (carryover entries look up their prior day).
     const rawSh = e.work_date === date ? shiftBy[e.user_id] : shiftFor.get(e.user_id, locId, e.work_date);
     const sh = rawSh && rawSh.start_time ? rawSh : null;
@@ -1040,11 +1044,19 @@ router.get('/board', requireRole(ROLES.MANAGE), (req, res) => {
     if (!schedByUser.has(s.id)) schedByUser.set(s.id, { user_id: s.id, name: s.name, employee_code: s.employee_code, blocks: [] });
     schedByUser.get(s.id).blocks.push({ start: s.start_time, end: s.end_time });
   }
-  const notIn = [...schedByUser.values()].filter(s => !byUser[s.user_id]).map(s => ({
-    user_id: s.user_id, name: s.name, employee_code: s.employee_code, blocks: s.blocks,
-    scheduled_minutes: s.blocks.reduce((a, b) => a + spanMin(b.start, b.end), 0),
-    start_time: s.blocks[0].start, end_time: s.blocks[s.blocks.length - 1].end,
+  // "Not clocked in" = each person's scheduled work BLOCKS that have no punch yet. This now keeps the
+  // still-unpunched block(s) of someone who HAS clocked into another block today — a split shift where
+  // they've punched one shift but not the other — so the second shift never disappears from the board.
+  const notIn = [...schedByUser.values()].map(s => {
+    const punched = punchedStarts[s.user_id];
+    const blocks = punched ? s.blocks.filter(b => !punched.has(b.start)) : s.blocks;
+    return { s, blocks };
+  }).filter(x => x.blocks.length).map(({ s, blocks }) => ({
+    user_id: s.user_id, name: s.name, employee_code: s.employee_code, blocks,
+    scheduled_minutes: blocks.reduce((a, b) => a + spanMin(b.start, b.end), 0),
+    start_time: blocks[0].start, end_time: blocks[blocks.length - 1].end,
     job: jobFor(s.user_id, date),
+    has_entry: !!byUser[s.user_id], // already punched another block today (manager "Enter hours" adds a 2nd entry)
   }));
   res.json({
     location: loc, date, today, timezone: tz, entries: rows, not_in: notIn,
@@ -1180,7 +1192,8 @@ router.put('/entry/:id', requireRole(ROLES.MANAGE), (req, res) => {
 // Manually CREATE a time entry for a scheduled staffer who never clocked in (forgot, or didn't
 // know how). A manager / shift-lead enters their clock-in (and usually clock-out) and it lands on
 // the board + timesheet exactly like a punched entry — so people who "Not clocked in" on the board
-// can still be given their hours. Guard: if they already have an entry that day, Adjust it instead.
+// can still be given their hours. A split-shift day may hold more than one entry (one per shift block),
+// so a 2nd entry is allowed as long as it doesn't overlap an existing one (else Adjust that entry).
 router.post('/entry', requireRole(ROLES.MANAGE), (req, res) => {
   const b = req.body || {};
   const locId = parseInt(b.location_id, 10);
@@ -1196,17 +1209,23 @@ router.post('/entry', requireRole(ROLES.MANAGE), (req, res) => {
   const hasOut = b.clock_out !== undefined && b.clock_out !== null && b.clock_out !== '';
   const outHHMM = hasOut ? String(b.clock_out).slice(0, 5) : null;
   if (hasOut && !hhmmRe.test(outHHMM)) return res.status(400).json({ error: 'Clock-out must be HH:MM (24-hour).' });
-  // Never create a duplicate — if they already have an entry that day, the manager should Adjust it.
-  const existing = db.prepare(`SELECT id FROM time_entries WHERE user_id=? AND location_id=? AND work_date=?`).get(userId, locId, date);
-  if (existing) return res.status(409).json({ error: 'This staffer already has a time entry for this day — use Adjust on it instead.' });
   const tz = locTz(locId);
   const clockInD = localWallToInstant(tz, date, inHHMM);
-  let clockOutISO = null, worked = null;
+  let clockOutISO = null, worked = null, outD = null;
   if (hasOut) {
-    let outD = localWallToInstant(tz, date, outHHMM);
+    outD = localWallToInstant(tz, date, outHHMM);
     if (outD.getTime() <= clockInD.getTime()) outD = new Date(outD.getTime() + 86400000); // crossed midnight
     clockOutISO = outD.toISOString();
     worked = Math.max(0, Math.round((outD.getTime() - clockInD.getTime()) / 60000));
+  }
+  // A split-shift day can legitimately have more than one entry (one per shift block), so only reject a
+  // NEW entry that OVERLAPS one they already have — this lets a manager record a missed MORNING shift for
+  // someone who punched their evening shift. An entry covering the same time → Adjust that one instead.
+  const newS = clockInD.getTime(), newE = outD ? outD.getTime() : clockInD.getTime();
+  for (const ex of db.prepare(`SELECT clock_in, clock_out FROM time_entries WHERE user_id=? AND location_id=? AND work_date=?`).all(userId, locId, date)) {
+    const exS = new Date(ex.clock_in).getTime();
+    const exE = ex.clock_out ? new Date(ex.clock_out).getTime() : exS;
+    if (newS <= exE && exS <= newE) return res.status(409).json({ error: 'This overlaps a time entry they already have for this day — use Adjust on that entry instead.' });
   }
   const sched = scheduledMinutes(userId, locId, date);
   const late = lateMinutesFor(userId, locId, date, tz, clockInD);
