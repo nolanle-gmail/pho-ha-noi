@@ -2241,6 +2241,15 @@ shift on the board (previously the unpunched shift disappeared once any shift wa
 two-shift day look like one). The manager can then enter the missed shift's hours, or leave it for the
 no-show sweep.
 
+**Corrupted overnight spans from the restore (2026-11-24).** A shift whose **end time is at or before its
+start** reads as an **overnight shift** (it crosses midnight). During the split-shift recovery a few
+restored blocks were left with a bad end that turned a normal evening shift into an implausible ~16-hour
+overnight span (e.g. a `6:00p–9:45p` cook shift showing as `6:00p → 10:00a`), which inflates the day's
+scheduled minutes and the auto-clock-out window. When reviewing a staffer, **sanity-check any shift that
+shows as a long overnight block** on the schedule board — if it isn't a genuine overnight, correct its
+**end time** (the worked punches are unaffected). One such block (Thien An Ngo, Nov 21) was corrected
+`18:00→10:00` ⇒ `18:00→21:45` to match the actual clock-out.
+
 The staff-facing notices — the *"Don't forget to clock out"* nudge and the *"Automatically
 clocked out"* notice — are sent **from a location leader** (a manager, or the owner/GM as a
 system sender), not from the staffer to themselves. The messaging layer drops self-messages, so
