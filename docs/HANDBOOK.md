@@ -2523,6 +2523,11 @@ seven days):
     → Requests. (An all-location approver's list is scoped to the store being viewed.)
   - **Position** — show only one job title (the dropdown lists the positions present at this
     location, in the same group order as the rows).
+  - **🔎 Search name** — a live locator next to the Position dropdown: type a few letters and
+    the grid hides every staffer whose name doesn't match (and any position header left with
+    no one under it), so a scheduler jumps straight to a person instead of scrolling a long
+    roster. It filters the rows already on screen (no reload), updates the "Showing *N*"
+    count as you type, and is remembered with the other filters; **Clear** empties it too.
   - A **Clear** button resets the filters, and a totals chip on the right reads
     **"Showing *N* of *M* · *X* hrs · $*Y*"** for the staff currently shown.
 - **One location at a time (no double-booking)** — a staff member can't be in two places
@@ -2557,6 +2562,17 @@ seven days):
   leave** forward. Because it only touches empty weeks it's self-rolling — each time the
   work week flips, the newly-empty next week fills in. Managers can still edit or use
   **Copy a week** on top of it. The sweep runs on server start and every 12 hours.
+- **⧉ Copy a day** — for a staffer who works the **same hours several days a week**, set up
+  **one** day and copy it to the rest in a single confirm, instead of re-entering each day by
+  hand. The **⧉** button next to a person's name opens a small dialog: pick the **day they're
+  already set up** (the dropdown lists that person's work days this week, with their times),
+  then tick the **days to copy it to** (each is marked **empty** or *"N shifts already"*; an
+  **"all empty days"** shortcut ticks the open ones). It clones that day's **work shifts —
+  with their jobs and breaks**; **leave** is not copied. A target day that already has shifts
+  is left alone unless you tick **"Replace shifts already on the chosen days"** (otherwise it
+  asks first, so nothing is duplicated), and a copy that would **double-book** the person at
+  another location that day is **skipped** (the toast says how many). Same `manage`-cap
+  scheduler scope as Copy a week; endpoint `POST /schedule/day/copy`.
 - **Leave** — the **+** entry has a **Type**: **Work Shift**, **🤒 Paid Sick Leave**,
   **🏖️ PTO**, or **🚫 Unpaid Time Off**. Leave takes a duration — **all day** (8 h), a
   **number of hours**, or a **from–to** span — and shows as a coloured chip. Leave never
