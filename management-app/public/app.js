@@ -3596,7 +3596,7 @@ const fmtBreak = (b) => `${b.start_time || '—'}–${b.end_time || '—'}${b.la
 
 // Schedule view filters, remembered per viewer in this browser. showPay defaults on.
 function loadSchedFilters() {
-  const def = { scheduledOnly: false, thisLocOnly: false, role: '', showPay: true, timeOff: false };
+  const def = { scheduledOnly: false, thisLocOnly: false, role: '', showPay: true, timeOff: false, name: '' };
   try { return Object.assign(def, JSON.parse(localStorage.getItem('phn_sched_filters') || '{}')); }
   catch { return def; }
 }
@@ -3746,7 +3746,7 @@ async function renderLocSchedule() {
   const totH = shownStaff.reduce((t, s) => t + paidHere(s), 0);
   const totLeave = shownStaff.reduce((t, s) => t + leaveHere(s), 0);
   const totPay = shownStaff.reduce((t, s) => t + paidHere(s) * (Number(s.hourly_rate) || 0), 0);
-  const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role || F.timeOff;
+  const anyFilter = F.scheduledOnly || F.thisLocOnly || !!F.role || F.timeOff || !!(F.name && F.name.trim());
   const colspan = viewDays.length + 1;
   // Time-off & requests panel: when the filter is on, show pending time-off requests
   // for this location that leaders can approve/reject inline (staff rows are already
@@ -3786,9 +3786,10 @@ async function renderLocSchedule() {
       const n = shownStaff.filter(s => groupLabel(s) === gl).length;
       header = `<tr class="sched-role-group"><td colspan="${colspan}"><span class="srg-title">${esc(gl)}</span><span class="srg-count">${n} ${n === 1 ? 'person' : 'people'}</span></td></tr>`;
     }
-    return header + `<tr>
+    const copyDayBtn = canEdit ? ` <button class="sched-copyday" data-copyday="${st.id}" title="Copy one day's shifts to other days of the week">⧉</button>` : '';
+    return header + `<tr data-srow="1" data-sname="${esc((st.name || '').toLowerCase())}">
         <td class="sched-name"><div class="sched-name-row"><strong>${esc(st.name)}</strong> <span class="badge ${ROLE_CHIP[st.role] || 'gray'}">${esc(st.role)}</span>
-          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}${seenEye(st)}</div>${nameTotal(st)}</td>
+          ${String(st.home_location_id) === String(data.location.id) ? '' : '<span class="badge blue" title="Home location is elsewhere">visiting</span>'}${seenEye(st)}${copyDayBtn}</div>${nameTotal(st)}</td>
         ${viewDays.map(d => cell(st, d)).join('')}
       </tr>`;
   }).join('');
@@ -3815,8 +3816,9 @@ async function renderLocSchedule() {
       <label class="chk" title="Show total hours and pay under each name."><input type="checkbox" id="fShowPay" ${F.showPay ? 'checked' : ''}/> Show hours &amp; pay</label>
       <label class="chk" title="Show only staff scheduled as time off (PTO, Paid Sick Leave or Unpaid Time Off), and list pending time-off requests awaiting approval."><input type="checkbox" id="fTimeOff" ${F.timeOff ? 'checked' : ''}/> Time off &amp; requests</label>
       <label class="sched-filter-role">Position <select id="fRole"><option value="">All positions</option>${positionsPresent.map(r => `<option value="${esc(r)}" ${F.role === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
+      <label class="sched-filter-role" title="Jump to a staff member by name">🔎 <input type="search" id="fName" placeholder="Search name…" value="${esc(F.name || '')}" autocomplete="off" style="width:9.5rem" /></label>
       ${anyFilter ? '<button class="btn sm ghost" id="fClear" title="Clear all filters">Clear</button>' : ''}
-      <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid leave (Paid Sick Leave + PTO); Unpaid Time Off is not counted">Showing <strong>${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} paid leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
+      <span class="sched-filter-total" title="Totals for the staff shown — hours and pay include paid leave (Paid Sick Leave + PTO); Unpaid Time Off is not counted">Showing <strong id="schShownCount">${shownStaff.length}</strong> of ${data.staff.length} · <strong>${totH.toFixed(2)} hrs</strong>${totLeave > 0 ? ` <span class="sched-leave-inc">(${totLeave.toFixed(2)} paid leave)</span>` : ''} · <strong>$${totPay.toFixed(2)}</strong></span>
     </div>
     ${timeOffPanel}
     <div class="table-wrap"><table class="sched-table"><thead><tr>
@@ -3843,9 +3845,37 @@ async function renderLocSchedule() {
   $('fShowPay').onchange = (e) => { F.showPay = e.target.checked; saveF(); };
   if ($('fTimeOff')) $('fTimeOff').onchange = (e) => { F.timeOff = e.target.checked; saveF(); };
   $('fRole').onchange = (e) => { F.role = e.target.value; saveF(); };
-  const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; F.timeOff = false; saveF(); };
+  const clearF = () => { F.scheduledOnly = false; F.thisLocOnly = false; F.role = ''; F.timeOff = false; F.name = ''; saveF(); };
   if ($('fClear')) $('fClear').onclick = clearF;
   if ($('fClear2')) $('fClear2').onclick = clearF;
+  // Name search: a live locator that hides non-matching staff rows (and now-empty
+  // group headers) without a re-fetch, so the manager can type and jump straight to
+  // a person. Persisted in the filters, but applied in the DOM to keep focus & speed.
+  const saveName = () => { try { localStorage.setItem('phn_sched_filters', JSON.stringify(F)); } catch { /* ignore */ } };
+  const applyNameFilter = () => {
+    const q = (($('fName') && $('fName').value) || '').trim().toLowerCase();
+    F.name = q; saveName();
+    const body = $('locBody'); if (!body) return;
+    let shown = 0, curHeader = null, curHeaderShown = 0;
+    const flushHeader = () => { if (curHeader) { curHeader.style.display = curHeaderShown ? '' : 'none'; const c = curHeader.querySelector('.srg-count'); if (c) c.textContent = `${curHeaderShown} ${curHeaderShown === 1 ? 'person' : 'people'}`; } };
+    body.querySelectorAll('.sched-table tbody tr').forEach(tr => {
+      if (tr.classList.contains('sched-role-group')) { flushHeader(); curHeader = tr; curHeaderShown = 0; return; }
+      if (!tr.hasAttribute('data-srow')) return;   // the empty-state row, etc.
+      const match = !q || (tr.getAttribute('data-sname') || '').includes(q);
+      tr.style.display = match ? '' : 'none';
+      if (match) { shown++; curHeaderShown++; }
+    });
+    flushHeader();
+    const cnt = $('schShownCount'); if (cnt) cnt.textContent = shown;
+    let note = $('schNameEmpty');
+    if (q && shown === 0) {
+      if (!note) {
+        const tb = body.querySelector('.sched-table tbody');
+        if (tb) { const tr = document.createElement('tr'); tr.id = 'schNameEmpty'; tr.innerHTML = `<td colspan="${colspan}" class="empty">No staff match “${esc(q)}”.</td>`; tb.appendChild(tr); }
+      } else note.querySelector('td').innerHTML = `No staff match “${esc(q)}”.`;
+    } else if (note) note.remove();
+  };
+  if ($('fName')) { $('fName').oninput = applyNameFilter; applyNameFilter(); }
   // Inline approve/reject on the Time-off panel; re-render the schedule afterwards so
   // the request list and the newly written leave shifts both refresh.
   $('locBody').querySelectorAll('[data-approve]').forEach(b => b.onclick = () => decideRequest(b.dataset.approve, 'approve', renderLocSchedule));
@@ -3868,6 +3898,11 @@ async function renderLocSchedule() {
       let shift, st;
       for (const s of data.staff) { const f = s.shifts.find(x => x.id == c.dataset.shift); if (f) { shift = f; st = s; break; } }
       if (shift) shiftModal(st, shift.shift_date, shift, jobs, data.location);
+    });
+    $('locBody').querySelectorAll('[data-copyday]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const st = data.staff.find(x => x.id == b.dataset.copyday);
+      if (st) copyDayModal(st, data.location, days, dayMode ? S.schedDay : null);
     });
   }
 }
@@ -3966,6 +4001,84 @@ function copyWeekModal(toWeek, location) {
       if (!res.ok) throw new Error(data.error || res.statusText);
       close();
       toast(`Copied ${data.copied} shift${data.copied === 1 ? '' : 's'}${data.cleared ? ` (replaced ${data.cleared})` : ''}${data.skipped ? ` · skipped ${data.skipped} already working another location` : ''}.`);
+      renderLocSchedule();
+    } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
+  };
+}
+
+// Copy ONE staffer's day to other days of the same week — for someone who works
+// the same hours several days a week, set up one day and copy it to the rest.
+// Copies work shifts (with jobs + breaks); leave is not carried over.
+function copyDayModal(staff, location, days, preferDay) {
+  const host = $('modalHost');
+  const wdOf = (d) => WD[(new Date(d + 'T00:00:00').getDay() + 6) % 7];
+  // This staffer's WORK shifts at THIS location, by day of the week in view.
+  const workByDay = {};
+  for (const s of (staff.shifts || [])) {
+    if (String(s.location_id) !== String(location.id) || isLeaveShift(s)) continue;
+    (workByDay[s.shift_date] = workByDay[s.shift_date] || []).push(s);
+  }
+  const sourceDays = days.filter(d => workByDay[d] && workByDay[d].length);
+  const summary = (d) => (workByDay[d] || []).map(s => `${to12h(s.start_time)}–${to12h(s.end_time)}`).join(', ');
+
+  if (!sourceDays.length) {
+    host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Copy a day — ${esc(staff.name)}</h3>
+      <p class="sub" style="color:var(--muted);margin:.3rem 0 .9rem">Set up one day's shift for <strong>${esc(staff.name)}</strong> first (use the <strong>+</strong> on a day), then reopen this to copy it to the other days they work.</p>
+      <div class="actions"><button class="btn" id="mCancel">OK</button></div></div></div>`;
+    $('mCancel').onclick = () => host.innerHTML = '';
+    host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) host.innerHTML = ''; };
+    return;
+  }
+  const defSource = (preferDay && workByDay[preferDay]) ? preferDay : sourceDays[0];
+  const srcOpts = sourceDays.map(d => `<option value="${d}" ${d === defSource ? 'selected' : ''}>${wdOf(d)} ${esc(fmtDay(d))} · ${esc(summary(d))}</option>`).join('');
+
+  host.innerHTML = `<div class="modal-bg"><div class="modal"><h3>Copy a day — ${esc(staff.name)}</h3>
+    <div class="err" id="mErr"></div>
+    <p class="sub" style="color:var(--muted);margin:.1rem 0 .7rem">Copies <strong>${esc(shortLoc(location.name))}</strong> work shifts (with their jobs and breaks) from one day to the days you tick. Leave (sick / vacation) is not copied. You can edit any day afterward.</p>
+    <label>Copy from<select id="cdFrom">${srcOpts}</select></label>
+    <div class="job-pick-label" style="margin-top:.8rem">Copy to <span style="color:var(--muted);font-weight:400">(<a href="#" id="cdAll">all empty days</a> · <a href="#" id="cdNone">none</a>)</span></div>
+    <div id="cdTargets" class="brk-list"></div>
+    <label class="chk" style="margin:.7rem 0 0"><input type="checkbox" id="cdOver" /> Replace shifts already on the chosen days</label>
+    <div class="actions"><button class="btn ghost" id="mCancel">Cancel</button><button class="btn" id="mOk">Copy day</button></div>
+  </div></div>`;
+  const close = () => host.innerHTML = '';
+  $('mCancel').onclick = close;
+  host.querySelector('.modal-bg').onclick = (e) => { if (e.target.classList.contains('modal-bg')) close(); };
+
+  const renderTargets = () => {
+    const src = $('cdFrom').value;
+    const picked = new Set([...$('cdTargets').querySelectorAll('input:checked')].map(i => i.value));
+    $('cdTargets').innerHTML = days.filter(d => d !== src).map(d => {
+      const n = (workByDay[d] || []).length;
+      const note = n ? `<span style="color:var(--warn)">${n} shift${n === 1 ? '' : 's'} already</span>` : `<span style="color:var(--muted)">empty</span>`;
+      return `<label class="chk" style="display:flex;gap:.5rem;align-items:center;padding:.2rem 0"><input type="checkbox" value="${d}" ${picked.has(d) ? 'checked' : ''}/> <strong>${wdOf(d)}</strong> ${esc(fmtDay(d))} — ${note}</label>`;
+    }).join('');
+  };
+  renderTargets();
+  $('cdFrom').onchange = renderTargets;
+  $('cdAll').onclick = (e) => { e.preventDefault(); const src = $('cdFrom').value; $('cdTargets').querySelectorAll('input').forEach(i => { i.checked = !(workByDay[i.value] && workByDay[i.value].length) && i.value !== src; }); };
+  $('cdNone').onclick = (e) => { e.preventDefault(); $('cdTargets').querySelectorAll('input').forEach(i => i.checked = false); };
+
+  $('mOk').onclick = async () => {
+    const from_date = $('cdFrom').value;
+    const to_dates = [...$('cdTargets').querySelectorAll('input:checked')].map(i => i.value);
+    if (!to_dates.length) { $('mErr').textContent = 'Tick at least one day to copy to.'; return; }
+    const overwrite = $('cdOver').checked;
+    $('mOk').disabled = true;
+    try {
+      const res = await fetch('/api/schedule/day/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.token },
+        body: JSON.stringify({ location_id: location.id, user_id: staff.id, from_date, to_dates, overwrite }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.error === 'target_not_empty') {
+        $('mErr').textContent = `${data.message} Tick “Replace shifts already on the chosen days”, then Copy again.`;
+        $('cdOver').checked = true; $('mOk').disabled = false; return;
+      }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      close();
+      toast(`Copied to ${to_dates.length} day${to_dates.length === 1 ? '' : 's'}${data.cleared ? ` (replaced ${data.cleared})` : ''}${data.skipped ? ` · skipped ${data.skipped} that would double-book another location` : ''}.`);
       renderLocSchedule();
     } catch (e) { $('mErr').textContent = e.message; $('mOk').disabled = false; }
   };

@@ -987,6 +987,85 @@ router.post('/week/copy', requireRole(ROLES.MANAGE), (req, res) => {
     message: r.skipped ? `Copied ${r.copied} shift${r.copied === 1 ? '' : 's'}; skipped ${r.skipped} that would double-book staff already working another location at that time.` : undefined });
 });
 
+// ── Copy ONE person's day to other days ───────────────────────────────────────
+// A staffer who works the same hours several days a week only has to be set up
+// once: build one day, then copy it to the other days. Copies that person's WORK
+// shifts on `from_date` (with their jobs and breaks) to each date in `to_dates`;
+// leave (sick / vacation / on-leave) is date-specific and is NOT carried over.
+// If a target date already has work shifts for this person, the caller must pass
+// overwrite=true (which clears them first) — otherwise it returns 409 so the UI
+// can confirm. A copy that would double-book the person at another location that
+// day is skipped (counted in `skipped`).
+function copyDayForUser(locId, userId, fromDate, toDates, { overwrite = false, createdBy = null } = {}) {
+  const src = db.prepare(`SELECT * FROM shifts WHERE location_id=? AND user_id=? AND kind='work' AND shift_date=?`)
+    .all(locId, userId, fromDate);
+  if (!src.length) return { empty: true, copied: 0, cleared: 0 };
+  // Only real future/other days, de-duped, never the source day itself.
+  const targets = [...new Set((toDates || []).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d) && d !== fromDate))];
+  if (!targets.length) return { error: 'no_targets' };
+
+  const existingBy = {};
+  for (const d of targets) {
+    const ex = db.prepare(`SELECT id FROM shifts WHERE location_id=? AND user_id=? AND kind='work' AND shift_date=?`).all(locId, userId, d);
+    if (ex.length) existingBy[d] = ex;
+  }
+  const busyDates = Object.keys(existingBy);
+  if (busyDates.length && !overwrite) return { conflict: busyDates };
+
+  const jobsBy = db.prepare(`SELECT job_id FROM shift_jobs WHERE shift_id=?`);
+  const breaksBy = db.prepare(`SELECT start_time, end_time, label FROM shift_breaks WHERE shift_id=?`);
+  const insShift = db.prepare(`INSERT INTO shifts (user_id,location_id,shift_date,start_time,end_time,notes,created_by,kind,all_day,leave_hours) VALUES (?,?,?,?,?,?,?,?,?,?)`);
+  const insJob = db.prepare(`INSERT OR IGNORE INTO shift_jobs (shift_id, job_id) VALUES (?,?)`);
+  const insBrk = db.prepare(`INSERT INTO shift_breaks (shift_id, start_time, end_time, label) VALUES (?,?,?,?)`);
+
+  db.exec('BEGIN');
+  try {
+    let cleared = 0;
+    for (const d of busyDates) for (const e of existingBy[d]) {
+      db.prepare(`DELETE FROM shift_jobs WHERE shift_id=?`).run(e.id);
+      db.prepare(`DELETE FROM shift_breaks WHERE shift_id=?`).run(e.id);
+      db.prepare(`DELETE FROM shifts WHERE id=?`).run(e.id);
+      cleared++;
+    }
+    let copied = 0, skipped = 0;
+    const skippedDates = new Set();
+    for (const d of targets) {
+      for (const s of src) {
+        // Don't copy a shift that would double-book them at another location then.
+        if (crossLocationConflict(userId, locId, d, s.start_time, s.end_time)) { skipped++; skippedDates.add(d); continue; }
+        const r = insShift.run(userId, locId, d, s.start_time, s.end_time, s.notes, createdBy, 'work', 0, null);
+        const nid = Number(r.lastInsertRowid);
+        for (const j of jobsBy.all(s.id)) insJob.run(nid, j.job_id);
+        for (const b of breaksBy.all(s.id)) insBrk.run(nid, b.start_time, b.end_time, b.label);
+        copied++;
+      }
+    }
+    db.exec('COMMIT');
+    return { copied, cleared, skipped, skipped_dates: [...skippedDates] };
+  } catch (e) { db.exec('ROLLBACK'); return { error: e.message || 'copy_failed' }; }
+}
+
+router.post('/day/copy', requireRole(ROLES.MANAGE), (req, res) => {
+  const locId = parseInt(req.body.location_id, 10);
+  const userId = parseInt(req.body.user_id, 10);
+  if (!locId || !userId) return res.status(400).json({ error: 'location_id and user_id are required.' });
+  if (!ownsLocation(req, locId)) return res.status(403).json({ error: 'You can only schedule your own location.' });
+  const fromDate = String(req.body.from_date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) return res.status(400).json({ error: 'from_date is required.' });
+  const toDates = Array.isArray(req.body.to_dates) ? req.body.to_dates.map(String) : [];
+  const overwrite = req.body.overwrite === true || req.body.overwrite === 1 || req.body.overwrite === 'true';
+
+  const r = copyDayForUser(locId, userId, fromDate, toDates, { overwrite, createdBy: req.user.id });
+  if (r.error === 'no_targets') return res.status(400).json({ error: 'Pick at least one day to copy to.' });
+  if (r.empty) return res.status(400).json({ error: 'That day has no work shifts to copy — set the day up first.' });
+  if (r.conflict) return res.status(409).json({ error: 'target_not_empty', existing: r.conflict,
+    message: `${r.conflict.length} of the chosen day${r.conflict.length === 1 ? '' : 's'} already ${r.conflict.length === 1 ? 'has' : 'have'} shifts.` });
+  if (r.error) return res.status(500).json({ error: 'Could not copy the day.' });
+  auditLog(req, 'schedule_day_copy', 'user', userId, { location_id: locId, from_date: fromDate, to_dates: toDates, ...r });
+  res.json({ success: true, ...r,
+    message: r.skipped ? `Copied to ${r.copied} shift slot${r.copied === 1 ? '' : 's'}; skipped ${r.skipped} that would double-book them at another location.` : undefined });
+});
+
 // Per-location opt-in for the weekly auto-roll (manager / shift-lead, own store).
 router.put('/auto-roll', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = parseInt(req.body.location_id, 10);

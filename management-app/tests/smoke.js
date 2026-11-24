@@ -413,6 +413,40 @@ const check = (name, ok, detail = '') => {
     const myWk = await j(await fetch(base + '/api/schedule/my-week', { headers: H(emp.token) }));
     check('employee sees own schedule (my-week)', Array.isArray(myWk.shifts) && !!myWk.week_start && myWk.days.length === 7, JSON.stringify(myWk).slice(0, 60));
 
+    // ── Copy a day to other days (same person, same week) ───────────────────
+    // schedStaff has a work shift on days[1] (08:00–17:00, 1 job + a lunch break);
+    // days[0], [3], [4] are empty. Copy day[1] → day[3] & day[4].
+    const cdRes = await j(await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[1], to_dates: [wk.days[3], wk.days[4]] }) }));
+    check('copy-day copies a day to other days', cdRes.success === true && cdRes.copied === 2, JSON.stringify(cdRes));
+    const wkCd = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+    const cdStaff = wkCd.staff.find(s => s.id === schedStaff.id) || { shifts: [] };
+    const cdD3 = cdStaff.shifts.filter(s => s.shift_date === wk.days[3] && s.kind === 'work');
+    check('copy-day carries the shift with its job and break', cdD3.length === 1 && cdD3[0].start_time === '08:00' && cdD3[0].jobs.length === 1 && cdD3[0].breaks.length === 1, JSON.stringify(cdD3[0] || {}).slice(0, 120));
+    // Copying onto a day that now has a shift needs overwrite → 409 first.
+    r = await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[1], to_dates: [wk.days[3]] }) });
+    check('copy-day onto a non-empty day needs overwrite (409)', r.status === 409, 'status=' + r.status);
+    const cdOv = await j(await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[1], to_dates: [wk.days[3]], overwrite: true }) }));
+    check('copy-day with overwrite replaces the day', cdOv.success === true && cdOv.cleared >= 1 && cdOv.copied === 1, JSON.stringify(cdOv));
+    // Copying FROM a day with no work shifts → 400 empty; no target days → 400.
+    r = await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[0], to_dates: [wk.days[3]] }) });
+    check('copy-day from an empty day rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(mgr.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[1], to_dates: [] }) });
+    check('copy-day with no target days rejected (400)', r.status === 400, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/day/copy', { method: 'POST', headers: H(emp.token),
+      body: JSON.stringify({ location_id: loc1, user_id: schedStaff.id, from_date: wk.days[1], to_dates: [wk.days[3]] }) });
+    check('employee cannot copy a day (403)', r.status === 403, 'status=' + r.status);
+    // Clean up the copied days so later break-cap / day-task assertions stay deterministic.
+    {
+      const fresh = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(mgr.token) }));
+      const mine = (((fresh.staff || []).find(x => x.id === schedStaff.id) || {}).shifts) || [];
+      for (const s of mine.filter(x => x.shift_date === wk.days[3] || x.shift_date === wk.days[4])) await fetch(base + `/api/schedule/shifts/${s.id}`, { method: 'DELETE', headers: H(mgr.token) });
+    }
+
     // ── Day tasks (specific tasks assigned to that day's working staff) ─────
     const allJobs = await j(await fetch(base + '/api/schedule/jobs?active=1', { headers: H(mgr.token) }));
     check('catalog has specific + standard kinds', allJobs.some(x => x.kind === 'specific') && allJobs.some(x => x.kind === 'standard'), 'kinds missing');
