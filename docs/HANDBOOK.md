@@ -3099,6 +3099,18 @@ and the API is the real boundary (the UI just reflects it).
   sidebar shows a **🌐 All locations** badge. (Mechanism: a request-aware
   `userSeesAll(req)` replaces the per-role all-location check across the whole route
   layer.)
+- **Can also manage these locations** (per user, same *Access overrides* box — shown for
+  a location-scoped **manager**). Instead of all-or-nothing, tick **specific** extra
+  stores: a **checklist of every location** (their home store excluded) where each ticked
+  store is one the manager can also **see and schedule staff at**, on top of home. The
+  extra store then shows up in their **Locations** list and opens like home across its
+  detail tabs (Schedule, Day Tasks, Time Clock, Service, Floor Plan). Stored as
+  `users.extra_location_ids`; a granted-but-unticked store stays **403**. (2026-11-25)
+- **Regional Manager & General Manager schedule everywhere.** Both are all-location
+  roles, so they can now **view and schedule at every store** — fixed a gap where the
+  schedule grid's edit controls only appeared for Owner/Admin-tier and a manager at their
+  *own* store. Edit access is now *"has the `manage` capability **and** can reach this
+  location"* (`canManageLocation`), which also powers the per-manager grants above.
 - **Read-only** (per user, same *Access overrides* box). The person can **view but not
   change anything** — every create/edit/delete is blocked at the login gate (**403**,
   *"Your access is view-only…"*), leaving only sign-in/out and messaging. Shows a **👁️
