@@ -3041,7 +3041,8 @@ messages).
 
 | Role | Access Level | Capabilities | In short |
 |---|---|---|---|
-| **Owner** | all | org · manage · ops · reports · central | Everything; only an owner can create owners |
+| **Owner** | all | org · manage · ops · reports · central · **exec** | Everything, incl. the secret executive modules; only an owner can create owners |
+| **Advanced Admin** | all | org · manage · ops · reports · central · **exec** | The tier **above Admin** — everything Admin has **plus** the secret executive modules and authority over the exec tier; for a few trusted people (e.g. Nha Le) |
 | **CEO** | all | org · manage · ops · reports · central | Executive org admin, mirroring Owner's access |
 | **President** | all | org · manage · ops · reports · central | Executive org admin, mirroring Owner's access |
 | **Admin** | all | org · manage · ops · reports · central | Everything; created by an owner |
@@ -3063,6 +3064,51 @@ messages).
 > slated to keep a few powers to themselves later — **archive, delete, view the
 > activity log, and audit information** — which HR would then not have; the checks
 > that will change are marked `ORG_ADMIN_ONLY` in the code.
+
+### Advanced Admin — the `exec` tier & secret sections (2026-11-24)
+
+A tier **above regular Admin**, for the Owner and a few trusted people (e.g. **Nha
+Le**), built on a new **`exec` capability**. Only roles that carry `exec` — **Owner**
+and **Advanced Admin** — see the "secret" executive sections and can manage the tier
+itself. Set it up by assigning someone the **Advanced Admin** access level on Staff →
+Access Levels (the Owner already carries `exec`).
+
+- **Secret sections** are gated by `exec` on **both** the sidebar and the API: **🔌
+  Integrations** (Toast connection, mapping & sync — moved here from the `org` cap, so
+  a regular Admin/HR no longer sees it) and a new **💰 Financials** page (a private
+  executive area; the detailed P&L / labor-cost / payroll views are placeholders to be
+  defined). Adding another secret page later is just tagging it `exec`.
+- **Tier protection.** Only an `exec` holder can create, edit or assign an **exec-level
+  account**, or **edit/remove an exec-capable access level** or **grant the `exec`
+  cap**. A regular Admin never even sees the `exec` checkbox in the role editor and
+  sees a **🔒 Advanced** marker on the Owner/Advanced-Admin rows. The **Advanced Admin**
+  role (like Owner and Admin) can't be removed. Advanced Admin is otherwise a strict
+  **superset of Admin** — it appears in every top-tier ability list (messaging, alerts,
+  moderation, etc.), so it can do everything an Admin can and more.
+
+### Permission toggles — read-only & see-all-locations (2026-11-24)
+
+Enable/disable access controls an org-admin flips from the UI, no redeploy. All resolve
+**fresh on each request**, so a change takes effect **without the person re-logging in**,
+and the API is the real boundary (the UI just reflects it).
+
+- **Sees all locations** (per user, on the staff **Edit** form → *Access overrides*).
+  Opens a normally single-location person — e.g. a **store Manager** — up to **every
+  store**, for viewing **and** their normal actions there. A plain manager asking for
+  another store's data still gets **403**; with this on, they're let through. The
+  sidebar shows a **🌐 All locations** badge. (Mechanism: a request-aware
+  `userSeesAll(req)` replaces the per-role all-location check across the whole route
+  layer.)
+- **Read-only** (per user, same *Access overrides* box). The person can **view but not
+  change anything** — every create/edit/delete is blocked at the login gate (**403**,
+  *"Your access is view-only…"*), leaving only sign-in/out and messaging. Shows a **👁️
+  View-only** badge. You can't make **your own** account read-only.
+- **View only** (per **role**, on the Access Levels editor). The same read-only
+  restriction applied to a **whole access level** at once — a group that should look but
+  not touch. The **exec tier can never be made view-only**.
+- **Compose them:** read-only **+** sees-all-locations = *"sees every store, changes
+  nothing"* (a group or person who reviews across the company). Overrides can only be
+  set by an org-admin, and never on an exec account by a non-exec admin.
 
 ---
 
