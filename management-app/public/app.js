@@ -161,6 +161,10 @@ async function boot() {
   $('app').classList.remove('hidden');
   // Load the access-level registry so labels, nav and scope are role-aware.
   try { (await api('/auth/roles')).forEach(r => { ROLE_DEFS[r.key] = r; ROLE_CHIP[r.key] = roleChip(r.key); }); } catch { /* fall back to raw keys */ }
+  // Refresh the live per-user access grants (resolved server-side) so an admin's change
+  // to read-only / sees-all / extra-locations applies on the next page load — no need
+  // to re-login. Role stays token-bound (a role change still needs a fresh sign-in).
+  try { const me = await api('/auth/me'); if (me && me.id) { ['read_only', 'view_all_locations', 'extra_location_ids'].forEach(k => { if (k in me) S.user[k] = me[k]; }); localStorage.setItem('phn_user', JSON.stringify(S.user)); } } catch { /* keep cached grants */ }
   $('who').textContent = `${S.user.name} · ${roleLabel(S.user.role)}`;
   $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}${S.user.read_only ? ' · <span class="badge gray" title="You can view everything your access allows, but not make changes">👁️ View-only</span>' : ''}${S.user.view_all_locations && roleScopeOf(S.user.role) !== 'all' ? ' · <span class="badge blue" title="You can see every location">🌐 All locations</span>' : ''}</div>`;
   S.locations = await api('/inventory/locations').catch(() => []);
@@ -235,6 +239,15 @@ const roleHasCap = (r, cap) => cap === 'any' ? true
   : cap === 'floor' ? (roleScopeOf(r) !== 'all' && !roleDef(r).caps.includes('manage'))
   : roleDef(r).caps.includes(cap);
 const myCap = (cap) => roleHasCap(S.user.role, cap);
+// Can the signed-in user manage (view + schedule) a given location? Needs the manage
+// capability AND access to that location — every store (all-scope or the see-all
+// grant), their home store, or a specific extra store an admin granted them
+// (S.user.extra_location_ids, from login / auth-me).
+const canManageLocation = (locId) => myCap('manage') && (
+  roleScopeOf(S.user.role) === 'all' || !!S.user.view_all_locations
+  || String(S.user.location_id) === String(locId)
+  || ((S.user.extra_location_ids || []).map(String).includes(String(locId)))
+);
 const SCOPE_LABEL = { all: 'All locations', location: 'Their location', self: 'Self only' };
 const CAP_LABEL = {
   org: 'Account & access-level admin', manage: 'Staff, schedules, menu & locations',
@@ -3654,7 +3667,7 @@ async function renderLocSchedule() {
   const period = S.schedPeriod || (S.schedPeriod = loadSchedPeriod());
   if (period === 'month') return renderLocScheduleMonth();
   const dayMode = period === 'day';
-  const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  const canEdit = canManageLocation(S.locDetailId);
   const weekParam = dayMode ? (S.schedDay || '') : (S.schedWeek || '');
   // Read filters up front so we can also pull pending time-off requests when the
   // "Time off & requests" filter is on (managers/owner/HR only).
@@ -4281,7 +4294,7 @@ function shiftModal(staff, dayIso, shift, jobs, location) {
 
 // ── Day Tasks — assign specific tasks to the day's working staff ─────────────
 async function renderLocDayTasks() {
-  const canEdit = ORG_ADMIN.includes(S.user.role) || (S.user.role === 'manager' && String(S.user.location_id) === String(S.locDetailId));
+  const canEdit = canManageLocation(S.locDetailId);
   let data;
   // No stored date → let the server default to the location's local "today".
   try { data = await api('/schedule/day-tasks?location_id=' + S.locDetailId + (S.dayTaskDate ? '&date=' + S.dayTaskDate : '')); }
@@ -6081,6 +6094,14 @@ function staffProfileEdit(d, locations, staff) {
           <div style="font-size:.82rem;color:var(--muted);font-weight:600;margin-bottom:.3rem">Access overrides</div>
           <label class="chk"><input type="checkbox" id="pf_view_all_locations" ${d.view_all_locations ? 'checked' : ''}/> 🌐 Sees all locations <span style="color:var(--muted)">— view &amp; work across every store, not just their home location</span></label>
           <label class="chk"><input type="checkbox" id="pf_read_only" ${d.read_only ? 'checked' : ''}/> 👁️ Read-only <span style="color:var(--muted)">— can look but not change anything</span></label>
+          ${(roleScopeOf(d.role) === 'location' && roleHasCap(d.role, 'manage')) ? (() => {
+            const extra = new Set((d.extra_location_ids || []).map(String));
+            const opts = (locations || []).filter(l => (l.type || 'restaurant') === 'restaurant' && String(l.id) !== String(d.location_id));
+            return `<div id="pf_extra_locs" style="margin-top:.45rem">
+              <div style="font-size:.82rem;color:var(--muted);margin-bottom:.2rem">🏪 Can also manage these locations <span>— this manager can view and schedule staff at each store you tick, on top of their home location</span></div>
+              <div class="loc-checks">${opts.map(l => `<label class="chk"><input type="checkbox" data-extraloc="${l.id}" ${extra.has(String(l.id)) ? 'checked' : ''}/> <span>${esc((l.name || '').replace('Pho Ha Noi — ', ''))}</span></label>`).join('')}</div>
+            </div>`;
+          })() : ''}
         </div>` : ''}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('personal_id', 'Personal ID (enter 9 digits to change)', p.personal_id)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
@@ -6115,8 +6136,9 @@ function staffProfileEdit(d, locations, staff) {
       // (the pf_ value loop captured a string, not the checked state).
       account.view_all_locations = $('pf_view_all_locations') ? $('pf_view_all_locations').checked : false;
       account.read_only = $('pf_read_only') ? $('pf_read_only').checked : false;
+      if ($('pf_extra_locs')) account.extra_location_ids = [...$('pf_extra_locs').querySelectorAll('[data-extraloc]:checked')].map(c => parseInt(c.dataset.extraloc, 10));
     } else { delete body.role; delete body.location_id; }
-    delete body.view_all_locations; delete body.read_only;
+    delete body.view_all_locations; delete body.read_only; delete body.extra_location_ids;
     try {
       if (Object.keys(account).length) await api('/staff/' + d.id, { method: 'PUT', body: JSON.stringify(account) });
       await api('/staff/' + d.id + '/profile', { method: 'PUT', body: JSON.stringify(body) });

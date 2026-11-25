@@ -176,6 +176,26 @@ const seesAllLocations = (role) => roleScope(role) === 'all';
 // (view_all_locations). Use this at request time in place of
 // seesAllLocations(req.user.role) so a specific person can be opened up to all stores.
 const userSeesAll = (req) => seesAllLocations(req.user && req.user.role) || !!(req.user && req.user.view_all_locations);
+// Whether this request's user may act on a specific location: every location (all
+// scope or the see-all grant), their home store, OR a specific extra location an admin
+// granted them. Used in the ownsLocation checks so a manager can be opened up to
+// another store for viewing and scheduling without becoming all-location.
+function userCanAccessLocation(req, locId) {
+  if (!req || !req.user) return false;
+  if (userSeesAll(req)) return true;
+  if (String(req.user.location_id) === String(locId)) return true;
+  const extra = req.user.extra_location_ids || [];
+  return extra.map(String).includes(String(locId));
+}
+// The set of location ids a user is scoped to for LIST endpoints: null when they see
+// every location, otherwise [home, ...extra].
+function accessibleLocationIds(req) {
+  if (userSeesAll(req)) return null;
+  const s = new Set();
+  if (req.user && req.user.location_id != null) s.add(Number(req.user.location_id));
+  for (const l of (req.user && req.user.extra_location_ids) || []) s.add(Number(l));
+  return [...s];
+}
 const roleLabel = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].label : role);
 const roleHasCap = (role, cap) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].caps.includes(cap));
 const roleViewOnly = (role) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].view_only);
@@ -204,10 +224,15 @@ const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'PATCH' || m =
 // takes effect without re-login): whether they're read-only (their own flag OR their
 // role being view-only) and whether they may see every location.
 function loadGrants(user) {
-  const out = { read_only: roleViewOnly(user.role), view_all_locations: false };
+  const out = { read_only: roleViewOnly(user.role), view_all_locations: false, extra_location_ids: [] };
   try {
-    const g = db.prepare(`SELECT read_only, view_all_locations FROM users WHERE id=?`).get(user.id);
-    if (g) { out.read_only = out.read_only || !!g.read_only; out.view_all_locations = !!g.view_all_locations; }
+    const g = db.prepare(`SELECT read_only, view_all_locations, extra_location_ids FROM users WHERE id=?`).get(user.id);
+    if (g) {
+      out.read_only = out.read_only || !!g.read_only;
+      out.view_all_locations = !!g.view_all_locations;
+      let extra = []; try { extra = JSON.parse(g.extra_location_ids || '[]'); } catch { extra = []; }
+      out.extra_location_ids = Array.isArray(extra) ? extra.map(Number).filter((n) => Number.isFinite(n)) : [];
+    }
   } catch { /* columns not migrated yet — treat as no override */ }
   return out;
 }
@@ -220,10 +245,11 @@ function verifyToken(req, res, next) {
   try { payload = jwt.verify(token, SECRET); }
   catch { return res.status(401).json({ error: 'Invalid or expired session' }); }
   req.user = payload;
-  // Augment with live per-user grants (read-only + see-all-locations).
+  // Augment with live per-user grants (read-only + see-all-locations + extra stores).
   const g = loadGrants(payload);
   req.user.read_only = g.read_only;
   req.user.view_all_locations = g.view_all_locations;
+  req.user.extra_location_ids = g.extra_location_ids;
   // Enforce read-only: block operational writes, keeping sign-in/out + messaging.
   if (req.user.read_only && isWriteMethod(req.method)) {
     const url = req.originalUrl || req.url || '';
@@ -251,5 +277,6 @@ function requireRole(...roles) {
 module.exports = {
   signToken, verifyToken, requireRole, SECRET,
   ROLES, ROLE_DEFS, CAPS, SCOPES, DEFAULT_ROLE_DEFS,
-  roleScope, seesAllLocations, userSeesAll, roleLabel, roleHasCap, roleViewOnly, roleRank, isExecRole, publicRoles, reloadRoles,
+  roleScope, seesAllLocations, userSeesAll, userCanAccessLocation, accessibleLocationIds,
+  roleLabel, roleHasCap, roleViewOnly, roleRank, isExecRole, publicRoles, reloadRoles,
 };

@@ -10,7 +10,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleHasCap, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, userCanAccessLocation, roleHasCap, SECRET } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
@@ -760,7 +760,7 @@ function sweepTaskReminders() {
 
 router.use(verifyToken);
 
-const ownsLocation = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => userCanAccessLocation(req, locId);
 const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 const validDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : null);
 const spanMin = (a, b) => { if (!a || !b) return 0; const [ah, am] = a.split(':').map(Number), [bh, bm] = b.split(':').map(Number); let s = ah * 60 + am, e = bh * 60 + bm; if (e <= s) e += 1440; return e - s; };

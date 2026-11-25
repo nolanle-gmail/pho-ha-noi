@@ -5,7 +5,7 @@
 // managers and to the service key (the Waitlist server scopes it to a location).
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, userCanAccessLocation, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
 const { auditLog } = require('../lib/audit');
 const { markWaitlistSeated, markWaitlistSeatedByName } = require('../lib/waitlistSync');
@@ -33,7 +33,7 @@ function auth(req, res, next) {
 router.use(auth);
 
 const isManage = (req) => req.user && ROLES.MANAGE.includes(req.user.role);
-const ownsLocation = (req, locId) => req.service || userSeesAll(req) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => req.service || userCanAccessLocation(req, locId);
 const reqLoc = (req, fromQuery) => {
   const asked = fromQuery ? req.query.location_id : req.body.location_id;
   if (asked) return asked; // ownsLocation() then enforces access

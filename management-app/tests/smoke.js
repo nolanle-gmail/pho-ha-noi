@@ -1335,6 +1335,44 @@ const check = (name, ok, detail = '') => {
     r = await fetch(base + '/api/roles/owner', { method: 'PUT', headers: H(token), body: JSON.stringify({ view_only: true }) });
     const ownAfter = (await j(await fetch(base + '/api/auth/roles', { headers: H(token) }))).find(x => x.key === 'owner');
     check('owner role cannot be made view-only', ownAfter && !ownAfter.view_only, JSON.stringify(ownAfter && { view_only: ownAfter.view_only }));
+
+    // ── Per-manager EXTRA locations (view + schedule a specific other store) ──
+    const xMgr = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Extra-Loc Manager', phone: '5105550091', email: 'xmgr@phohanoi.com', password: 'Password123!', role: 'manager', location_id: loc1 }) }));
+    const xLogin = await login('5105550091', 'Password123!');
+    // Baseline: no extra grant → blocked from loc2's schedule, and loc2 not in their list.
+    r = await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(xLogin) });
+    check('manager without a grant is refused another store (403)', r.status === 403, 'status=' + r.status);
+    let xLocs = await j(await fetch(base + '/api/locations', { headers: H(xLogin) }));
+    check('manager list shows only their home store', Array.isArray(xLocs) && xLocs.length === 1 && String(xLocs[0].id) === String(loc1), 'ids=' + (xLocs || []).map(l => l.id).join(','));
+    // Grant loc2 as an extra location.
+    r = await fetch(base + `/api/staff/${xMgr.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ extra_location_ids: [loc2] }) });
+    check('owner grants a specific extra location', r.status === 200, await r.text());
+    const profX = await j(await fetch(base + `/api/staff/${xMgr.id}/profile`, { headers: H(token) }));
+    check('profile returns the extra location', Array.isArray(profX.extra_location_ids) && profX.extra_location_ids.map(String).includes(String(loc2)), JSON.stringify(profX.extra_location_ids));
+    // Now they can pull loc2's schedule, write a shift there, and see it in their list.
+    const wkX = await j(await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(xLogin) }));
+    check('extra-location manager can see that store schedule', wkX.location && String(wkX.location.id) === String(loc2), 'loc=' + (wkX.location && wkX.location.id));
+    const sx = (wkX.staff || [])[0];
+    r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(xLogin), body: JSON.stringify({ user_id: sx ? sx.id : xMgr.id, location_id: loc2, shift_date: wkX.days[3], start_time: '09:00', end_time: '17:00' }) });
+    check('extra-location manager can schedule at that store', r.status === 200, await r.text());
+    xLocs = await j(await fetch(base + '/api/locations', { headers: H(xLogin) }));
+    check('extra location now appears in the manager list', (xLocs || []).map(l => String(l.id)).includes(String(loc2)) && xLocs.length === 2, 'ids=' + (xLocs || []).map(l => l.id).join(','));
+    // Revoking the grant locks them back out.
+    r = await fetch(base + `/api/staff/${xMgr.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ extra_location_ids: [] }) });
+    r = await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(xLogin) });
+    check('revoking the extra location locks the manager out again (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Regional Manager: view + schedule ALL locations (role-wide) ──
+    const rmUser = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'Reg Manager', phone: '5105550092', email: 'rmgr@phohanoi.com', password: 'Password123!', role: 'regional_manager' }) }));
+    check('created a regional manager', rmUser.success === true, JSON.stringify(rmUser));
+    const rmLogin = await login('5105550092', 'Password123!');
+    const rmWk1 = await j(await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(rmLogin) }));
+    const rmWk2 = await j(await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(rmLogin) }));
+    check('regional manager can view any location schedule', rmWk1.location && String(rmWk1.location.id) === String(loc1) && rmWk2.location && String(rmWk2.location.id) === String(loc2), `l1=${rmWk1.location && rmWk1.location.id} l2=${rmWk2.location && rmWk2.location.id}`);
+    const rs2 = (rmWk2.staff || [])[0];
+    r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(rmLogin), body: JSON.stringify({ user_id: rs2 ? rs2.id : rmUser.id, location_id: loc2, shift_date: rmWk2.days[4], start_time: '10:00', end_time: '16:00' }) });
+    check('regional manager can schedule at any location', r.status === 200, await r.text());
+
     const gmTok = await login('4085550004', 'Gm123456!');
     const gmStaff = await j(await fetch(base + '/api/staff', { headers: H(gmTok) }));
     check('GM sees all-location staff', Array.isArray(gmStaff) && gmStaff.length > 20, 'count=' + (gmStaff || []).length);

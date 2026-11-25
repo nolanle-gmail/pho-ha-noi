@@ -28,16 +28,18 @@ router.post('/login', (req, res) => {
     // email is returned so the Staff app can carry it as the cross-app identity
     // (its `as=<email>` service calls) even though login is by phone.
     user: { id: user.id, name: user.name, email: user.email, role: user.role, location_id: user.location_id, caps: roleCaps(user.role),
-      read_only: !!user.read_only || roleViewOnly(user.role), view_all_locations: !!user.view_all_locations },
+      read_only: !!user.read_only || roleViewOnly(user.role), view_all_locations: !!user.view_all_locations,
+      extra_location_ids: parseLocIds(user.extra_location_ids) },
   });
 });
+const parseLocIds = (v) => { try { const a = JSON.parse(v || '[]'); return Array.isArray(a) ? a.map(Number).filter(Number.isFinite) : []; } catch { return []; } };
 
 router.get('/me', verifyToken, (req, res) => {
   const u = db.prepare(`
-    SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.read_only, u.view_all_locations, l.name AS location_name
+    SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.read_only, u.view_all_locations, u.extra_location_ids, l.name AS location_name
     FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?
   `).get(req.user.id);
-  if (u) { u.caps = roleCaps(u.role); u.read_only = !!u.read_only || roleViewOnly(u.role); u.view_all_locations = !!u.view_all_locations; }
+  if (u) { u.caps = roleCaps(u.role); u.read_only = !!u.read_only || roleViewOnly(u.role); u.view_all_locations = !!u.view_all_locations; u.extra_location_ids = parseLocIds(u.extra_location_ids); }
   res.json(u || {});
 });
 

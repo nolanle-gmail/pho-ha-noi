@@ -1353,6 +1353,9 @@ function migrate() {
     // may see every location, not just their own.
     `ALTER TABLE users ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE users ADD COLUMN view_all_locations INTEGER NOT NULL DEFAULT 0`,
+    // Specific extra locations a manager may also see & schedule (JSON array of
+    // location ids), on top of their home store. Admin ticks them on the profile.
+    `ALTER TABLE users ADD COLUMN extra_location_ids TEXT`,
     // Per-ROLE "view only": everyone on this access level can look but not change
     // (a whole group set to read-only from the Access Levels page).
     `ALTER TABLE roles ADD COLUMN view_only INTEGER NOT NULL DEFAULT 0`,

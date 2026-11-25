@@ -5,7 +5,7 @@
 // with no location, the whole group.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, userCanAccessLocation } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { sendSms, smsEnabled, SMS_PROVIDER, gsm7 } = require('../lib/sms');
 
@@ -14,7 +14,7 @@ router.use(verifyToken);
 
 const CAN_SEND = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 const canSend = (role) => CAN_SEND.includes(role);
-const ownsLoc = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
+const ownsLoc = (req, locId) => userCanAccessLocation(req, locId);
 
 // Whether SMS is actually wired, so the UI can warn "log-only" mode.
 router.get('/status', (req, res) => {

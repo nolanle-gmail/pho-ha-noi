@@ -3,7 +3,7 @@
 // view/manage their own location's hours & equipment.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, userCanAccessLocation, accessibleLocationIds } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { slugify } = require('../lib/slug');
 
@@ -12,7 +12,7 @@ router.use(verifyToken);
 
 const isAdmin = (req) => userSeesAll(req);
 function ownsLocation(req, locId) {
-  return isAdmin(req) || String(req.user.location_id) === String(locId);
+  return userCanAccessLocation(req, locId);
 }
 function locationOf(equipmentId) {
   const e = db.prepare(`SELECT location_id FROM equipment WHERE id=?`).get(equipmentId);
@@ -21,8 +21,11 @@ function locationOf(equipmentId) {
 
 // ── Directory ────────────────────────────────────────────────────────────────
 router.get('/', requireRole(ROLES.MANAGE), (req, res) => {
-  const where = isAdmin(req) ? '' : 'WHERE l.id=?';
-  const args = isAdmin(req) ? [] : [req.user.location_id];
+  // Scope the list to what the user may act on: every location (all-scope / see-all),
+  // else their home store plus any extra locations an admin granted them.
+  const ids = accessibleLocationIds(req);
+  const where = ids === null ? '' : (ids.length ? `WHERE l.id IN (${ids.map(() => '?').join(',')})` : 'WHERE 0');
+  const args = ids === null ? [] : ids;
   const rows = db.prepare(`
     SELECT l.*,
       (SELECT name FROM users WHERE role='manager' AND location_id=l.id AND is_active=1 LIMIT 1) AS manager_name,

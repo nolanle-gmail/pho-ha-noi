@@ -6,7 +6,7 @@
 // floor plan's table status is kept in sync so both views agree.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, userCanAccessLocation, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
 const { emitVisits, onVisits } = require('../lib/events');
 const { markWaitlistSeated, markWaitlistSeatedByName } = require('../lib/waitlistSync');
@@ -56,7 +56,7 @@ router.get('/stream', (req, res) => {
 router.use(auth);
 
 const isManage = (req) => req.user && ROLES.MANAGE.includes(req.user.role);
-const ownsLocation = (req, locId) => req.service || userSeesAll(req) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => req.service || userCanAccessLocation(req, locId);
 // View/act: the service key (Staff app) or a manager. Per-user server/host scoping
 // happens in the Staff app UI (Phase 4); the API trusts the service key.
 const requireView = (req, res, next) => (req.service || isManage(req) ? next() : res.status(403).json({ error: 'You do not have access to the service lists.' }));
