@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 24, 2026_
+_Last updated: November 25, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -1714,7 +1714,7 @@ mobile browser's bottom toolbar rather than being pushed out of view.
 | **Central Kitchen** | The CK's own **inventory hub** — the same tools as Inventory (Glossary, Stock, Orders & Reorder, Lots & Expiry, Vendors, Reports) scoped to the CK location — plus **Distribution** (raw-food warehouse → stores) and **Fulfillment**. CK staff, scheduling, day-tasks and clock in/out are handled in the unified staff system (Staff Directory + Locations → Central Kitchen), not a CK-only tab. The CK **Glossary & Vendors are the master catalog**: adding or editing an item/vendor there **copies it one-way to every restaurant** (stores can also keep their own local items/vendors, which never push up) | Owner/Admin/GM |
 | **Menu / Recipes** | Menu items, recipe links, live food-cost costing | Manage tier |
 | **Reports** | Items, sales, analytics, timesheets, payments, **breaks**, and **Waitlist** (every guest ever on the Front Desk waitlist — phone, SMS opt-in, status, texts sent — with CSV export for promotions; manage cap) — location + date filters | Reports tier |
-| **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix), day/time patterns and **avg time to pay** from the stored Toast history — no live pull; **each report runs manually via its own ▶ Run button** | Manager+ (own store) · Owner/Admin all |
+| **Sales Analytics** | 💹 Trends, per-location comparison, top items (menu mix), day/time patterns and **avg time to pay** from the stored Toast history — no live pull; **each report runs manually via its own ▶ Run button** | **`salesview` only** — all-location leadership (Owner, Advanced Admin, CFO, CEO, COO, VP, President, Admin, HR, GM); store managers & Analyst/Accountant are excluded |
 | **Orders** | 🧾 Browse a day's Toast orders (time, table, server, guests, items, net, tips, status) and open any order's full detail | Manager+ (own store) · Owner/Admin all |
 | **Service Flow** | ⏱️ Live dine-in board — each table's ordered / served / paid / bussed state with escalating alerts (food runner → server → busser); staff tap **Served / Done**; auto-pulled every 3 min. **Per-location On/Off** — on the board **and** as a **⏱️ Service Flow tab** in each location's manage view (next to Details; renders that store's board + toggle inline). **Any manager can turn their own store on/off** (`…/toggle`, own location); going live stays Owner/Admin. Off / not-Toast-connected shows a clear state with no board and no alerts | Manager toggles own store · Owner/Admin all |
 | **Integrations** | 🔌 **Toast POS** — map each location to its Toast restaurant, verify the connection, pull sales, sync the staff roster, backfill history, and toggle auto-sync (read-only) | Owner/Admin |
@@ -3109,6 +3109,18 @@ and the API is the real boundary (the UI just reflects it).
 - **Compose them:** read-only **+** sees-all-locations = *"sees every store, changes
   nothing"* (a group or person who reviews across the company). Overrides can only be
   set by an org-admin, and never on an exec account by a non-exec admin.
+
+### Sales Analytics — leadership-only (`salesview`, 2026-11-24)
+
+The **💹 Sales Analytics** page (group-wide Toast revenue dashboards) is gated by its own
+**`salesview`** capability, split out from `manage` so a store **Manager** can run their
+store without seeing company sales. It's carried only by **all-location leadership** —
+**Owner, Advanced Admin, CFO, CEO, COO, Vice President, President, Admin, HR, General
+Manager**; **Regional Manager, store managers, Shift/Kitchen Lead, and the reports-only
+Analyst/Accountant are excluded.** Enforced on both the sidebar and the
+`/toast/analytics/*` API. It's an ordinary capability — tick/untick it per role on the
+**Access Levels** page to change who gets Sales Analytics. (The manager dashboard's own
+small Toast-sales strip is a different surface and is unaffected.)
 
 ---
 
