@@ -3,14 +3,14 @@
 // view/manage their own location's hours & equipment.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { slugify } = require('../lib/slug');
 
 const router = express.Router();
 router.use(verifyToken);
 
-const isAdmin = (req) => seesAllLocations(req.user.role);
+const isAdmin = (req) => userSeesAll(req);
 function ownsLocation(req, locId) {
   return isAdmin(req) || String(req.user.location_id) === String(locId);
 }
@@ -39,7 +39,7 @@ router.get('/', requireRole(ROLES.MANAGE), (req, res) => {
 // several stores), unlike the per-location Staff counts which sum higher. Org-scope roles only.
 // Declared before '/:id' so the literal path isn't captured as a location id.
 router.get('/headcount', requireRole(ROLES.MANAGE), (req, res) => {
-  if (!seesAllLocations(req.user.role)) return res.status(403).json({ error: 'Org-wide headcount is for all-location roles.' });
+  if (!userSeesAll(req)) return res.status(403).json({ error: 'Org-wide headcount is for all-location roles.' });
   const active = db.prepare(`SELECT COUNT(*) c FROM users WHERE is_active=1`).get().c;
   const total = db.prepare(`SELECT COUNT(*) c FROM users`).get().c;
   // Unassigned = active people with NO home store AND not covering any store via staff_locations,

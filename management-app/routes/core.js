@@ -2,7 +2,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap, isExecRole } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleHasCap, isExecRole } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
 const { sendSms, smsEnabled } = require('../lib/sms');
@@ -65,7 +65,7 @@ function loginMessage(u, lang) {
 
 // Staff directory. Owner/admin see all locations; managers see their own (view only).
 router.get('/staff', requireRole(ROLES.MANAGE), (req, res) => {
-  const scopeAll = seesAllLocations(req.user.role);
+  const scopeAll = userSeesAll(req);
   const where = scopeAll ? '' : 'WHERE u.location_id=?';
   const args = scopeAll ? [] : [req.user.location_id];
   const rows = db.prepare(`
@@ -82,7 +82,7 @@ router.get('/staff', requireRole(ROLES.MANAGE), (req, res) => {
 
 // Staff overview: per-location roster health (count, manager, status breakdown).
 router.get('/staff/overview', requireRole(ROLES.MANAGE), (req, res) => {
-  const scopeAll = seesAllLocations(req.user.role);
+  const scopeAll = userSeesAll(req);
   const locs = db.prepare(`SELECT id, name FROM locations WHERE is_active=1 ${scopeAll ? '' : 'AND id=?'} ORDER BY name`)
     .all(...(scopeAll ? [] : [req.user.location_id]));
   const displayStatus = (u) => (!u.is_active ? 'inactive' : (u.status || 'active'));
@@ -107,7 +107,7 @@ function canEditStaff(req, target) {
   if (ROLES.ADMIN.includes(req.user.role)) return true;
   if (!ROLES.MANAGE.includes(req.user.role)) return false;
   if (ROLES.ADMIN.includes(target.role)) return false;
-  if (seesAllLocations(req.user.role)) return true;
+  if (userSeesAll(req)) return true;
   return String(target.location_id) === String(req.user.location_id);
 }
 const isAdminEditor = (req) => ROLES.ADMIN.includes(req.user.role);
@@ -208,6 +208,19 @@ router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
   if (req.body.is_active !== undefined) {
     if (Number(req.params.id) === req.user.id && !req.body.is_active) return res.status(400).json({ error: 'You cannot deactivate your own account.' });
     fields.push('is_active=?'); vals.push(req.body.is_active ? 1 : 0);
+  }
+
+  // Per-user access overrides (org-admin only): read-only (view but not modify) and
+  // see-all-locations (open a single-location person up to every store).
+  if (req.body.read_only !== undefined || req.body.view_all_locations !== undefined) {
+    if (!isAdminEditor(req)) return res.status(403).json({ error: 'Only an owner or admin can change access overrides.' });
+    // Don't let a non-exec admin alter an exec-tier (Owner / Advanced Admin) account.
+    if (isExecRole(u.role) && !roleHasCap(req.user.role, 'exec')) return res.status(403).json({ error: 'Only an Advanced Admin or the Owner can change this account.' });
+    if (req.body.read_only !== undefined) {
+      if (Number(req.params.id) === req.user.id && req.body.read_only) return res.status(400).json({ error: 'You cannot make your own account read-only.' });
+      fields.push('read_only=?'); vals.push(req.body.read_only ? 1 : 0);
+    }
+    if (req.body.view_all_locations !== undefined) { fields.push('view_all_locations=?'); vals.push(req.body.view_all_locations ? 1 : 0); }
   }
 
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
@@ -311,6 +324,7 @@ const PROFILE_COLS = [
 // View a full profile (owner/admin/manager).
 router.get('/staff/:id/profile', requireRole(ROLES.MANAGE), (req, res) => {
   const u = db.prepare(`SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.hourly_rate, u.is_active, u.created_at,
+      u.read_only, u.view_all_locations,
       l.name AS location_name FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?`).get(req.params.id);
   if (!u) return res.status(404).json({ error: 'Staff member not found.' });
   const profile = db.prepare(`SELECT * FROM staff_profiles WHERE user_id=?`).get(u.id) || {};

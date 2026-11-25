@@ -10,7 +10,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleHasCap, SECRET } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, localTime, DEFAULT_TZ } = require('../lib/tz');
@@ -760,7 +760,7 @@ function sweepTaskReminders() {
 
 router.use(verifyToken);
 
-const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
 const locTz = (locId) => (db.prepare(`SELECT timezone FROM locations WHERE id=?`).get(locId) || {}).timezone || DEFAULT_TZ;
 const validDate = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || '') ? s : null);
 const spanMin = (a, b) => { if (!a || !b) return 0; const [ah, am] = a.split(':').map(Number), [bh, bm] = b.split(':').map(Number); let s = ah * 60 + am, e = bh * 60 + bm; if (e <= s) e += 1440; return e - s; };
@@ -1092,11 +1092,11 @@ router.get('/punch-photos', requireRole(ROLES.MANAGE), (req, res) => {
   const locId = req.query.location_id ? parseInt(req.query.location_id, 10) : null;
   const conds = ['te.user_id=?', 'te.work_date>=?', 'te.work_date<=?'], args = [userId, start, end];
   if (locId) { conds.push('te.location_id=?'); args.push(locId); }
-  else if (!seesAllLocations(req.user.role)) { conds.push('te.location_id=?'); args.push(req.user.location_id); }
+  else if (!userSeesAll(req)) { conds.push('te.location_id=?'); args.push(req.user.location_id); }
   const rows = db.prepare(`SELECT tp.id photo_id, tp.kind, te.id entry_id, te.work_date, te.clock_in, te.clock_out, te.location_id, l.name location, l.timezone
     FROM time_entry_photos tp JOIN time_entries te ON te.id=tp.entry_id LEFT JOIN locations l ON l.id=te.location_id
     WHERE ${conds.join(' AND ')} ORDER BY te.work_date DESC, tp.kind`).all(...args)
-    .filter(r => seesAllLocations(req.user.role) || String(r.location_id) === String(req.user.location_id))
+    .filter(r => userSeesAll(req) || String(r.location_id) === String(req.user.location_id))
     .map(r => ({
       photo_id: r.photo_id, kind: r.kind, work_date: r.work_date, location: r.location,
       at: localTime(r.timezone || DEFAULT_TZ, new Date(r.kind === 'out' && r.clock_out ? r.clock_out : r.clock_in)),

@@ -6,7 +6,7 @@
 // floor plan's table status is kept in sync so both views agree.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, SECRET } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, SECRET } = require('../lib/auth');
 const jwt = require('jsonwebtoken');
 const { emitVisits, onVisits } = require('../lib/events');
 const { markWaitlistSeated, markWaitlistSeatedByName } = require('../lib/waitlistSync');
@@ -56,7 +56,7 @@ router.get('/stream', (req, res) => {
 router.use(auth);
 
 const isManage = (req) => req.user && ROLES.MANAGE.includes(req.user.role);
-const ownsLocation = (req, locId) => req.service || seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => req.service || userSeesAll(req) || String(req.user.location_id) === String(locId);
 // View/act: the service key (Staff app) or a manager. Per-user server/host scoping
 // happens in the Staff app UI (Phase 4); the API trusts the service key.
 const requireView = (req, res, next) => (req.service || isManage(req) ? next() : res.status(403).json({ error: 'You do not have access to the service lists.' }));
@@ -64,7 +64,7 @@ const requireView = (req, res, next) => (req.service || isManage(req) ? next() :
 // service lists and do the server actions (claim / check / pay / done / help / bus) at
 // their own store. Any non-all-location staffer qualifies; manager-only actions
 // (seat / assign / transfer / cancel / interval / create) keep requireView.
-const isFloorStaff = (req) => req.user && !seesAllLocations(req.user.role);
+const isFloorStaff = (req) => req.user && !userSeesAll(req);
 const requireFloor = (req, res, next) => (req.service || isManage(req) || isFloorStaff(req) ? next() : res.status(403).json({ error: 'You do not have access to the service lists.' }));
 
 const nowISO = () => new Date().toISOString();
@@ -130,7 +130,7 @@ function mapVisit(v) {
 
 // Resolve the requested location + enforce scope. Returns { locId } or sends an error.
 function scopeLocation(req, res) {
-  const scopeAll = req.service ? false : seesAllLocations(req.user.role);
+  const scopeAll = req.service ? false : userSeesAll(req);
   let locId = req.query.location_id ? parseInt(req.query.location_id, 10) : (req.body.location_id ? parseInt(req.body.location_id, 10) : null);
   if (req.service && !locId) { res.status(400).json({ error: 'location_id is required.' }); return null; }
   if (!scopeAll && !req.service && !locId) locId = req.user.location_id;   // default location-scoped users to their own store

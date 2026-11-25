@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { signToken, verifyToken, publicRoles, ROLE_DEFS, seesAllLocations } = require('../lib/auth');
+const { signToken, verifyToken, publicRoles, ROLE_DEFS, seesAllLocations, roleViewOnly } = require('../lib/auth');
 const roleCaps = (role) => (ROLE_DEFS[role] && Array.isArray(ROLE_DEFS[role].caps)) ? ROLE_DEFS[role].caps : [];
 const { logLogin } = require('../lib/activity');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
@@ -27,16 +27,17 @@ router.post('/login', (req, res) => {
     token,
     // email is returned so the Staff app can carry it as the cross-app identity
     // (its `as=<email>` service calls) even though login is by phone.
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, location_id: user.location_id, caps: roleCaps(user.role) },
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, location_id: user.location_id, caps: roleCaps(user.role),
+      read_only: !!user.read_only || roleViewOnly(user.role), view_all_locations: !!user.view_all_locations },
   });
 });
 
 router.get('/me', verifyToken, (req, res) => {
   const u = db.prepare(`
-    SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, l.name AS location_name
+    SELECT u.id, u.name, u.email, u.phone, u.role, u.location_id, u.read_only, u.view_all_locations, l.name AS location_name
     FROM users u LEFT JOIN locations l ON u.location_id=l.id WHERE u.id=?
   `).get(req.user.id);
-  if (u) u.caps = roleCaps(u.role);
+  if (u) { u.caps = roleCaps(u.role); u.read_only = !!u.read_only || roleViewOnly(u.role); u.view_all_locations = !!u.view_all_locations; }
   res.json(u || {});
 });
 

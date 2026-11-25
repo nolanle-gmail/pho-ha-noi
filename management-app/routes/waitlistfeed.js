@@ -2,7 +2,7 @@
 // DB). Reads it server-to-server over the shared service key. Location IDs are aligned
 // across both apps. Scoped by role: all-location roles see all; others their own store.
 const express = require('express');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
 
 const router = express.Router();
 router.use(verifyToken);
@@ -17,7 +17,7 @@ async function wl(path) {
   return r.json();
 }
 // A manager is pinned to their own location; all-location roles may pass ?location_id.
-const scopedLoc = (req) => seesAllLocations(req.user.role) ? (parseInt(req.query.location_id, 10) || null) : req.user.location_id;
+const scopedLoc = (req) => userSeesAll(req) ? (parseInt(req.query.location_id, 10) || null) : req.user.location_id;
 
 router.get('/active', async (req, res) => {
   try { const loc = scopedLoc(req); res.json(await wl('/active' + (loc ? `?location_id=${loc}` : ''))); }

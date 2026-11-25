@@ -1295,6 +1295,46 @@ const check = (name, ok, detail = '') => {
     // The owner CAN edit the Advanced Admin level.
     r = await fetch(base + '/api/roles/advanced_admin', { method: 'PUT', headers: H(token), body: JSON.stringify({ label: 'Advanced Admin' }) });
     check('owner can edit the Advanced Admin level', r.status === 200, await r.text());
+
+    // ── Permission toggles: read-only + see-all-locations ──────
+    // A throwaway single-location manager the owner can flip overrides on.
+    const ptMgr = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'PT Manager', phone: '5105550081', email: 'ptmgr@phohanoi.com', password: 'Password123!', role: 'manager', location_id: loc1 }) }));
+    check('created a throwaway manager for toggle tests', ptMgr.success === true && !!ptMgr.id, JSON.stringify(ptMgr));
+    const ptLogin1 = await login('5105550081', 'Password123!');
+    // Baseline: a plain single-location manager is refused another store's schedule.
+    r = await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(ptLogin1) });
+    check('plain manager is refused another location (403)', r.status === 403, 'status=' + r.status);
+    // Grant "sees all locations" → now they can pull another store's schedule.
+    r = await fetch(base + `/api/staff/${ptMgr.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ view_all_locations: true }) });
+    check('owner grants view_all_locations', r.status === 200, await r.text());
+    const wkPt = await j(await fetch(base + `/api/schedule/week?location_id=${loc2}`, { headers: H(ptLogin1) }));
+    check('view_all_locations manager can see another location', wkPt.location && String(wkPt.location.id) === String(loc2), 'loc=' + (wkPt.location && wkPt.location.id));
+    // A regular manager cannot grant access overrides to anyone.
+    r = await fetch(base + `/api/staff/${ptMgr.id}`, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ read_only: true }) });
+    check('a manager cannot set access overrides (403)', r.status === 403, 'status=' + r.status);
+    // Grant read-only → GETs still work, but any write is blocked at the gate.
+    r = await fetch(base + `/api/staff/${ptMgr.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ read_only: true }) });
+    check('owner grants read-only', r.status === 200, await r.text());
+    r = await fetch(base + `/api/schedule/week?location_id=${loc1}`, { headers: H(ptLogin1) });
+    check('read-only user can still GET (view)', r.status === 200, 'status=' + r.status);
+    r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(ptLogin1), body: JSON.stringify({ user_id: ptMgr.id, location_id: loc1, shift_date: wk.days[1], start_time: '09:00', end_time: '17:00' }) });
+    check('read-only user is blocked from writing (403)', r.status === 403, 'status=' + r.status);
+    // Lifting read-only restores write access.
+    r = await fetch(base + `/api/staff/${ptMgr.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ read_only: false }) });
+    r = await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(ptLogin1), body: JSON.stringify({ user_id: ptMgr.id, location_id: loc1, shift_date: wk.days[2], start_time: '09:00', end_time: '17:00' }) });
+    check('lifting read-only restores writes', r.status === 200, await r.text());
+    // You cannot make your own account read-only.
+    const ptSelf = (require('../db/database')).prepare("SELECT id FROM users WHERE role='owner' AND is_active=1 ORDER BY id LIMIT 1").get();
+    r = await fetch(base + `/api/staff/${ptSelf.id}`, { method: 'PUT', headers: H(token), body: JSON.stringify({ read_only: true }) });
+    check('cannot make your own account read-only (400)', r.status === 400, 'status=' + r.status);
+    // Per-ROLE view-only: flip a role to view_only; the registry reflects it.
+    r = await fetch(base + '/api/roles/accountant', { method: 'PUT', headers: H(token), body: JSON.stringify({ view_only: true }) });
+    const acctAfter = (await j(await fetch(base + '/api/auth/roles', { headers: H(token) }))).find(x => x.key === 'accountant');
+    check('a role can be set view-only', r.status === 200 && acctAfter && !!acctAfter.view_only, JSON.stringify(acctAfter && { view_only: acctAfter.view_only }));
+    // The exec tier can never be made view-only.
+    r = await fetch(base + '/api/roles/owner', { method: 'PUT', headers: H(token), body: JSON.stringify({ view_only: true }) });
+    const ownAfter = (await j(await fetch(base + '/api/auth/roles', { headers: H(token) }))).find(x => x.key === 'owner');
+    check('owner role cannot be made view-only', ownAfter && !ownAfter.view_only, JSON.stringify(ownAfter && { view_only: ownAfter.view_only }));
     const gmTok = await login('4085550004', 'Gm123456!');
     const gmStaff = await j(await fetch(base + '/api/staff', { headers: H(gmTok) }));
     check('GM sees all-location staff', Array.isArray(gmStaff) && gmStaff.length > 20, 'count=' + (gmStaff || []).length);

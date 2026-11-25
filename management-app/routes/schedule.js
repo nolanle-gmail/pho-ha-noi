@@ -3,7 +3,7 @@
 // owner/admin can schedule any location and curate the job catalog.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleScope, roleHasCap } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleScope, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { notify } = require('./messages');
 const { localDate, DEFAULT_TZ } = require('../lib/tz');
@@ -61,13 +61,14 @@ router.get('/location',
     const key = req.headers['x-service-key'] || req.query.key;
     if (key && key === SCHED_SERVICE_KEY) {
       const email = String(req.query.as || '').toLowerCase().trim();
-      user = email && db.prepare(`SELECT id, name, role, location_id FROM users WHERE lower(email)=? AND is_active=1`).get(email);
+      user = email && db.prepare(`SELECT id, name, role, location_id, view_all_locations FROM users WHERE lower(email)=? AND is_active=1`).get(email);
     } else if (req.user) {
-      user = db.prepare(`SELECT id, name, role, location_id FROM users WHERE id=?`).get(req.user.id);
+      user = db.prepare(`SELECT id, name, role, location_id, view_all_locations FROM users WHERE id=?`).get(req.user.id);
     }
     if (!user) return res.status(401).json({ error: 'Unknown staff member.' });
     if (!roleHasCap(user.role, 'manage')) return res.status(403).json({ error: 'Not allowed to view the team schedule.' });
-    const locId = (seesAllLocations(user.role) && parseInt(req.query.location_id, 10)) || user.location_id;
+    const seesAll = seesAllLocations(user.role) || !!user.view_all_locations;
+    const locId = (seesAll && parseInt(req.query.location_id, 10)) || user.location_id;
     if (!locId) return res.status(400).json({ error: 'No location for this account.' });
     const loc = db.prepare(`SELECT id, name, timezone FROM locations WHERE id=?`).get(locId);
     if (!loc) return res.status(404).json({ error: 'Location not found.' });
@@ -248,7 +249,7 @@ router.post('/leave-requests/:id/decide', svcKeyOrJwt, (req, res) => {
 
 router.use(verifyToken);
 
-const ownsLocation = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
+const ownsLocation = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
 const COMPLEXITY = ['low', 'medium', 'high'];
 
 // Local-date ISO (YYYY-MM-DD) — avoids the UTC shift that toISOString() causes

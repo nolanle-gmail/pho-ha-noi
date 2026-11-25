@@ -2,7 +2,7 @@
 // Owner/admin can report on any/all locations; managers are scoped to theirs.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
 const { localTime, localDate, DEFAULT_TZ } = require('../lib/tz');
 const { auditLog } = require('../lib/audit');
 const gsheets = require('../lib/gsheets');
@@ -12,7 +12,7 @@ const router = express.Router();
 router.use(verifyToken);
 
 function scope(req) {
-  return { locId: seesAllLocations(req.user.role) ? (req.query.location_id || null) : req.user.location_id };
+  return { locId: userSeesAll(req) ? (req.query.location_id || null) : req.user.location_id };
 }
 function dateRange(req) {
   const end = req.query.end || new Date().toISOString().slice(0, 10);

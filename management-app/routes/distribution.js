@@ -6,7 +6,7 @@
 // transfer flows this reuses.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { receiveLot, consumeFIFO } = require('../lib/lots');
 const { parseScan, logScan } = require('../lib/barcode');
@@ -47,13 +47,13 @@ function ckLoc() { return db.prepare(`SELECT * FROM locations WHERE type='centra
 // CK-side actions are for whoever runs the kitchen: anyone who sees all locations,
 // or a person whose home location IS the Central Kitchen.
 function isCKStaff(req) {
-  if (seesAllLocations(req.user.role)) return true;
+  if (userSeesAll(req)) return true;
   const ck = ckLoc();
   return !!ck && String(req.user.location_id) === String(ck.id);
 }
 // The store a request targets: owners/admins may name one; everyone else is pinned.
 function storeScope(req, fromQuery) {
-  if (seesAllLocations(req.user.role)) return (fromQuery ? req.query.location_id : req.body.location_id) || null;
+  if (userSeesAll(req)) return (fromQuery ? req.query.location_id : req.body.location_id) || null;
   return req.user.location_id;
 }
 // How much of an item the CK can currently offer (on-hand, distributable, active).
@@ -65,7 +65,7 @@ function ckAvailable(itemName) { return hubAvailable(ckLoc() ? ckLoc().id : null
 const { hubById, hubAvailable, hubOrderLines, hubQueue, storeLines, shipScanOrder, notifySender, recomputeOrderStage } = require('../lib/shipOrder');
 function hubs() { return db.prepare(`SELECT id, name, type FROM locations WHERE type IN ('central_kitchen','warehouse') AND is_active=1 ORDER BY (type='central_kitchen') DESC, name`).all(); }
 // Is this person allowed to run that hub? (leadership, or a staffer based at the hub.)
-function isHubStaff(req, hubId) { return seesAllLocations(req.user.role) || String(req.user.location_id) === String(hubId); }
+function isHubStaff(req, hubId) { return userSeesAll(req) || String(req.user.location_id) === String(hubId); }
 // Resolve the hub a request is for: an explicit source_location_id (validated as a hub), else the
 // staffer's own hub if they're based at one, else the Central Kitchen (back-compat default).
 function resolveHub(req, fromQuery) {
@@ -77,7 +77,7 @@ function resolveHub(req, fromQuery) {
 }
 // A hub MANAGER (or org leadership) — the people who may review/approve orders.
 function isHubManager(req, hubId) {
-  if (seesAllLocations(req.user.role)) return true;
+  if (userSeesAll(req)) return true;
   return String(req.user.location_id) === String(hubId) && roleHasCap(req.user.role, 'manage');
 }
 
@@ -429,7 +429,7 @@ router.put('/orders/:id', requireRole(ROLES.OPS), (req, res) => {
 router.post('/cancel-order', requireRole(ROLES.OPS), (req, res) => {
   const orderNo = String((req.body && req.body.order_no) || '').trim();
   if (!orderNo) return res.status(400).json({ error: 'Order number required.' });
-  const seesAll = seesAllLocations(req.user.role);
+  const seesAll = userSeesAll(req);
   const where = seesAll ? 'order_no=?' : 'order_no=? AND to_location_id=?';
   const args = seesAll ? [orderNo] : [orderNo, req.user.location_id];
   const lines = db.prepare(`SELECT * FROM distribution_orders WHERE ${where}`).all(...args);
@@ -472,7 +472,7 @@ router.post('/orders/:id/request-cancel', requireRole(ROLES.OPS), (req, res) => 
   const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
   if (!d) return res.status(404).json({ error: 'Order not found.' });
   const hub = hubById(d.source_location_id);
-  const canReq = String(req.user.location_id) === String(d.to_location_id) || seesAllLocations(req.user.role) || (!!hub && isHubStaff(req, hub.id));
+  const canReq = String(req.user.location_id) === String(d.to_location_id) || userSeesAll(req) || (!!hub && isHubStaff(req, hub.id));
   if (!canReq) return res.status(403).json({ error: 'Not your order.' });
   if (d.status !== 'shipped') return res.status(400).json({ error: d.status === 'requested' || d.status === 'approved' ? 'This hasn’t shipped yet — cancel it directly instead.' : `Can't request cancellation of an order that is ${d.status}.` });
   if (d.cancel_requested) return res.status(400).json({ error: 'A cancellation is already requested for this item.' });
@@ -487,7 +487,7 @@ router.post('/request-cancel-order', requireRole(ROLES.OPS), (req, res) => {
   const orderNo = String((req.body && req.body.order_no) || '').trim();
   if (!orderNo) return res.status(400).json({ error: 'Order number required.' });
   const reason = ((req.body && req.body.reason) || '').toString().trim().slice(0, 500) || null;
-  const seesAll = seesAllLocations(req.user.role);
+  const seesAll = userSeesAll(req);
   const where = seesAll ? 'order_no=?' : 'order_no=? AND to_location_id=?';
   const args = seesAll ? [orderNo] : [orderNo, req.user.location_id];
   const lines = db.prepare(`SELECT * FROM distribution_orders WHERE ${where}`).all(...args);
@@ -510,7 +510,7 @@ router.post('/request-cancel-order', requireRole(ROLES.OPS), (req, res) => {
 router.post('/orders/:id/withdraw-cancel', requireRole(ROLES.OPS), (req, res) => {
   const d = db.prepare(`SELECT * FROM distribution_orders WHERE id=?`).get(req.params.id);
   if (!d) return res.status(404).json({ error: 'Order not found.' });
-  const canReq = String(req.user.location_id) === String(d.to_location_id) || seesAllLocations(req.user.role);
+  const canReq = String(req.user.location_id) === String(d.to_location_id) || userSeesAll(req);
   if (!canReq) return res.status(403).json({ error: 'Not your order.' });
   if (!d.cancel_requested) return res.status(400).json({ error: 'No cancellation request to withdraw.' });
   db.prepare(`UPDATE distribution_orders SET cancel_requested=0, cancel_reason=NULL, updated_at=datetime('now') WHERE id=?`).run(d.id);
@@ -652,7 +652,7 @@ router.post('/hub-orders/:orderNo/dispatch', requireRole(ROLES.DELIVERY), (req, 
   const h = headerOf(req.params.orderNo);
   if (!h) return res.status(404).json({ error: 'Order not found.' });
   const hub = hubById(h.source_location_id);
-  if (!hub || !(seesAllLocations(req.user.role) || String(req.user.location_id) === String(hub.id))) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} drivers only.` });
+  if (!hub || !(userSeesAll(req) || String(req.user.location_id) === String(hub.id))) return res.status(403).json({ error: `${hub ? hub.name : 'Hub'} drivers only.` });
   // Dispatch whatever is currently LOADED (scanned onto the truck, not yet in transit). An order can
   // ship in several trips, so leftover items still "Ready to ship" stay for a later load + dispatch.
   const loaded = db.prepare(`SELECT id FROM distribution_orders WHERE order_no=? AND status='shipped' AND dispatched=0 AND approval='approved'`).all(h.order_no);
@@ -671,7 +671,7 @@ router.post('/hub-orders/:orderNo/deliver', requireRole(ROLES.OPS), (req, res) =
   const h = headerOf(req.params.orderNo);
   if (!h) return res.status(404).json({ error: 'Order not found.' });
   const hub = hubById(h.source_location_id);
-  const canDeliver = seesAllLocations(req.user.role) || String(req.user.location_id) === String(h.to_location_id)
+  const canDeliver = userSeesAll(req) || String(req.user.location_id) === String(h.to_location_id)
     || (hub && isHubStaff(req, hub.id)) || roleHasCap(req.user.role, 'delivery');
   if (!canDeliver) return res.status(403).json({ error: 'Not your order.' });
   if (h.stage !== 'in_transit' && h.stage !== 'loaded') return res.status(400).json({ error: `Only an in-transit order can be delivered (this is ${h.stage}).` });
@@ -705,7 +705,7 @@ router.post('/hub-orders/:orderNo/pickup-receive', requireRole(ROLES.ALL), (req,
   const h = headerOf(req.params.orderNo);
   if (!h) return res.status(404).json({ error: 'Order not found.' });
   const hub = hubById(h.source_location_id);
-  const canDo = seesAllLocations(req.user.role) || (hub && isHubStaff(req, hub.id)) || String(req.user.location_id) === String(h.to_location_id);
+  const canDo = userSeesAll(req) || (hub && isHubStaff(req, hub.id)) || String(req.user.location_id) === String(h.to_location_id);
   if (!canDo) return res.status(403).json({ error: 'Not your order.' });
   const lines = db.prepare(`SELECT * FROM distribution_orders WHERE order_no=? AND status='shipped' AND approval='approved'`).all(h.order_no);
   if (!lines.length) return res.status(400).json({ error: 'Nothing is scanned yet — scan the items being picked up first.' });

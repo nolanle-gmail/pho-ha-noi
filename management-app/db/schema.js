@@ -1346,6 +1346,16 @@ function migrate() {
     // Opt-in: when set, a weekly sweep copies this location's current week's work
     // shifts into the upcoming week if that week is still empty (never overwrites).
     `ALTER TABLE locations ADD COLUMN auto_roll_schedule INTEGER NOT NULL DEFAULT 0`,
+    // ── Permission toggles (2026-11-24) ──────────────────────────────────────
+    // Per-USER access overrides, resolved fresh on each request (so a change takes
+    // effect without re-login). read_only = can view but not modify anything;
+    // view_all_locations = a normally single-location person (e.g. a store manager)
+    // may see every location, not just their own.
+    `ALTER TABLE users ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN view_all_locations INTEGER NOT NULL DEFAULT 0`,
+    // Per-ROLE "view only": everyone on this access level can look but not change
+    // (a whole group set to read-only from the Access Levels page).
+    `ALTER TABLE roles ADD COLUMN view_only INTEGER NOT NULL DEFAULT 0`,
     // Last time a shift row was edited — drives the read/unread eye (a change after
     // the staffer last viewed their schedule flips them back to unread).
     `ALTER TABLE shifts ADD COLUMN updated_at TEXT`,

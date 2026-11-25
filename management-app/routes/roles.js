@@ -36,10 +36,13 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
   if (!scope) return res.status(400).json({ error: 'Access level must be all, location or self.' });
   const caps = cleanCaps(req.body.caps, req);
   const rank = cleanRank(req.body.rank, 10);
-  db.prepare(`INSERT INTO roles (key,label,scope,rank,caps,is_builtin,is_active) VALUES (?,?,?,?,?,0,1)`)
-    .run(key, label, scope, rank, JSON.stringify(caps));
+  // A brand-new role is never exec-capable from a non-exec creator (cleanCaps drops it),
+  // so view_only is safe to honor here.
+  const viewOnly = req.body.view_only ? 1 : 0;
+  db.prepare(`INSERT INTO roles (key,label,scope,rank,caps,view_only,is_builtin,is_active) VALUES (?,?,?,?,?,?,0,1)`)
+    .run(key, label, scope, rank, JSON.stringify(caps), viewOnly);
   reloadRoles();
-  auditLog(req, 'role_create', 'role', key, { label, scope, caps });
+  auditLog(req, 'role_create', 'role', key, { label, scope, caps, view_only: viewOnly });
   res.json({ success: true, key });
 });
 
@@ -61,10 +64,14 @@ router.put('/:key', requireRole(ROLES.ADMIN), (req, res) => {
   if (isExecRole(r.key) && !caps.includes('exec')) caps.push('exec');
   // Never lock the platform out of its owner: keep Owner all-scope with full admin + exec.
   if (r.key === 'owner') { scope = 'all'; caps = [...new Set([...caps, 'org', 'manage', 'ops', 'reports', 'central', 'exec'])]; }
-  db.prepare(`UPDATE roles SET label=?, scope=?, rank=?, caps=? WHERE key=?`)
-    .run(label, scope, rank, JSON.stringify(caps), r.key);
+  // The exec tier (Owner / Advanced Admin) can never be made view-only — that would
+  // strip the platform of its ability to make changes. Everyone else is as submitted.
+  let viewOnly = req.body.view_only !== undefined ? (req.body.view_only ? 1 : 0) : (r.view_only ? 1 : 0);
+  if (isExecRole(r.key)) viewOnly = 0;
+  db.prepare(`UPDATE roles SET label=?, scope=?, rank=?, caps=?, view_only=? WHERE key=?`)
+    .run(label, scope, rank, JSON.stringify(caps), viewOnly, r.key);
   reloadRoles();
-  auditLog(req, 'role_update', 'role', r.key, { label, scope, caps });
+  auditLog(req, 'role_update', 'role', r.key, { label, scope, caps, view_only: viewOnly });
   res.json({ success: true });
 });
 

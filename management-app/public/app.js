@@ -162,7 +162,7 @@ async function boot() {
   // Load the access-level registry so labels, nav and scope are role-aware.
   try { (await api('/auth/roles')).forEach(r => { ROLE_DEFS[r.key] = r; ROLE_CHIP[r.key] = roleChip(r.key); }); } catch { /* fall back to raw keys */ }
   $('who').textContent = `${S.user.name} · ${roleLabel(S.user.role)}`;
-  $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}</div>`;
+  $('sbUser').innerHTML = `<div class="user-name">${esc(S.user.name)}</div><div class="user-role">${esc(roleLabel(S.user.role))}${S.user.read_only ? ' · <span class="badge gray" title="You can view everything your access allows, but not make changes">👁️ View-only</span>' : ''}${S.user.view_all_locations && roleScopeOf(S.user.role) !== 'all' ? ' · <span class="badge blue" title="You can see every location">🌐 All locations</span>' : ''}</div>`;
   S.locations = await api('/inventory/locations').catch(() => []);
   S.warehouses = await api('/inventory/locations?type=warehouse').catch(() => []);   // storage hubs → the 🏬 Warehouse section
   // The signed-in user's own location type — lets a hub-based manager (located at the Central
@@ -6075,7 +6075,12 @@ function staffProfileEdit(d, locations, staff) {
         ${canEditAccountFields()
           ? selRaw('role', 'Role', d.role, accessLevels().filter(r => r !== 'owner' || S.user.role === 'owner').map(r => ({ v: r, n: roleLabel(r) })).sort((a, b) => a.n.localeCompare(b.n)))
             + selRaw('location_id', 'Home location', d.location_id || '', [{ v: '', n: 'All locations (owner/admin)' }].concat((locations || []).map(l => ({ v: l.id, n: (l.name || '').replace('Pho Ha Noi — ', '') }))))
-          : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}</div>
+          : `<label class="pfl">Role<input type="text" value="${esc(roleLabel(d.role))}" disabled /></label><label class="pfl">Home location<input type="text" value="${esc((d.location_name || 'All locations').replace('Pho Ha Noi — ', ''))}" disabled /></label>`}
+        ${canEditAccountFields() ? `<div class="access-overrides" style="margin-top:.5rem;border-top:1px solid var(--line);padding-top:.5rem">
+          <div style="font-size:.82rem;color:var(--muted);font-weight:600;margin-bottom:.3rem">Access overrides</div>
+          <label class="chk"><input type="checkbox" id="pf_view_all_locations" ${d.view_all_locations ? 'checked' : ''}/> 🌐 Sees all locations <span style="color:var(--muted)">— view &amp; work across every store, not just their home location</span></label>
+          <label class="chk"><input type="checkbox" id="pf_read_only" ${d.read_only ? 'checked' : ''}/> 👁️ Read-only <span style="color:var(--muted)">— can look but not change anything</span></label>
+        </div>` : ''}</div>
       <div class="section"><h3>Personal</h3>${inp('preferred_name', 'Preferred name', p.preferred_name)}${inp('legal_first_name', 'Legal first name', p.legal_first_name)}${inp('legal_last_name', 'Legal last name', p.legal_last_name)}${inp('dob', 'Date of birth', p.dob, 'date')}${inp('gender', 'Gender', p.gender)}${inp('personal_id', 'Personal ID (enter 9 digits to change)', p.personal_id)}${inp('employee_code', 'Employee code (6 digits)', p.employee_code)}</div>
       <div class="section"><h3>Contact</h3>${inp('personal_email', 'Personal email', p.personal_email, 'email')}${inp('phone', 'Mobile', p.phone)}${inp('alt_phone', 'Alt phone', p.alt_phone)}${selS('preferred_contact', 'Preferred contact', p.preferred_contact, ['', 'email', 'phone', 'text'])}</div>
       <div class="section"><h3>Mailing address</h3>${inp('address_line1', 'Address line 1', p.address_line1)}${inp('address_line2', 'Address line 2', p.address_line2)}${inp('city', 'City', p.city)}${inp('state', 'State', p.state)}${inp('postal_code', 'Postal code', p.postal_code)}${inp('country', 'Country', p.country || 'USA')}</div>
@@ -6105,7 +6110,12 @@ function staffProfileEdit(d, locations, staff) {
     if (canEditAccountFields()) {
       if (body.role !== undefined) { account.role = body.role; delete body.role; }
       if (body.location_id !== undefined) { account.location_id = body.location_id; delete body.location_id; }
+      // Access overrides are account fields and read from the checkboxes directly
+      // (the pf_ value loop captured a string, not the checked state).
+      account.view_all_locations = $('pf_view_all_locations') ? $('pf_view_all_locations').checked : false;
+      account.read_only = $('pf_read_only') ? $('pf_read_only').checked : false;
     } else { delete body.role; delete body.location_id; }
+    delete body.view_all_locations; delete body.read_only;
     try {
       if (Object.keys(account).length) await api('/staff/' + d.id, { method: 'PUT', body: JSON.stringify(account) });
       await api('/staff/' + d.id + '/profile', { method: 'PUT', body: JSON.stringify(body) });
@@ -6284,6 +6294,7 @@ function openRoleEditor(key) {
     <label>Access level</label><select id="roleScope">${scopeOpts}</select>
     <label>Can do</label>
     <div style="display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .5rem">${capBoxes}</div>
+    ${(editing && isExecRoleF(key)) ? '' : `<label class="chk" style="margin:.1rem 0 .5rem"><input type="checkbox" id="roleViewOnly" ${d.view_only ? 'checked' : ''}/> 👁️ View only <span style="color:var(--muted)">— this whole group can look but not change anything</span></label>`}
     <label>Order (higher shows first)</label><input id="roleRank" type="number" value="${d.rank != null ? d.rank : 10}" />
     <div class="actions"><button class="btn ghost" id="roleCancel">Cancel</button><button class="btn" id="roleSave">${editing ? 'Save' : 'Add role'}</button></div>
   </div></div>`;
@@ -6296,6 +6307,7 @@ function openRoleEditor(key) {
       scope: $('roleScope').value,
       caps: [...host.querySelectorAll('.role-cap:checked')].map(c => c.value),
       rank: parseInt($('roleRank').value, 10),
+      view_only: $('roleViewOnly') ? $('roleViewOnly').checked : false,
     };
     if (!editing) body.key = $('roleKey').value.trim().toLowerCase();
     try {

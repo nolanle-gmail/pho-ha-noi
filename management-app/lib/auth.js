@@ -107,6 +107,14 @@ function reloadRoles() {
   } else {
     for (const [key, d] of Object.entries(DEFAULT_ROLE_DEFS)) defs[key] = { ...d, builtin: true };
   }
+  // Per-role "view only" (whole access level is read-only). Best-effort + separate
+  // from the main SELECT so a DB that hasn't run the view_only migration yet still
+  // loads every role normally (the column simply reads as absent → not view-only).
+  try {
+    const vo = db.prepare(`SELECT key FROM roles WHERE view_only=1`).all();
+    const voSet = new Set(vo.map((r) => r.key));
+    for (const k of Object.keys(defs)) defs[k].view_only = voSet.has(k);
+  } catch { for (const k of Object.keys(defs)) defs[k].view_only = false; }
   ROLE_DEFS = defs;
   ROLE_KEYS = Object.keys(defs);
   const withCap = (cap) => ROLE_KEYS.filter((k) => defs[k].caps.includes(cap));
@@ -140,8 +148,13 @@ reloadRoles();
 
 const roleScope = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].scope : 'self');
 const seesAllLocations = (role) => roleScope(role) === 'all';
+// Request-aware "sees every location": the role's own scope OR a per-user grant
+// (view_all_locations). Use this at request time in place of
+// seesAllLocations(req.user.role) so a specific person can be opened up to all stores.
+const userSeesAll = (req) => seesAllLocations(req.user && req.user.role) || !!(req.user && req.user.view_all_locations);
 const roleLabel = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].label : role);
 const roleHasCap = (role, cap) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].caps.includes(cap));
+const roleViewOnly = (role) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].view_only);
 const roleRank = (role) => (ROLE_DEFS[role] ? (ROLE_DEFS[role].rank || 0) : 0);
 // The exec (Advanced-Admin) tier — Owner + Advanced Admin. Used to protect the tier:
 // only an exec holder may create/edit/assign an exec-capable role or account.
@@ -157,16 +170,44 @@ function signToken(user) {
   );
 }
 
+// Read-only (view-but-not-modify) principals may still reach these path prefixes
+// with a write — sign-in/out, and communication — everything else operational is
+// blocked. GET/HEAD/OPTIONS are always allowed.
+const READONLY_WRITE_OK = ['/api/auth', '/api/messages', '/api/chat'];
+const isWriteMethod = (m) => m === 'POST' || m === 'PUT' || m === 'PATCH' || m === 'DELETE';
+
+// Resolve a signed-in user's live access grants (read fresh from the DB so a change
+// takes effect without re-login): whether they're read-only (their own flag OR their
+// role being view-only) and whether they may see every location.
+function loadGrants(user) {
+  const out = { read_only: roleViewOnly(user.role), view_all_locations: false };
+  try {
+    const g = db.prepare(`SELECT read_only, view_all_locations FROM users WHERE id=?`).get(user.id);
+    if (g) { out.read_only = out.read_only || !!g.read_only; out.view_all_locations = !!g.view_all_locations; }
+  } catch { /* columns not migrated yet — treat as no override */ }
+  return out;
+}
+
 function verifyToken(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Authentication required' });
-  try {
-    req.user = jwt.verify(token, SECRET);
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired session' });
+  let payload;
+  try { payload = jwt.verify(token, SECRET); }
+  catch { return res.status(401).json({ error: 'Invalid or expired session' }); }
+  req.user = payload;
+  // Augment with live per-user grants (read-only + see-all-locations).
+  const g = loadGrants(payload);
+  req.user.read_only = g.read_only;
+  req.user.view_all_locations = g.view_all_locations;
+  // Enforce read-only: block operational writes, keeping sign-in/out + messaging.
+  if (req.user.read_only && isWriteMethod(req.method)) {
+    const url = req.originalUrl || req.url || '';
+    if (!READONLY_WRITE_OK.some((p) => url.startsWith(p))) {
+      return res.status(403).json({ error: 'Your access is view-only — you can see this but not change it.' });
+    }
   }
+  next();
 }
 
 // Accepts explicit role names — requireRole('owner','admin') — OR a single live
@@ -186,5 +227,5 @@ function requireRole(...roles) {
 module.exports = {
   signToken, verifyToken, requireRole, SECRET,
   ROLES, ROLE_DEFS, CAPS, SCOPES, DEFAULT_ROLE_DEFS,
-  roleScope, seesAllLocations, roleLabel, roleHasCap, roleRank, isExecRole, publicRoles, reloadRoles,
+  roleScope, seesAllLocations, userSeesAll, roleLabel, roleHasCap, roleViewOnly, roleRank, isExecRole, publicRoles, reloadRoles,
 };

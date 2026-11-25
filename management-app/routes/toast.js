@@ -3,7 +3,7 @@
 // read-only; credentials live in env / Fly secrets (see lib/toast.js), never here.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll, roleHasCap } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const toast = require('../lib/toast');
 const toastSync = require('../lib/toastSync');
@@ -16,7 +16,7 @@ router.use(verifyToken);
 // Owner + Advanced Admin. Manager-facing reads (sales, service-flow, orders) stay MANAGE.
 const ADMIN = requireRole(ROLES.EXEC);
 const MANAGE = requireRole(ROLES.MANAGE);
-const canSeeLoc = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
+const canSeeLoc = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
 
 // Pull a human-readable restaurant name out of Toast's restaurant-info response,
 // whose shape can vary (general.name / locationName / name).
@@ -428,7 +428,7 @@ router.get('/menu', MANAGE, (req, res) => {
 // a name is used, and $0 items are excluded, to cut size/variant noise. Returns items
 // whose base price differs across the mapped stores the caller can see.
 router.get('/menu/compare', MANAGE, (req, res) => {
-  const all = seesAllLocations(req.user.role);
+  const all = userSeesAll(req);
   const scope = all ? '' : 'AND location_id=?';
   const args = all ? [] : [req.user.location_id];
   // Per (name, location) base price.
@@ -469,7 +469,7 @@ router.get('/sales/dining', MANAGE, (req, res) => {
 // Dashboard roll-up: each mapped location's most recently synced business day and
 // its sales summary. Scoped to what the caller can see (managers: their own store).
 router.get('/sales/overview', MANAGE, (req, res) => {
-  const all = seesAllLocations(req.user.role);
+  const all = userSeesAll(req);
   let maps = db.prepare(`SELECT tl.location_id, tl.toast_name, tl.last_synced_at, l.name AS location_name
     FROM toast_locations tl JOIN locations l ON l.id=tl.location_id WHERE tl.active=1`).all();
   if (!all) maps = maps.filter(m => String(m.location_id) === String(req.user.location_id));
@@ -511,7 +511,7 @@ const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUT
 function rangeScope(req) {
   const to = /^\d{4}-\d{2}-\d{2}$/.test(req.query.to || '') ? req.query.to : toastSync.pacificToday();
   const from = /^\d{4}-\d{2}-\d{2}$/.test(req.query.from || '') ? req.query.from : addDaysIso(to, -90);
-  const all = seesAllLocations(req.user.role);
+  const all = userSeesAll(req);
   const loc = all ? (parseInt(req.query.location_id, 10) || null) : req.user.location_id;   // managers pinned to own store
   return { from, to, loc, all };
 }

@@ -5,7 +5,7 @@
 // with no location, the whole group.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { sendSms, smsEnabled, SMS_PROVIDER, gsm7 } = require('../lib/sms');
 
@@ -14,7 +14,7 @@ router.use(verifyToken);
 
 const CAN_SEND = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 const canSend = (role) => CAN_SEND.includes(role);
-const ownsLoc = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
+const ownsLoc = (req, locId) => userSeesAll(req) || String(req.user.location_id) === String(locId);
 
 // Whether SMS is actually wired, so the UI can warn "log-only" mode.
 router.get('/status', (req, res) => {
@@ -26,7 +26,7 @@ router.get('/status', (req, res) => {
 router.get('/staff', (req, res) => {
   if (!canSend(req.user.role)) return res.status(403).json({ error: 'Not allowed to send texts.' });
   const locId = parseInt(req.query.location_id, 10) || req.user.location_id;
-  if (!locId && !seesAllLocations(req.user.role)) return res.status(400).json({ error: 'A location is required.' });
+  if (!locId && !userSeesAll(req)) return res.status(400).json({ error: 'A location is required.' });
   if (locId && !ownsLoc(req, locId)) return res.status(403).json({ error: 'Not your location.' });
   const rows = locId
     ? db.prepare(`SELECT u.id, u.name, u.role, u.phone, u.location_id, l.name AS location_name FROM users u LEFT JOIN locations l ON l.id=u.location_id WHERE u.location_id=? AND u.is_active=1 ORDER BY u.name`).all(locId)
@@ -42,7 +42,7 @@ router.get('/staff', (req, res) => {
 // Resolve the set of recipients {id, name, phone} for a blast.
 function resolveRecipients(req, body) {
   const type = body.target_type;
-  const locId = parseInt(body.location_id, 10) || (seesAllLocations(req.user.role) ? null : req.user.location_id);
+  const locId = parseInt(body.location_id, 10) || (userSeesAll(req) ? null : req.user.location_id);
   if (type === 'user') {
     const u = db.prepare(`SELECT id, name, phone, location_id FROM users WHERE id=? AND is_active=1`).get(parseInt(body.target_user_id, 10));
     if (!u) return { error: 'Pick a staff member to text.' };
@@ -61,7 +61,7 @@ function resolveRecipients(req, body) {
     return { locId: locs.length === 1 ? owned[0].location_id : null, list: owned };
   }
   // role / all need a location unless the caller sees all locations
-  if (!locId && !seesAllLocations(req.user.role)) return { error: 'A location is required.' };
+  if (!locId && !userSeesAll(req)) return { error: 'A location is required.' };
   if (locId && !ownsLoc(req, locId)) return { error: 'Not your location.' };
   const where = ['is_active=1'], args = [];
   if (locId) { where.push('location_id=?'); args.push(locId); }
@@ -117,7 +117,7 @@ router.post('/send', async (req, res) => {
 
 // Recent blasts (for audit) — the sender's own, or all for leadership.
 router.get('/recent', (req, res) => {
-  const all = seesAllLocations(req.user.role);
+  const all = userSeesAll(req);
   const rows = all
     ? db.prepare(`SELECT m.*, u.name AS sender_name FROM sms_messages m LEFT JOIN users u ON u.id=m.sender_id ORDER BY m.id DESC LIMIT 50`).all()
     : db.prepare(`SELECT m.*, u.name AS sender_name FROM sms_messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.sender_id=? ORDER BY m.id DESC LIMIT 50`).all(req.user.id);

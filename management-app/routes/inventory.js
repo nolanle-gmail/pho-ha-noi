@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, userSeesAll } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { receiveLot, consumeFIFO, consumeFIFOCosted, costHistory, setLotCost } = require('../lib/lots');
 const { lookupProduct, rememberProduct } = require('../lib/productLookup');
@@ -18,7 +18,7 @@ router.use(verifyToken);
 // Resolve the location a request targets: owners may pass one; everyone else is
 // pinned to their own.
 function scopeLoc(req, fromQuery) {
-  if (seesAllLocations(req.user.role)) return (fromQuery ? req.query.location_id : req.body.location_id) || null;
+  if (userSeesAll(req)) return (fromQuery ? req.query.location_id : req.body.location_id) || null;
   return req.user.location_id;
 }
 
@@ -175,7 +175,7 @@ router.post('/sections', requireRole(ROLES.OPS), (req, res) => {
 router.put('/sections/:id', requireRole(ROLES.OPS), (req, res) => {
   const s = db.prepare(`SELECT * FROM storage_sections WHERE id=?`).get(req.params.id);
   if (!s) return res.status(404).json({ error: 'Section not found' });
-  if (!seesAllLocations(req.user.role) && s.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && s.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const fields = [], vals = [];
   if (req.body.name !== undefined && String(req.body.name).trim()) {
     const nm = String(req.body.name).trim().slice(0, 60);
@@ -194,7 +194,7 @@ router.put('/sections/:id', requireRole(ROLES.OPS), (req, res) => {
 router.delete('/sections/:id', requireRole(ROLES.OPS), (req, res) => {
   const s = db.prepare(`SELECT * FROM storage_sections WHERE id=?`).get(req.params.id);
   if (!s) return res.status(404).json({ error: 'Section not found' });
-  if (!seesAllLocations(req.user.role) && s.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && s.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   db.exec('BEGIN');
   try {
     db.prepare(`UPDATE inventory SET section_id=NULL WHERE section_id=?`).run(s.id);
@@ -251,7 +251,7 @@ router.post('/', requireRole(ROLES.OPS), (req, res) => {
 router.post('/waste', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only log waste for your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only log waste for your location.' });
   const qty = Math.max(0, parseFloat(req.body.quantity) || 0);
   if (qty <= 0) return res.status(400).json({ error: 'Quantity must be greater than 0.' });
   if (qty > item.quantity) return res.status(400).json({ error: `Only ${item.quantity} ${item.unit} in stock.` });
@@ -280,7 +280,7 @@ router.get('/waste', requireRole(ROLES.OPS), (req, res) => {
 router.post('/count', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   if (!item) return res.status(404).json({ error: 'Inventory item not found' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only count items at your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'You can only count items at your location.' });
   const counted = parseFloat(req.body.counted_quantity);
   if (!Number.isFinite(counted) || counted < 0) return res.status(400).json({ error: 'Enter a valid counted quantity (>= 0).' });
   const systemQty = item.quantity;
@@ -549,7 +549,7 @@ router.post('/receive', requireRole(ROLES.OPS), (req, res) => {
   if (req.body.item_id) item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   else if (req.body.sku) item = db.prepare(`SELECT * FROM inventory WHERE sku=? ${locId ? 'AND location_id=?' : ''}`).get(...(locId ? [String(req.body.sku).trim(), locId] : [String(req.body.sku).trim()]));
   if (!item) return res.status(404).json({ error: 'No item matches that SKU.' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const qty = Math.max(0, parseFloat(req.body.quantity) || 0);
   if (qty <= 0) return res.status(400).json({ error: 'Quantity must be greater than 0.' });
   const expiry = (req.body.expiry_date || '').toString().trim() || null;
@@ -566,7 +566,7 @@ router.post('/receive', requireRole(ROLES.OPS), (req, res) => {
 router.put('/:id', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const fields = [], vals = [];
   if (req.body.item_name !== undefined && String(req.body.item_name).trim()) { fields.push('item_name=?'); vals.push(String(req.body.item_name).trim().slice(0, 120)); }
   if (req.body.sku !== undefined) { fields.push('sku=?'); vals.push(req.body.sku || null); }
@@ -597,7 +597,7 @@ router.put('/:id', requireRole(ROLES.OPS), (req, res) => {
 router.delete('/:id', requireRole(ROLES.OPS), (req, res) => {
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.params.id);
   if (!item) return res.status(404).json({ error: 'Item not found' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   db.prepare(`UPDATE inventory SET is_active=0, last_updated=datetime('now') WHERE id=?`).run(item.id);
   auditLog(req, 'item_delete', 'inventory', item.id, { item: item.item_name });
   res.json({ success: true });
@@ -622,7 +622,7 @@ router.post('/barcode/link', requireRole(ROLES.OPS), (req, res) => {
   const code = scanKey(req.body.code);
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(req.body.item_id);
   if (!code || !item) return res.status(400).json({ error: 'A barcode and item are required.' });
-  if (!seesAllLocations(req.user.role) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && item.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const clash = db.prepare(`SELECT id FROM inventory WHERE location_id=? AND barcode=? AND is_active=1 AND id<>?`).get(item.location_id, code, item.id);
   if (clash) return res.status(409).json({ error: 'That barcode is already linked to another item here.' });
   db.prepare(`UPDATE inventory SET barcode=? WHERE id=?`).run(code, item.id);
@@ -635,7 +635,7 @@ router.post('/barcode/link', requireRole(ROLES.OPS), (req, res) => {
 
 // Scan-to-ship: destinations a location can transfer to (everything but itself; stores first).
 router.get('/ship/targets', requireRole(ROLES.OPS), (req, res) => {
-  const from = seesAllLocations(req.user.role) ? (req.query.from_location_id || req.user.location_id) : req.user.location_id;
+  const from = userSeesAll(req) ? (req.query.from_location_id || req.user.location_id) : req.user.location_id;
   res.json(db.prepare(`SELECT id, name, type FROM locations WHERE is_active=1 AND id<>? ORDER BY (type='restaurant') DESC, name`).all(from || 0));
 });
 
@@ -647,7 +647,7 @@ router.get('/ship/orders', requireRole(ROLES.OPS), (req, res) => {
 // Scan-to-ship: move the scanned item from here to a destination, and fill a matching open
 // order line if the destination has one. Decrements here (FIFO) and adds/creates there.
 router.post('/barcode/transfer', requireRole(ROLES.OPS), (req, res) => {
-  const from = seesAllLocations(req.user.role) ? (req.body.from_location_id || req.user.location_id) : req.user.location_id;
+  const from = userSeesAll(req) ? (req.body.from_location_id || req.user.location_id) : req.user.location_id;
   const r = shipByBarcode({ fromLoc: from, toLoc: req.body.to_location_id, code: req.body.code, quantity: req.body.quantity, userId: req.user.id, confirm: req.body.confirm });
   if (!r.ok) {
     if (r.duplicate) return res.json({ duplicate: true, message: r.message });
@@ -851,7 +851,7 @@ router.get('/expiring', requireRole(ROLES.OPS), (req, res) => {
 router.patch('/lots/:id/cost', requireRole(ROLES.OPS), (req, res) => {
   const lot = db.prepare(`SELECT * FROM inventory_lots WHERE id=?`).get(req.params.id);
   if (!lot) return res.status(404).json({ error: 'Purchase not found' });
-  if (!seesAllLocations(req.user.role) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   const cost = parseFloat(req.body.unit_cost);
   if (!Number.isFinite(cost) || cost < 0) return res.status(400).json({ error: 'Enter a valid unit cost.' });
   const c = setLotCost(lot, cost);
@@ -863,7 +863,7 @@ router.patch('/lots/:id/cost', requireRole(ROLES.OPS), (req, res) => {
 router.post('/lots/:id/discard', requireRole(ROLES.OPS), (req, res) => {
   const lot = db.prepare(`SELECT * FROM inventory_lots WHERE id=?`).get(req.params.id);
   if (!lot) return res.status(404).json({ error: 'Lot not found' });
-  if (!seesAllLocations(req.user.role) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
+  if (!userSeesAll(req) && lot.location_id !== req.user.location_id) return res.status(403).json({ error: 'Not your location.' });
   if (lot.quantity <= 0) return res.status(409).json({ error: 'Lot is already empty.' });
   const item = db.prepare(`SELECT * FROM inventory WHERE id=?`).get(lot.item_id);
   const qty = lot.quantity;
