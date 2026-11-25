@@ -16,8 +16,8 @@ const SERVICE_KEY = process.env.FLOORPLAN_SERVICE_KEY || 'dev-floorplan-key';
 const MAX_BODY = 4000;
 // Attachments — images, videos and files (docs/PDF/etc.) — same rules as message attachments.
 const { MAX_ATTACH, MAX_ANY, classify, REJECT_MSG, serveBytes, signMediaTicket, verifyMediaTicket } = require('../lib/attachments');
-const AUDIT = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager']; // may read/list any group — ORG_ADMIN_ONLY (future: drop 'hr')
-const CAN_DELETE = ['owner', 'ceo', 'president', 'admin', 'hr'];              // may deactivate a group — ORG_ADMIN_ONLY (future: drop 'hr')
+const AUDIT = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager']; // may read/list any group — ORG_ADMIN_ONLY (future: drop 'hr')
+const CAN_DELETE = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr'];              // may deactivate a group — ORG_ADMIN_ONLY (future: drop 'hr')
 
 // Inline-media streaming via a short-lived ticket (so an <img>/<video> src works
 // without an Authorization header, and the browser can range-stream). Registered

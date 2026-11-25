@@ -10,6 +10,9 @@
 //             reports  view reports & analytics
 //             central  the Central Kitchen production/supply hub
 //             delivery delivery manifests / fulfillment (drivers)
+//             exec     Advanced-Admin tier: unlocks the "secret" executive modules
+//                      (Integrations, Financials, …) and lets the holder manage the
+//                      exec tier itself. Only Owner + Advanced Admin carry it.
 //
 // The registry lives in the `roles` DB table (seeded from DEFAULT_ROLE_DEFS below)
 // so Owner/Admin can add, edit and remove roles at runtime from the Access Levels
@@ -24,13 +27,18 @@ const SECRET = process.env.JWT_SECRET || 'pho-ha-noi-dev-secret-change-in-prod';
 const EXPIRES = '12h';
 
 // Known capabilities and scopes (the editable vocabulary for a role).
-const CAPS = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+const CAPS = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'exec'];
 const SCOPES = ['all', 'location', 'self'];
 
 // Built-in defaults — seed the `roles` table, and a fallback if the DB is empty.
 const DEFAULT_ROLE_DEFS = {
   // Executive / all-location administration
-  owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central'] },
+  owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec'] },
+  // Advanced Admin — the tier above regular Admin: everything Admin has PLUS the
+  // exec cap (secret executive modules + authority over the exec tier). Assign only
+  // the few people who should see financials/integrations (e.g. Nha Le); Owner also
+  // carries exec. Rank 97 sits above Admin (95) and below President/CEO.
+  advanced_admin:    { label: 'Advanced Admin',    scope: 'all',      rank: 97,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec'] },
   ceo:               { label: 'CEO',               scope: 'all',      rank: 99,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   president:         { label: 'President',         scope: 'all',      rank: 98,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
   admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
@@ -72,7 +80,7 @@ let ROLE_KEYS = [];
 
 // Permission groups — STABLE instances, repopulated in place on reload so any
 // held reference (route guards, inline checks) stays live.
-const ROLES = { ALL: [], ADMIN: [], MANAGE: [], OPS: [], REPORTS: [], CENTRAL: [], DELIVERY: [], SCHEDULED: [] };
+const ROLES = { ALL: [], ADMIN: [], EXEC: [], MANAGE: [], OPS: [], REPORTS: [], CENTRAL: [], DELIVERY: [], SCHEDULED: [] };
 const setArr = (arr, vals) => { arr.length = 0; for (const v of vals) arr.push(v); };
 const uniq = (a) => [...new Set(a)];
 
@@ -104,6 +112,7 @@ function reloadRoles() {
   const withCap = (cap) => ROLE_KEYS.filter((k) => defs[k].caps.includes(cap));
   setArr(ROLES.ALL, ROLE_KEYS);
   setArr(ROLES.ADMIN, withCap('org'));
+  setArr(ROLES.EXEC, withCap('exec'));
   setArr(ROLES.MANAGE, withCap('manage'));
   setArr(ROLES.OPS, withCap('ops'));
   setArr(ROLES.REPORTS, withCap('reports'));
@@ -112,13 +121,31 @@ function reloadRoles() {
   setArr(ROLES.SCHEDULED, ROLE_KEYS.filter((k) => defs[k].scope !== 'all'));
 }
 
+// One-time patch: the owner role was seeded before the `exec` cap existed, and
+// ensureSeeded's INSERT OR IGNORE never updates an existing row — so give the
+// already-seeded owner the exec cap here (idempotent). Advanced Admin is a brand-new
+// key, so ensureSeeded inserts it with exec already in its caps.
+function ensureOwnerExec() {
+  try {
+    const r = db.prepare(`SELECT caps FROM roles WHERE key='owner'`).get();
+    if (!r) return;
+    let caps = []; try { caps = JSON.parse(r.caps || '[]'); } catch { caps = []; }
+    if (!caps.includes('exec')) { caps.push('exec'); db.prepare(`UPDATE roles SET caps=? WHERE key='owner'`).run(JSON.stringify(caps)); }
+  } catch { /* table not migrated yet in this context */ }
+}
+
 ensureSeeded();
+ensureOwnerExec();
 reloadRoles();
 
 const roleScope = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].scope : 'self');
 const seesAllLocations = (role) => roleScope(role) === 'all';
 const roleLabel = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].label : role);
 const roleHasCap = (role, cap) => !!(ROLE_DEFS[role] && ROLE_DEFS[role].caps.includes(cap));
+const roleRank = (role) => (ROLE_DEFS[role] ? (ROLE_DEFS[role].rank || 0) : 0);
+// The exec (Advanced-Admin) tier — Owner + Advanced Admin. Used to protect the tier:
+// only an exec holder may create/edit/assign an exec-capable role or account.
+const isExecRole = (role) => roleHasCap(role, 'exec');
 // Public view of the registry for the frontend (labels, scope, caps, builtin).
 const publicRoles = () => ROLE_KEYS.map((key) => ({ key, ...ROLE_DEFS[key] }));
 
@@ -159,5 +186,5 @@ function requireRole(...roles) {
 module.exports = {
   signToken, verifyToken, requireRole, SECRET,
   ROLES, ROLE_DEFS, CAPS, SCOPES, DEFAULT_ROLE_DEFS,
-  roleScope, seesAllLocations, roleLabel, roleHasCap, publicRoles, reloadRoles,
+  roleScope, seesAllLocations, roleLabel, roleHasCap, roleRank, isExecRole, publicRoles, reloadRoles,
 };

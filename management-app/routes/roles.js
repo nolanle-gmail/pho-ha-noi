@@ -3,14 +3,21 @@
 // changes take effect immediately because lib/auth reloads the live registry.
 const express = require('express');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, CAPS, SCOPES, publicRoles, reloadRoles } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, CAPS, SCOPES, roleHasCap, isExecRole, publicRoles, reloadRoles } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 
 const router = express.Router();
 router.use(verifyToken);
 
 const KEY_RE = /^[a-z][a-z0-9_]{1,31}$/;      // role key (identifier)
-const cleanCaps = (v) => (Array.isArray(v) ? [...new Set(v.filter((c) => CAPS.includes(c)))] : []);
+const actorIsExec = (req) => roleHasCap(req.user.role, 'exec');
+// Clean the submitted caps. A non-exec editor can never grant the `exec` cap (that
+// would self-escalate into the Advanced-Admin tier), so it's stripped for them.
+const cleanCaps = (v, req) => {
+  let caps = Array.isArray(v) ? [...new Set(v.filter((c) => CAPS.includes(c)))] : [];
+  if (req && !actorIsExec(req)) caps = caps.filter((c) => c !== 'exec');
+  return caps;
+};
 const cleanScope = (v) => (SCOPES.includes(v) ? v : null);
 const cleanRank = (v, dflt) => (Number.isInteger(v) && v >= 0 && v <= 1000 ? v : dflt);
 const usersWith = (key) => db.prepare(`SELECT COUNT(*) c FROM users WHERE role=?`).get(key).c;
@@ -27,7 +34,7 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
   if (!label) return res.status(400).json({ error: 'A display name is required.' });
   const scope = cleanScope(req.body.scope);
   if (!scope) return res.status(400).json({ error: 'Access level must be all, location or self.' });
-  const caps = cleanCaps(req.body.caps);
+  const caps = cleanCaps(req.body.caps, req);
   const rank = cleanRank(req.body.rank, 10);
   db.prepare(`INSERT INTO roles (key,label,scope,rank,caps,is_builtin,is_active) VALUES (?,?,?,?,?,0,1)`)
     .run(key, label, scope, rank, JSON.stringify(caps));
@@ -40,14 +47,20 @@ router.post('/', requireRole(ROLES.ADMIN), (req, res) => {
 router.put('/:key', requireRole(ROLES.ADMIN), (req, res) => {
   const r = db.prepare(`SELECT * FROM roles WHERE key=?`).get(req.params.key);
   if (!r) return res.status(404).json({ error: 'Role not found.' });
+  // The exec (Advanced-Admin) tier can only be edited by an exec holder — a regular
+  // Admin/HR can't alter Owner or Advanced Admin (or quietly strip their exec cap).
+  if (isExecRole(r.key) && !actorIsExec(req)) return res.status(403).json({ error: 'Only an Advanced Admin or the Owner can edit this access level.' });
   const label = req.body.label !== undefined ? String(req.body.label).trim().slice(0, 60) : r.label;
   if (!label) return res.status(400).json({ error: 'A display name is required.' });
   let scope = req.body.scope !== undefined ? cleanScope(req.body.scope) : r.scope;
   if (!scope) return res.status(400).json({ error: 'Access level must be all, location or self.' });
-  let caps = req.body.caps !== undefined ? cleanCaps(req.body.caps) : (JSON.parse(r.caps || '[]'));
+  let caps = req.body.caps !== undefined ? cleanCaps(req.body.caps, req) : (JSON.parse(r.caps || '[]'));
   const rank = req.body.rank !== undefined ? cleanRank(req.body.rank, r.rank) : r.rank;
-  // Never lock the platform out of its owner: keep Owner all-scope with org admin.
-  if (r.key === 'owner') { scope = 'all'; caps = [...new Set([...caps, 'org', 'manage', 'ops', 'reports', 'central'])]; }
+  // A non-exec editor can never strip/keep the exec cap off an exec role (guarded above),
+  // but also must not remove it by omission if they somehow reach here — keep it for exec roles.
+  if (isExecRole(r.key) && !caps.includes('exec')) caps.push('exec');
+  // Never lock the platform out of its owner: keep Owner all-scope with full admin + exec.
+  if (r.key === 'owner') { scope = 'all'; caps = [...new Set([...caps, 'org', 'manage', 'ops', 'reports', 'central', 'exec'])]; }
   db.prepare(`UPDATE roles SET label=?, scope=?, rank=?, caps=? WHERE key=?`)
     .run(label, scope, rank, JSON.stringify(caps), r.key);
   reloadRoles();
@@ -59,9 +72,11 @@ router.put('/:key', requireRole(ROLES.ADMIN), (req, res) => {
 // staff can't be removed until those people are reassigned.
 router.delete('/:key', requireRole(ROLES.ADMIN), (req, res) => {
   const key = req.params.key;
-  if (key === 'owner' || key === 'admin') return res.status(400).json({ error: 'The Owner and Admin roles are required and can’t be removed.' });
+  if (key === 'owner' || key === 'admin' || key === 'advanced_admin') return res.status(400).json({ error: 'The Owner, Advanced Admin and Admin roles are required and can’t be removed.' });
   const r = db.prepare(`SELECT * FROM roles WHERE key=?`).get(key);
   if (!r) return res.status(404).json({ error: 'Role not found.' });
+  // Only an exec holder can remove any other exec-capable level.
+  if (isExecRole(key) && !actorIsExec(req)) return res.status(403).json({ error: 'Only an Advanced Admin or the Owner can remove this access level.' });
   const inUse = usersWith(key);
   if (inUse) return res.status(409).json({ error: `${inUse} staff member${inUse > 1 ? 's' : ''} still ${inUse > 1 ? 'use' : 'uses'} this role — reassign ${inUse > 1 ? 'them' : 'that person'} first.` });
   db.prepare(`DELETE FROM roles WHERE key=?`).run(key);

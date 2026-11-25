@@ -12,7 +12,9 @@ const router = express.Router();
 router.use(verifyToken);
 // Config, mapping and sync triggers are owner/admin only (financial config);
 // read-only sales endpoints allow managers too, scoped to their own location.
-const ADMIN = requireRole(ROLES.ADMIN);
+// Integration connection/mapping/sync controls are Advanced-Admin-only (exec cap):
+// Owner + Advanced Admin. Manager-facing reads (sales, service-flow, orders) stay MANAGE.
+const ADMIN = requireRole(ROLES.EXEC);
 const MANAGE = requireRole(ROLES.MANAGE);
 const canSeeLoc = (req, locId) => seesAllLocations(req.user.role) || String(req.user.location_id) === String(locId);
 

@@ -1265,6 +1265,36 @@ const check = (name, ok, detail = '') => {
     const login = async (phone, pw) => (await j(await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone, password: pw }) }))).token;
     const roleReg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));
     check('role registry exposed', Array.isArray(roleReg) && roleReg.length >= 15, 'count=' + (roleReg || []).length);
+
+    // ── Advanced-Admin (exec) tier ─────────────────────────────
+    // token = owner (has exec); adminTok = a regular Admin (org but NOT exec).
+    const advDef = (roleReg || []).find(r => r.key === 'advanced_admin');
+    const ownDef = (roleReg || []).find(r => r.key === 'owner');
+    check('Advanced Admin role exists with exec cap', !!advDef && advDef.caps.includes('exec') && advDef.scope === 'all', JSON.stringify(advDef || {}));
+    check('Owner carries the exec cap', !!ownDef && ownDef.caps.includes('exec'), JSON.stringify(ownDef && ownDef.caps));
+    // Exec-only Integration route: owner reaches it, a regular admin is forbidden.
+    r = await fetch(base + '/api/toast/status', { headers: H(token) });
+    check('owner (exec) can reach Integrations route', r.status !== 403, 'status=' + r.status);
+    r = await fetch(base + '/api/toast/status', { headers: H(adminTok) });
+    check('regular admin blocked from Integrations route (403)', r.status === 403, 'status=' + r.status);
+    // A regular admin can't create an exec-tier account…
+    r = await fetch(base + '/api/staff', { method: 'POST', headers: H(adminTok), body: JSON.stringify({ name: 'AA Nope', phone: '5105550071', email: 'aanope@phohanoi.com', password: 'Password123!', role: 'advanced_admin' }) });
+    check('regular admin cannot create an Advanced Admin (403)', r.status === 403, 'status=' + r.status);
+    // …but the owner can.
+    const advCreate = await j(await fetch(base + '/api/staff', { method: 'POST', headers: H(token), body: JSON.stringify({ name: 'AA Yes', phone: '5105550072', email: 'aayes@phohanoi.com', password: 'Password123!', role: 'advanced_admin' }) }));
+    check('owner can create an Advanced Admin', advCreate.success === true && !!advCreate.id, JSON.stringify(advCreate));
+    // A regular admin can't edit/remove an exec-capable access level…
+    r = await fetch(base + '/api/roles/advanced_admin', { method: 'PUT', headers: H(adminTok), body: JSON.stringify({ label: 'Hacked' }) });
+    check('regular admin cannot edit the Advanced Admin level (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/roles/owner', { method: 'DELETE', headers: H(adminTok) });
+    check('owner level cannot be removed (400)', r.status === 400, 'status=' + r.status);
+    // …nor grant the exec cap to another level (the cap is silently stripped).
+    r = await fetch(base + '/api/roles/regional_manager', { method: 'PUT', headers: H(adminTok), body: JSON.stringify({ caps: ['manage', 'ops', 'reports', 'exec'] }) });
+    const rmAfter = (await j(await fetch(base + '/api/auth/roles', { headers: H(token) }))).find(x => x.key === 'regional_manager');
+    check('regular admin cannot grant the exec cap', r.status === 200 && rmAfter && !rmAfter.caps.includes('exec'), JSON.stringify(rmAfter && rmAfter.caps));
+    // The owner CAN edit the Advanced Admin level.
+    r = await fetch(base + '/api/roles/advanced_admin', { method: 'PUT', headers: H(token), body: JSON.stringify({ label: 'Advanced Admin' }) });
+    check('owner can edit the Advanced Admin level', r.status === 200, await r.text());
     const gmTok = await login('4085550004', 'Gm123456!');
     const gmStaff = await j(await fetch(base + '/api/staff', { headers: H(gmTok) }));
     check('GM sees all-location staff', Array.isArray(gmStaff) && gmStaff.length > 20, 'count=' + (gmStaff || []).length);

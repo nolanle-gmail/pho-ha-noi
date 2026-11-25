@@ -14,9 +14,9 @@ router.use((req, res, next) => {
 });
 
 // Roles allowed to operate the front-desk board (host/floor staff + leadership).
-const BOARD_ROLES = ['owner', 'admin', 'ceo', 'president', 'hr', 'general_manager', 'manager', 'assistant_manager', 'kitchen_manager', 'shift_lead', 'kitchen_lead', 'frontdesk', 'host', 'server', 'cashier'];
+const BOARD_ROLES = ['owner', 'advanced_admin', 'admin', 'ceo', 'president', 'hr', 'general_manager', 'manager', 'assistant_manager', 'kitchen_manager', 'shift_lead', 'kitchen_lead', 'frontdesk', 'host', 'server', 'cashier'];
 // These see every location, so their code works at any board.
-const ALL_LOC = ['owner', 'admin', 'ceo', 'president', 'hr', 'general_manager'];
+const ALL_LOC = ['owner', 'advanced_admin', 'admin', 'ceo', 'president', 'hr', 'general_manager'];
 
 router.post('/validate', (req, res) => {
   const code = String((req.body && req.body.employee_code) || '').trim();

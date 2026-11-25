@@ -222,7 +222,7 @@ let ROLE_DEFS = {};
 // Org-level administrators (all-location executives with the 'org' capability) — they see the
 // org-admin UI incl. the Locations Edit / Hide / Add controls. Mirrors the backend's ROLES.ADMIN
 // (roles with the 'org' cap): Owner, CEO, President, Admin, HR.
-const ORG_ADMIN = ['owner', 'ceo', 'president', 'admin', 'hr'];
+const ORG_ADMIN = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr'];
 const roleDef = (r) => ROLE_DEFS[r] || { label: r, scope: 'self', caps: [] };
 const roleLabel = (r) => roleDef(r).label;
 const roleScopeOf = (r) => roleDef(r).scope;
@@ -240,6 +240,7 @@ const CAP_LABEL = {
   org: 'Account & access-level admin', manage: 'Staff, schedules, menu & locations',
   ops: 'Inventory operations', reports: 'Reports & analytics',
   central: 'Central Kitchen hub', delivery: 'Delivery manifests / fulfillment',
+  exec: '🔒 Advanced (financials, integrations & secret pages)',
 };
 const roleChip = (r) => { const c = roleDef(r).caps; return c.includes('org') ? 'gold' : c.includes('manage') ? 'blue' : c.includes('reports') ? 'low' : (c.includes('ops') || c.includes('central') || c.includes('delivery')) ? 'ok' : 'gray'; };
 
@@ -264,7 +265,10 @@ const SECTIONS = [
   ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
   ['toastorders', '🧾', 'Orders', 'manage'],
   ['serviceflow', '⏱️', 'Service Flow', 'manage'],
-  ['integrations', '🔌', 'Integrations', 'org'],
+  // 🔒 Advanced-Admin-only ("secret") sections — gated by the exec cap, so only the
+  // Owner and Advanced Admins see them. Integrations moved here from 'org' (2026-11-24).
+  ['financials', '💰', 'Financials', 'exec'],
+  ['integrations', '🔌', 'Integrations', 'exec'],
   ['messages', '💬', 'Messages', 'any'],
 ];
 // The hub sections (🏭 Central Kitchen, 🏬 Warehouse) show for hub leadership — anyone with the
@@ -428,7 +432,7 @@ function showSection(section) {
   // My Hours opens fresh each visit: start at today and let the view auto-pick (Daily, widening
   // to Weekly / Bi-weekly only if older days still need the staffer's sign-off).
   if (section === 'myhours') { S._hoursAuto = true; S.hoursAnchor = null; S.hoursKind = 'daily'; renderMyHoursMgmt(); return; }
-  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, distribution: renderDistribution, integrations: renderIntegrations, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
+  const fn = { overview: renderOverview, myschedule: renderMySchedule, mytasks: renderMyTasks, mytables: renderMyTables, alerts: renderMyAlerts, myhours: renderMyHoursMgmt, scan: renderStaffScan, deliveries: renderDeliveries, distribution: renderDistribution, integrations: renderIntegrations, financials: renderFinancials, salesanalytics: renderToastAnalytics, toastorders: renderToastOrders, serviceflow: renderServiceFlow }[section];
   (fn || (() => renderPlaceholder(meta ? meta[2] : 'Section', '📄', '')))();
 }
 
@@ -791,7 +795,27 @@ async function showOrderDetail(guid) {
   } catch (e) { $('ordDetail').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 
-// ── Integrations: Toast POS (owner/admin) ────────────────────────────────────
+// ── Financials (Advanced-Admin only) ─────────────────────────────────────────
+// A "secret" executive section gated by the exec cap (Owner / Advanced Admin only).
+// Placeholder for now — the specific financial views (P&L, labor-cost %, payroll)
+// will be defined and built out later. Guarded both here and by the exec-gated nav.
+async function renderFinancials() {
+  const el = $('view');
+  if (!myCap('exec')) { el.innerHTML = '<div class="section"><div class="empty">🔒 This section is for Advanced Admins only.</div></div>'; return; }
+  el.innerHTML = `
+    <div class="row-between"><h2 class="page">💰 Financials <span class="badge gold">🔒 Advanced Admin</span></h2></div>
+    <p class="sub" style="color:var(--muted);margin-top:-.4rem">A private executive area — visible only to the Owner and Advanced Admins. The detailed views below are coming soon; tell me which you want first.</p>
+    <div class="grid three" style="margin-top:1rem">
+      <div class="card"><span class="tag">Planned</span><h4>P&amp;L by location</h4><p>Sales vs. cost of goods, labor and overhead per store and group-wide.</p></div>
+      <div class="card"><span class="tag">Planned</span><h4>Labor cost %</h4><p>Payroll hours × rate against net sales, by day/week, flagged over target.</p></div>
+      <div class="card"><span class="tag">Planned</span><h4>Payroll export</h4><p>Period pay runs straight from the timesheet, ready for the payroll provider.</p></div>
+      <div class="card"><span class="tag">Planned</span><h4>Sales vs. target</h4><p>Daily/period revenue against goals, with trend and variance.</p></div>
+      <div class="card"><span class="tag">Planned</span><h4>Vendor spend</h4><p>Purchase-order and receiving spend by vendor and category.</p></div>
+      <div class="card"><span class="tag">Available now</span><h4>Timesheet &amp; pay</h4><p>Payroll hours and gross pay already live under <strong>Reports → Timesheet</strong>.</p></div>
+    </div>`;
+}
+
+// ── Integrations: Toast POS (Advanced Admin only) ────────────────────────────
 // Map each location to its Toast restaurant GUID, verify the connection, and pull
 // sales. All Toast access is read-only; credentials live in Fly secrets.
 async function renderIntegrations() {
@@ -2736,7 +2760,7 @@ async function fillToastSales(elId) {
     <div class="tsale-more">🍽️ By dining option ›</div>
   </div>`; };
   el.innerHTML = `<div class="section"><div class="row-between"><h3>🔌 Toast sales <span style="font-weight:400;color:var(--muted);font-size:.82rem">— latest synced day per location</span></h3>
-      ${myCap('org') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
+      ${myCap('exec') ? '<button class="btn sm ghost" data-goto="integrations">Manage →</button>' : ''}</div>
     <div class="tsale-pulled">${d.last_pulled_at ? `⏱ Last pulled from Toast: <strong>${esc(fmtPulled(d.last_pulled_at))}</strong>` : 'Not pulled yet'}</div>
     <div class="kpis tsale-grid">${rows.map(card).join('')}</div></div>`;
   el.querySelectorAll('[data-goto]').forEach(b => b.onclick = () => showSection(b.dataset.goto));
@@ -3272,9 +3296,9 @@ function breakLeadModal(loc) {
 
 const LOC_DETAIL_TABS = [['details', 'Details'], ['serviceflow', '⏱️ Service Flow'], ['menu', '🍽️ Menu/Recipes'], ['staff', 'Staff'], ['schedule', 'Schedule'], ['daytasks', 'Day Tasks'], ['timeclock', 'Time Clock'], ['performance', 'Performance'], ['floorplan', 'Floor Plan'], ['equipment', 'Equipment'], ['activity', 'Activity']];
 // The Activity trail is limited to Owner / Admin / General Manager / Manager.
-const LOC_ACTIVITY_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
+const LOC_ACTIVITY_ROLES = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 // Service Flow tab: any manage-capability role (they can toggle & run the board for their store).
-const SF_TAB_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const SF_TAB_ROLES = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
 // Dining-only tabs — hidden for a hub location (Central Kitchen / Warehouse), which has no
 // guests, menu or floor. Hubs keep Details, Staff, Schedule, Day Tasks, Time Clock, Equipment, Activity.
 const HUB_HIDDEN_TABS = ['serviceflow', 'menu', 'floorplan', 'performance'];
@@ -3345,11 +3369,11 @@ async function renderLocActivity() {
 
 async function renderLocInfo(loc) {
   const canEdit = ORG_ADMIN.includes(S.user.role);
-  const canEditHours = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canEditHours = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   // A store manager can set their own location's break-reminder lead time even
   // though they don't get the full (owner/admin) location edit modal.
-  const canEditLead = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'].includes(S.user.role);
-  const canViewFloor = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
+  const canEditLead = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'].includes(S.user.role);
+  const canViewFloor = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'manager', 'assistant_manager', 'kitchen_manager', 'general_manager', 'regional_manager'].includes(S.user.role);
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const hoursMap = {}; loc.hours.forEach(h => hoursMap[h.day_of_week] = h);
   $('locBody').innerHTML = `
@@ -5505,7 +5529,7 @@ const equipStatusBadge = (s) => { const m = { operational: ['ok', 'operational']
 function nextServiceCell(d) { if (!d) return '<span style="color:var(--muted)">—</span>'; const overdue = new Date(d) < new Date(); return overdue ? `<span class="badge out">${esc(d)} ⚠</span>` : esc(d); }
 async function renderLocEquipment() {
   const eq = await api('/locations/' + S.locDetailId + '/equipment');
-  const canManage = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   $('locBody').innerHTML = `
     <div class="row-between"><h3 style="margin:0">Equipment & assets <span style="font-weight:400;color:var(--muted);font-size:.85rem">— ${eq.length}</span></h3>${canManage ? '<button class="btn" id="addEq">+ Add equipment</button>' : ''}</div>
     <div class="table-wrap" style="margin-top:1rem"><table><thead><tr>
@@ -5673,7 +5697,7 @@ async function renderJobsCatalog() {
   let jobs;
   try { jobs = await api('/schedule/jobs'); }
   catch (e) { return renderPlaceholder('Jobs', '🧾', e.message); }
-  const canManage = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
+  const canManage = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(S.user.role);
   const active = jobs.filter(j => j.is_active);
   const byDept = {};
   active.forEach(j => { const d = j.department || NO_DEPT; (byDept[d] = byDept[d] || []).push(j); });
@@ -5758,8 +5782,8 @@ const letterOf = (u) => { const L = (u.name.trim()[0] || '#').toUpperCase(); ret
 // their own store's staff (all-location managers: any store) but never an
 // owner/admin account. Only owner/admin can Add staff or change access level /
 // home location.
-const MGR_EDIT_ROLES = ['owner', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
-const ALL_SCOPE_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const MGR_EDIT_ROLES = ['owner', 'advanced_admin', 'admin', 'general_manager', 'regional_manager', 'manager', 'assistant_manager', 'kitchen_manager'];
+const ALL_SCOPE_ROLES = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
 function canEditStaffRow(u) {
   const r = S.user.role;
   if (ORG_ADMIN.includes(r)) return true;
@@ -6196,7 +6220,10 @@ function renderStaffAddDone(created, locations) {
   $('doneToDir').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
 }
 
-const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery'];
+const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'exec'];
+// A role carrying the exec cap is the Advanced-Admin tier (Owner / Advanced Admin);
+// only an exec holder may edit or remove it, or grant the exec cap.
+const isExecRoleF = (r) => (roleDef(r).caps || []).includes('exec');
 
 // Refresh the client-side role registry after a change on the Access Levels page.
 async function reloadRoleDefs() {
@@ -6209,6 +6236,7 @@ async function reloadRoleDefs() {
 
 function renderAccessLevels() {
   const canManageRoles = ORG_ADMIN.includes(S.user.role); // Owner / Admin (org cap)
+  const canExec = myCap('exec');                           // Owner / Advanced Admin
   const rows = accessLevels().map(r => {
     const d = roleDef(r);
     const caps = CAP_ORDER.filter(c => d.caps.includes(c)).map(c => CAP_LABEL[c]);
@@ -6225,8 +6253,9 @@ function renderAccessLevels() {
         <td><strong>${esc(SCOPE_LABEL[d.scope] || d.scope)}</strong></td>
         <td style="color:#374151">${esc(summary)}</td>
         ${canManageRoles ? `<td><div class="actions-cell">
-          <button class="btn sm ghost" data-roleedit="${esc(r)}">Edit</button>
-          ${r === 'owner' || r === 'admin' ? '' : `<button class="btn sm ghost" data-roledel="${esc(r)}">Remove</button>`}
+          ${(isExecRoleF(r) && !canExec) ? '<span class="badge gray" title="Only an Advanced Admin or the Owner can change this level">🔒 Advanced</span>'
+            : `<button class="btn sm ghost" data-roleedit="${esc(r)}">Edit</button>
+          ${(r === 'owner' || r === 'admin' || r === 'advanced_admin') ? '' : `<button class="btn sm ghost" data-roledel="${esc(r)}">Remove</button>`}`}
         </div></td>` : ''}
       </tr>`).join('')}
     </tbody></table></div>`;
@@ -6242,7 +6271,10 @@ function openRoleEditor(key) {
   const editing = !!key;
   const d = editing ? roleDef(key) : { label: '', scope: 'self', caps: [], rank: 10 };
   const scopeOpts = Object.entries(SCOPE_LABEL).map(([v, n]) => `<option value="${v}" ${v === d.scope ? 'selected' : ''}>${esc(n)}</option>`).join('');
-  const capBoxes = CAP_ORDER.map(c => `<label class="chk"><input type="checkbox" class="role-cap" value="${c}" ${d.caps.includes(c) ? 'checked' : ''}> ${esc(CAP_LABEL[c])}</label>`).join('');
+  // The exec cap is only offerable to an exec holder (Owner / Advanced Admin); hide it
+  // from a regular Admin so they can't grant the Advanced-Admin tier to themselves.
+  const capsOfferable = CAP_ORDER.filter(c => c !== 'exec' || myCap('exec'));
+  const capBoxes = capsOfferable.map(c => `<label class="chk"><input type="checkbox" class="role-cap" value="${c}" ${d.caps.includes(c) ? 'checked' : ''}> ${esc(CAP_LABEL[c])}</label>`).join('');
   const host = $('modalHost');
   host.innerHTML = `<div class="modal-bg"><div class="modal">
     <h3>${editing ? 'Edit role' : 'Add role'}</h3>
@@ -7212,7 +7244,7 @@ const ALERT_PRESETS = [
   'Table {n} needs a refill / bus', 'Come to the front desk', 'Check on your section',
 ];
 const ALERT_ROLE_LABEL = { server: 'Servers', host: 'Hosts', busser: 'Bussers', support: 'Support', employee: 'Staff', chef: 'Kitchen', driver: 'Drivers' };
-const ALERT_SEES_ALL = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
+const ALERT_SEES_ALL = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'regional_manager'];
 
 // One shared AudioContext, unlocked on any user gesture. A context created inside
 // an SSE callback (not a gesture) starts *suspended* and stays silent, so we reuse
@@ -7957,15 +7989,15 @@ async function renderSent() {
   pollReceipts();
 }
 
-const MSG_LEADERSHIP = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager'];
+const MSG_LEADERSHIP = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager'];
 const MSG_MANAGERS = ['manager', 'assistant_manager', 'kitchen_manager', 'regional_manager', 'general_manager'];
 // Who may delete any message / attachment (matches the server's MODERATOR set).
-const MSG_MODERATOR = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
+const MSG_MODERATOR = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager', 'manager'];
 const canDeleteMsg = (senderId, me) => String(senderId) === String(me) || MSG_MODERATOR.includes(S.user.role);
 
 async function renderCompose() {
   const role = S.user.role;
-  const canBroadcast = ['owner', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(role);
+  const canBroadcast = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'manager'].includes(role);
   const recips = await api('/messages/recipients');
   const myLoc = String(S.user.location_id || '');
   const inLoc = (u) => String(u.location_id || '') === myLoc;

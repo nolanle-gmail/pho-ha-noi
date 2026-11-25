@@ -2,7 +2,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db/database');
-const { verifyToken, requireRole, ROLES, seesAllLocations } = require('../lib/auth');
+const { verifyToken, requireRole, ROLES, seesAllLocations, roleHasCap, isExecRole } = require('../lib/auth');
 const { auditLog } = require('../lib/audit');
 const { normalizePhone, isValidPhone } = require('../lib/phone');
 const { sendSms, smsEnabled } = require('../lib/sms');
@@ -131,6 +131,9 @@ router.post('/staff', requireRole(ROLES.ADMIN), (req, res) => {
   if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
   if (!ROLES.ALL.includes(role)) return res.status(400).json({ error: 'Invalid role.' });
   if (role === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can create owner accounts.' });
+  // Advanced-Admin tier: only an exec holder (Owner / Advanced Admin) can create an
+  // account at an exec level — a regular Admin/HR can't mint one.
+  if (isExecRole(role) && !roleHasCap(req.user.role, 'exec')) return res.status(403).json({ error: 'Only an Advanced Admin or the Owner can assign this access level.' });
   const loc = resolveLocation(role, req.body.location_id, null);
   if (loc.error) return res.status(400).json({ error: loc.error });
   const ph = normalizePhone(phone);
@@ -186,6 +189,12 @@ router.put('/staff/:id', requireRole(ROLES.MANAGE), (req, res) => {
     if (!ROLES.ALL.includes(newRole)) return res.status(400).json({ error: 'Invalid role.' });
     if (newRole === 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can assign the owner level.' });
     if (u.role === 'owner' && newRole !== 'owner' && req.user.role !== 'owner') return res.status(403).json({ error: 'Only an owner can change an owner account.' });
+    // Advanced-Admin tier guard: only an exec holder can move an account INTO or OUT OF
+    // an exec level (so a regular Admin can't promote anyone to Advanced Admin, nor
+    // demote one). The owner-specific rules above still apply on top.
+    if ((isExecRole(newRole) || isExecRole(u.role)) && !roleHasCap(req.user.role, 'exec')) {
+      return res.status(403).json({ error: 'Only an Advanced Admin or the Owner can change this access level.' });
+    }
     fields.push('role=?'); vals.push(newRole);
   }
 

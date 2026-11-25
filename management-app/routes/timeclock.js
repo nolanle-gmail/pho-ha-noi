@@ -1337,7 +1337,7 @@ router.delete('/entry/:id/break/:bid', requireRole(ROLES.MANAGE), (req, res) => 
 // Overtime is derived from clocked hours per California's daily rule:
 //   regular ≤ 8h/day, overtime (1.5×) for 8–12h/day, double-time (2×) beyond 12h/day.
 const OT_AFTER_MIN = 8 * 60, DT_AFTER_MIN = 12 * 60, OT_MULT = 1.5, DT_MULT = 2;
-const OT_EDIT_ROLES = ['owner', 'ceo', 'president', 'admin', 'hr', 'general_manager']; // may change approved OT later
+const OT_EDIT_ROLES = ['owner', 'advanced_admin', 'ceo', 'president', 'admin', 'hr', 'general_manager']; // may change approved OT later
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 // Start of the pay/work week (Saturday) containing `iso`. The work week runs Saturday → Friday.
 const weekStartOf = (iso) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 1) % 7)); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
