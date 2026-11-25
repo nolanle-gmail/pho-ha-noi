@@ -1347,6 +1347,23 @@ const check = (name, ok, detail = '') => {
     check('analyst blocked from staff (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + `/api/inventory/?location_id=${loc1}`, { headers: H(anTok) });
     check('analyst blocked from inventory (403)', r.status === 403, 'status=' + r.status);
+
+    // ── Sales Analytics restricted to the `salesview` cap (leadership only) ──
+    // Owner + GM carry salesview; a store Manager (manage, no salesview) and an
+    // Analyst (reports, no salesview) do not.
+    r = await fetch(base + '/api/toast/analytics/summary', { headers: H(token) });
+    check('owner (salesview) can reach Sales Analytics', r.status !== 403, 'status=' + r.status);
+    r = await fetch(base + '/api/toast/analytics/summary', { headers: H(gmTok) });
+    check('GM (salesview) can reach Sales Analytics', r.status !== 403, 'status=' + r.status);
+    r = await fetch(base + '/api/toast/analytics/summary', { headers: H(mgr.token) });
+    check('store manager blocked from Sales Analytics (403)', r.status === 403, 'status=' + r.status);
+    r = await fetch(base + '/api/toast/analytics/summary', { headers: H(anTok) });
+    check('analyst blocked from Sales Analytics (403)', r.status === 403, 'status=' + r.status);
+    {
+      const reg = await j(await fetch(base + '/api/auth/roles', { headers: H(token) }));
+      const has = (k) => { const d = reg.find(x => x.key === k); return d && d.caps.includes('salesview'); };
+      check('salesview granted to leadership, not store managers', has('owner') && has('general_manager') && has('admin') && !has('manager') && !has('regional_manager') && !has('analyst'), JSON.stringify(reg.filter(x => x.caps.includes('salesview')).map(x => x.key)));
+    }
     const drTok = await login('4085550006', 'Driver123!');
     r = await fetch(base + '/api/central/fulfillment', { headers: H(drTok) });
     check('driver can view fulfillment/deliveries', r.status === 200, 'status=' + r.status);

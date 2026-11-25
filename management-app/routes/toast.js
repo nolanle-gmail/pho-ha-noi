@@ -504,8 +504,11 @@ router.delete('/map/:id', ADMIN, (req, res) => {
 });
 
 // ── Sales analytics (reads the local mirror only; never calls Toast) ──────────
-// Visible to managers and the reports tier; managers are scoped to their own store.
-const ANALYTICS = (req, res, next) => (roleHasCap(req.user.role, 'reports') || roleHasCap(req.user.role, 'manage'))
+// Restricted to the `salesview` capability — all-location leadership only (Owner,
+// Advanced Admin, CFO, CEO, COO, VP, President, Admin, HR, GM). Store managers and
+// the reports-only roles (Analyst/Accountant) are intentionally excluded. Editable
+// per role on the Access Levels page.
+const ANALYTICS = (req, res, next) => roleHasCap(req.user.role, 'salesview')
   ? next() : res.status(403).json({ error: 'Not allowed to view sales analytics.' });
 const addDaysIso = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 function rangeScope(req) {

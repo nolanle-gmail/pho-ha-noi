@@ -241,6 +241,7 @@ const CAP_LABEL = {
   ops: 'Inventory operations', reports: 'Reports & analytics',
   central: 'Central Kitchen hub', delivery: 'Delivery manifests / fulfillment',
   exec: '🔒 Advanced (financials, integrations & secret pages)',
+  salesview: '💹 Sales Analytics (group revenue dashboards)',
 };
 const roleChip = (r) => { const c = roleDef(r).caps; return c.includes('org') ? 'gold' : c.includes('manage') ? 'blue' : c.includes('reports') ? 'low' : (c.includes('ops') || c.includes('central') || c.includes('delivery')) ? 'ok' : 'gray'; };
 
@@ -262,7 +263,7 @@ const SECTIONS = [
   ['distribution', '🚛', 'Distribution', 'central'],
   ['deliveries', '🚚', 'Deliveries', 'delivery'],
   ['reports', '📈', 'Reports', 'reports'],
-  ['salesanalytics', '💹', 'Sales Analytics', 'manage'],
+  ['salesanalytics', '💹', 'Sales Analytics', 'salesview'],
   ['toastorders', '🧾', 'Orders', 'manage'],
   ['serviceflow', '⏱️', 'Service Flow', 'manage'],
   // 🔒 Advanced-Admin-only ("secret") sections — gated by the exec cap, so only the
@@ -6230,7 +6231,7 @@ function renderStaffAddDone(created, locations) {
   $('doneToDir').onclick = () => { S.staffTab = 'directory'; renderStaffTabs(); renderStaffModule(); };
 }
 
-const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'exec'];
+const CAP_ORDER = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'salesview', 'exec'];
 // A role carrying the exec cap is the Advanced-Admin tier (Owner / Advanced Admin);
 // only an exec holder may edit or remove it, or grant the exec cap.
 const isExecRoleF = (r) => (roleDef(r).caps || []).includes('exec');

@@ -13,6 +13,9 @@
 //             exec     Advanced-Admin tier: unlocks the "secret" executive modules
 //                      (Integrations, Financials, …) and lets the holder manage the
 //                      exec tier itself. Only Owner + Advanced Admin carry it.
+//             salesview the 💹 Sales Analytics page (Toast revenue dashboards). Kept
+//                      separate from `manage` so store managers can run the store but
+//                      NOT see group sales — only all-location leadership carries it.
 //
 // The registry lives in the `roles` DB table (seeded from DEFAULT_ROLE_DEFS below)
 // so Owner/Admin can add, edit and remove roles at runtime from the Access Levels
@@ -27,26 +30,26 @@ const SECRET = process.env.JWT_SECRET || 'pho-ha-noi-dev-secret-change-in-prod';
 const EXPIRES = '12h';
 
 // Known capabilities and scopes (the editable vocabulary for a role).
-const CAPS = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'exec'];
+const CAPS = ['org', 'manage', 'ops', 'reports', 'central', 'delivery', 'exec', 'salesview'];
 const SCOPES = ['all', 'location', 'self'];
 
 // Built-in defaults — seed the `roles` table, and a fallback if the DB is empty.
 const DEFAULT_ROLE_DEFS = {
   // Executive / all-location administration
-  owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec'] },
+  owner:             { label: 'Owner',             scope: 'all',      rank: 100, caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec', 'salesview'] },
   // Advanced Admin — the tier above regular Admin: everything Admin has PLUS the
   // exec cap (secret executive modules + authority over the exec tier). Assign only
   // the few people who should see financials/integrations (e.g. Nha Le); Owner also
   // carries exec. Rank 97 sits above Admin (95) and below President/CEO.
-  advanced_admin:    { label: 'Advanced Admin',    scope: 'all',      rank: 97,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec'] },
-  ceo:               { label: 'CEO',               scope: 'all',      rank: 99,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
-  president:         { label: 'President',         scope: 'all',      rank: 98,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
-  admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
+  advanced_admin:    { label: 'Advanced Admin',    scope: 'all',      rank: 97,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'exec', 'salesview'] },
+  ceo:               { label: 'CEO',               scope: 'all',      rank: 99,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'salesview'] },
+  president:         { label: 'President',         scope: 'all',      rank: 98,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'salesview'] },
+  admin:             { label: 'Admin',             scope: 'all',      rank: 95,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'salesview'] },
   // HR — full administrative access, mirroring Admin. (Owner/Admin are slated to
   // keep a few powers to themselves later — archive, delete, activity log & audit —
   // which HR would then not have; those checks are marked ORG_ADMIN_ONLY.)
-  hr:                { label: 'HR',                scope: 'all',      rank: 90,  caps: ['org', 'manage', 'ops', 'reports', 'central'] },
-  general_manager:   { label: 'General Manager',   scope: 'all',      rank: 85,  caps: ['manage', 'ops', 'reports', 'central'] },
+  hr:                { label: 'HR',                scope: 'all',      rank: 90,  caps: ['org', 'manage', 'ops', 'reports', 'central', 'salesview'] },
+  general_manager:   { label: 'General Manager',   scope: 'all',      rank: 85,  caps: ['manage', 'ops', 'reports', 'central', 'salesview'] },
   regional_manager:  { label: 'Regional Manager',  scope: 'all',      rank: 80,  caps: ['manage', 'ops', 'reports'] },
   // Single-location management
   manager:           { label: 'Manager',           scope: 'location', rank: 70,  caps: ['manage', 'ops', 'reports'] },
@@ -142,8 +145,29 @@ function ensureOwnerExec() {
   } catch { /* table not migrated yet in this context */ }
 }
 
+// One-time seed for the `salesview` cap on an existing DB. The built-in roles get it
+// from DEFAULT_ROLE_DEFS, but ensureSeeded never updates an already-seeded row and the
+// custom executive roles (CFO/COO/VP) live only in the DB. The all-location leadership
+// that should see Sales Analytics is exactly the set holding the `central` cap, so on
+// the FIRST run (no role has salesview yet) grant it to every central-capable role.
+// Guarded by "no role has it yet" so it runs once and never fights later edits.
+function ensureSalesViewSeed() {
+  try {
+    if (db.prepare(`SELECT 1 FROM roles WHERE caps LIKE '%salesview%' LIMIT 1`).get()) return;
+    const rows = db.prepare(`SELECT key, caps FROM roles WHERE caps LIKE '%central%'`).all();
+    for (const r of rows) {
+      let caps = []; try { caps = JSON.parse(r.caps || '[]'); } catch { caps = []; }
+      if (caps.includes('central') && !caps.includes('salesview')) {
+        caps.push('salesview');
+        db.prepare(`UPDATE roles SET caps=? WHERE key=?`).run(JSON.stringify(caps), r.key);
+      }
+    }
+  } catch { /* table not migrated yet in this context */ }
+}
+
 ensureSeeded();
 ensureOwnerExec();
+ensureSalesViewSeed();
 reloadRoles();
 
 const roleScope = (role) => (ROLE_DEFS[role] ? ROLE_DEFS[role].scope : 'self');
