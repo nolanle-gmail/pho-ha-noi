@@ -450,24 +450,35 @@ const check = (name, ok, detail = '') => {
     // ── Day tasks (specific tasks assigned to that day's working staff) ─────
     const allJobs = await j(await fetch(base + '/api/schedule/jobs?active=1', { headers: H(mgr.token) }));
     check('catalog has specific + standard kinds', allJobs.some(x => x.kind === 'specific') && allJobs.some(x => x.kind === 'standard'), 'kinds missing');
-    const dtDay = wk.days[6]; // schedStaff has a 12h shift here
+    const dtDay = wk.days[6]; // schedStaff has a 12h (06:00–18:00) shift here
+    const _dtdb = require('../db/database');
+    // Scheduled-only assignee list: schedule a SECOND staffer (asg2) so the list has more than one name,
+    // and keep a THIRD staffer unscheduled (to assert they're excluded and can't be assigned).
+    const freeStaff = _dtdb.prepare("SELECT id, name FROM users WHERE location_id=? AND is_active=1 AND id<>? AND id NOT IN (SELECT user_id FROM shifts WHERE location_id=? AND shift_date=?) ORDER BY id LIMIT 2").all(loc1, schedStaff.id, loc1, dtDay);
+    const asg2 = freeStaff[0];           // scheduled below → should appear in the Assigned-to list
+    const unschedStaff = freeStaff[1];   // stays unscheduled → should be excluded + rejected
+    const addedShiftIds = [];            // today/asg2 shifts we add for scheduled-only coverage, cleaned up later
+    if (asg2) { const sr = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ user_id: asg2.id, location_id: loc1, shift_date: dtDay, start_time: '09:00', end_time: '17:00' }) })); if (sr && sr.id) addedShiftIds.push(sr.id); }
     const dt = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('day-tasks lists specific tasks + working staff', dt.tasks.length > 0 && dt.working.some(w => w.id === schedStaff.id), JSON.stringify(dt.summary));
     check('day-tasks carry est_minutes (for the Est. column)', dt.tasks.every(t => 'est_minutes' in t), JSON.stringify(dt.tasks[0]));
+    check('day-tasks carry a code (for the Code column)', dt.tasks.every(t => 'code' in t), JSON.stringify(dt.tasks[0]));
     const codedTasks = dt.tasks.filter(t => t.code);
     check('day-tasks board is sorted by code (opening→closing order)', codedTasks.every((t, i) => i === 0 || codedTasks[i - 1].code <= t.code), JSON.stringify(codedTasks.slice(0, 6).map(t => t.code)));
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[0].job_id, user_id: schedStaff.id }) });
     check('assign a specific day task', r.status === 200, await r.text());
     const dt2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('day task shows the assignee', (dt2.tasks.find(t => t.job_id === dt.tasks[0].job_id) || {}).user_id === schedStaff.id, JSON.stringify(dt2.summary));
-    // All-staff mode (temp): the Assigned-to list includes every active location staffer, even unscheduled.
-    const _dtdb = require('../db/database');
-    const unschedStaff = _dtdb.prepare("SELECT id, name FROM users WHERE location_id=? AND is_active=1 AND id<>? AND id NOT IN (SELECT user_id FROM shifts WHERE location_id=? AND shift_date=?) LIMIT 1").get(loc1, schedStaff.id, loc1, dtDay);
-    check('day-tasks assignees lists ALL location staff (more than scheduled), unscheduled flagged', dt.all_staff_mode === true && Array.isArray(dt.assignees) && dt.assignees.length > dt.working.length && !!unschedStaff && dt.assignees.some(a => a.id === unschedStaff.id && a.scheduled === false), JSON.stringify({ assignees: (dt.assignees || []).length, working: dt.working.length, unsched: !!unschedStaff }));
-    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, user_id: unschedStaff.id }) });
-    check('can assign a day task to an UN-scheduled staffer', r.status === 200, await r.text());
+    // Scheduled-only mode: the Assigned-to list is exactly the staff with a shift that day.
+    check('day-tasks assignees are scheduled staff only (unscheduled excluded)', dt.all_staff_mode === false && Array.isArray(dt.assignees) && dt.assignees.length === dt.working.length && dt.assignees.every(a => a.scheduled === true) && (!asg2 || dt.assignees.some(a => a.id === asg2.id)) && (!unschedStaff || !dt.assignees.some(a => a.id === unschedStaff.id)), JSON.stringify({ assignees: (dt.assignees || []).length, working: dt.working.length, asg2: !!asg2, unsched: !!unschedStaff }));
+    if (unschedStaff) {
+      r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, user_id: unschedStaff.id }) });
+      check('cannot assign a day task to an un-scheduled staffer (400)', r.status === 400, 'status=' + r.status);
+    }
+    r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, user_id: asg2.id }) });
+    check('assign a day task to a 2nd scheduled staffer', r.status === 200, await r.text());
     const dtUn = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
-    check('un-scheduled assignee shows on the task', (dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).user_id === unschedStaff.id, JSON.stringify(dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id)));
+    check('2nd scheduled assignee shows on the task', (dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).user_id === asg2.id, JSON.stringify(dtUn.tasks.find(t => t.job_id === dt.tasks[1].job_id)));
     // ── Manager verification step: staff Done → manager Verify ──────────────────────────────────
     const vjob = dt.tasks[2].job_id;
     await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, user_id: schedStaff.id }) });
@@ -484,25 +495,31 @@ const check = (name, ok, detail = '') => {
     await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: vjob, done: false }) });
     const dv2 = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
     check('reopening a task clears its verification', (dv2.tasks.find(t => t.job_id === vjob) || {}).verified === false, JSON.stringify(dv2.tasks.find(t => t.job_id === vjob)));
-    // A manager can set a start time even for an UN-scheduled assignee (no shift hours to slot within).
+    // A manager sets the task's start time within the assignee's hours (asg2 works 09:00–17:00).
     r = await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: dtDay, job_id: dt.tasks[1].job_id, time: '10:30' }) });
-    check('can set a task time for an un-scheduled assignee', r.status === 200, await r.text());
+    check('set a task time for the 2nd assignee (within 09:00–17:00)', r.status === 200, await r.text());
     const dtTm = await j(await fetch(base + `/api/schedule/day-tasks?location_id=${loc1}&date=${dtDay}`, { headers: H(mgr.token) }));
-    check('un-scheduled task shows the picked time', (dtTm.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).task_time === '10:30');
+    check('day task shows the picked time', (dtTm.tasks.find(t => t.job_id === dt.tasks[1].job_id) || {}).task_time === '10:30');
     // 5-min start reminder sweep: a timed task due in ~2 min (location-local, today) fires once.
     const tz = _dtdb.prepare("SELECT timezone FROM locations WHERE id=?").get(loc1).timezone || 'America/Los_Angeles';
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
     const gp = (t) => parts.find(x => x.type === t).value;
     const locToday = `${gp('year')}-${gp('month')}-${gp('day')}`;
+    // Scheduled-only mode requires an assignee to have a shift on the target date. Give schedStaff + asg2
+    // a shift on "today" for the reschedule / morning-recheck assignments below; cleaned up after this block.
+    for (const u of [schedStaff, asg2].filter(Boolean)) {
+      const has = _dtdb.prepare("SELECT 1 FROM shifts WHERE user_id=? AND location_id=? AND shift_date=? AND kind='work'").get(u.id, loc1, locToday);
+      if (!has) { const sr = await j(await fetch(base + '/api/schedule/shifts', { method: 'POST', headers: H(mgr.token), body: JSON.stringify({ user_id: u.id, location_id: loc1, shift_date: locToday, start_time: '09:00', end_time: '17:00' }) })); if (sr && sr.id) addedShiftIds.push(sr.id); }
+    }
     const soon = (+gp('hour')) * 60 + (+gp('minute')) + 2;
     if (soon < 1438) {   // skip near midnight to avoid a day-rollover edge
       const taRow = _dtdb.prepare("SELECT id FROM task_assignments WHERE location_id=? AND job_id=? AND task_date=?").get(loc1, dt.tasks[1].job_id, dtDay);
       const hhmm = `${String(Math.floor(soon / 60)).padStart(2, '0')}:${String(soon % 60).padStart(2, '0')}`;
       _dtdb.prepare("DELETE FROM task_assignments WHERE location_id=? AND job_id=? AND task_date=? AND id<>?").run(loc1, dt.tasks[1].job_id, locToday, taRow.id);
-      _dtdb.prepare("UPDATE task_assignments SET task_date=?, task_time=?, done=0, reminded_at=NULL, user_id=? WHERE id=?").run(locToday, hhmm, unschedStaff.id, taRow.id);
+      _dtdb.prepare("UPDATE task_assignments SET task_date=?, task_time=?, done=0, reminded_at=NULL, user_id=? WHERE id=?").run(locToday, hhmm, asg2.id, taRow.id);
       require('../routes/timeclock').sweepTaskReminders();
       const after = _dtdb.prepare("SELECT reminded_at FROM task_assignments WHERE id=?").get(taRow.id);
-      const alert = _dtdb.prepare("SELECT COUNT(*) c FROM floor_alerts WHERE location_id=? AND target_user_id=? AND body LIKE 'Task reminder:%'").get(loc1, unschedStaff.id).c;
+      const alert = _dtdb.prepare("SELECT COUNT(*) c FROM floor_alerts WHERE location_id=? AND target_user_id=? AND body LIKE 'Task reminder:%'").get(loc1, asg2.id).c;
       check('task start-reminder sweep stamps reminded_at + raises an alert', !!after.reminded_at && alert >= 1, JSON.stringify({ reminded: after.reminded_at, alerts: alert }));
     }
     // ── Reschedule a day task to a future date (manager plans the week ahead) ───────────────────
@@ -546,7 +563,7 @@ const check = (name, ok, detail = '') => {
     // ── Morning re-check nudge for tasks assigned IN ADVANCE (staff may be out that day) ─────────
     check('morning-recheck SMS stays within 140 chars', tmc.morningRecheckSms('Fountain Valley', 12, 5).length <= 140, 'len=' + tmc.morningRecheckSms('Fountain Valley', 12, 5).length);
     const mrJob = dt.tasks[4].job_id;
-    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: mrJob, user_id: unschedStaff.id }) });
+    await fetch(base + '/api/schedule/day-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc1, date: locToday, job_id: mrJob, user_id: asg2.id }) });
     _dtdb.prepare("DELETE FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").run(loc1, locToday);
     tmc.sweepDayTaskMorningRecheck({ force: true, locationId: loc1 });
     const mm0 = _dtdb.prepare("SELECT COUNT(*) c FROM daily_reminders WHERE location_id=? AND kind='daytask_morning' AND remind_date=?").get(loc1, locToday).c;
@@ -630,6 +647,23 @@ const check = (name, ok, detail = '') => {
     check('employee blocked from location-tasks (403)', r.status === 403, 'status=' + r.status);
     r = await fetch(base + '/api/schedule/location-tasks', { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ location_id: loc2, job_id: offTask.job_id, enabled: true }) });
     check('manager cannot edit another location list (403)', r.status === 403, 'status=' + r.status);
+    // Edit a task definition (name / department / complexity / estimate) — the Manage-list ✎ Edit → PUT /jobs/:id.
+    const editJob = lt.catalog.find(t => t.job_id);
+    if (editJob) {
+      const newName = (editJob.name || 'Task') + ' (edited)';
+      r = await fetch(base + '/api/schedule/jobs/' + editJob.job_id, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ name: newName, department: 'Kitchen', complexity: 'high', est_minutes: 42 }) });
+      check('edit a day-task definition (name/dept/complexity/est)', r.status === 200, await r.text());
+      const ltE = await j(await fetch(base + `/api/schedule/location-tasks?location_id=${loc1}`, { headers: H(mgr.token) }));
+      const e2 = ltE.catalog.find(t => t.job_id === editJob.job_id) || {};
+      check('edited task reflects the new values', e2.name === newName && e2.complexity === 'high' && e2.est_minutes === 42 && e2.department === 'Kitchen', JSON.stringify(e2));
+      r = await fetch(base + '/api/schedule/jobs/' + editJob.job_id, { method: 'PUT', headers: H(emp.token), body: JSON.stringify({ name: 'nope' }) });
+      check('employee cannot edit a task definition (403)', r.status === 403, 'status=' + r.status);
+      // Restore so later name-matching assertions still hold.
+      await fetch(base + '/api/schedule/jobs/' + editJob.job_id, { method: 'PUT', headers: H(mgr.token), body: JSON.stringify({ name: editJob.name, department: editJob.department, complexity: editJob.complexity, est_minutes: editJob.est_minutes }) });
+    }
+    // Clean up the scheduled-only coverage shifts we added (today + asg2's day) so later attendance /
+    // no-show sweeps aren't perturbed by shifts nobody clocked into.
+    for (const sid of addedShiftIds) await fetch(base + `/api/schedule/shifts/${sid}`, { method: 'DELETE', headers: H(mgr.token) });
 
     r = await fetch(base + `/api/schedule/shifts/${shiftRes.id}`, { method: 'DELETE', headers: H(mgr.token) });
     check('manager deletes shift', r.status === 200, await r.text());

@@ -1,6 +1,6 @@
 # Phở Hà Nội — Platform Handbook
 
-_Last updated: November 25, 2026_
+_Last updated: November 28, 2026_
 
 One reference for the whole system: how the apps fit together, the full back-end
 database design, the day-to-day workflows, and a role-by-role guide you can hand
@@ -454,6 +454,16 @@ nothing was pre-assigned** — a same-day assignment never triggers it. Needs
 `task_assignments.created_at` (added 2026-10-23, backfilled from `updated_at`) to tell advance from
 same-day. `routes/timeclock.js` `sweepDayTaskMorningRecheck` + `startDayTaskMorningRecheckSweep` (every
 15 min; `DAYTASK_MORNING_RECHECK_HOUR` default 7, `…_END_HOUR` default 12).
+**Board layout, scheduled-only assignees & editable tasks (2026-11-28).** The board shows the task
+**Code in its own column** (left of the name; the list is still ordered by code). The **Assigned to**
+dropdown lists **only the staff scheduled that day at this location** — assigning someone with no shift
+that day is **rejected (400)**; an assignee whose shift was later removed still shows, flagged *not
+scheduled*, so an existing assignment is never silently hidden. `DAYTASK_ASSIGN_ALL_STAFF` (in
+`routes/schedule.js`, now **`false`**) governs both the candidate list and the check — flip it to `true`
+to list every active location staffer again (the temporary 2026-10-21 behaviour). The **⚙ Manage list**
+modal now has an **✎ Edit** per task to change its **name / department / complexity / estimate / code**
+(`PUT /schedule/jobs/:id`, manage cap); edits update the **shared catalog** everywhere the task is used,
+and leaving **Code** blank keeps the existing code (so a `DT-##` / `BOH-##` code isn't wiped by an edit).
 
 ```mermaid
 erDiagram

@@ -4303,9 +4303,18 @@ async function renderLocDayTasks() {
   const wd = WD[(new Date(data.date + 'T00:00:00').getDay() + 6) % 7];
   const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
   const hoursById = {}; data.working.forEach(w => { hoursById[w.id] = w; });
-  // Assignee candidates: all location staff when all_staff_mode is on, else the scheduled staff.
+  // Assignee candidates: the staff scheduled that day (all location staff when all_staff_mode is on).
   const assignList = data.assignees || data.working.map(w => ({ ...w, scheduled: true }));
-  const opts = (sel) => `<option value="">— unassigned —</option>` + assignList.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)}${w.scheduled ? ` · ${esc(w.start_time)}–${esc(w.end_time)}` : ' · not scheduled'}</option>`).join('');
+  const opts = (t) => {
+    const sel = t.user_id;
+    // Keep a current assignee who isn't scheduled today (e.g. their shift was later removed) visible so
+    // the assignment isn't silently hidden — the manager sees "not scheduled" and can reassign.
+    let list = assignList;
+    if (sel && !assignList.some(w => String(w.id) === String(sel))) {
+      list = assignList.concat([{ id: sel, name: t.assignee_name || 'Assigned', scheduled: false }]);
+    }
+    return `<option value="">— unassigned —</option>` + list.map(w => `<option value="${w.id}" ${String(w.id) === String(sel) ? 'selected' : ''}>${esc(w.name)}${w.scheduled ? ` · ${esc(w.start_time)}–${esc(w.end_time)}` : ' · not scheduled'}</option>`).join('');
+  };
   // Slot picker: 15-min starts within the assignee's hours, minus breaks and other tasks they already have.
   const SLOT = 15;
   const tm = (s) => (+s.slice(0, 2)) * 60 + (+s.slice(3, 5));
@@ -4363,10 +4372,11 @@ async function renderLocDayTasks() {
     return canEdit ? `<button type="button" class="btn sm" data-verify="${t.job_id}">✓ Verify</button>` : '<span class="badge gold">awaiting review</span>';
   };
   const rows = data.tasks.map(t => `<tr class="${t.user_id ? '' : 'task-unassigned'}">
-    <td><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.8rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
+    <td class="mono" style="white-space:nowrap;color:var(--muted);font-size:.85rem">${t.code ? esc(t.code) : '—'}</td>
+    <td><strong>${esc(t.name)}</strong>${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</td>
     <td>${esc(t.department || '')} ${cx(t.complexity)}</td>
     <td style="white-space:nowrap;color:var(--muted)">${t.est_minutes ? `~${t.est_minutes} min` : '—'}</td>
-    <td>${canEdit && assignList.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t.user_id)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
+    <td>${canEdit && assignList.length ? `<select data-assign="${t.job_id}" style="margin:0;padding:.4rem .5rem;max-width:220px">${opts(t)}</select>` : (t.assignee_name ? `<strong>${esc(t.assignee_name)}</strong>` : '<span class="badge low">unassigned</span>')}</td>
     <td>${whenCell(t)}</td>
     <td>${canEdit ? `<label class="chk"><input type="checkbox" data-done="${t.job_id}" ${t.done ? 'checked' : ''}/> done</label>` : (t.done ? '<span class="badge ok">done</span>' : '—')}</td>
     <td>${verifyCell(t)}</td>
@@ -4383,8 +4393,8 @@ async function renderLocDayTasks() {
       </div>
     </div>
     <p class="sub" style="color:var(--muted);margin:0 0 .8rem">Assign each specific task to a staff member so nothing's left behind. ${data.all_staff_mode ? `<strong>${assignList.length}</strong> staff selectable · <strong>${data.working.length}</strong> scheduled today (set a time only for scheduled staff).` : (data.working.length ? `<strong>${data.working.length}</strong> scheduled today.` : '<strong style="color:var(--red)">Nobody is scheduled today — add shifts on the Schedule tab first.</strong>')}</p>
-    <div class="table-wrap"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Verify</th><th>Proof</th></tr></thead><tbody>
-      ${data.tasks.length ? rows : `<tr><td colspan="8" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
+    <div class="table-wrap"><table><thead><tr><th>Code</th><th>Task</th><th>Dept</th><th>Est.</th><th>Assigned to</th><th>When</th><th>Status</th><th>Verify</th><th>Proof</th></tr></thead><tbody>
+      ${data.tasks.length ? rows : `<tr><td colspan="9" class="empty">No tasks on this location's list yet.${canEdit ? ' Click <strong>⚙ Manage list</strong> to add some.' : ''}</td></tr>`}
     </tbody></table></div>`;
   const go = (iso) => { S.dayTaskDate = iso; renderLocDayTasks(); };
   $('dtPrev').onclick = () => go(addDaysIso(data.date, -1));
@@ -4522,16 +4532,31 @@ async function openLocTaskListModal(locId, locName) {
   const draw = async () => {
     const data = await api('/schedule/location-tasks?location_id=' + locId);
     const cx = (c) => `<span class="badge ${COMPLEXITY_CHIP[c] || 'gray'}">${esc(c || '')}</span>`;
-    const rows = data.catalog.map(t => `<tr>
+    const DEPT_OPTS = ['Front House', 'Kitchen', 'Bar', 'Management'];
+    const deptSel = (cur) => `<option value="">—</option>` + (cur && !DEPT_OPTS.includes(cur) ? `<option selected>${esc(cur)}</option>` : '') + DEPT_OPTS.map(d => `<option ${d === cur ? 'selected' : ''}>${esc(d)}</option>`).join('');
+    const cxSel = (cur) => ['low', 'medium', 'high'].map(c => `<option value="${c}" ${c === cur ? 'selected' : ''}>${c}</option>`).join('');
+    const rows = data.catalog.map(t => `<tr data-row="${t.job_id}">
       <td><label class="chk" style="align-items:flex-start"><input type="checkbox" data-lt="${t.job_id}" ${t.enabled ? 'checked' : ''}/>
         <span><strong>${esc(t.name)}</strong>${t.code ? ` <span class="mono" style="color:var(--muted);font-size:.75rem">${esc(t.code)}</span>` : ''}${t.description ? `<div class="job-note">${esc(t.description)}</div>` : ''}</span></label></td>
       <td style="white-space:nowrap">${esc(t.department || '')} ${cx(t.complexity)}</td>
       <td style="white-space:nowrap;color:var(--muted)">${t.est_minutes ? `~${t.est_minutes} min` : ''}</td>
-    </tr>`).join('');
-    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:640px">
+      <td style="text-align:right;white-space:nowrap"><button type="button" class="btn sm ghost" data-edit="${t.job_id}" title="Edit this task's name, estimate, complexity or department">✎ Edit</button></td>
+    </tr>
+    <tr class="lt-edit" data-editrow="${t.job_id}" hidden><td colspan="4" style="background:rgba(0,0,0,.03)">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;padding:.5rem .2rem">
+        <label style="grid-column:1/3">Name<input class="le-name" value="${esc(t.name)}"/></label>
+        <label>Department<select class="le-dept">${deptSel(t.department)}</select></label>
+        <label>Complexity<select class="le-cx">${cxSel(t.complexity)}</select></label>
+        <label>Est. minutes *<input class="le-est" type="number" min="1" step="5" value="${t.est_minutes || ''}"/></label>
+        <label>Code<input class="le-code" value="${esc(t.code || '')}" placeholder="blank = keep current"/></label>
+      </div>
+      <div class="err le-err" style="margin:.1rem .2rem"></div>
+      <div style="display:flex;gap:.5rem;padding:0 .2rem .4rem"><button type="button" class="btn sm" data-save="${t.job_id}">Save changes</button><button type="button" class="btn sm ghost" data-cancel="${t.job_id}">Cancel</button></div>
+    </td></tr>`).join('');
+    host.innerHTML = `<div class="modal-bg"><div class="modal" style="max-width:680px">
       <h3>Task list — ${esc(locName || data.location.name)}</h3>
-      <p class="sub" style="color:var(--muted);margin:.2rem 0 .8rem">Check the specific tasks that apply here. <strong id="ltCount">${data.enabled}</strong> on this location's list.</p>
-      <div class="table-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="sub" style="color:var(--muted);margin:.2rem 0 .8rem">Check the tasks that apply here, or <strong>✎ Edit</strong> one to change its name, estimate, complexity or department. <strong id="ltCount">${data.enabled}</strong> on this location's list. <span style="color:var(--red)">Edits apply everywhere this task is used.</span></p>
+      <div class="table-wrap" style="max-height:46vh;overflow:auto"><table><thead><tr><th>Task</th><th>Dept</th><th>Est.</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
       <details style="margin-top:.8rem"><summary style="cursor:pointer;font-weight:600">+ Add a new task to the catalog</summary>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-top:.6rem">
           <label style="grid-column:1/3">Name<input id="ntName" placeholder="e.g. Water the patio plants"/></label>
@@ -4552,6 +4577,30 @@ async function openLocTaskListModal(locId, locName) {
         await api('/schedule/location-tasks', { method: 'PUT', body: JSON.stringify({ location_id: locId, job_id: cb.dataset.lt, enabled: cb.checked }) });
         const n = host.querySelectorAll('[data-lt]:checked').length; $('ltCount').textContent = n;
       } catch (e) { toast(e.message, true); cb.checked = !cb.checked; }
+    });
+    // ✎ Edit a task definition (name / department / complexity / estimate / code) — updates the shared catalog.
+    host.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => {
+      const row = host.querySelector(`[data-editrow="${b.dataset.edit}"]`);
+      if (!row) return;
+      row.hidden = !row.hidden;
+      if (!row.hidden) { const n = row.querySelector('.le-name'); if (n) n.focus(); }
+    });
+    host.querySelectorAll('[data-cancel]').forEach(b => b.onclick = () => {
+      const row = host.querySelector(`[data-editrow="${b.dataset.cancel}"]`); if (row) row.hidden = true;
+    });
+    host.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+      const row = host.querySelector(`[data-editrow="${b.dataset.save}"]`);
+      const err = row.querySelector('.le-err'); err.textContent = '';
+      const name = row.querySelector('.le-name').value.trim();
+      if (!name) { err.textContent = 'Name is required.'; return; }
+      const est = parseInt(row.querySelector('.le-est').value, 10);
+      if (!Number.isFinite(est) || est <= 0) { err.textContent = 'Estimated minutes is required (a positive number).'; return; }
+      const body = { name, department: row.querySelector('.le-dept').value || null, complexity: row.querySelector('.le-cx').value, est_minutes: est };
+      const code = row.querySelector('.le-code').value.trim();
+      if (code) body.code = code;            // blank leaves the existing code unchanged (won't wipe a DT-## code)
+      b.disabled = true;
+      try { await api('/schedule/jobs/' + b.dataset.save, { method: 'PUT', body: JSON.stringify(body) }); toast('Task updated'); await draw(); }
+      catch (e) { err.textContent = e.message; b.disabled = false; }
     });
     $('ntAdd').onclick = async () => {
       $('ntErr').textContent = '';

@@ -350,10 +350,11 @@ router.delete('/jobs/:id', requireRole(ROLES.MANAGE), (req, res) => {
 });
 
 // ── Day tasks — assign specific tasks to that day's working staff ────────────
-// TEMP (2026-10-21, owner request): the Assigned-to dropdown lists ALL active staff at the location,
-// even those with no shift that day. Flip this to `false` to restore the original schedule-only logic
-// (only staff scheduled that day are assignable). Governs both the GET candidate list and the PUT check.
-const DAYTASK_ASSIGN_ALL_STAFF = true;
+// The Assigned-to dropdown lists only the staff scheduled that day at this location (owner request,
+// 2026-11-28 — reverted the temporary all-staff mode). Flip this to `true` to list ALL active staff
+// at the location again, even those with no shift that day. Governs both the GET candidate list and
+// the PUT check (an unscheduled staffer is rejected while this is false).
+const DAYTASK_ASSIGN_ALL_STAFF = false;
 // All active staff at a location — home staff plus anyone who can cover it (staff_locations).
 function locationStaff(locId) {
   return db.prepare(`SELECT DISTINCT u.id, u.name, u.role FROM users u
