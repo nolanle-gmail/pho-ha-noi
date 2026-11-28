@@ -134,8 +134,9 @@
   .dots{ display:flex; gap:.3rem; }
   .dots i{ width:.6rem; height:.6rem; border-radius:50%; background:var(--line); display:inline-block; }
   .dots i.on{ background:var(--brand); }
-  .foot-legend{ display:flex; gap:.9rem; flex-wrap:wrap; }
+  .foot-legend{ display:flex; gap:.9rem; flex-wrap:wrap; align-items:center; }
   .foot-legend b{ color:var(--ink); }
+  .foot-legend .leg-pill{ font-size:.72rem; padding:.12em .6em; vertical-align:middle; margin-right:.1rem; }
 
   .picks{ max-width:560px; margin:auto; display:grid; gap:.7rem; width:100%; padding:1rem; }
   .pick{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.3rem; font-size:1.3rem; font-weight:800;
@@ -321,6 +322,7 @@ function layout() {
   const staff = d.staff || [];
   $('main').innerHTML = `<div class="board" id="board"></div>
     <footer><div class="foot-legend">
+        <span><span class="iochip in leg-pill">In</span> / <span class="iochip out leg-pill">Out</span> clock pills</span>
         <span><b style="color:var(--red)">●</b> Late / long break</span>
         <span><b style="color:var(--purple)">●</b> Task starting</span>
         <span><b style="color:var(--amber)">●</b> Heads-up</span>
