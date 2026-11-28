@@ -725,10 +725,11 @@ function sweepNoShows() {
   } catch (err) { console.error('no-show sweep failed:', err.message); }
 }
 
-// Remind the assigned staff member ~5 minutes before a timed day task is due to START — a live in-app
+// Remind the assigned staff member ~10 minutes before a timed day task is due to START — a live in-app
 // alert AND a text to their phone. Fires once per task (guarded by task_assignments.reminded_at, which
 // is reset when the task's time or assignee changes). Only for today's timed, not-yet-done tasks.
-const TASK_REMIND_LEAD = parseInt(process.env.TASK_REMINDER_LEAD_MIN || '', 10) || 5;
+// (The Shift Board separately flashes the staffer's row from 5 min before until they Start the task.)
+const TASK_REMIND_LEAD = parseInt(process.env.TASK_REMINDER_LEAD_MIN || '', 10) || 10;
 function sweepTaskReminders() {
   try {
     const rows = db.prepare(`SELECT ta.id, ta.task_time, ta.user_id, ta.location_id, ta.task_date,

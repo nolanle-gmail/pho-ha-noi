@@ -12,6 +12,7 @@
     --paper:#f3ede3; --board:#fbf9f4;
     --red:#b91c1c; --red-bg:#fbe7e5; --amber:#b45309; --amber-bg:#fdf0d9;
     --blue:#1d4ed8; --blue-bg:#e6edfc; --green:#15803d; --green-bg:#e4f3e9; --grey:#6b7280; --grey-bg:#eceae6;
+    --purple:#7c3aed; --purple-bg:#f0e6fe;
     --rowh:64px; --fs:1rem;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
@@ -45,7 +46,7 @@
   .col + .col{ border-left:2px solid var(--line); }
   .board.cols-2 .trow,.board.cols-2 .thead{ padding-left:.45rem; padding-right:.45rem; }
   .board.cols-3 .trow,.board.cols-3 .thead{ padding-left:.35rem; padding-right:.35rem; }
-  .thead,.trow{ display:grid; grid-template-columns:2.1fr 1fr 1fr 1.3fr 2fr; align-items:center; gap:.5rem; }
+  .thead,.trow{ display:grid; grid-template-columns:2fr 2.6fr 1.5fr 1.9fr; align-items:center; gap:.5rem; }
   .thead{ flex:0 0 auto; padding:.2rem .7rem .3rem; color:var(--muted); font-weight:800; font-size:.8rem;
     text-transform:uppercase; letter-spacing:.03em; border-bottom:2px solid var(--line); }
   .thead .num,.trow .num{ text-align:center; }
@@ -56,6 +57,8 @@
   .trow.row-late,.trow.row-longbreak{ background:var(--red-bg); border-left-color:var(--red); }
   .trow.row-missed,.trow.row-soon,.trow.row-due{ background:var(--amber-bg); border-left-color:var(--amber); }
   .trow.row-break{ background:var(--blue-bg); border-left-color:var(--blue); }
+  /* Purple = a timed day task is about to start (and still not started) — flashes until they Start it. */
+  .trow.row-tasksoon{ background:var(--purple-bg); border-left-color:var(--purple); animation:flashPurple 1.25s ease-in-out infinite; }
   .trow.row-soon{ animation:flashAmber 1.25s ease-in-out infinite; }
   .trow.row-longbreak{ animation:flashRed 1.25s ease-in-out infinite; }
   .trow.dim{ opacity:.62; }
@@ -81,15 +84,36 @@
   .bchip.done{ background:var(--green-bg); color:var(--green); box-shadow:0 0 0 1.5px var(--green) inset; }
   .bchip.over{ background:var(--red-bg); color:var(--red); box-shadow:0 0 0 1.5px var(--red) inset; }
   /* Whole-row flash: amber when a scheduled break is ~10 min out ("about to break"),
-     red while a break has already run over the limit ("long break"). */
+     red while a break has already run over the limit ("long break"),
+     purple when a timed task is about to start and still not started. */
   @keyframes flashAmber{ 0%,100%{ background:var(--amber-bg); } 50%{ background:#fbe1a0; } }
   @keyframes flashRed{ 0%,100%{ background:var(--red-bg); } 50%{ background:#f4b2aa; } }
+  @keyframes flashPurple{ 0%,100%{ background:var(--purple-bg); } 50%{ background:#ddc4fb; } }
+  /* Combined In · Out · Break column: three parts split by "||" dividers, e.g. 10a || 5:15p || 1:45p 4:15p */
+  .io{ display:flex; align-items:center; justify-content:center; gap:.3rem; min-width:0; overflow:hidden;
+    font-weight:600; font-size:calc(var(--fs) * .78); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .io .io-sep{ color:var(--muted); opacity:.5; font-weight:700; }
+  .io .late{ color:var(--red); }
+  .io .ded{ color:var(--muted); font-weight:500; }
+  .io .iop{ display:inline-flex; align-items:center; gap:.25rem; }
+  .io-h{ text-align:center; }
+  .io-h .io-sep{ opacity:.6; margin:0 .2em; }
+  /* Tasks column: each task is "CODE, time"; the imminent one flashes purple until started. */
+  .tasks-cell{ min-width:0; overflow:hidden; }
+  .tasks{ display:flex; flex-direction:column; gap:.1rem; justify-content:center; }
+  .tchip{ font-weight:700; font-size:calc(var(--fs) * .7); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font-variant-numeric:tabular-nums; }
+  .tchip .tc{ font-weight:800; }
+  .tchip.done{ color:var(--muted); text-decoration:line-through; }
+  .tchip.started{ color:var(--green); }
+  .tchip.soon{ color:var(--purple); animation:flash 1.3s ease-in-out infinite; }
   .badges{ display:flex; gap:.35rem; flex-wrap:wrap; align-items:center; }
   .bdg{ font-weight:800; font-size:calc(var(--fs) * .62); padding:.16em .5em; border-radius:999px; white-space:nowrap;
     display:inline-flex; align-items:center; gap:.25em; letter-spacing:.01em; }
   .bdg.red{ background:var(--red); color:#fff; }
   .bdg.amber{ background:var(--amber); color:#fff; }
   .bdg.blue{ background:var(--blue); color:#fff; }
+  .bdg.purple{ background:var(--purple); color:#fff; }
   .bdg.green{ background:var(--green-bg); color:var(--green); box-shadow:0 0 0 1.5px var(--green) inset; }
   .bdg.grey{ background:var(--grey-bg); color:var(--grey); box-shadow:0 0 0 1.5px var(--grey) inset; }
   .bdg.wrap{ white-space:normal; text-align:center; line-height:1.08; }
@@ -134,6 +158,8 @@ const SLUG = decodeURIComponent((location.pathname.match(/^\/shiftboard\/(.+?)\/
 let dataTimer = null, pageTimer = null, lastData = null, curPage = 0, pages = 1, NOWMIN = 0;
 const PAGE_SECONDS = 15, REFRESH_SECONDS = 8, MIN_ROW = 48, MAX_ROW = 92, MAX_COLS = 3;
 const fmt12 = (t) => { const [h, m] = String(t).split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')}${h < 12 ? 'a' : 'p'}`; };
+// Compact 12-hour: drops ":00" on a whole hour (10:00→10a, 17:15→5:15p) — used in the tight In·Out·Break + Tasks columns.
+const fmt12c = (t) => { const [h, m] = String(t).split(':').map(Number); const hh = ((h + 11) % 12) + 1, ap = h < 12 ? 'a' : 'p'; return m ? `${hh}:${String(m).padStart(2, '0')}${ap}` : `${hh}${ap}`; };
 const toMin = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
 
 async function api(path) {
@@ -163,6 +189,7 @@ async function pickStore() {
 // ── Status badges for one staffer (most-severe first) ───────────────────────
 function badgesFor(s, limit) {
   const b = [];
+  if (s.task_soon) b.push(`<span class="bdg purple flash">📋 START ${esc(s.task_soon_code || 'TASK')}${s.task_soon_in != null ? (s.task_soon_in > 0 ? ` IN ${s.task_soon_in}m` : ' NOW') : ''}</span>`);
   if (s.late_min > 0) b.push(`<span class="bdg red flash">⏰ LATE ${s.late_min}m${s.status === 'not_in' ? ' · NOT IN' : ''}</span>`);
   if (s.long_break) b.push(`<span class="bdg red wrap">☕ LONGER THAN 10-MIN BREAK</span>`);
   if (s.break_missed) b.push(`<span class="bdg amber">⚠ BREAK MISSED</span>`);
@@ -201,11 +228,52 @@ function breakCell(s) {
   return '<span class="ok">—</span>';
 }
 
+// Break portion of the combined column — compact, inline, matching "1:45p 4:15p": live on-break timer,
+// else each break's actual time (red if it ran over), else the scheduled times dimmed, else "—".
+function brkInline(s) {
+  if (s.on_break) {
+    const over = s.break_over_now > 0;
+    return `<span class="${over ? 'late' : ''}">☕${s.break_start ? fmt12c(s.break_start) + '·' : ''}${s.break_elapsed_min}m${over ? `(${s.break_over_now}x)` : ''}</span>`;
+  }
+  if (s.breaks && s.breaks.length) {
+    return s.breaks.map(b => `<span class="${b.over > 0 ? 'late' : ''}">${fmt12c(b.at)}${b.over > 0 ? `(${b.over}x)` : ''}</span>`).join(' ');
+  }
+  if (s.sched_breaks && s.sched_breaks.length) {
+    return s.sched_breaks.map(t => `<span class="ded">${fmt12c(t)}</span>`).join(' ');
+  }
+  return '<span class="ded">—</span>';
+}
+
+// Combined In · Out · Break cell: "10a || 5:15p || 1:45p 4:15p".
+function ioCell(s) {
+  const lateHere = s.late_min > 0 && s.status !== 'not_in';
+  const inPart = s.clock_in
+    ? `<span class="${lateHere ? 'late' : ''}">${fmt12c(s.clock_in)}</span>`
+    : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
+  const outPart = s.clock_out ? `<span>${fmt12c(s.clock_out)}</span>` : (s.status === 'out' ? '<span class="ded">—</span>' : '<span class="ded">·</span>');
+  return `<span class="iop">${inPart}</span><span class="io-sep">||</span>`
+    + `<span class="iop">${outPart}</span><span class="io-sep">||</span>`
+    + `<span class="iop">${brkInline(s)}</span>`;
+}
+
+// Tasks cell: each day-task as "CODE, time" (done = struck through, started = green, imminent = purple flash).
+function taskCell(s) {
+  const ts = s.tasks || [];
+  if (!ts.length) return '<span class="ded" style="color:var(--muted)">—</span>';
+  return `<div class="tasks">${ts.map(t => {
+    const cls = t.done ? 'done' : t.started ? 'started' : t.soon ? 'soon' : '';
+    const tm = t.time ? `, ${fmt12c(t.time)}` : '';
+    const mark = t.done ? ' ✓' : t.started ? ' ▸' : '';
+    return `<span class="tchip ${cls}"><span class="tc">${esc(t.code || '—')}</span>${tm}${mark}</span>`;
+  }).join('')}</div>`;
+}
+
 function rowHtml(s) {
-  // Whole-row color + flash by the most urgent state: red = late / long break,
-  // amber = missed break / break coming up / due a break; a long break and an
-  // imminent break flash the row.
+  // Whole-row color + flash by the most urgent state: red = late / long break, purple = a timed task
+  // about to start (and not yet started), amber = missed break / break coming up / due a break. A long
+  // break (red), an imminent task (purple) and an imminent break (amber) flash the row.
   const stateClass = s.long_break ? 'row-longbreak'
+    : s.task_soon ? 'row-tasksoon'
     : s.late_min > 0 ? 'row-late'
     : s.break_missed ? 'row-missed'
     : s.break_soon_min != null ? 'row-soon'
@@ -215,16 +283,10 @@ function rowHtml(s) {
   const sched = (s.shift_blocks && s.shift_blocks.length)
     ? s.shift_blocks.map(b => `${fmt12(b.start)}–${b.end ? fmt12(b.end) : '?'}`).join('<span class="sdot">·</span>')
     : '—';
-  const lateHere = s.late_min > 0 && s.status !== 'not_in';
-  const inCell = s.clock_in
-    ? `<span class="${lateHere ? 'late' : ''}">${fmt12(s.clock_in)}${lateHere ? `<span class="sub">(${s.late_min} min late)</span>` : ''}</span>`
-    : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
-  const outCell = s.clock_out ? fmt12(s.clock_out) : (s.status === 'out' ? '' : '<span class="ded">·</span>');
   return `<div class="trow ${stateClass}${dim}">
     <div class="who"><div class="nm">${esc(s.name)}</div><div class="when">${sched}</div></div>
-    <div class="punch">${inCell}</div>
-    <div class="punch">${outCell}</div>
-    <div class="brk">${breakCell(s)}</div>
+    <div class="io">${ioCell(s)}</div>
+    <div class="tasks-cell">${taskCell(s)}</div>
     <div class="badges">${badgesFor(s)}</div>
   </div>`;
 }
@@ -237,6 +299,7 @@ function renderChrome(d) {
   const sm = d.summary || {};
   const L = [
     ['on_clock', 'On clock', 'var(--green)', sm.on_clock],
+    ['task_soon', 'Task due', 'var(--purple)', sm.task_soon],
     ['late', 'Late', 'var(--red)', sm.late],
     ['long_break', 'Long break', 'var(--red)', sm.long_break],
     ['break_missed', 'Missed break', 'var(--amber)', sm.break_missed],
@@ -251,8 +314,9 @@ function renderChrome(d) {
 
 // One column's header row.
 function colHeader() {
-  return `<div class="thead"><div>Staff</div><div class="num">In</div>`
-    + `<div class="num">Out</div><div class="num">Breaks</div><div>Status</div></div>`;
+  return `<div class="thead"><div>Staff</div>`
+    + `<div class="io-h">In<span class="io-sep">||</span>Out<span class="io-sep">||</span>Break</div>`
+    + `<div>Tasks</div><div>Status</div></div>`;
 }
 
 // Lay staff out side by side across as many columns as it takes to show EVERYONE on one
@@ -265,6 +329,7 @@ function layout() {
   $('main').innerHTML = `<div class="board" id="board"></div>
     <footer><div class="foot-legend">
         <span><b style="color:var(--red)">●</b> Late / long break</span>
+        <span><b style="color:var(--purple)">●</b> Task starting</span>
         <span><b style="color:var(--amber)">●</b> Heads-up</span>
         <span>Break limit <b>${(d.thresholds && d.thresholds.break_limit_min) || 10} min</b></span>
       </div><div class="pager" id="pager"></div></footer>`;

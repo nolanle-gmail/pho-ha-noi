@@ -324,6 +324,17 @@ store's daily roster. It refreshes the data every ~8 s and holds a screen wake-l
 derived from the store name via `shiftBoardUrl()`, matched case/hyphen-insensitively by the server).
 Available for every active location, Central Kitchen and the warehouse included. Thresholds (late grace,
 break limit, soon/missed windows, due-after) are env-tunable and default to the clock kiosk's.
+**Compact columns + a Tasks column + task-start flash (2026-11-28).** To make room, the separate In / Out /
+Break columns were **merged into one `In || Out || Break` column** (e.g. `10a || 5:15p || 1:45p 4:15p` — the
+break part is the actual break time(s), the live on-break timer, or the scheduled times dimmed). The freed
+space holds a new **Tasks column** listing that person's day-tasks for today as **code + start time** (e.g.
+`DT-23, 7:15p`; done = struck through, started = green, the imminent one in purple). For timed tasks the
+staffer is **messaged ~10 min before** the start (the existing `sweepTaskReminders`, `TASK_REMINDER_LEAD_MIN`
+now **10**), and the Shift Board **flashes their whole row purple from 5 min before** the start
+(`TASK_SOON_LEAD_MIN`, `row-tasksoon`) with a **📋 START `<code>` IN `N`m** badge, and **keeps flashing past
+the start time until they tap Start** (`started_at`) — it stops once started/done, or once they clock out.
+`GET /api/shiftboard/board` now returns each staffer's `tasks[]` (`code`/`time`/`started`/`done`/`soon`),
+`task_soon`/`task_soon_in`/`task_soon_code`, and a `task_soon` summary count + legend chip.
 
 **Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
 own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch
