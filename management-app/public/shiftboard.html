@@ -228,23 +228,8 @@ function breakCell(s) {
   return '<span class="ok">—</span>';
 }
 
-// Break portion of the combined column — compact, inline, matching "1:45p 4:15p": live on-break timer,
-// else each break's actual time (red if it ran over), else the scheduled times dimmed, else "—".
-function brkInline(s) {
-  if (s.on_break) {
-    const over = s.break_over_now > 0;
-    return `<span class="${over ? 'late' : ''}">☕${s.break_start ? fmt12c(s.break_start) + '·' : ''}${s.break_elapsed_min}m${over ? `(${s.break_over_now}x)` : ''}</span>`;
-  }
-  if (s.breaks && s.breaks.length) {
-    return s.breaks.map(b => `<span class="${b.over > 0 ? 'late' : ''}">${fmt12c(b.at)}${b.over > 0 ? `(${b.over}x)` : ''}</span>`).join(' ');
-  }
-  if (s.sched_breaks && s.sched_breaks.length) {
-    return s.sched_breaks.map(t => `<span class="ded">${fmt12c(t)}</span>`).join(' ');
-  }
-  return '<span class="ded">—</span>';
-}
-
-// Combined In · Out · Break cell: "10a || 5:15p || 1:45p 4:15p".
+// Combined In · Out · Break cell: "10a || 5:15p || 1:45p 4:15p". The Break part keeps its ORIGINAL look —
+// the pill/oval chips from breakCell (scheduled times, the actual break time(s), or the live on-break timer).
 function ioCell(s) {
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inPart = s.clock_in
@@ -253,7 +238,7 @@ function ioCell(s) {
   const outPart = s.clock_out ? `<span>${fmt12c(s.clock_out)}</span>` : (s.status === 'out' ? '<span class="ded">—</span>' : '<span class="ded">·</span>');
   return `<span class="iop">${inPart}</span><span class="io-sep">||</span>`
     + `<span class="iop">${outPart}</span><span class="io-sep">||</span>`
-    + `<span class="iop">${brkInline(s)}</span>`;
+    + `<span class="iop brk">${breakCell(s)}</span>`;
 }
 
 // Tasks cell: each day-task as "CODE, time" (done = struck through, started = green, imminent = purple flash).
