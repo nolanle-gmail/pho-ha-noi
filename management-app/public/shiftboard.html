@@ -96,6 +96,14 @@
   .io .late{ color:var(--red); }
   .io .ded{ color:var(--muted); font-weight:500; }
   .io .iop{ display:inline-flex; align-items:center; gap:.25rem; }
+  /* In / Out as colored pills (same chip shape as the break chips) so they're easy to tell apart:
+     In = green, Out = grey, a late clock-in = red. */
+  .iochip{ font-weight:800; font-size:calc(var(--fs) * .64); padding:.12em .5em; border-radius:999px;
+    white-space:nowrap; display:inline-block; font-variant-numeric:tabular-nums; }
+  .iochip.in{ background:var(--green); color:#fff; }
+  .iochip.in.late{ background:var(--red); color:#fff; }
+  .iochip.out{ background:var(--grey); color:#fff; }
+  .iochip.none{ color:var(--muted); font-weight:600; }
   .io-h{ text-align:center; }
   .io-h .io-sep{ opacity:.6; margin:0 .2em; }
   /* Tasks column: each task is "CODE, time"; the imminent one flashes purple until started. */
@@ -233,9 +241,9 @@ function breakCell(s) {
 function ioCell(s) {
   const lateHere = s.late_min > 0 && s.status !== 'not_in';
   const inPart = s.clock_in
-    ? `<span class="${lateHere ? 'late' : ''}">${fmt12c(s.clock_in)}</span>`
-    : (s.status === 'not_in' ? `<span class="${s.late_min > 0 ? 'late' : ''}">${s.late_min > 0 ? 'LATE' : '—'}</span>` : '<span class="ded">—</span>');
-  const outPart = s.clock_out ? `<span>${fmt12c(s.clock_out)}</span>` : (s.status === 'out' ? '<span class="ded">—</span>' : '<span class="ded">·</span>');
+    ? `<span class="iochip in${lateHere ? ' late' : ''}">${fmt12c(s.clock_in)}</span>`
+    : (s.status === 'not_in' && s.late_min > 0 ? `<span class="iochip in late">LATE</span>` : '<span class="iochip none">—</span>');
+  const outPart = s.clock_out ? `<span class="iochip out">${fmt12c(s.clock_out)}</span>` : `<span class="iochip none">${s.status === 'out' ? '—' : '·'}</span>`;
   return `<span class="iop">${inPart}</span><span class="io-sep">||</span>`
     + `<span class="iop">${outPart}</span><span class="io-sep">||</span>`
     + `<span class="iop brk">${breakCell(s)}</span>`;
