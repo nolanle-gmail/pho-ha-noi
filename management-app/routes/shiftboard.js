@@ -17,7 +17,8 @@ const BREAK_LIMIT_MIN = parseInt(process.env.BREAK_LIMIT_MIN || '', 10) || 10;  
 const BREAK_SOON_LEAD_MIN = parseInt(process.env.BREAK_SOON_LEAD_MIN || '', 10) || 10; // flash + flag an upcoming break this early
 const BREAK_MISS_GRACE_MIN = parseInt(process.env.BREAK_MISS_GRACE_MIN || '', 10) || 15; // scheduled break this overdue → "missed"
 const BREAK_DUE_AFTER_MIN = parseInt(process.env.BREAK_DUE_AFTER_MIN || '', 10) || 240;  // earns a rest break per this many worked minutes (CA ~4h)
-const TASK_SOON_LEAD_MIN = parseInt(process.env.TASK_SOON_LEAD_MIN || '', 10) || 5;       // flash the row this many min before a timed task's start (until started)
+const TASK_SOON_LEAD_MIN = parseInt(process.env.TASK_SOON_LEAD_MIN || '', 10) || 5;       // flash the row this many min before a timed task's start (until started/missed)
+const TASK_MISS_GRACE_MIN = parseInt(process.env.TASK_MISS_GRACE_MIN || '', 10) || 15;    // overdue this long & still not started → "missed task" (flash stops, a dot shows instead)
 
 // Light per-IP abuse guard (a TV polls on a timer; allow generous headroom).
 const rate = new Map();
@@ -174,13 +175,21 @@ router.get('/board', (req, res) => {
     // Today's day-tasks for this person: code + scheduled start + progress. A timed task that isn't
     // started/done yet drives the "task soon" row flash from TASK_SOON_LEAD_MIN before its start time,
     // and keeps flashing past the start until they Start it (never while they've clocked out for the day).
-    let task_soon_at = null, task_soon_code = null;
+    let task_soon_at = null, task_soon_code = null, task_missed = false;
     const taskList = tasksStmt.all(loc.id, date, p.user_id).map(t => {
       const tmin = t.task_time ? hhmmToMin(hhmm(t.task_time)) : null;
       const started = !!t.started_at, done = !!t.done;
-      const soon = tmin != null && !started && !done && status !== 'out' && nowMin >= (tmin - TASK_SOON_LEAD_MIN);
+      const overdue = tmin != null ? nowMin - tmin : null;     // minutes past the scheduled start
+      // Flash while it's actionable: from TASK_SOON_LEAD_MIN before the start until TASK_MISS_GRACE_MIN
+      // after it, and only while unstarted/unfinished and not clocked out — the flash stops the moment
+      // they tap Start (action taken) or once it tips over into "missed".
+      const soon = tmin != null && !started && !done && status !== 'out'
+        && nowMin >= (tmin - TASK_SOON_LEAD_MIN) && overdue < TASK_MISS_GRACE_MIN;
+      // Missed = still not started/done once overdue past the grace (a persistent record, even after clock-out).
+      const missed = tmin != null && !started && !done && overdue >= TASK_MISS_GRACE_MIN;
       if (soon && (task_soon_at == null || tmin < task_soon_at)) { task_soon_at = tmin; task_soon_code = t.code; }
-      return { code: t.code, time: t.task_time ? hhmm(t.task_time) : null, started, done, soon };
+      if (missed) task_missed = true;
+      return { code: t.code, time: t.task_time ? hhmm(t.task_time) : null, started, done, soon, missed };
     });
     const task_soon = task_soon_at != null;
     const task_soon_in = task_soon_at != null ? task_soon_at - nowMin : null; // ≤0 = due now / overdue to start
@@ -201,10 +210,10 @@ router.get('/board', (req, res) => {
       on_break, break_start, break_elapsed_min, break_over_now,
       breaks_taken, break_total_min, break_over_total, breaks,
       sched_breaks, next_break, break_soon_min, break_missed, break_due, long_break,
-      tasks: taskList, task_soon, task_soon_in, task_soon_code,
+      tasks: taskList, task_soon, task_soon_in, task_soon_code, task_missed,
       flags,
-      // Top severity for row tint / sort: 0 none, 1 blue, 2 amber, 3 red (a task about to start sorts high).
-      sev: (flags.some(f => f.sev === 'red') || task_soon) ? 3 : flags.some(f => f.sev === 'amber') ? 2 : flags.some(f => f.sev === 'blue') ? 1 : 0,
+      // Top severity for row tint / sort: 0 none, 1 blue, 2 amber, 3 red (a task about to start or missed sorts high).
+      sev: (flags.some(f => f.sev === 'red') || task_soon || task_missed) ? 3 : flags.some(f => f.sev === 'amber') ? 2 : flags.some(f => f.sev === 'blue') ? 1 : 0,
     };
   });
 
@@ -227,6 +236,7 @@ router.get('/board', (req, res) => {
     break_missed: staff.filter(s => s.break_missed).length,
     break_due: staff.filter(s => s.break_due).length,
     task_soon: staff.filter(s => s.task_soon).length,
+    task_missed: staff.filter(s => s.task_missed).length,
   };
 
   res.json({

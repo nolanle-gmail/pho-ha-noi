@@ -2273,7 +2273,7 @@ const check = (name, ok, detail = '') => {
       const slug = (sbLocs.locations && sbLocs.locations[0] && sbLocs.locations[0].slug) || 'cupertino';
       const sb = await SB('/board?slug=' + encodeURIComponent(slug));
       check('shiftboard board ok + shape', sb.ok === true && !!sb.location && Array.isArray(sb.staff) && !!sb.summary && typeof sb.summary.total === 'number', JSON.stringify({ ok: sb.ok, hasLoc: !!sb.location, staff: Array.isArray(sb.staff), sum: !!sb.summary }));
-      check('shiftboard carries tasks + task-soon shape', sb.staff.every(s => Array.isArray(s.tasks) && 'task_soon' in s) && typeof sb.summary.task_soon === 'number' && sb.thresholds && typeof sb.thresholds.task_soon_lead_min === 'number', JSON.stringify({ task_soon_sum: sb.summary.task_soon, lead: sb.thresholds && sb.thresholds.task_soon_lead_min }));
+      check('shiftboard carries tasks + task-soon/missed shape', sb.staff.every(s => Array.isArray(s.tasks) && 'task_soon' in s && 'task_missed' in s) && typeof sb.summary.task_soon === 'number' && typeof sb.summary.task_missed === 'number' && sb.thresholds && typeof sb.thresholds.task_soon_lead_min === 'number', JSON.stringify({ task_soon_sum: sb.summary.task_soon, task_missed_sum: sb.summary.task_missed, lead: sb.thresholds && sb.thresholds.task_soon_lead_min }));
       const sbBad = await fetch(base + '/api/shiftboard/board?slug=nope-' + Date.now());
       check('shiftboard unknown slug → 404', sbBad.status === 404, 'status=' + sbBad.status);
     }

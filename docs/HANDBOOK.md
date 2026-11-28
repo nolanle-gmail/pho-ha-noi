@@ -335,6 +335,18 @@ now **10**), and the Shift Board **flashes their whole row purple from 5 min bef
 the start time until they tap Start** (`started_at`) — it stops once started/done, or once they clock out.
 `GET /api/shiftboard/board` now returns each staffer's `tasks[]` (`code`/`time`/`started`/`done`/`soon`),
 `task_soon`/`task_soon_in`/`task_soon_code`, and a `task_soon` summary count + legend chip.
+**Colored pills, "act now" flashing, and issue dots (2026-11-28).** Two refinements make the board read at a
+glance. (1) **In / Out are colored pills** (same chip shape as the break chips): **In = green** (red if the
+clock-in was late), **Out = grey** — with a footer key. (2) The board now separates *live, act-now* states
+from *what already happened*. **Flashing is reserved for live states and STOPS the moment the action is taken:**
+a row flashes **purple** while a timed task is due and unstarted (stops when they tap **Start**, `started_at`),
+**red** only while someone is **on an over-limit break right now** (`break_over_now`, stops when they clock back
+in), and **amber** while a scheduled break is within ~10 min (stops when taken). Problems that already happened
+are shown as steady **colored dots in the Status column** (never flashing): **Late = red, Long break = orange,
+Missed break = amber, Missed task = purple** — a staffer who was late *and* took a long break shows **two dots**.
+A **missed task** is a timed task still not started once it's overdue past `TASK_MISS_GRACE_MIN` (default 15) —
+at that point the purple flash stops and the purple dot (+ a red `⚠` on the task chip) takes over. Backend adds
+`task_missed` (+ summary count); `break_over_now` drives the long-break flash while `long_break` drives the dot.
 
 **Seated guests drop off the waitlist board (2026-10-06).** The waitlist lives in the Waitlist app's
 own DB; a seat on the Management side (floor plan, Table Map, or the visit lifecycle) couldn't touch

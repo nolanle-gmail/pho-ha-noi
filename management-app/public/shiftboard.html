@@ -12,7 +12,7 @@
     --paper:#f3ede3; --board:#fbf9f4;
     --red:#b91c1c; --red-bg:#fbe7e5; --amber:#b45309; --amber-bg:#fdf0d9;
     --blue:#1d4ed8; --blue-bg:#e6edfc; --green:#15803d; --green-bg:#e4f3e9; --grey:#6b7280; --grey-bg:#eceae6;
-    --purple:#7c3aed; --purple-bg:#f0e6fe;
+    --purple:#7c3aed; --purple-bg:#f0e6fe; --orange:#ea580c;
     --rowh:64px; --fs:1rem;
   }
   *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
@@ -115,7 +115,13 @@
   .tchip.done{ color:var(--muted); text-decoration:line-through; }
   .tchip.started{ color:var(--green); }
   .tchip.soon{ color:var(--purple); animation:flash 1.3s ease-in-out infinite; }
+  .tchip.missed{ color:var(--red); }
   .badges{ display:flex; gap:.35rem; flex-wrap:wrap; align-items:center; }
+  /* Issue dots in the Status column — a persistent record of what happened today (no flashing):
+     Late = red, Long break = orange, Missed break = amber, Missed task = purple. */
+  .idots{ display:inline-flex; gap:.3em; align-items:center; margin-right:.15rem; }
+  .idot{ width:calc(var(--fs) * .7); height:calc(var(--fs) * .7); border-radius:50%; display:inline-block;
+    box-shadow:0 0 0 1.5px rgba(0,0,0,.06) inset; }
   .bdg{ font-weight:800; font-size:calc(var(--fs) * .62); padding:.16em .5em; border-radius:999px; white-space:nowrap;
     display:inline-flex; align-items:center; gap:.25em; letter-spacing:.01em; }
   .bdg.red{ background:var(--red); color:#fff; }
@@ -137,6 +143,8 @@
   .foot-legend{ display:flex; gap:.9rem; flex-wrap:wrap; align-items:center; }
   .foot-legend b{ color:var(--ink); }
   .foot-legend .leg-pill{ font-size:.72rem; padding:.12em .6em; vertical-align:middle; margin-right:.1rem; }
+  .foot-legend .leg-sep{ color:var(--muted); font-weight:800; }
+  .foot-legend .idot{ margin-right:.15rem; vertical-align:middle; }
 
   .picks{ max-width:560px; margin:auto; display:grid; gap:.7rem; width:100%; padding:1rem; }
   .pick{ background:#fff; border:1px solid var(--line); border-radius:14px; padding:1.1rem 1.3rem; font-size:1.3rem; font-weight:800;
@@ -195,22 +203,32 @@ async function pickStore() {
     + d.locations.map(l => `<a class="pick" href="/shiftboard/${esc(l.slug)}">${esc(shortLoc(l.name))}</a>`).join('') + '</div>';
 }
 
-// ── Status badges for one staffer (most-severe first) ───────────────────────
-function badgesFor(s, limit) {
-  const b = [];
-  if (s.task_soon) b.push(`<span class="bdg purple flash">📋 START ${esc(s.task_soon_code || 'TASK')}${s.task_soon_in != null ? (s.task_soon_in > 0 ? ` IN ${s.task_soon_in}m` : ' NOW') : ''}</span>`);
-  if (s.late_min > 0) b.push(`<span class="bdg red flash">⏰ LATE ${s.late_min}m${s.status === 'not_in' ? ' · NOT IN' : ''}</span>`);
-  if (s.long_break) b.push(`<span class="bdg red wrap">☕ LONGER THAN 10-MIN BREAK</span>`);
-  if (s.break_missed) b.push(`<span class="bdg amber">⚠ BREAK MISSED</span>`);
-  if (s.break_soon_min != null) b.push(`<span class="bdg amber">☕ BREAK IN ${s.break_soon_min}m${s.next_break ? ` · ${fmt12(s.next_break)}` : ''}</span>`);
-  if (s.break_due) b.push(`<span class="bdg amber">☕ DUE A BREAK</span>`);
-  if (s.on_break && !s.long_break) b.push(`<span class="bdg blue">☕ ON BREAK ${s.break_elapsed_min}m</span>`);
-  if (!b.length) {
-    if (s.status === 'in') b.push(`<span class="bdg green">✓ ON THE CLOCK</span>`);
-    else if (s.status === 'out') b.push(`<span class="bdg grey">● DONE</span>`);
-    else if (s.status === 'not_in') b.push(`<span class="bdg grey">○ NOT IN YET</span>`);
-  }
-  return b.join('');
+// ── Live status badge: the single "what are they doing right now" chip ───────────────────────
+// Problems that already happened (late / long break / missed break / missed task) are shown as
+// coloured DOTS by dotsFor(), not here — so this badge only reflects the current, live state.
+function badgesFor(s) {
+  if (s.task_soon) return `<span class="bdg purple flash">📋 START ${esc(s.task_soon_code || 'TASK')}${s.task_soon_in != null ? (s.task_soon_in > 0 ? ` IN ${s.task_soon_in}m` : ' NOW') : ''}</span>`;
+  if (s.on_break) return `<span class="bdg blue">☕ ON BREAK ${s.break_elapsed_min}m${s.break_over_now > 0 ? ` (+${s.break_over_now})` : ''}</span>`;
+  if (s.break_soon_min != null) return `<span class="bdg amber">☕ BREAK IN ${s.break_soon_min}m${s.next_break ? ` · ${fmt12(s.next_break)}` : ''}</span>`;
+  if (s.break_due) return `<span class="bdg amber">☕ DUE A BREAK</span>`;
+  if (s.status === 'in') return `<span class="bdg green">✓ ON THE CLOCK</span>`;
+  if (s.status === 'out') return `<span class="bdg grey">● DONE</span>`;
+  if (s.status === 'not_in') return `<span class="bdg grey">○ NOT IN YET</span>`;
+  return '';
+}
+
+// ── Issue dots: a persistent record of today's problems, shown in the Status column ──────────
+// Late = red, Long break = orange, Missed break = amber, Missed task = purple. These don't flash
+// (the flashing row is reserved for "act now" states); a staffer who was late AND took a long
+// break shows two dots.
+function dotsFor(s) {
+  const d = [];
+  if (s.late_min > 0) d.push(['var(--red)', `Late${s.late_min ? ' ' + s.late_min + 'm' : ''}`]);
+  if (s.long_break) d.push(['var(--orange)', 'Long break']);
+  if (s.break_missed) d.push(['var(--amber)', 'Missed break']);
+  if (s.task_missed) d.push(['var(--purple)', 'Missed task']);
+  if (!d.length) return '';
+  return `<span class="idots">${d.map(([c, lbl]) => `<span class="idot" style="background:${c}" title="${esc(lbl)}"></span>`).join('')}</span>`;
 }
 
 // Breaks cell. On break → the live timer next to the break's start time, with "(N min
@@ -255,24 +273,27 @@ function taskCell(s) {
   const ts = s.tasks || [];
   if (!ts.length) return '<span class="ded" style="color:var(--muted)">—</span>';
   return `<div class="tasks">${ts.map(t => {
-    const cls = t.done ? 'done' : t.started ? 'started' : t.soon ? 'soon' : '';
+    const cls = t.done ? 'done' : t.started ? 'started' : t.missed ? 'missed' : t.soon ? 'soon' : '';
     const tm = t.time ? `, ${fmt12c(t.time)}` : '';
-    const mark = t.done ? ' ✓' : t.started ? ' ▸' : '';
+    const mark = t.done ? ' ✓' : t.started ? ' ▸' : t.missed ? ' ⚠' : '';
     return `<span class="tchip ${cls}"><span class="tc">${esc(t.code || '—')}</span>${tm}${mark}</span>`;
   }).join('')}</div>`;
 }
 
 function rowHtml(s) {
-  // Whole-row color + flash by the most urgent state: red = late / long break, purple = a timed task
-  // about to start (and not yet started), amber = missed break / break coming up / due a break. A long
-  // break (red), an imminent task (purple) and an imminent break (amber) flash the row.
-  const stateClass = s.long_break ? 'row-longbreak'
+  // The row only flashes/tints for LIVE, actionable states — and the flash STOPS as soon as the
+  // action is taken (task started, break taken, back from a long break). Problems that already
+  // happened are shown as steady coloured dots in Status (dotsFor), not as a flashing row.
+  //   red flash   = ON an over-limit break right now (stops when they clock back in)
+  //   purple flash= a timed task is due and not started (stops when they Start it, or once missed)
+  //   amber flash = a scheduled break is within ~10 min (stops when they take it)
+  //   blue / amber (steady) = on a break within the limit / earned a rest break
+  const stateClass = s.break_over_now > 0 ? 'row-longbreak'
     : s.task_soon ? 'row-tasksoon'
-    : s.late_min > 0 ? 'row-late'
-    : s.break_missed ? 'row-missed'
     : s.break_soon_min != null ? 'row-soon'
+    : s.on_break ? 'row-break'
     : s.break_due ? 'row-due'
-    : s.on_break ? 'row-break' : '';
+    : '';
   const dim = s.status === 'out' ? ' dim' : '';
   const sched = (s.shift_blocks && s.shift_blocks.length)
     ? s.shift_blocks.map(b => `${fmt12(b.start)}–${b.end ? fmt12(b.end) : '?'}`).join('<span class="sdot">·</span>')
@@ -281,7 +302,7 @@ function rowHtml(s) {
     <div class="who"><div class="nm">${esc(s.name)}</div><div class="when">${sched}</div></div>
     <div class="io">${ioCell(s)}</div>
     <div class="tasks-cell">${taskCell(s)}</div>
-    <div class="badges">${badgesFor(s)}</div>
+    <div class="badges">${dotsFor(s)}${badgesFor(s)}</div>
   </div>`;
 }
 
@@ -293,10 +314,11 @@ function renderChrome(d) {
   const sm = d.summary || {};
   const L = [
     ['on_clock', 'On clock', 'var(--green)', sm.on_clock],
-    ['task_soon', 'Task due', 'var(--purple)', sm.task_soon],
     ['late', 'Late', 'var(--red)', sm.late],
-    ['long_break', 'Long break', 'var(--red)', sm.long_break],
+    ['long_break', 'Long break', 'var(--orange)', sm.long_break],
     ['break_missed', 'Missed break', 'var(--amber)', sm.break_missed],
+    ['task_soon', 'Task due', 'var(--purple)', sm.task_soon],
+    ['task_missed', 'Task missed', 'var(--purple)', sm.task_missed],
     ['break_due', 'Due break', 'var(--amber)', sm.break_due],
     ['done', 'Done', 'var(--grey)', sm.done],
     ['not_in', 'Not in', 'var(--grey)', sm.not_in],
@@ -323,9 +345,13 @@ function layout() {
   $('main').innerHTML = `<div class="board" id="board"></div>
     <footer><div class="foot-legend">
         <span><span class="iochip in leg-pill">In</span> / <span class="iochip out leg-pill">Out</span> clock pills</span>
-        <span><b style="color:var(--red)">●</b> Late / long break</span>
-        <span><b style="color:var(--purple)">●</b> Task starting</span>
-        <span><b style="color:var(--amber)">●</b> Heads-up</span>
+        <span class="leg-sep">Dots:</span>
+        <span><span class="idot" style="background:var(--red)"></span> Late</span>
+        <span><span class="idot" style="background:var(--orange)"></span> Long break</span>
+        <span><span class="idot" style="background:var(--amber)"></span> Missed break</span>
+        <span><span class="idot" style="background:var(--purple)"></span> Missed task</span>
+        <span class="leg-sep">·</span>
+        <span><b style="color:var(--purple)">●</b> flashing = task starting</span>
         <span>Break limit <b>${(d.thresholds && d.thresholds.break_limit_min) || 10} min</b></span>
       </div><div class="pager" id="pager"></div></footer>`;
   const board = $('board');
